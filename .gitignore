@@ -1,0 +1,30 @@
+# Local samples, story data, and request logs
+/data/
+/word-card/
+/test.md
+/docs/prompt-construction-design.md
+
+# Local runtime, databases, and credentials
+/runtime/
+/backups/
+/models/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+coverage/
+.vite/
+*.log
+.DS_Store
