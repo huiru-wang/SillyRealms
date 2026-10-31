@@ -1,5 +1,8 @@
 # Local samples, story data, and request logs
-/data/
+/data/*
+!/data/character.json
+!/data/lorebook.json
+!/data/预设.json
 /word-card/
 /test.md
 /docs/prompt-construction-design.md
