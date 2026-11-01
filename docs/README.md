@@ -16,7 +16,7 @@
 | 文档 | 唯一负责的领域 |
 | --- | --- |
 | [world-card.md](design/world-card.md) | 世界卡内容/加载条件、状态字段及 Opening 初值覆盖；不允许 Prompt 插入位置/角色/顺序配置 |
-| [session.md](design/session.md) | 世界实例进入与恢复、聊天阅读、全局世界线、任意消息跳转、上下滚动、分叉切换与消息操作 |
+| [session.md](design/session.md) | MVP 活动叶子入口、只向上祖先分页、压缩世界线拓扑、选叶子进入、显式历史分叉及消息操作 |
 | [context.md](design/context.md) | 按预设节点顺序构建 Prompt、世界书加载、宏、预算、状态结算、当前分支历史 |
 | [configuration.md](design/configuration.md) | 只读基础默认预设、10 个基础 Prompt 节点、自定义节点重排、Provider 和模型连接 |
 
@@ -25,7 +25,7 @@
 | 文档 | 唯一负责的技术主题 |
 | --- | --- |
 | [architecture.md](technical/architecture.md) | 本地 H5/Hono 结构、Pi Agent 适配、生成执行流程、接口运行与验证边界 |
-| [storage.md](technical/storage.md) | SQLite 表、索引、事务、历史游标、接口草案、备份与迁移 |
+| [storage.md](technical/storage.md) | SQLite 表、仅向上祖先游标 CTE、压缩世界线拓扑 API、叶子切换事务、备份与迁移 |
 
 ## 示例 · `examples/`
 
