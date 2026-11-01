@@ -1,0 +1,15 @@
+{
+  "name": "sillyrealms-pi-feasibility",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Isolated, reproducible Pi SDK feasibility experiments; not production code",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "probe": "node scripts/probe.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0"
+  },
+  "engines": {"node": ">=22"}
+}

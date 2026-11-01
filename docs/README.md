@@ -15,10 +15,10 @@
 
 | 文档 | 唯一负责的领域 |
 | --- | --- |
-| [world-card.md](design/world-card.md) | 世界卡内容、状态字段 `data.state`、Opening 初值覆盖、MVU 式状态操作、发布和实例同步 |
+| [world-card.md](design/world-card.md) | 世界卡内容/加载条件、状态字段及 Opening 初值覆盖；不允许 Prompt 插入位置/角色/顺序配置 |
 | [session.md](design/session.md) | 世界实例进入与恢复、聊天阅读、全局世界线、任意消息跳转、上下滚动、分叉切换与消息操作 |
-| [context.md](design/context.md) | Prompt 构建、世界书触发、宏、注入、预算、状态注入/结算、分支历史与摘要可见性 |
-| [configuration.md](design/configuration.md) | 预设、Provider、模型连接、配置生效与用户侧凭据边界 |
+| [context.md](design/context.md) | 按预设节点顺序构建 Prompt、世界书加载、宏、预算、状态结算、当前分支历史 |
+| [configuration.md](design/configuration.md) | 只读基础默认预设、10 个基础 Prompt 节点、自定义节点重排、Provider 和模型连接 |
 
 ## 技术设计 · `technical/`
 
@@ -29,7 +29,8 @@
 
 ## 示例 · `examples/`
 
-- [world-card.json](examples/world-card.json)：世界卡结构示例，含状态定义和两种不同 Opening 的状态初值覆盖。`spec_version` 是数据格式版本，`data.version` 是两段内容发布版本。
+- [world-card.json](examples/world-card.json)：原生世界卡结构示例，移除世界卡内注入编排字段，含状态定义和两种不同 Opening 的状态初值覆盖。`spec_version` 是数据格式版本，`data.version` 是两段内容发布版本。
+- [default-preset.json](examples/default-preset.json)：只读系统默认 Prompt 预设的 10 个节点、角色和排列顺序示例。
 
 ## 文档维护规则
 

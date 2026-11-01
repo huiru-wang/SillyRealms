@@ -22,7 +22,7 @@
 | `sessions` | `id` 主键、`world_id`、`title`、`world_snapshot_json`、`source_world_version` TEXT、`preset_id`、`active_leaf_entry_id` 可空、`created_at`、`updated_at` | 一条记录是一局世界实例，包含一棵 Entry 树；来源版本仅此一个字段 |
 | `entries` | `id` 主键、`session_id`、`parent_entry_id` 可空、`seq`、`role`、`content`、`status`、`created_at`、`updated_at`；**状态功能阶段新增** `state_snapshot_json`、`state_status` 及版本校验信息 | 有父子关系的真实用户/AI 消息；状态启用时每条消息保存完整快照，`seq` 不用于历史游标 |
 
-世界卡内容发布、版本递增与手动实例同步的业务语义以[世界卡领域设计](../design/world-card.md)为准；本表只存 `worlds.version` 与实例单个 `source_world_version`，同步事务更新 JSON 快照与来源版本，不影响 Entry 树或既有状态快照。新卡 `data.state` 与现有快照的结构必须先做兼容性检查。
+世界卡内容发布、版本递增与手动实例同步的业务语义以[世界卡领域设计](../design/world-card.md)为准；原生世界卡不接受可生效的 Prompt 注入位置/角色/顺序及 `data.prompts`；旧导入元数据只能归档或显式转为用户预设文本节点。本表只存 `worlds.version` 与实例单个 `source_world_version`，同步事务更新 JSON 快照与来源版本，不影响 Entry 树或既有状态快照。新卡 `data.state` 与现有快照的结构必须先做兼容性检查。
 
 首期 `entries.role` 只要求用户/AI 可见消息；`status` 区分生成中、完成、失败/中断，内建工具事件需要未来单独持久化和恢复。普通消息形成单链，但底层始终使用父子指针，路径分页参见下文「一致性、索引和分页」；分叉直接由已有 AI Entry 的多个 User 子节点表达，不需要附加分叉选项表；压缩检查点可分期增加。导入原始角色卡数据单独保留时，不视作已转换完成的世界内容。
 
@@ -30,10 +30,10 @@
 
 | 表 | 字段 | 用途 |
 | --- | --- | --- |
-| `presets` | `id` 主键、`name`、`api_connection_id`、`config_json`、`created_at`、`updated_at` | 配置上下文长度、温度、惩罚项、Top P、帮答、续写、自建提示词及编排顺序；只保存当前配置 |
+| `presets` | `id` 主键、`name`、`api_connection_id`、`config_json`、`created_at`、`updated_at` | 只保存用户自定义预设；`config_json` 包含 `base_preset_id: "builtin/default"`、**完整的已排序 `nodes[]`**（10 个系统节点 + 自定义文本节点）及模型生成参数，不维护版本历史 |
 | `api_connections` | `id` 主键、`name`、`platform`、`base_url`、`credential_ref` 可空、`model_id`、`created_at`、`updated_at` | 一条 API 连接包含名称、模型平台、地址、凭据引用与选中的模型 |
 
-预设与 API 连接的用户配置、生效优先级和删除策略见[配置领域设计](../design/configuration.md)。`api_connections.credential_ref` 仅指向本地安全凭据，API Key 不写进 JSON、普通导出或消息；具体密钥存储实现需验证。
+内置 `builtin/default` 为应用随代码提供的**只读模板，不通过 `presets` 表作为可编辑用户记录**；新预设从模板复制为完整节点数组，基础 ID/类型/source 不可更改、不得删除或重复，`chatHistory` 强制开启。导入时验证后才保存；预设数组是运行顺序的唯一来源，世界卡的 `injection_*` 与 `data.prompts` 不得执行，也不创建第二张节点顺序表。预设与 API 连接的用户配置、生效优先级和删除策略见[配置领域设计](../design/configuration.md)。`api_connections.credential_ref` 仅指向本地安全凭据，API Key 不写进 JSON、普通导出或消息；具体密钥存储实现需验证。
 
 ### 通用标签
 
@@ -119,6 +119,7 @@
 ## 数据验证
 
 - 两段世界版本与 Session 唯一来源版本；同步不改变消息、分叉关系、已有状态快照和交互叶子；不兼容状态定义不直接生效。
+- 系统默认预设不可修改/删除/覆盖，导入预设和保存自定义预设时必须完整保留 10 个不重复的基础节点、固定 source，`chatHistory` 强制开启；世界卡中的旧注入规则不能改变节点顺序或角色。
 - 应用层同实例引用校验、父子无环、唯一根约束、并发 `seq` 分配；在历史 User 处发起分叉，新增其父 AI 的 User 子节点，不超过 3 条；重复请求幂等且不会误建第四分支。
 - 按指定阅读叶子双向游标分页和围绕任意 Entry 直接读取窗口，服务端校验锚点在路径上；没有确定后续路线时只读祖先，遇到多路分叉须显式选择，不能混入兄弟分支；1000 轮长历史按需加载。
 - 切换阅读路线只修改客户端 `view_leaf_entry_id`，历史跳转与滚动不影响持久化 `active_leaf_entry_id`；用户明确选择「在此世界线继续」才切换交互叶子。

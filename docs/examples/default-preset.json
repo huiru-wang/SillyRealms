@@ -1,0 +1,77 @@
+{
+  "id": "builtin/default",
+  "name": "基础默认",
+  "builtin": true,
+  "nodes": [
+    {
+      "id": "main",
+      "type": "text",
+      "role": "system",
+      "enabled": true,
+      "content": "你是虚构世界的叙事引擎。依据世界设定、人物、当前状态及已发生的故事推进叙事；保持情节连贯、角色行为合理，并尊重用户选定的参与方式。"
+    },
+    {
+      "id": "worldDescription",
+      "type": "slot",
+      "source": "world.description",
+      "role": "system",
+      "enabled": true
+    },
+    {
+      "id": "worldInfo",
+      "type": "slot",
+      "source": "world.lorebooks",
+      "role": "system",
+      "enabled": true
+    },
+    {
+      "id": "personaInfo",
+      "type": "slot",
+      "source": "session.persona",
+      "role": "system",
+      "enabled": true
+    },
+    {
+      "id": "characterInfo",
+      "type": "slot",
+      "source": "world.characters",
+      "role": "system",
+      "enabled": true
+    },
+    {
+      "id": "sceneInfo",
+      "type": "slot",
+      "source": "world.scenes",
+      "role": "system",
+      "enabled": true
+    },
+    {
+      "id": "worldState",
+      "type": "slot",
+      "source": "session.state",
+      "role": "system",
+      "enabled": true
+    },
+    {
+      "id": "dialogueExamples",
+      "type": "slot",
+      "source": "world.examples",
+      "role": "auto",
+      "enabled": true
+    },
+    {
+      "id": "chatHistory",
+      "type": "slot",
+      "source": "session.history",
+      "role": "auto",
+      "enabled": true
+    },
+    {
+      "id": "postHistory",
+      "type": "text",
+      "role": "system",
+      "enabled": false,
+      "content": ""
+    }
+  ]
+}

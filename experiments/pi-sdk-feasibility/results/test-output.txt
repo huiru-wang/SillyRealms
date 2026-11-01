@@ -1,0 +1,63 @@
+
+> sillyrealms-pi-feasibility@0.0.0 test
+> node --test tests/*.test.mjs
+
+TAP version 13
+# Subtest: SessionManager: in-memory, branch-scoped reading, import from entries
+ok 1 - SessionManager: in-memory, branch-scoped reading, import from entries
+  ---
+  duration_ms: 24.771208
+  type: 'test'
+  ...
+# Subtest: SessionManager: native JSONL persistence can reopen, no SQLite adapter implied
+ok 2 - SessionManager: native JSONL persistence can reopen, no SQLite adapter implied
+  ---
+  duration_ms: 16.711791
+  type: 'test'
+  ...
+# Subtest: SDK: no tools/resources, custom system prompt; Pi adds cwd context
+ok 3 - SDK: no tools/resources, custom system prompt; Pi adds cwd context
+  ---
+  duration_ms: 118.10925
+  type: 'test'
+  ...
+# Subtest: Mock stream: sends seeded history+current input; final reply and settle events work
+ok 4 - Mock stream: sends seeded history+current input; final reply and settle events work
+  ---
+  duration_ms: 461.392333
+  type: 'test'
+  ...
+# Subtest: PrepareRequest adapter: precise post-history USER instruction position can be preserved
+ok 5 - PrepareRequest adapter: precise post-history USER instruction position can be preserved
+  ---
+  duration_ms: 114.134958
+  type: 'test'
+  ...
+# Subtest: OpenAI-compatible adapter repositions system after history into head (limitation)
+ok 6 - OpenAI-compatible adapter repositions system after history into head (limitation)
+  ---
+  duration_ms: 78.686209
+  type: 'test'
+  ...
+# 1000-message in-memory projection elapsedMs=3.60 (local fixture only)
+# Subtest: Abort during SSE: runs settle without extra external requests
+ok 7 - Abort during SSE: runs settle without extra external requests
+  ---
+  duration_ms: 73.034041
+  type: 'test'
+  ...
+# Subtest: 1000-entry in-memory path: projection scales for local harness (not database/UX benchmark)
+ok 8 - 1000-entry in-memory path: projection scales for local harness (not database/UX benchmark)
+  ---
+  duration_ms: 14.878125
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3985.222375
