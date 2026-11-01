@@ -244,7 +244,7 @@ MVU 的正常消息写入是冗余的完整状态快照，但还提供“自动�
 - 不需要为了节约存储而跳过无变化快照；状态小/中等规模时，读取简单性优先。
 - 可以额外存储 `patch / change_log / update_reason` 用于调试、UI 和审计，但它们不是读取当前状态的必需条件。
 - 保留 `schema_version / state_version / source_message_id / parent_entry_id` 等必要元信息，便于迁移和检查因果关系。
-- 状态字段和持久化表结构待后续独立设计，不在本研究中定稿。
+- 该研究本身不定义最终字段 Schema；现已在 [`docs/design/world-card.md`](../docs/design/world-card.md) 中明确最简 `data.state`（`initial`/`description`/`rule`）、Opening `initial_state` 按字段覆盖及五种操作；Entry 快照的目标持久化见 [`docs/technical/storage.md`](../docs/technical/storage.md)。
 
 ### 10.2 适配父子消息树
 

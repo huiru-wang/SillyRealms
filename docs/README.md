@@ -15,9 +15,9 @@
 
 | 文档 | 唯一负责的领域 |
 | --- | --- |
-| [world-card.md](design/world-card.md) | 世界卡内容结构、角色/场景/世界书/开局、发布版本与实例同步 |
+| [world-card.md](design/world-card.md) | 世界卡内容、状态字段 `data.state`、Opening 初值覆盖、MVU 式状态操作、发布和实例同步 |
 | [session.md](design/session.md) | 世界实例进入与恢复、聊天阅读、全局世界线、任意消息跳转、上下滚动、分叉切换与消息操作 |
-| [context.md](design/context.md) | Prompt 构建、世界书触发、宏、注入、预算、分支历史与摘要/记忆可见性 |
+| [context.md](design/context.md) | Prompt 构建、世界书触发、宏、注入、预算、状态注入/结算、分支历史与摘要可见性 |
 | [configuration.md](design/configuration.md) | 预设、Provider、模型连接、配置生效与用户侧凭据边界 |
 
 ## 技术设计 · `technical/`
@@ -29,7 +29,7 @@
 
 ## 示例 · `examples/`
 
-- [world-card.json](examples/world-card.json)：世界卡结构示例。`spec_version` 是数据格式版本，`data.version` 是两段内容发布版本。
+- [world-card.json](examples/world-card.json)：世界卡结构示例，含状态定义和两种不同 Opening 的状态初值覆盖。`spec_version` 是数据格式版本，`data.version` 是两段内容发布版本。
 
 ## 文档维护规则
 

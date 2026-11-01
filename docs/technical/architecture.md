@@ -32,6 +32,10 @@ flowchart LR
 
 SQLite 是应用持久化数据的唯一权威来源；Pi 的运行时对象或缓存不能成为另一份独立事实来源。手机访问电脑上的本地服务时，电脑需要运行且网络可达。
 
+## 可选状态引擎（后续实现）
+
+世界卡 `data.state` 定义字段和规则，Opening 仅覆盖初值；会话各 Entry 的完整状态快照才是实际游玩状态。User Entry 继承父快照，叙事 AI 完成回复后由 Agent 提议 `set/add/insert/delete/move` 变化，状态服务独立校验、原子结算并保存完整快照；不执行卡片脚本。状态不变仍持久化快照，失败与无变化需区分。具体类型、操作和 Opening 语义以[世界卡](../design/world-card.md)为准，Context 注入见[Context](../design/context.md)，数据落盘见[存储](storage.md)。本能力属于后续阶段，不表示首期 MVP 已有状态引擎。
+
 ## Pi 最小接入的前置验证
 
 目标为 `@earendil-works/pi-coding-agent`，只扩展**会话持久化和 Agent 执行前的消息构建**。不开启 coding tools、自动发现的技能与扩展，也不在 MVP 提供工具调用能力；是否能通过固定版本的公开配置做到需要实测。
