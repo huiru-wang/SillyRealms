@@ -31,3 +31,6 @@ coverage/
 .vite/
 *.log
 .DS_Store
+
+# Keep MVU research notes under the character-card data directory
+!/data/MVU-状态机制研究.md

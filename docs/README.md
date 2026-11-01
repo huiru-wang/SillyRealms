@@ -16,7 +16,7 @@
 | 文档 | 唯一负责的领域 |
 | --- | --- |
 | [world-card.md](design/world-card.md) | 世界卡内容结构、角色/场景/世界书/开局、发布版本与实例同步 |
-| [session.md](design/session.md) | 世界实例、Entry 故事树、AI 分叉点、最多三条规划路线、切换及全局树体验 |
+| [session.md](design/session.md) | 世界实例进入与恢复、聊天阅读、全局世界线、任意消息跳转、上下滚动、分叉切换与消息操作 |
 | [context.md](design/context.md) | Prompt 构建、世界书触发、宏、注入、预算、分支历史与摘要/记忆可见性 |
 | [configuration.md](design/configuration.md) | 预设、Provider、模型连接、配置生效与用户侧凭据边界 |
 

@@ -20,12 +20,11 @@
 | --- | --- | --- |
 | `worlds` | `id` 主键、`name`、`draft_json`、`published_json` 可空、`version` TEXT 可空、`created_at`、`updated_at`、`published_at` 可空 | 世界当前草稿和最新发布内容及两段内容版本；不保存历史版本 |
 | `sessions` | `id` 主键、`world_id`、`title`、`world_snapshot_json`、`source_world_version` TEXT、`preset_id`、`active_leaf_entry_id` 可空、`created_at`、`updated_at` | 一条记录是一局世界实例，包含一棵 Entry 树；来源版本仅此一个字段 |
-| `entries` | `id` 主键、`session_id`、`parent_entry_id` 可空、`seq`、`role`、`content`、`status`、`fork_reason` 可空、`created_at` | 有父子关系的真实用户/AI 消息；`seq` 只代表创建顺序，不用于历史游标 |
-| `branch_options` | `id`、`session_id`、`fork_entry_id`、`slot`（1～3）、`title`、`instruction`、`first_entry_id` 可空、`created_at`、`updated_at` | 分叉阶段引入：已完成 AI 分叉点的规划路线和实际入口，最多 3 个槽位；未开启选项不产生 Entry |
+| `entries` | `id` 主键、`session_id`、`parent_entry_id` 可空、`seq`、`role`、`content`、`status`、`created_at`、`updated_at` | 有父子关系的真实用户/AI 消息；编辑/重生成/续写更新正文与时间，`seq` 不用于历史游标 |
 
 世界卡内容发布、版本递增与手动实例同步的业务语义以[世界卡领域设计](../design/world-card.md)为准；本表只存 `worlds.version` 与实例单个 `source_world_version`，同步事务更新 JSON 快照与来源版本，不影响树或选项。
 
-首期 `entries.role` 只要求用户/AI 可见消息；`status` 区分生成中、完成、失败/中断，内建工具事件需要未来单独持久化和恢复。普通消息形成单链，但底层始终使用父子指针，路径分页参见下文「一致性、索引和分页」；完整分叉选项及压缩检查点的存储可分期增加。导入原始角色卡数据单独保留时，不视作已转换完成的世界内容。
+首期 `entries.role` 只要求用户/AI 可见消息；`status` 区分生成中、完成、失败/中断，内建工具事件需要未来单独持久化和恢复。普通消息形成单链，但底层始终使用父子指针，路径分页参见下文「一致性、索引和分页」；分叉直接由已有 AI Entry 的多个 User 子节点表达，不需要附加分叉选项表；压缩检查点可分期增加。导入原始角色卡数据单独保留时，不视作已转换完成的世界内容。
 
 ### 预设与 API 连接
 
@@ -52,52 +51,46 @@
 | --- | --- | --- |
 | `schema_migrations` | `version` 主键、`applied_at` | 数据库结构迁移记录 |
 
-首期**不设计** `world_assets`、`entry_attachments`、`models`、`memories`、`state_checkpoints`、独立 `branches` 或 `runs` 表；`branch_options` 由分叉交互阶段启用，`context_checkpoints` 由压缩阶段按 Entry 锚点引入。即使后续支持分叉也不增加并行的 `branches` 消息表。世界卡中的资源引用可以保留，但资源文件管理不在本表设计范围。
+首期**不设计** `world_assets`、`entry_attachments`、`models`、`memories`、`state_checkpoints`、`branches`、`branch_options` 或 `runs` 表；`context_checkpoints` 由压缩阶段按 Entry 锚点引入。AI 帮答行动项只是用户输入候选，不持久化为分支。世界卡中的资源引用可以保留，但资源文件管理不在本表设计范围。
 
 ## 一致性、索引和分页
 
-主要索引：`entries(session_id, seq)` 唯一，`entries(session_id, parent_entry_id)` 读取子节点；分叉阶段增加 `branch_options(session_id, fork_entry_id, slot)`（同时保证 `(fork_entry_id, slot)` 唯一）；`sessions(world_id, updated_at)` 用于世界下的实例列表；标签索引维持原设计。主键和索引不属于外键。
+主要索引：`entries(session_id, seq)` 唯一、`entries(session_id, parent_entry_id)` 用于查询某 AI 的直接 User 分支与祖先链，`sessions(world_id, updated_at)` 用于世界下的实例列表；标签索引维持原设计。主键和索引不属于外键。
 
-所有引用由服务层校验：写入消息前确认会话存在；创建会话时确认世界已发布、预设和 API 连接可用；修改或删除世界、预设、连接和对象标签时检查相关引用并采取用户可见的保留、解除或拒绝策略，不留悬空引用。多项关联写入在短事务中完成；并发更新使用事务和应用层冲突检查。禁止用数据库外键或级联删除替代这些规则。
+所有引用由服务层校验：写入消息前确认会话存在；创建会话时确认世界已发布、预设和 API 连接可用；修改世界、预设、连接和对象标签时检查相关引用并采取用户可见的保留、解除或拒绝策略，不留悬空引用。**消息删除 API 当前禁止**，不能用直接删除 Entry 或级联删除代替产品确认。多项关联写入在短事务中完成；并发更新使用事务和应用层冲突检查。禁止用数据库外键或级联删除替代这些规则。
 
-打开会话先定位有效 `active_leaf_entry_id`，只读取该叶子的最近一页祖先消息；历史游标使用固定 `leaf_id` 与 `before_entry_id`，沿 `parent_entry_id` 递归查询并验证游标确实属于所选路径，绝不能用 `(session_id, seq)` 获取分叉历史。每次新增消息仍须在短事务中获得唯一递增 `seq`，并校验同实例父节点、非环和最多 3 路约束。H5 同时限制渲染数量并保持上滑位置。
+打开会话先定位有效 `active_leaf_entry_id`，默认将其用于客户端的 `view_leaf_entry_id` 并只读取最近一页祖先消息；若设备保存了同一阅读路径上的滚动锚点，可以围绕锚点恢复阅读窗口。向上和向下的历史游标都绑定固定 `leaf_id`，沿 `parent_entry_id` 得到单一祖先链、校验游标属于该路径，绝不能用 `(session_id, seq)` 拼接跨分支消息。每次新增消息仍须在短事务中获得唯一递增 `seq`，并校验同实例父节点、非环以及每个 AI 最多 3 个直接 User 子节点、每个 User 最多 1 个有效 AI 子节点；只有显式世界分叉请求可以向已有后续的历史 AI 节点添加另一条 User 路线。H5 同时限制渲染数量并保持上滑位置。
 
-## `branch_options` DDL 与校验
+## 显式分叉、编辑与叶子操作的事务约束
 
-```sql
-CREATE TABLE branch_options (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL,
-  fork_entry_id TEXT NOT NULL,
-  slot INTEGER NOT NULL CHECK (slot BETWEEN 1 AND 3),
-  title TEXT NOT NULL,
-  instruction TEXT NOT NULL,
-  first_entry_id TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  UNIQUE (fork_entry_id, slot),
-  UNIQUE (first_entry_id)
-);
-
-CREATE INDEX idx_branch_options_fork
-ON branch_options (session_id, fork_entry_id, slot);
-```
-
-数据库层使用 `slot BETWEEN 1 AND 3` 和唯一索引约束槽位；服务层事务必须校验 fork Entry 属于同一 session、类型是已完成 AI、`first_entry_id` 是该 fork 的直接子 Entry、无环且同一个子节点不被两个选项引用。同步检查真实子节点总数 ≤3；不能因为没有外键而漏掉逻辑约束。已有正常后续占用槽位的业务规则见[会话](../design/session.md)。
+- **创建分叉**：接口传入历史 `source_user_entry_id` 与新用户输入 `content`，服务端在事务中读取该 User 的 `parent_entry_id`（必须是已完成 AI Entry），确认它在同一 Session 且已有 User 子节点数少于 3，再创建 `new_user_entry(parent=source_user.parent_entry_id)`。用户打开输入框、取消或调用 AI 帮答时不写入 Entry。
+- `seq` 分配及分叉上限检查必须在同一写事务完成；请求幂等 ID 防止重复点击创建重复分支。Agent 回复为该新 User 的唯一有效 AI 子节点，模型执行时不持有数据库长事务。发送失败可恢复并重试，不能重复新增 User 分支。
+- **阅读与选择叶子分离**：`view_leaf_entry_id`、`focused_entry_id` 与 `scroll_anchor` 是客户端临时阅读导航状态（后者可按设备缓存），**不直接写入 Session 的交互叶子**。只有用户明确选择「在此世界线继续」，服务端校验目标是同一 Session 的真实叶子后才更新 `sessions.active_leaf_entry_id`；显式新分叉生成并确认新的真实叶子后亦可更新。模型生成请求明确携带实际交互叶子并进行一致性检查，避免并发切线误写。
+- **重生成/AI 续写**：仅当目标是当前选中路径末尾的 AI Entry 且无子节点时可执行；重生成更新同一 Entry 的正文，续写追加至同一 Entry 的正文。不新增父子节点，不触发分叉；中断失败保留可恢复正文。
+- **编辑历史**：允许用户主动更新任意已保存且没有运行中写冲突的 User/AI Entry 的 `content`（以及 `updated_at`），**不自动生成、改写或删除任何后代 Entry**。编辑共同祖先影响多条路径，UI 需明确提示。依赖该消息旧内容的 Context/摘要/记忆/状态派生数据需失效或重建，路径无关数据保留。
+- **删除消息暂不支持**：不设计 `DELETE /sessions/:id/entries/:entry_id` 或自动剪枝/重连父子链的用户操作；子树删除、历史编辑审计等作为后续独立方案。
 
 ## 查询与 API 草案
 
 | 接口 | 语义 |
 | --- | --- |
-| `GET /sessions/:id/tree` | 返回扁平 Entry `id/parent_entry_id/role/status/preview`、分叉原因、选项状态与树统计，按需展开子树 |
-| `GET /sessions/:id/entries?leaf_id=...&before=...&limit=...` | 固定叶子祖先路径的游标分页；按阅读顺序返回 |
-| `POST /sessions/:id/fork-points/:ai_entry_id/options` | 设置共同分叉原因、创建/维护不超过 3 个选项，处理已有原路线登记 |
-| `POST /sessions/:id/options/:option_id/start` | 幂等地首次开启选项并开始 Agent 生成 |
+| `GET /sessions/:id/tree` | 返回真实 Entry 的 `id/parent_entry_id/role/status/preview` 等元数据，按 AI 的直接 User 子节点推导分支数；可按需加载子树 |
+| `GET /sessions/:id/entries?leaf_id=...&before_entry_id=...&limit=...` | 固定阅读叶子祖先链的**向上**分页（更早消息） |
+| `GET /sessions/:id/entries?leaf_id=...&after_entry_id=...&limit=...` | 固定阅读叶子祖先链的**向下**分页（更晚消息），不混入同一 AI 节点的其他子分支 |
+| `GET /sessions/:id/entries/window?anchor_entry_id=...&leaf_id=...&before=15&after=15` | 任意消息定位：读取目标前后的消息窗口；有确定阅读叶子时要求 anchor 属于该叶子的祖先链，未确定下行路线时可只取目标及其祖先 |
+| `POST /sessions/:id/forks` | **显式**从历史 User 消息处创建世界分叉，提供 `source_user_entry_id`、新用户 `content`、幂等 ID，创建真实 User Entry 并正常生成 |
 | `POST /sessions/:id/select-leaf` | 校验并更新当前选中叶子 |
-| `POST /sessions/:id/generate` | 明确指定起始叶子及本次操作；正常消息、续写、恢复、重生成受统一分叉约束 |
-| `POST /sessions/:id/compact` | 对指定叶子路径创建/更新派生压缩摘要，不改写 Entries |
+| `POST /sessions/:id/generate` | 在当前叶子普通发送 User 消息并生成回复，不因选用 AI 帮答而触发分叉 |
+| `POST /sessions/:id/entries/:entry_id/regenerate` | 仅重新生成当前路径末尾 AI 消息，更新同一 Entry |
+| `POST /sessions/:id/entries/:entry_id/continue` | 仅为当前路径末尾 AI 消息续写，追加同一 Entry |
+| `PATCH /sessions/:id/entries/:entry_id` | 用户编辑历史消息正文，保留所有后代，失效受影响派生 Context |
+| `POST /sessions/:id/compact` | 按叶子历史创建/更新派生压缩摘要，不改写 Entries |
 
-**历史游标**必须包含本次固定的 `leaf_id` 与 `before_entry_id`（或签名游标）；按 `parent_entry_id` 逐层取祖先，每次只获取所需页并反转为时间阅读顺序。服务端检查游标确实属于指定叶子的祖先链，不能使用全实例 `(session_id, seq)` 过滤后假装分页。首屏优先查询最近一页，向上翻页返回更早祖先，避免打开长篇故事时加载所有节点。查询须设置合理的分页上限并防御异常循环。
+**无消息删除接口**。AI 帮答的候选行动生成属于普通输入辅助，不是 `forks` 也不产生分叉数据；其单独接口可后续设计。
+
+**双向历史游标**使用固定 `leaf_id` 加互斥的 `before_entry_id` / `after_entry_id`（或等效签名游标），服务端校验锚点属于该叶子的祖先链，并以 `parent_entry_id` 推导其在唯一历史路径上的前后关系。返回结果按阅读顺序排列，不使用全实例 `(session_id, seq)` 过滤来假装处理分支。打开会话只取最近一页；上滚请求祖先，下滚请求该叶子路径上的较新后代。切换阅读叶子后必须使旧路径的游标和缓存窗口失效。请求须有合理分页上限及异常环路防护。
+
+**任意消息窗口定位**使用 `anchor_entry_id` 与可选的 `leaf_id`。有明确阅读叶子时校验 anchor 属于所选路径，再读取其前后有限条真实 Entry；若暂时无法确定下行路线，则仅取 anchor 和向上的祖先窗口（`after=0`），直到用户选定后续路径才能向下加载。一个节点有多条实际 User 后续而未指定阅读路线时，服务端应返回可选直接分支元数据供客户端显示选择器，绝不能自行按 `seq` 或最近时间猜测。消息定位/切换阅读路径不调用 `select-leaf`，只有明确继续交互才更新 `active_leaf_entry_id`。
 
 全局树允许加载完整树元数据或按子树分页，但树布局不依赖把所有 `content` 正文一次性取回。对大量节点的统计可按需缓存，缓存不是权威数据。
 
@@ -105,7 +98,7 @@ ON branch_options (session_id, fork_entry_id, slot);
 
 - 世界卡同步使用一次短事务：将已发布 `worlds.published_json`、`worlds.version` 分别复制为实例 `sessions.world_snapshot_json`、`sessions.source_world_version`，可更新 `updated_at`；禁止使用未发布草稿或触碰 Entry 树/选项。
 - `context_checkpoints` 在历史压缩阶段引入，最小持久化字段包括 `id`、`session_id`、`anchor_entry_id`、摘要文本、用于有效性检查的世界快照/Context 指纹及时间。具体 DDL 等待 Pi 接入与压缩可行性验证。
-- 检查点仅对**锚点在当前叶子祖先链**上的路径有效。原始消息保留可分页；失效的摘要可删除并重建。未来记忆与状态遵循类似的祖先隔离原则。
+- 检查点仅对**锚点在当前叶子祖先链**上的路径有效。编辑历史节点 X 后，对覆盖 X 内容的检查点（锚点为 X 或其后代）标记失效或重新计算；严格位于 X 之前的检查点仍可有效。原始消息保留可分页；未来记忆与状态遵循类似的祖先隔离规则。
 
 ## 备份、迁移和回退
 
@@ -113,7 +106,8 @@ ON branch_options (session_id, fork_entry_id, slot);
 
 ## 数据验证
 
-- 两段世界版本与 Session 唯一来源版本；同步不改变消息和选项。
-- 应用层同实例引用校验、父子无环、唯一根约束、并发 `seq` 分配、选项 1～3 槽、原有路线占槽、重复请求幂等，阻止第 4 条分支。
-- 按选定叶子查询最近一页及更早游标，仅沿祖先链，不把兄弟路线混进 Context；1000 轮长历史按需加载。
-- 取消/失败恢复、服务重启、不同叶子的压缩可见性，及迁移回滚后的数据一致性。
+- 两段世界版本与 Session 唯一来源版本；同步不改变消息、分叉关系和交互叶子。
+- 应用层同实例引用校验、父子无环、唯一根约束、并发 `seq` 分配；在历史 User 处发起分叉，新增其父 AI 的 User 子节点，不超过 3 条；重复请求幂等且不会误建第四分支。
+- 按指定阅读叶子双向游标分页和围绕任意 Entry 直接读取窗口，服务端校验锚点在路径上；没有确定后续路线时只读祖先，遇到多路分叉须显式选择，不能混入兄弟分支；1000 轮长历史按需加载。
+- 切换阅读路线只修改客户端 `view_leaf_entry_id`，历史跳转与滚动不影响持久化 `active_leaf_entry_id`；用户明确选择「在此世界线继续」才切换交互叶子。
+- 取消/失败恢复、服务重启、不同叶子的压缩可见性；仅末尾 AI 可重生成/续写，编辑历史不自动生成后代且派生上下文失效；消息删除接口不存在，迁移回滚后数据一致。
