@@ -327,3 +327,7 @@ MVU 原生按线性消息楼层向前查找最近有效快照；SillyRealms 消�
 | 更新方式说明 | https://github.com/MagicalAstrogy/MagVarUpdate/blob/beta/src/panel/update_method.zh-CN.md |
 
 **文档边界**：本文件记录 MVU 的运行逻辑、已核对的源码行为以及 SillyRealms 的状态存储取舍。项目自身的产品总纲仍以 `docs/PRODUCT.md` 为准，具体实现另行设计，不应直接将本研究当作已经落地的程序行为。
+
+## SillyRealms 后续 MVP 决策补记（2026-11-01）
+
+上面的第 10 节为研究阶段判断，不构成当前代码实现。最新产品方案进一步选择：**同一叙事模型回复的正文 + `<UpdateVariable>`**，引擎在显示/后续 Context 前去除变量块，做白名单解析和每 Entry 完整快照；不在 MVP 额外调用独立状态分析模型。状态面板从结构化快照读取，包含世界/本局所选世界卡角色两组；`user` 只能从世界卡许可角色中选择，角色运行状态按 Session 和世界线隔离。详情以 [`docs/design/state.md`](../docs/design/state.md) 和 [`docs/design/world-card.md`](../docs/design/world-card.md) 为准。

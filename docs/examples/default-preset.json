@@ -73,5 +73,11 @@
       "enabled": false,
       "content": ""
     }
-  ]
+  ],
+  "budget": {
+    "context_window_tokens": 32768,
+    "max_output_tokens": 4096,
+    "safety_margin_tokens": 1024,
+    "world_info_max_tokens": 4096
+  }
 }
