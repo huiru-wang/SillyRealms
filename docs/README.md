@@ -1,6 +1,6 @@
 # SillyRealms · 文档索引
 
-> 文档重组日期：2026-11-01。当前仍在产品与技术设计阶段；**设计不表示已实现**。
+> 文档重组日期：2026-11-02。当前仍在产品与技术设计阶段；**设计不表示已实现**。
 
 本目录按 **产品总纲 → 领域设计 → 技术实现 → 示例** 组织。同一规则只在其所属文档定义一次，其余文档引用，不复制并维护第二份。
 
@@ -15,11 +15,11 @@
 
 | 文档 | 唯一负责的领域 |
 | --- | --- |
-| [world-card.md](design/world-card.md) | 世界卡内容/加载条件、状态字段及 Opening 初值覆盖；不允许 Prompt 插入位置/角色/顺序配置 |
+| [world-card.md](design/world-card.md) | 世界卡内容、单个世界书与受限锚点、角色加载、状态字段及 Opening 初值覆盖；世界书不可指定消息角色 |
 | [session.md](design/session.md) | MVP 活动叶子入口、只向上祖先分页、压缩世界线拓扑、最简 Entry 生命周期、显式历史分叉及消息操作 |
 | [state.md](design/state.md) | MVU 风格 `<UpdateVariable>`、单轮更新、安全解析、完整状态快照与独立状态渲染 |
-| [context.md](design/context.md) | 按预设节点顺序构建 Prompt、世界书加载、宏、预算、状态结算、当前分支历史 |
-| [configuration.md](design/configuration.md) | 只读基础默认预设、10 个基础 Prompt 节点、自定义节点重排、Token 预算、Provider 和模型连接 |
+| [context.md](design/context.md) | 按世界线历史扫描世界书、按七节点编排并合并锚点、宏、顺序预算与构建诊断 |
+| [configuration.md](design/configuration.md) | 可编辑且不可删除的基础默认预设、七个固定节点、世界书锚点角色继承、Token 预算及模型连接 |
 
 ## 技术设计 · `technical/`
 
@@ -30,8 +30,8 @@
 
 ## 示例 · `examples/`
 
-- [world-card.json](examples/world-card.json)：原生世界卡结构示例，移除世界卡内注入编排字段，含状态定义和两种不同 Opening 的状态初值覆盖。`spec_version` 是数据格式版本，`data.version` 是两段内容发布版本。
-- [default-preset.json](examples/default-preset.json)：只读系统默认 Prompt 预设的 10 个节点、角色、排列顺序与 Token 预算建议值。
+- [world-card.json](examples/world-card.json)：原生世界卡结构示例，单个世界书及无角色字段的相对锚点，含状态定义和不同 Opening 的初值覆盖。`spec_version` 是数据格式版本，`data.version` 是两段内容发布版本。
+- [default-preset.json](examples/default-preset.json)：可编辑的基础默认预设七节点、userInput、角色、顺序和 Token 预算示例。
 
 ## 文档维护规则
 

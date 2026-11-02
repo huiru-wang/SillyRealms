@@ -4,7 +4,11 @@
 
 ## 定位和内容归属
 
-世界卡定义可重用的世界背景、独立角色、场景、开局、世界书、**可选的状态字段定义**及资源/文本规则。**世界卡只提供内容与触发条件，Prompt 节点顺序、插入位置和消息角色由预设唯一控制**；不得通过卡片自动修改预设。人物设定存在角色本身，地点/组织/物品等独立资料放在世界书；世界卡不保留玩家当前游玩状态。世界实例是一次独立故事，创建时复制发布的世界定义；所选开局、当前身份/场景、控制权、实际消息和分叉属于该实例。角色可否由玩家选择属于卡片定义，实际选择属于实例。**用户 `user` 必须来自该世界卡的 `characters[]`，不支持外部个人角色、自由创建身份或未定义角色。**
+世界卡定义可重用的世界背景展示信息、独立角色、开局、**单个世界书**、可选状态字段及资源规则。**世界卡只负责内容与加载条件**；Preset 控制 Prompt 节点主顺序、角色和启停；世界书条目仅可选择预设允许的相对锚点及同锚点顺序，不得独立声明消息角色。命中条目与对应基础节点本体合并为一条 Prompt，角色继承目标节点，详见[配置](configuration.md)。
+
+`data.description` 可以是 HTML 等展示内容，不自动进入 Prompt。故事前提、地点、事件、场景规则与示例等需供模型使用的信息属于 `data.lorebook.entries[]`；本期没有独立的 `scenes[]` 或 `examples` Prompt 插槽。角色的人物设定仍直接放在 `characters[]` 下。
+
+用户扮演的 `user` **只能来自本世界卡 `characters[]` 中被允许的角色**；不支持外部个人身份或自由身份。世界卡保存静态定义，Session 保存本局用户角色快照、动态状态及 Entry 树。
 
 ## 发布版本与同步
 
@@ -16,43 +20,36 @@
 
 ## 内容结构与导入边界
 
-### 整体结构
-
 ```text
 WorldCard
 ├─ spec / spec_version
 └─ data
-   ├─ name / summary / description
-   ├─ creator / creator_notes / version / tags / cover
-   ├─ scenes[]                 场景内容与加载触发条件
-   ├─ characters[]             独立角色及其人物设定
-   ├─ openings[]               可选开局，每项可有 initial_state
-   ├─ state                    可选的状态字段定义
-   ├─ lorebooks[]              世界资料及加载触发条件
-   ├─ examples                 可选的对话示例
-   ├─ regex_scripts[]          可选文本规则
-   ├─ assets[]                 可选资源清单
-   └─ extensions              可选扩展数据
+   ├─ name / summary / description / version / tags / cover
+   ├─ characters[]           独立角色及其加载配置
+   ├─ openings[]             多个开局及可选世界状态初值覆盖
+   ├─ state                  可选世界状态字段定义
+   ├─ lorebook               单个世界书：entries[] 及各自 load
+   ├─ regex_scripts[]        来源规则/可选扩展（MVP 不执行）
+   ├─ assets[]               资源清单
+   └─ extensions             非执行扩展/来源归档
 ```
 
-结构外壳暂用 `spec: "world_card"`、`spec_version: "0.1"`。`spec_version` 是**卡片格式**版本；`data.version` 是作者发布的**内容**版本。卡片跨版本身份及导入兼容协议仍待确认。具体内容发布与实例同步规则见上文。
-
-有效卡至少具有非空名称和一个有效开局；缺少内容仍可保存为草稿。字段缺失时可选文本按空文本处理，可选列表按空列表处理。未知来源内容不能因不被理解而静默丢失。
-
-## 基础字段
+结构外壳使用 `spec: "world_card"`、`spec_version: "0.1"`；`spec_version` 是格式版本，`data.version` 为两段递增的内容发布版本。有效卡需名称、至少一个有效 Opening 及可选玩家角色；草稿可以尚未完整。未知来源字段可归档保留，但不能未经支持就生效。
 
 | 字段 | 类型 | 用途 |
 | --- | --- | --- |
 | `name` | string，必填 | 世界卡名称 |
-| `summary` | string | 给用户看的简介，不默认发送模型 |
-| `description` | string | 世界基础设定、环境与通用规则 |
-| `creator` / `creator_notes` | string | 作者和使用说明，不默认发送模型 |
-| `version` / `tags` | string / string[] | `version` 为 `X.Y` 两段内容发布版本，严格递增；`tags` 用于分类 |
-| `cover` | string | 可选封面引用，暂用 `asset:<资源ID>` |
-| `examples` | string | 可选表达或对话示例，不作为实际故事历史 |
-
-| `state` | object | 可选状态定义：每个字段包含 `initial`、`description`、`rule`；实例运行状态不写回世界卡 |
-| `extensions` | object | 可选扩展，不自动解释或执行 |
+| `summary` | string | 列表简介，不发送模型 |
+| `description` | string 或 `{format,content}` | 展示用说明，不自动发送模型 |
+| `creator` / `creator_notes` | string | 作者与说明，不发送模型 |
+| `version` | string | `X.Y` 内容发布版本 |
+| `tags` | string[] | 搜索与分类 |
+| `cover` | string | 可选 `asset:<ID>` 封面引用 |
+| `characters[]` | array | 角色定义、可扮演许可及加载条件 |
+| `openings[]` | array | 故事开局 |
+| `lorebook` | object | 单个世界书，`entries[]` 存独立资料 |
+| `state` | object | 世界状态定义，实例中的运行值不回写世界卡 |
+| `extensions` | object | 不自动解释或执行 |
 
 ## 独立角色
 
@@ -63,11 +60,11 @@ WorldCard
 | `description` | string | 完整人物设定，包括需要时的性格、经历、外貌和关系 |
 | `avatar` | string | 可选头像资源引用 |
 | `tags` | string[] | 可选标签，用于展示、筛选和整理；缺省为空列表 |
-| 共同加载字段 | 见下文「场景、世界书与共同加载条件」 | 角色资料何时可以被选中进入其预设插槽 |
+| `load` | object，见「世界书与角色加载条件」 | 角色资料何时进入 `characterInfo` |
 | `player_selectable` | boolean，默认 `false` | 世界卡级别的角色可扮演许可；仅 `true` 的角色能作为 `user` |
 | `state` | object，可选 | 角色的初始状态字段定义，结构与 `data.state` 完全一致；只有本局选作 `user` 的角色进入用户运行状态 |
 
-角色、场景与世界书条目使用相同的加载条件，见下文「场景、世界书与共同加载条件」。玩家在本局选中角色时，默认提供该角色资料；其他角色按其加载配置筛选，并最终填入预设的 `characterInfo` 插槽。
+角色与世界书条目使用相同的基础加载条件，见下文「世界书与角色加载条件」。玩家在本局选中角色时，默认提供该角色资料；其他角色按其加载配置筛选，并最终填入预设的 `characterInfo` 插槽。
 
 角色设定直接放在 `description`，不要求通过世界书关联。角色可声明静态 `state` 初值/字段规则，但**实际变化的状态快照不写回世界卡**；角色的控制者和是否登场也不写在世界卡。`player_selectable=true` 只表示该角色**可以**被选为 `user`，不是每局自动被玩家控制；选择时会将该世界卡角色完整定义复制到 Session。
 
@@ -157,55 +154,60 @@ WorldCard
 - 用户主动编辑历史消息时，保留所有后代正文和树关系，不自动重生成；受影响的后代状态结算应标记失效/待处理，不能默默把旧结果当新事实。世界卡同步不清空或重初始化旧消息快照，状态定义发生不兼容变化时先提示显式迁移。
 - 作者编辑体验可只展示“字段名 / 初始值 / 描述 / 规则”；Opening 中列出字段默认值，并允许“覆盖初始值 / 恢复默认”。模型可见状态及结算的 Context 规则见 [Context](context.md)。
 
-## 场景、世界书与共同加载条件
+## 世界书与角色加载条件
 
-### 场景列表 `scenes[]`
+一张原生世界卡拥有一个 `data.lorebook`，其中 `entries[]` 保存多个资料条目。`id` 在本世界书内部唯一，`title` 为显示标题，`content` 为模型可用正文。人物设定保存在角色定义中；地点、场景、组织、物品、历史事件、剧情规则和对话示例都可作为世界书条目。独立场景/示例来源内容可以归档，但 MVP 不隐式创建独立 Prompt 节点。
 
-场景定义可进入或切换的叙事环境，`id`、`name`、`description` 分别表示卡内标识、名称和场景设定；可选的 `tags` 是用于展示、筛选和整理的字符串列表，缺省为空列表。场景还可使用下表的共同加载字段。场景可以为空；当前场景是会话状态。关键词触发场景资料加载，不自动切换当前场景。
+### 内容激活规则
 
-角色和场景的 `tags` 默认不进入 Prompt，也不自动作为触发关键词；需要按特定词语触发时，应在加载条件 `keywords` 中明确填写。
+角色 `load` 与世界书条目 `load` 都支持：
 
-### 世界书 `lorebooks[]`
+| 字段 | 类型 / 默认 | 作用 |
+| --- | --- | --- |
+| `mode` | `always/on_mention/manual`，默认 `manual` | 常驻、关键词、手动加载 |
+| `keywords` | string[] / `[]` | `on_mention` 触发词 |
+| `keyword_logic` | `any/all` / `any` | 多关键词满足任一或全部 |
+| `order` | integer / `0` | **仅世界书**同一锚点同一侧排序，非预算优先级 |
 
-世界书是独立世界资料集合；条目使用 `id`、`name`、`content` 表达资料，并使用共同加载字段定义加载方式。人物设定放在角色自身，不通过关联世界书取得。资料是否在本局关闭属于实例或会话状态，卡片不包含 `enabled` 当前状态。
+世界书条目额外配置：
 
-### 三类内容共用的平铺加载字段
+| 字段 | 允许值 | 用途 |
+| --- | --- | --- |
+| `anchor` | `personaInfo` / `characterInfo` / `worldState` / `userInput` | 目标基础节点，默认 `characterInfo` |
+| `position` | `before` / `after` | 目标节点前/后，默认 `after` |
 
-角色、场景及世界书条目只声明**内容触发和候选筛选**条件，字段直接位于各内容对象上，不允许声明 Prompt 节点位置、深度、消息角色或跨节点排序。
-
-| 字段 | 类型 | 默认 | 含义 |
-| --- | --- | --- | --- |
-| `load_mode` | string | `manual` | `always` 常驻候选；`on_mention` 匹配关键词时加载；`manual` 由本局明确选择 |
-| `keywords` | string[] | `[]` | `on_mention` 触发词；空列表不命中并提示配置不足 |
-| `priority` | integer | `0` | 在**当前插槽内部**预算裁剪时排序优先级；不影响插槽本身的位置或角色 |
-| `recursive_trigger` | boolean | `false` | 是否可被其他已加载资料内容触发 |
-| `recursive_source` | boolean | `false` | 命中后是否参与触发其他资料 |
-
-已选择的玩家角色可作为加载规则之外的必要候选。具体关键词组合、扫描范围、递归和预算策略见 [Context](context.md)；优先级只决定当前插槽内哪些候选被保留，不允许移动预设节点。相同优先级下的条目按世界卡原始顺序稳定排列，重复条目根据稳定 ID 去重。不能因为 `load_mode` 是 `always` 就在预设相关插槽被禁用时仍强制注入。
+**世界书不支持 `role` 字段。** 所有激活条目与目标节点本体合并为**一条** Prompt，继承该节点配置的角色；`userInput` 固定继承 `user`。不能为条目设置 `system/user/assistant`，也不能修改预设节点主顺序、历史深度或任意自定义节点。
 
 ```json
 {
-  "scenes": [
-    {"id": "study", "name": "书房", "description": "一间安静的书房。", "tags": ["室内", "地点"], "load_mode": "on_mention", "keywords": ["书房"]}
-  ],
-  "characters": [
-    {"id": "keeper", "name": "守书人", "description": "谨慎而耐心。", "tags": ["主要角色"], "player_selectable": true, "load_mode": "always"}
-  ],
-  "lorebooks": [
-    {"id": "places", "name": "地点", "entries": [
-      {"id": "valley", "name": "山谷", "content": "山谷常年有雾。", "load_mode": "on_mention", "keywords": ["山谷"]}
-    ]}
-  ]
+  "lorebook": {
+    "name": "世界设定",
+    "entries": [
+      {
+        "id": "gate-rule",
+        "title": "王宫通行规则",
+        "content": "守卫需要核验通行证。",
+        "load": {
+          "mode": "on_mention",
+          "keywords": ["王宫", "守卫"],
+          "keyword_logic": "any",
+          "anchor": "characterInfo",
+          "position": "before",
+          "order": 0
+        }
+      }
+    ]
+  }
 }
 ```
 
-角色/场景/世界资料各自拥有独立的卡内 ID，世界书条目在所属世界书内唯一。`enabled` 等用户临时开关属于实例/会话，不写回世界卡。
+角色的 `load` 不接受 `anchor/position/role`，其资料进入 `characterInfo` 基础节点，按原始角色数组顺序稳定排列；当前选为玩家的角色固定由 `personaInfo` 读取，不在 `characterInfo` 重复出现。世界书按 `(anchor,position,order,原始列表位置)` 稳定编排；同一条目在同一次构建中去重。`mode=always` 也受本局资料禁用策略影响，但即便节点本体被关闭，该节点锚点仍能生成合并后的消息；具体见[配置](configuration.md)。
 
-### 世界卡不得控制 Prompt 编排
+Context 扫描默认本次 User 和最近三条祖先 Entry（`scan_depth=4`），`on_mention` 使用普通子串匹配；`manual` 从本局选择项读取。扫描与预算裁剪由[Context](context.md)统一执行，MVP 不支持递归、概率、Sticky/Cooldown、历史内部深度插入或跨分支关键词触发。
 
-- 原世界卡字段 `injection_position`、`injection_depth`、`injection_role`、`injection_order` **退出 SillyRealms 原生格式**；即使来自旧卡，也不可作为生效规则。消息排列和角色统一由[预设的节点](configuration.md)提供。
-- 原生世界卡**不声明 `data.prompts`**，更不能直接覆盖 `main/postHistory` 等预设节点。来自酒馆的角色卡若包含 prompt、角色卡作者指令、注入控制等内容，可保留在来源档案或 `extensions` 的不执行兼容数据中；用户明确选择导入为**自定义预设文本节点**后才进入 Prompt。
-- 内容条件、角色信息、世界书被解析进哪个固定插槽，由引擎的 `slot.source` 映射决定；世界卡不允许创建或覆盖基础 `slot`。未知字段可原样保留用于导入往返，但不应因未知数据存在就自动执行。
+### 禁止隐式 Prompt 注入
+
+原生格式不接受生效的 `load.role`、`injection_role/depth/order` 或 `data.prompts` 字段。旧来源可以归档在非执行扩展中；**对原生新卡应校验拒绝**未知的角色/深度注入控制，不能靠忽略非法字段掩盖内容行为差异。原世界卡 Prompt 如需生效，必须由用户明确导入为预设自定义文本节点。
 
 ## 文本规则与资源
 
@@ -217,7 +219,7 @@ WorldCard
 
 角色卡 V2/V3 仅作为内容来源，不要求世界卡继承其字段或结构。整理时：
 
-- 将确定的人物设定整理到对应角色下；将独立世界资料整理到世界书。
+- 将确定的人物设定整理到对应角色下；将独立世界资料、场景和对话示例整理到单个世界书。
 - 原卡的开场白保留为开局；来源中的特殊入口应保留其内容。原来源中的 Prompt/注入字段不得自动转成生效配置；必要时存入不执行的扩展归档，供用户明确导入为自定义预设节点。
 - 原来的关闭条目、旧版设定和不支持的扩展保留在原始来源归档；不要未经选择就把相互冲突的版本一起作为活跃世界设定。
 - 原始数据与新卡分开保存。原始数据保留不代表所有旧字段或功能已转换完成。
@@ -225,6 +227,6 @@ WorldCard
 
 ## 示例与待讨论事项
 
-世界卡整理示例见 [world-card.json](../examples/world-card.json)。原卡素材不随文档库分发。示例中的角色可选资格和加载方式属于人工设计，不是原卡已有权限。
+世界卡整理示例见 [world-card.json](../examples/world-card.json)。示例中的角色许可与加载方式属于人工整理，不是源角色卡既有权限。
 
-继续设计时需要明确角色加载与玩家身份的关系、开局角色限制的继承、世界书完整触发机制、共同加载字段的默认值、原卡正则和扩展的兼容方式。Prompt 构建的产品逻辑见 [Context](context.md)。
+后续再讨论高级世界书触发、导入的正则和扩展兼容。Prompt 构建的确定性加载与合并规则见 [Context](context.md)。

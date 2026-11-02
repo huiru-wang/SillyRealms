@@ -1,6 +1,6 @@
 # 持久化与接口：SQLite 数据模型
 
-> 状态：技术方案草案，2026-11-01；以下为逻辑结构和可选 DDL，并非已执行的数据库迁移。返回[文档索引](../README.md)。
+> 状态：技术方案草案，2026-11-02；以下为逻辑结构和可选 DDL，并非已执行的数据库迁移。返回[文档索引](../README.md)。
 
 ## 事实来源和结构约定
 
@@ -19,21 +19,21 @@
 | 表 | 字段 | 用途 |
 | --- | --- | --- |
 | `worlds` | `id` 主键、`name`、`draft_json`、`published_json` 可空、`version` TEXT 可空、`created_at`、`updated_at`、`published_at` 可空 | 世界当前草稿和最新发布内容及两段内容版本；不保存历史版本 |
-| `sessions` | `id` 主键、`world_id`、`title`、`world_snapshot_json`、`source_world_version` TEXT、`preset_id`、`user_character_id`、`user_character_snapshot_json`、`active_leaf_entry_id` 可空、`created_at`、`updated_at` | 一局世界实例 + 一棵 Entry 树；用户身份**只能从本世界卡许可角色中选取**；保存选中角色 ID 和完整快照，运行状态不反写卡片 |
+| `sessions` | `id` 主键、`world_id`、`title`、`world_snapshot_json`、`source_world_version` TEXT、`preset_id`、`user_character_id`、`user_character_snapshot_json`、`context_options_json` 可空、`active_leaf_entry_id` 可空、`created_at`、`updated_at` | 一局世界实例 + 一棵 Entry 树；用户身份**只能从本世界卡许可角色中选取**；保存选中角色 ID 和完整快照，运行状态不反写卡片 |
 | `entries` | `id` 主键、`session_id`、`parent_entry_id` 可空、`seq`、`role`、`content`（纯叙事）、`raw_content` 可空、`status`、`state_snapshot_json` 可空、`state_status` 可空、`state_update_text` 可空、`updated_at`、`created_at` | 已提交的 User/AI 消息；MVP `status=completed`，AI 的原始模型输出和 MVU 风格更新块单独保存，状态启用时每条 Entry 完整快照 |
 
-世界卡内容发布、版本递增与手动实例同步的业务语义以[世界卡领域设计](../design/world-card.md)为准；原生世界卡不接受可生效的 Prompt 注入位置/角色/顺序及 `data.prompts`；旧导入元数据只能归档或显式转为用户预设文本节点。本表只存 `worlds.version` 与实例单个 `source_world_version`，同步事务更新 JSON 快照与来源版本，不影响 Entry 树或既有状态快照。新卡 `data.state` 与现有快照的结构必须先做兼容性检查。
+世界卡内容发布、版本递增与手动实例同步的业务语义以[世界卡领域设计](../design/world-card.md)为准；原生世界卡使用单个 `lorebook`，条目只保留受限 `load.anchor/position/order`，不允许 `load.role`，其内容与锚点节点合并为一条 Prompt 并继承节点角色；旧导入元数据只能归档或显式转为预设文本节点。本表只存 `worlds.version` 与实例单个 `source_world_version`，同步事务更新 JSON 快照与来源版本，不影响 Entry 树或既有状态快照。新卡 `data.state` 与现有快照的结构必须先做兼容性检查。
 
-首期 `entries.role` 只要求用户/AI 可见消息；`entries.status` 仅有 `completed` 持久化状态，**生成中/失败/取消是临时请求状态，不建 AI 占位 Entry 或 Run 表**。失败/取消后保留 User 叶子并显式重试原 User；流式部分正文默认不持久化，详见[会话](../design/session.md)。普通消息形成单链，但底层始终使用父子指针；MVP 只允许按 `active_leaf_entry_id` 的单条祖先链向上分页，参见下文「一致性、索引和分页」；分叉直接由已有 AI Entry 的多个 User 子节点表达，不需要附加分叉选项表；压缩检查点可分期增加。导入原始角色卡数据单独保留时，不视作已转换完成的世界内容。
+`sessions.context_options_json` 保存本局世界书手动选择 `manual_lore_ids` 与禁用 `disabled_lore_ids`，默认均为空数组；ContextManager 读快照后只沿本轮 User 的路径使用这些本局配置，不让自动触发覆盖显式禁用。\n\n首期 `entries.role` 只要求用户/AI 可见消息；`entries.status` 仅有 `completed` 持久化状态，**生成中/失败/取消是临时请求状态，不建 AI 占位 Entry 或 Run 表**。失败/取消后保留 User 叶子并显式重试原 User；流式部分正文默认不持久化，详见[会话](../design/session.md)。普通消息形成单链，但底层始终使用父子指针；MVP 只允许按 `active_leaf_entry_id` 的单条祖先链向上分页，参见下文「一致性、索引和分页」；分叉直接由已有 AI Entry 的多个 User 子节点表达，不需要附加分叉选项表；压缩检查点可分期增加。导入原始角色卡数据单独保留时，不视作已转换完成的世界内容。
 
 ### 预设与 API 连接
 
 | 表 | 字段 | 用途 |
 | --- | --- | --- |
-| `presets` | `id` 主键、`name`、`api_connection_id`、`config_json`、`created_at`、`updated_at` | 只保存用户自定义预设；`config_json` 包含 `base_preset_id: "builtin/default"`、**完整的已排序 `nodes[]`**（10 个系统节点 + 自定义文本节点）及模型生成参数，不维护版本历史 |
+| `presets` | `id` 主键、`name`、`api_connection_id` 可空、`config_json`、`created_at`、`updated_at` | 保存不可删除但可编辑的 `builtin/default` 记录及用户预设；`config_json` 包含**完整有序 `nodes[]`**（七个基础节点 + 自定义文本节点）、`scan_depth`、预算和生成参数，不维护历史版本 |
 | `api_connections` | `id` 主键、`name`、`platform`、`base_url`、`credential_ref` 可空、`model_id`、`created_at`、`updated_at` | 一条 API 连接包含名称、模型平台、地址、凭据引用与选中的模型 |
 
-内置 `builtin/default` 为应用随代码提供的**只读模板，不通过 `presets` 表作为可编辑用户记录**；新预设从模板复制为完整节点数组，基础 ID/类型/source 不可更改、不得删除或重复，`chatHistory` 强制开启。导入时验证后才保存；预设数组是运行顺序的唯一来源，世界卡的 `injection_*` 与 `data.prompts` 不得执行，也不创建第二张节点顺序表。预设与 API 连接的用户配置、生效优先级和删除策略见[配置领域设计](../design/configuration.md)。`api_connections.credential_ref` 仅指向本地安全凭据，API Key 不写进 JSON、普通导出或消息；具体密钥存储实现需验证。
+初始化时确保 `presets` 中存在 `id="builtin/default"` 的用户可编辑记录，**不可删除或改 ID**，可绑定现有 API 连接；出厂 JSON 只用于首次初始化和用户明确确认后的恢复，不在运行时覆盖已保存修改。导入/保存时验证七个基础节点各一次、固定 source、`chatHistory` 位于 `userInput` 之前且二者必需；`userInput` 始终为 user 角色。完整 `nodes[]` 是主顺序唯一来源，世界书只通过锚点附着，不创建第二张顺序表；`api_connections.credential_ref` 仅指向本地凭据，API Key 不写进导出、Prompt 或消息。
 
 ### 通用标签
 
@@ -146,7 +146,7 @@ ORDER BY ancestors.depth DESC;
 
 按 `depth` 选择**最近的 `limit` 条**；当查询返回 `limit+1` 条时，`has_more=true`，必须**丢弃 `depth` 最大的那条最老消息**，再按 `depth DESC` 展示剩余消息（从旧到新）。多出的第 31 条只用于检测是否还有历史，不能错误地显示并遗漏最新的一条。`before` 是否属于目标叶子祖先链需要单独做路径存在性校验（可使用递归 CTE），且必须验证 `before.session_id`、`leaf_id` 和当前活动叶子一致；不能只信任请求传来的 `before.parent_entry_id`。异常父链、循环、跨实例链接须失败而不是无限递归；即使无数据库外键也必须有服务层防护。
 
-**重要：** UI 只查询 30 条，不意味着 Context 只使用 30 条。模型生成以固定叶子祖先路径读取完整有效历史，并按 Token 预算/检查点决定实际发送；两者不可混用聊天列表游标。
+**重要：** UI 只查询 30 条，不意味着 Context 只使用 30 条。生成从**本次已确认的 User Entry 的父链**读取历史，`chatHistory` 排除本轮 User；`userInput` 将原文和锚点前后文字拼成唯一有效 Query。预算顺序舍弃、最近历史裁剪均不修改持久化原文或 UI 分页游标。
 
 ### 全局世界线：只传保留节点和隐藏边
 
@@ -202,7 +202,7 @@ Content-Type: application/json
 ## 数据验证
 
 - 两段世界版本与 Session 唯一来源版本；同步不改变消息、分叉关系、已有状态快照和交互叶子；不兼容状态定义不直接生效。
-- 系统默认预设不可修改/删除/覆盖，导入预设和保存自定义预设时必须完整保留 10 个不重复的基础节点、固定 source，`chatHistory` 强制开启；世界卡中的旧注入规则不能改变节点顺序或角色。
+- 系统默认预设不可删除但可编辑，导入和保存时七个基础节点不得删除/重复、固定 source；`chatHistory` 在 `userInput` 之前且二者必需，世界书不可包含 `load.role`，各锚点条目合并成目标节点的一条 Prompt 并继承其角色。
 - 应用层同实例引用校验、父子无环、唯一根约束、并发 `seq` 分配；在历史 User 处发起分叉，新增其父 AI 的 User 子节点，不超过 3 条；重复请求幂等且不会误建第四分支。
 - 打开实例仅从活动叶子取最近一页，向上游标仅沿父链，`before` 须属于当前活动叶子；没有向下历史分页或任意 Entry 窗口。1000+ 条单世界线只加载必要消息页，旧叶子游标切换后立即失效。
 - 全局世界线仅返回 Root/Fork/Branch Start/Leaf 及带 `hidden_count` 的边，不全量返回正文；叶子高亮仅保留前端 `selected_leaf_id`。用户确认进入后校验真实叶子与预期活动叶子，再更新持久化 `active_leaf_entry_id`、清空聊天列表并加载最新一页。

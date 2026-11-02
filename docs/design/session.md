@@ -1,6 +1,6 @@
 # 会话：MVP 世界线选择、单向历史分页与 Entry 树
 
-> 状态：2026-11-01 MVP 目标领域设计（尚未实现）。返回[文档索引](../README.md)；SQLite/API 见[存储](../technical/storage.md)，模型输入见[Context](context.md)。
+> 状态：2026-11-02 MVP 目标领域设计（尚未实现）。返回[文档索引](../README.md)；SQLite/API 见[存储](../technical/storage.md)，模型输入见[Context](context.md)。
 
 ## 核心模型与边界
 
@@ -39,7 +39,7 @@ GET /sessions/{sessionId}/entries?leaf_id=A900&before=U850&limit=30
 - 返回 `leaf_id`、`entries`、`next_before`、`has_more`；`next_before` 为当前返回页最早 Entry ID，只有 `has_more=true` 时继续使用；从用户视角不会把兄弟世界线的内容插进聊天中。
 - 前端维护单调递增的导航代号（如 `navigation_epoch`，纯内存）丢弃**跨世界线切换**后的旧响应。同线生成让活动叶子从 A → U → A 演进时，只更新分页请求绑定的 `leaf_id` 并取消/重试已发出的旧叶子查询，**不清空当前已加载的祖先消息，也不强制跳到底部**。服务端在生成、切线和历史分页时均要校验请求关联的叶子版本。
 
-> UI **只向上加载历史**，不等于模型每轮也只读 30 条。模型 Context 沿活动叶子的全部有效祖先历史按预算/压缩选择；聊天分页游标不参与模型历史裁剪。
+> UI **只向上加载历史**，不等于模型每轮也只读 30 条。模型 Context 从本次真实 User Entry 的父节点沿有效祖先链读取，`chatHistory` 排除该 User；按顺序预算选择历史。UI 的 `before` 游标不参与模型历史裁剪。
 
 ## 全局世界线：压缩拓扑，而非全消息画布
 
@@ -148,9 +148,9 @@ MVP 前端只需要 `idle / generating / error`（以及可选 `cancelled` 提�
 
 ## 与 Context、状态和 Agent 的边界
 
-- `active_leaf_entry_id` 是 Agent 生成、Context、世界书扫描、压缩/记忆及状态读取的**唯一路径起点**；真正的模型历史是它的有效祖先链，不是 UI 最近加载的 30 条，也不是拓扑预览数据。
+- `active_leaf_entry_id` 是创建 User 前选择真实世界线的**唯一持久化入口**；User 确认落盘后，本轮 Context 固定该 `user_entry_id` 并读取**它的父 Entry 祖先链**。`chatHistory` 只包含本轮 User 之前的历史，`userInput` 保存原文并把世界书锚点合并成一次有效 Query；扫描和状态读取均绑定同一路径，不能读取兄弟分支或 H5 最近 30 条。
 - 状态启用时，Opening 根 Entry 写世界/用户身份的完整初值；User 继承父状态，AI **一次性输出叙事及末尾 `<UpdateVariable>`**，引擎提取并移除更新块、校验结算后保存完整快照，无变化也保存。状态独立于聊天正文在状态抽屉/侧栏显示；切线后的状态取该叶子路径，不与兄弟分支或世界卡原始角色定义的状态混合。编辑历史导致后代状态失效，详见[状态](state.md)。
-- 模型生成过程中必须用本次明确的叶子/父节点固定执行上下文；Pi Session 只能是临时执行态，SQLite 是唯一权威。失败、取消、重试和迟到响应不能误写另一叶子或为原 User 追加第二个有效 AI 子节点。
+- 模型生成过程中必须以本次 `user_entry_id` 和其父节点固定执行上下文；Pi `session.prompt(effectiveUserQuery)` 的有效 Query 可含 `userInput` 锚点，但数据库 User Entry 始终只保留原文。Pi Session 只是临时执行态，SQLite 是唯一权威。失败、取消、重试及迟到响应不能误写另一叶子或为原 User 追加第二个有效 AI 子节点。
 - 全局拓扑是派生视图：它的摘要/缓存不能被用作模型 Context，也不改变 Entry 的实际父子关系。
 
 ## MVP 验收要点
