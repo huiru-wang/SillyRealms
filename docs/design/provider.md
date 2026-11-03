@@ -7,11 +7,11 @@
 - **ProviderService** 是设置页、Session 创建与 AgentRuntime 的统一业务入口，负责 `listProviders / listModels / getModel / getAvailableModels`、配置/验证/删除用户 API Key、解析可调用的模型选择与能力信息。
 - 内置 Provider/Model 集合来自项目锁定版本的 `@earendil-works/pi-ai`（或统一选定的兼容 Pi 版本）。MVP 可以采用应用级**允许列表**决定在 UI 中开放哪些 Pi 内置 Provider；这只是过滤和产品配置，不是为每个供应商编写一套 Adapter。
 - API Key 属于用户可管理配置。`ProviderService` 通过应用实现的 `CredentialStore` 持久化凭据，向 Pi 的 `Models` 注入该 Store；私密值不写到 Session、Preset、世界卡、日志或导出内容。
-- Provider Domain **不构建 Prompt、不创建 Session/Run、不负责 SSE、不应用状态 ChangeSet**。PiAgentExecutor 负责调用和事件转发；状态工具与校验归 State Domain。
+- Provider Domain **不构建 Prompt、不创建 Session/Entry、不负责 SSE、不应用状态 ChangeSet**。PiAgentExecutor 负责调用和事件转发；状态工具与校验归 State Domain。
 
 ## 2. 模型与凭据契约
 
-`ModelSelection` 仅保存 `{ provider: string, modelId: string }`，按需另存普通生成参数；`provider` 和 `modelId` 必须以运行时选定的 Pi 模型目录实际值为准。Session 持久化该选择；没有显式选择时按应用默认配置读取，不把模型写入 Preset。
+`ModelSelection` 仅保存 `{ provider: string, modelId: string }`，按需另存普通生成参数；`provider` 和 `modelId` 必须以运行时选定的 Pi 模型目录实际值为准。Session 持久化该选择；本地 MVP 创建 Session 时要求明确选择模型，不建 app_settings 表，也不把模型写入 Preset。
 
 模型展示信息直接从 Pi `Model` 映射：`provider`、`id`、`name`、`contextWindow`、`maxTokens`、`reasoning`、`input`、`api` 等（以锁定依赖版本的字段为准）。模型在目录中存在**不代表**已配置 API Key、远端仍可调用或支持当前的状态工具 Schema；因此要区分：
 
@@ -47,7 +47,7 @@ API 建议：
 - `GET /providers/available-models`：本地认证完整的模型（非实时云端可用性）。
 - `PUT /providers/:providerId/api-key`、`DELETE /providers/:providerId/api-key`：用户 Key 配置/删除，不提供明文读取。
 - `POST /providers/:providerId/test`：指定模型、显式执行连接验证。
-- 默认模型设置在应用配置；Session 创建/修改模型时验证 `ModelSelection`。
+- MVP 创建 Session 时明确选择模型；上次选择可以仅记在前端本地偏好/客户端配置文件，无 app_settings 表。
 
 ## 4. Pi 复用方式
 
@@ -70,7 +70,7 @@ ProviderService 对外使用 Pi 目录，**不重复定义**每个模型的最�
 
 ## 5. 与一次 Agent 执行的关系
 
-`runAgent()` 根据 `sessionId` 加载 `WorldInstanceContext`，通过 `ProviderService.resolveModel` 解析实际模型与认证配置，`AgentContext` 只返回 `ModelMessage[]`，`PiAgentExecutor` 负责把消息适配到 Pi 的模型请求并 SSE 转发。是否开启状态 Tool 由本轮 Session/状态配置和已验证的模型能力共同决定，ProviderService 只提供查询与校验信息。
+`runAgent()` 通过 `AgentContext.create(sessionId, parentEntryId, userInput)` 构建本轮历史/全状态/条目与 `ModelMessage[]`，并通过 `ProviderService.resolveModel` 解析 Session 的模型与凭据；`PiAgentExecutor` 负责调用与 SSE 转发。是否开启状态 Tool 由本轮 Session/状态配置和已验证的模型能力共同决定，ProviderService 只提供查询与校验信息。
 
 **已知限制**：SillyRealms 在 2026-11-01 对 `@earendil-works/pi-coding-agent@1.4.0` 的离线 mock 实测发现：`prepareRequest` 可以覆盖发送的 Messages，但 OpenAI-compatible 路径会把历史后方的 `system` 节点规范化到头部。`session.prompt(text)` 也不能直接当成「接受完整任意数组」的 API；正式实现必须以实际 HTTP 请求为准验证 role/order、避免重复追加当前 User。必要时使用受支持的更底层 Pi Agent / Pi AI 接口，**不静默重排**。参考 [实验报告](../../experiments/pi-sdk-feasibility/REPORT.md)。
 

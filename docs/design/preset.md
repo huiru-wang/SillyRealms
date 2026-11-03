@@ -4,13 +4,13 @@
 
 ## 1. 产品体验与边界
 
-Preset 是可复用的“**模型输入编排清单**”，而非完整 Prompt 文本。创作者可查看、复制、编辑、导入、导出和选择预设；在一个有序列表中编辑各节点的标题、Prompt、角色、启用状态并拖动排序。界面明确区分 **系统节点（有稳定来源，内容由系统构建）** 与 **自定义文本节点（作者直接编辑 Prompt）**，并提供最终编排顺序、角色和预算规则预览。编辑 Preset 不直接改变既有 Run/Message。
+Preset 是可复用的“**模型输入编排清单**”，而非完整 Prompt 文本。创作者可查看、复制、编辑、导入、导出和选择预设；在一个有序列表中编辑各节点的标题、Prompt、角色、启用状态并拖动排序。界面明确区分 **系统节点（有稳定来源，内容由系统构建）** 与 **自定义文本节点（作者直接编辑 Prompt）**，并提供最终编排顺序、角色和预算规则预览。编辑 Preset 不改写既有 Entry 和内嵌 Run；从下一次 AgentContext 构建开始使用新配置。
 
 首期提供一个持久化预设 `builtin/default`：**不可删除、不可改 ID，但可修改标题、节点顺序、内容、角色及预算**。恢复出厂配置须显式确认，不能在启动、升级或模型切换时自动覆盖用户修改。用户可复制、新建空预设（自动生成七系统节点）、从 JSON 导入预设。选择模型/API Key 属 Provider/Session，不写入 Preset。
 
 ## 2. 领域对象及不变量
 
-`Preset`：`id`、`name`、`description?`、`schema_version`、`is_builtin`、`revision`、有序 `nodes[]`、`budget`、`scan_depth_runs`、时间信息。`revision` 用于乐观并发更新；导出的 schema_version 是文件**格式版本**，不同于预设修订号。
+`Preset`：`id`、`name`、`description?`、`schema_version`、`is_builtin`、有序 `nodes[]`、`budget`、`scan_depth_entries`、时间信息。`schema_version` 仅为导入导出格式版本，MVP 本地个人应用不做预设乐观锁 revision。
 
 `PresetNode` 分两种：
 
@@ -36,17 +36,17 @@ Preset 是可复用的“**模型输入编排清单**”，而非完整 Prompt �
 | `userInput` | 当前 Run 的用户输入 | 固定 `user` | 必需；支持前/后挂钩；原始输入仅一次 |
 | `postHistory` | 预设正文 `content` | 可选 | 默认关闭 |
 
-仅 `chatHistory` 与 `userInput` 必须启用，且前者在后者之前；启用状态时 `worldState` 也必须启用。系统节点即使自身关闭，关联 WorldBook 前/后钩子仍可生效；禁用本体不等于禁止挂钩。系统节点的具体构建与钩子执行由 AgentContext 决定，Preset 不含脚本调度器。
+仅 `chatHistory` 与 `userInput` 必须启用，且前者在后者之前；启用状态时 `worldState` 也必须启用。系统节点即使自身关闭，关联 WorldBook 前/后钩子仍可生效；禁用本体不等于禁止挂钩。系统节点的具体构建与钩子执行由 AgentContext 内各个**独立系统 NodeBuilder** 实现：before 条目 → 本体 → after 条目。全部 Node 构建完毕后由独立的共享 TextRenderer 统一渲染变量、条件、状态引用和受控文本转换。Preset 不含脚本调度器。
 
-自定义文本节点允许插在系统节点任意位置，支持自定义名称、role、Prompt 内容和启停；不允许伪装系统 `source`、自定义内部钩子或执行任意代码。自定义文本在运行时与其它节点使用同一安全只读模板引擎。
+自定义文本节点允许插在系统节点任意位置，支持自定义名称、role、Prompt 内容和启停；不允许伪装系统 `source`、自定义内部钩子或执行任意代码。自定义文本在运行时与其它节点使用独立于 Agent 的共享 [TextRenderer](text-rendering.md)。
 
 ## 3. 排序与 Token 配置
 
 有序 `nodes[]` 是**唯一编排权威**，UI 拖动直接改变数组顺序；不维护第二份独立顺序表。WorldBook 的 `before/after` 只附着固定系统锚点，跟随节点移动，不作为 Preset 节点持久化。
 
-`budget` 保存**策略**而非实际消费：`max_output_tokens`（响应保留）、`safety_margin_tokens`、`max_input_tokens?`（额外输入上限）。模型上下文窗口从本轮调用配置提供给 AgentContext 的中立 `BudgetLimits`，不是 Preset 的模型引用。实际输入额度 = min(模型窗口 - 输出保留 - 安全裕量, 可选预设输入上限)。`scan_depth_runs` 默认 4，指**当前 Run + 至多 3 个祖先 Run** 的文本扫描，而非 4 条 Message。
+`budget` 保存**策略**而非实际消费：`max_output_tokens`（响应保留）、`safety_margin_tokens`、`max_input_tokens?`（额外输入上限）。模型上下文窗口从本轮调用配置提供给 AgentContext 的中立 `BudgetLimits`，不是 Preset 的模型引用。实际输入额度 = min(模型窗口 - 输出保留 - 安全裕量, 可选预设输入上限)。`scan_depth_entries` 默认 4，指**当前 Entry 的用户输入 + 至多 3 个已加载祖先互动 Entry** 的可见文本扫描；与 Session `history.max_messages` 是两个不同选项。扫描窗口不能越过最近 Summary 和模型可见历史窗口。
 
-Preset 只验证预算数字的基本合法性；实际预算使用由 buildAgentContext 做最简限额检查与完整 Run 历史裁剪，不引入独立的全局片段预算框架；模型上下文能力可由 ProviderService 从 Pi 目录提供。
+Preset 只验证预算数字的基本合法性；实际预算使用由 AgentContext 做最简限额检查与完整 Entry 历史裁剪，不引入独立的全局片段预算框架；模型上下文能力可由 ProviderService 从 Pi 目录提供。
 
 ## 4. 可序列化配置示例
 
@@ -66,22 +66,22 @@ Preset 只验证预算数字的基本合法性；实际预算使用由 buildAgen
     {"id":"postHistory","kind":"system","name":"后置指令","source":"postHistory","role":"system","enabled":false,"content":""}
   ],
   "budget":{"max_output_tokens":4096,"safety_margin_tokens":1024},
-  "scan_depth_runs":4
+  "scan_depth_entries":4
 }
 ~~~
 
-`id / is_builtin / revision / created_at` 是库记录元数据；导出 JSON 不携带内置身份、用户 ID、密钥或运行时内容。导入后按目标库分配新 `id`；自定义节点重复 ID 可拒绝并提示修复，不能隐式丢节点。
+`id / is_builtin / created_at` 是库记录元数据；导出 JSON 不携带内置身份、用户 ID、密钥或运行时内容。导入后按目标库分配新 `id`；自定义节点重复 ID 可拒绝并提示修复，不能隐式丢节点。
 
 ## 5. 持久化与 API
 
-SQLite 一张 `presets` 表即可：`id TEXT PK`、`name`、`description`、`is_builtin`、`schema_version`、`revision`、`config_json`、`created_at`、`updated_at`；配置包含完整 nodes/budget/scan_depth_runs。`builtin/default` 由首次初始化创建，出厂默认值作为应用只读资源，不另建历史版本表。修改时要求 `expected_revision`；所有规则校验通过才整体替换 `config_json`、递增 revision。Session 保存 `preset_id`；每次生成开始时冻结一份 `PresetSnapshot`，中途修改只影响后续 Run。
+SQLite 的 `presets` 表只需：`id TEXT PK`、`name`、`config_json`、`is_builtin`、`created_at`、`updated_at`。描述、`schema_version`、完整 `nodes[]/budget/scan_depth_entries` 均在 `config_json`。`builtin/default` 首次初始化创建且不能删除，出厂预设为应用只读资源。编辑时检查配置合法后直接覆盖，无 `expected_revision`、不建历史版本表。Session 保存 `preset_id`；每次 AgentContext 构建读取当前配置，不改写已完成 Entry。
 
 管理接口（逻辑契约，路由可依实际风格统一）：
 
 - `listPresets() / getPreset(id)`：列表/编辑详情；
-- `createPreset(input) / clonePreset(id) / updatePreset(id, expectedRevision, input) / deletePreset(id)`；
+- `createPreset(input) / clonePreset(id) / updatePreset(id, input) / deletePreset(id)`；
 - `importPreset(json, conflictPolicy) / exportPreset(id) / restoreDefault(confirmed)`；
-- **供 AgentContext 的唯一读取口**：`getPresetSnapshot(id): PresetSnapshot`，返回已验证、深度只读、有序的 `nodes[]`、`budget`、`scan_depth_runs`、`revision`，不拼 Prompt、不访问 WorldBook、不提供模型连接。
+- **供 AgentContext 的唯一读取口**：`getPresetSnapshot(id): PresetSnapshot`，返回已验证、有序的 `nodes[]`、`budget`、`scan_depth_entries`，不拼 Prompt、不访问 WorldBook、不提供模型连接。
 
 建议对外 REST：`GET /presets`、`GET /presets/:id`、`POST /presets`、`PUT /presets/:id`、`DELETE /presets/:id`、`POST /presets/import`、`GET /presets/:id/export`。状态查询应复用读取口，不另造运行时“动态预设”存储。
 
@@ -94,8 +94,8 @@ SQLite 一张 `presets` 表即可：`id TEXT PK`、`name`、`description`、`is_
 ## 7. 验收与非目标
 
 - 拖动前/后系统节点和自定义文本节点后，`nodes[]` 顺序、role、enabled、content round-trip 一致；七基础节点无法丢失。
-- 自定义节点的名字、角色、正文可分别编辑；恢复默认需确认；并发 revision 不覆盖他人更改。
-- JSON 导出→导入后除本地 ID/revision 外语义相同；非法/旧格式报清晰诊断，任何凭据不会出现在导出。
+- 自定义节点的名字、角色、正文可分别编辑；恢复默认需确认；本地单人编辑直接保存，无需 revision 锁。
+- JSON 导出→导入后除本地 ID 外语义相同；非法/旧格式报清晰诊断，任何凭据不会出现在导出。
 - AgentContext 读取的仅是不可变预设配置；Preset 领域**完全不处理** WorldBook 扫描、Hook 内容、变量、Token 裁剪或 Provider。ProviderService 只读 Pi 模型目录并负责用户 Key。
 
-相关：[Provider](provider.md)、[AgentContext](agent-context.md)、[WorldInstanceContext](world-instance-context.md)、[存储](../technical/storage.md)。
+相关：[Provider](provider.md)、[AgentContext](agent-context.md)、[TextRenderer](text-rendering.md)、[存储](../technical/storage.md)。

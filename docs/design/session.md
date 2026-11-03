@@ -1,141 +1,125 @@
-# Session：Run 树、消息归属、分页与压缩世界线
+# Session 与 Entry：单表回合、Run 列表及世界分叉
 
-> 2026-11-03 目标设计，**尚未实现**。本文件把过去的 Entry 树改为 **Run 树 + Run 内 Message**。分页、分叉、世界线统计、活动叶子和必要的并发修订以 **Run** 为唯一单位，不再使用 Message/Entry 当树节点。数据持久化细则见 [Storage](../technical/storage.md)。
+> 2026-11-03 第二版精简设计，尚未实现。参考 Fanto 的 `sessions + entries` 存储思想，但**SillyRealms 的 Entry 粒度刻意不同**：一个 Entry 是一个可分叉的完整互动回合，内嵌 `runs[]` 保存生成尝试和 Pi 过程；不另建 `runs/messages/run_tool_calls`。
 
-## 1. 核心产品模型
+## 1. 对象职责
 
-`WorldCard` 是可重复使用的世界定义；`Session` 是一次独立的世界实例及其故事树；`Run` 是该故事树上一次完整的互动回合；`Message` 是某个 Run 内要展示的用户或模型消息。一次普通 Run 通常包含一条 User Message 和一条 Assistant Message，Opening Root Run 是特例，仅含初始 Assistant/Opening Message。模型内部工具消息、思维过程、SSE event 等不构成玩家可见 Message，也不额外创建 Run；工具调用可在 `run_tool_calls` 按 generationId/toolCallId 存储脱敏内部记录，供追踪和重试诊断，不参与玩家历史分页。
+- `Session`：一局世界实例。保存 world 快照、Opening、当前玩家角色 ID、Preset ID、ModelSelection、聊天窗口配置和 `active_entry_id`。
+- `Entry`：一棵世界线上的一个节点。`parent_entry_id` 为唯一父指针。`kind=opening` 是根；`kind=turn` 是玩家输入回合；`kind=summary` 是可选历史压缩锚点。
+- `Entry.runs[]`：该 Entry 的一次或多次生成尝试（初次、重试、重新生成）；每个 Run 可以保存最终叙事、内部 Pi messages/tool 过程、候选状态变化、**完整状态快照**、生成状态和错误。`selected_run_id` 指向这条世界线实际采用的成功 Run。
+- **状态跟随选中 Run**：`runs[selected_run_id].state_snapshot` 即这个 Entry 的结算全量状态；其它 Run 可以保留以便用户查看重试记录，但不用于后续世界线历史或状态加载。
 
 ~~~text
-Session (World Instance)
-└─ Run R0 (opening)  [Message: assistant 开局；初始状态 S0]
-   └─ Run R1 (turn) [Message: user U1, assistant A1；状态 S1]
-      ├─ Run R2 (turn) [U2,A2；状态 S2]    路线 A
-      │  └─ Run R4 [U4,A4]
-      └─ Run R3 (turn) [U3,A3；状态 S3]    路线 B
+Session (active_entry_id = E4)
+└─ E0 opening [R0: 开场叙事, S0]
+   └─ E1 turn: U1 [R1: A1, S1]
+      ├─ E2 turn: U2 [R2: A2, S2]  路线 A
+      │  └─ E4 turn: U4 [R4: A4, S4]  活动叶子
+      └─ E3 turn: U3 [R3: A3, S3]  路线 B
+
+Entry.parent_entry_id 构成分叉树；每个 Entry.runs[] 是该节点的生成尝试列表。
 ~~~
 
-**重要约束：**
-- Run 的 `parent_run_id` 指向同一 Session 的父 Run，Root 的 parent 为 null；**Message 只有 `run_id` 和顺序，不参与 Run 树父子关系**。
-- 单个父 Run 最多 **3 个直接子 Run**，表示至多 3 条后续选择；允许多级嵌套分叉，整棵世界线叶子总数没有 3 的限制。
-- 正常发送只能在 `sessions.active_leaf_run_id` 指向的真实叶子继续；用户从历史 Run 显式发起新分叉时，必须在有足额空位的父 Run 下新增兄弟 Run。
-- `seq` 可记录 Session 内创建顺序，但不得用全局 seq 推导祖先、分页顺序或隐藏 Run 数；唯一合法祖先关系是 `parent_run_id`。
-- 开局选中 `user_character_id` 来自世界卡/Opening 的可扮演名单，保存角色快照和完整强类型状态 Schema；不同 Session 彼此隔离。
+Fanto 的 entries 行是 Pi 的事件/消息 checkpoint，另带 run_id 归组；SillyRealms 不需要原样照搬其行粒度、usage_ledger 或运行缓存。这里只借鉴**Session + Entry 父指针 + JSON 载荷**的简洁性。
 
-## 2. Run / Message 生命周期
+## 2. Entry / Run 推荐 TypeScript 结构
 
-`Run` 核心字段：`id, session_id, parent_run_id, kind(opening|turn), status(awaiting_ai|completed), seq, state_snapshot_json, state_status, state_schema_hash, state_revision, generation_id, created_at, updated_at`。`Message` 字段：`id, run_id, ordinal, role(user|assistant), content, raw_content?, revision, created_at, updated_at`。状态变化属于 Run，模型回复归属 Run 的 Assistant Message。Opening Run 只有 ordinal=0 的 assistant Message；普通 Run 最多 ordinal=0 user、ordinal=1 assistant。未来如果支持多段可见消息须显式扩展，不自动把工具回合算作玩家回合。
-
-~~~mermaid
-flowchart LR
- A[活动完整 Run 叶子] --> B[提交用户文本]
- B --> C[短事务: 新建 child Run status=awaiting_ai + User Message + 继承父快照]
- C --> D[AgentContext 构建 Messages + Provider 执行]
- D -->|成功| E[同一 Run 添加 Assistant Message + ChangeSet/完整状态 + status=completed]
- D -->|取消或错误| F[Run 保持 awaiting_ai, User Message 已保存]
- F -->|用户重试| D
+~~~ts
+type EntryKind = "opening" | "turn" | "summary";
+type EntryRun = {
+  id: string;
+  status: "running" | "completed" | "failed" | "stopped";
+  assistantText?: string;        // 可见、已清洗的 AI 回复；开局为 Opening 内容
+  rawText?: string;              // 可选原始响应，默认 UI 不展示
+  stateSnapshot?: StateSnapshot; // 成功生成后完整状态，Opening 为 S0
+  stateChanges?: StateChange[];  // 可选状态增量；不能替代全量快照
+  piEntries?: PiEntry[];         // 可选内部工具/消息步骤（体积受限、可脱敏）
+  usage?: Usage;
+  error?: string;
+  createdAt: string;
+  finishedAt?: string;
+};
+type Entry = {
+  id: string;
+  sessionId: string;
+  parentEntryId: string | null;
+  kind: EntryKind;
+  text: string;                  // turn=玩家输入；opening=开场文本；summary=摘要
+  runs: EntryRun[];              // SQLite entries.runs_json
+  selectedRunId: string | null;  // 只指向 completed 的 Run
+  createdAt: string;
+  updatedAt: string;
+};
 ~~~
 
-- 创建 Run 与第一条 User Message 使用一次短事务、幂等客户端 request ID 防重复；同时更新 `active_leaf_run_id`。AI 生成期间不写占位 Assistant Message、不持有长事务。失败/取消保留同一 Run 供显式重试，不另建 Run、更不制造假分支。
-- 成功后一次事务提交清洗正文与 Raw、状态变更集、有效全量快照、Run 修订和 Assistant Message；`completed` 不等于状态一定有效，状态层可独立标记 `missing/invalid`，后续须修复或确认继承才能继续。
-- 如果还未收到 AI，`awaiting_ai` 的 Run 仍是合法真实**叶子 Run**；UI 显示用户文本和“重试生成”入口。重复生成响应必须绑定同一 generation ID 和父 Run/状态版本，避免再次 `adjust`。
-- 末尾 Assistant 重新生成/续写（未来功能）只重写**本 Run 的 Assistant Message**和状态结算，不新建 Run；若该 Run 已有子 Run，不允许无提示重写历史因果，可先走明确历史修复流程。
-- 编辑任意历史 User/Assistant Message 保留原有 Run 树和消息，不自动改写后代；该 Run 及其后代的状态与依赖摘要标记 `stale`，不能自动把旧有效快照作为新事实继续生成。
-- 只有完整有效的父 Run 才可被用作新 Run 的状态来源。用户说出行动不等于行动已经发生：User Message 创建时复制父快照，AI 成功解释剧情之后才应用本轮 ChangeSet。
+`runs[]` 是**Entry 内的生成记录**，并非数据库的 `runs` 表。通常只有一次生成；后续重试就在原 Entry 追加 Run。内部工具消息可记录在 `piEntries`，不需要独立工具表。不要把 `piEntries` 当作展示在聊天框的独立消息。
 
-## 3. 聊天：以 Run 为分页单元
+根 Entry `kind=opening` 在 Session 创建时写入 `text=opening`，`runs=[{status:completed,stateSnapshot:S0}]`；本局角色身份固定取世界快照中的选中角色。`summary` Entry 保存摘要文本并继承压缩锚点的完整状态（一次已选 Run），作为模型历史截断边界，不重复执行故事事件。
 
-进入 Session 读取 `active_leaf_run_id` 指向的真实叶子，默认取最近 **30 个 Run**（不是 30 条 Message），返回每个 Run 内完整可见 Messages，按 Run 旧→新/Run 内 ordinal 升序展示。向上滚动只读取更老的**祖先 Run**；不存在双向窗口或中间历史定位。不同 Run 包含不同数量消息，页面一次返回的可见 Message 数不固定，这是刻意选择。
+## 3. 创建 Session
 
-~~~http
-GET /sessions/{sessionId}/runs?limit=30
-GET /sessions/{sessionId}/runs?leaf_run_id=R900&before_run_id=R850&limit=30
+`createSession(worldId, openingId, userCharacterId, presetId, modelSelection)`：
+
+1. 校验世界卡、Opening、允许扮演的角色、Preset、Pi 支持模型及本地 API Key 配置。
+2. 读取世界卡完整 `data_json` 并**复制**到 Session 的 `world_snapshot_json`；保存角色 ID、Opening ID、Preset ID、模型选择及基础历史参数。角色详情和状态 Schema 均从同一快照读取，避免多份冗余状态定义。
+3. 创建 Opening 根 Entry，保存开场内容和初始完整状态 S0，`sessions.active_entry_id = opening.id`。
+4. 本地 SQLite 使用最小事务避免「Session 有了但 Opening 没写」的半初始化；不引入乐观版本矩阵或分布式锁。
+
+世界卡编辑不自动改变已有 Session 世界快照；如需要显式同步，按已保存状态 Schema 做必要兼容检查，不重演 Opening。
+
+## 4. 消息发送、失败与重试
+
+**新消息**：从活动叶子建立 `kind=turn` 的 child Entry，保存本轮玩家输入；追加一个 `status=running` 的 Run；Pi SSE 流式输出。成功后将经过状态校验的 Assistant、内部必要工具记录和完整状态写入此 Run，标记 completed 与 selectedRunId。失败/取消保留用户 Entry，Run 记录 failed/stopped，允许再次在该 Entry 中追加 Run 重试。
+
+**模型 Context**：只使用祖先 Entry 的 `text` 和**选中 Run 的 assistantText**；工具回合和未选中的失败/重试 Run 不回灌模型历史。当前 User 即正在生成的 Entry.text，不能在历史重建后再重复追加。若当前 Entry 尚未成功，AgentContext 的 parentEntryId 指向其父 Entry，输入从自己 `text` 读取。
+
+**状态**：每个成功选中 Run 写全量 `stateSnapshot`。失败 Entry 不提供新状态；最新状态从它的完成父链读取。没有 State Schema 的世界可使用空状态对象，不强行生成状态更新。
+
+**局部一致性**：本地应用只允许每个 Session 同时进行一个生成（内存 in-flight 标志即可），SQLite 仅做短事务组合写入和单 Entry 更新，防止意外半写。无需 requestId 表、generationId 表、复杂锁/修订版本，也不用为单人应用设计跨进程并发体系。
+
+## 5. 分叉与世界线
+
+从历史 Entry E2 的玩家行动处“重选”时，新增一个 Entry，以 **`E2.parent_entry_id` 为 parent**，和 E2 构成兄弟；继承该父 Entry 的已选 Run 完整状态。正常继续则从活动叶子生成子 Entry。单个真实决策节点可维持**至多三个直接非 summary 子 Entry**，该规则由 SessionService 在创建时简单检查；超过则提示用户。
+
+每个分支是一条从当前 Entry 沿 `parent_entry_id` 反向追溯的链。**不能靠创建时间或全局最大 ID 找历史、状态或世界书扫描文本**。
+
+压缩世界线 UI 沿用原产品语义：只显示 Opening Root 和真正 Fork，普通节点和 Leaf 折叠进线段，边统计隐藏的**互动 Entry 数**，终止边可进入实际 `leaf_entry_id`。`summary` 是折叠用的技术节点，不算一轮玩家决策，也不凭空增加分叉数量。切换叶子只修改 `sessions.active_entry_id`，不复制整个 Session。
+
+历史编辑/重生成已有分支内容时，不自动悄悄重算后代状态；若 Entry 已有后代，MVP 可限制只读/提示「从这里新建分叉」，避免完整 stale 修复体系。
+
+## 6. 历史压缩与近 N 消息
+
+`kind=summary` Entry 表示某条世界线完成一次历史摘要；它的 `parent_entry_id` 指向压缩时的真实锚点 Entry，后续生成接在 Summary 后。加载模型历史时从当前目标父节点沿本分支回溯，遇到**最近一次 summary** 即停止，保留摘要与后续文本。原历史仍保存在 SQLite 中供查看或从旧节点分叉。
+
+`sessions.options_json.history.max_messages` 可限制进入模型的最近 N 条可见 User/Assistant 消息，按 Entry 完整回合边界向前截断；与 summary 共用时**始终保留最近 Summary 作为摘要前缀**，N 仅限制其后的可见消息，不读取更早祖先。`Preset.scan_depth_entries` 另行限制世界书/状态加载的关键字扫描范围，不能与历史窗口混淆。UI 分页默认 30 **互动 Entry**，不影响真实 Agent 历史加载。
+
+## 7. SessionService 建议 API
+
+~~~ts
+createSession(input): Promise<Session>
+getSession(sessionId): Promise<Session>
+getEntry(sessionId, entryId): Promise<Entry>
+getAncestorEntries(sessionId, parentEntryId): Promise<Entry[]>
+getConversationHistory(sessionId, parentEntryId, options): Promise<EntryView[]>
+getLatestState(sessionId, parentEntryId): Promise<StateSnapshot>
+createTurnEntry(sessionId, parentEntryId, userText): Promise<Entry>
+appendEntryRun(entryId, run): Promise<void>
+completeEntryRun(entryId, runId, result): Promise<void>
+failEntryRun(entryId, runId, error): Promise<void>
+forkFromEntry(sessionId, historyEntryId, userText): Promise<Entry>
+switchActiveEntry(sessionId, leafEntryId): Promise<void>
+getEntryPage(sessionId, beforeEntryId?, limit?): Promise<EntryView[]>
+getCompressedWorldlines(sessionId): Promise<WorldlineView>
+createSummaryEntry(sessionId, anchorEntryId, summaryText): Promise<Entry>
 ~~~
 
-响应：
+接口只说明职责，不要求独立 `Repository` 接口、DTO 层或复杂编排器。建议路由 `/sessions/:id/entries`、`/sessions/:id/forks`、`/sessions/:id/worldlines`、`/sessions/:id/active-entry`、`/sessions/:id/entries/:entryId/retry`。
 
-~~~json
-{
-  "leaf_run_id": "R900",
-  "runs": [
-    {"id":"R899","parent_run_id":"R898","status":"completed","messages":[{"role":"user","content":"我进城"},{"role":"assistant","content":"守卫让开道路"}]},
-    {"id":"R900","parent_run_id":"R899","status":"awaiting_ai","messages":[{"role":"user","content":"继续向前"}]}
-  ],
-  "next_before_run_id":"R899",
-  "has_more":true
-}
-~~~
+## 8. MVP 验收
 
-`before_run_id` 为当前列表最早 Run ID，严格从它的父 Run 继续，不能重复返回当前 Run；服务端校验 `leaf_run_id` 是当前活动真实叶子、`before_run_id` 是其有效祖先且属于同一 Session。请求应在同一一致性读取视图中取得 Run 页和其 Message，避免 Chat 页出现半个 Run。返回 `limit+1` 个祖先 Run 判定是否有更多，展示最多 limit 个。跨世界线切换清空旧列表/游标、废弃旧请求；同线新增 Run 可以追加并更新 leaf 绑定，保留正在阅读的祖先页面和视觉锚点。前端虚拟化以 Run 分组为稳定锚点。
-
-**模型 Context 不能只读取 UI 的最近 30 个 Run**。AgentContext 可单独按 Run 父链读取真实祖先，再按 Token 预算用 Run 作为最小历史裁剪单元；Chat 阅读页数不影响模型召回历史。
-
-## 4. 压缩世界线：只显示 Root 和 Fork
-
-**全局世界线不再绘制 Branch Start 和 Leaf 节点。** 可见节点只有：
-- `root`：Opening Run；
-- `fork`：拥有 2～3 个直接 Run 子节点的真实 Run；Root 也可能同时是 Fork。
-
-其余普通、分支起点、叶子 Run 全部压在**连接线**上。每一条从 Root/Fork 出发的线延伸至**下一个 Fork 或终止**；边携带：
-- `from_run_id`：可见的起始 Root/Fork；
-- `to_fork_run_id?`：下一真实 Fork，若该路线走到终点则为 null；
-- `branch_start_run_id`：起始节点的该分支第一个子 Run（不单独画节点）；
-- `collapsed_run_count`：该段所有未画出来的真实 Run 数；**终止边把不可见 Leaf Run 也计入**，而中间通往可见 Fork 的边不计起终两端可见 Run；
-- `terminal_leaf_run_id?`：终止边实际叶子 Run，用于点击“进入此路线”；
-- `branch_preview?`：起点附近的简短 User 输入摘要，作为线标签，而非新节点。
-
-普通线性故事：Root → 一条带“已折叠 N 个 Run”的**终止线**，可通过其 `terminal_leaf_run_id` 进入；没有显式 Leaf 圆点。只有 Root 没有子 Run 时仅显示 Root，它同时可作为终点。若中途产生历史分叉，则提升真实 Fork 节点并拆线重算折叠数。
-
-~~~mermaid
-flowchart LR
- Root[Root Run R0] -->|折叠 8 个 Run| Fork1{Fork Run R9}
- Fork1 -->|路线 A：折叠 12 个 Run| EndA[终止线端点，非实际 Run 节点]
- Fork1 -->|路线 B：折叠 5 个 Run| Fork2{Fork Run R15}
- Fork2 -->|折叠 3 个 Run| EndB[终止线端点，非实际 Run 节点]
- Fork2 -->|折叠 7 个 Run| EndC[终止线端点，非实际 Run 节点]
-~~~
-
-图中的 `EndA/EndB/EndC` **只是为 Mermaid 说明终止线而写的图形端点，不属于 API 可见节点**；客户端不画它们为可选 Run。实际 API 在边上返回 `terminal_leaf_run_id`，线卡片可点。预览选择某条路线只是临时高亮 `selected_leaf_run_id`；必须点击“进入”才更新持久化 `active_leaf_run_id` 并重新加载 Chat 页。不能凭 seq 猜终点，更不能把中间 Fork 当成聊天可进入叶子。
-
-接口建议：
-
-~~~http
-GET /sessions/{sessionId}/worldlines
-PUT /sessions/{sessionId}/active-leaf
-Content-Type: application/json
-
-{"leaf_run_id":"R900","expected_active_leaf_run_id":"R700"}
-~~~
-
-世界线接口只加载 Run 的轻量父指针/子数/简短预览等元信息；**不拉取全部 Message 正文**。`collapsed_run_count` 基于真实父链逐个 Run 计算，不是全局 seq 差，不是 Message 数。可以返回 `run_tree_revision` 和 `run_content_revision` 供 UI 并发/变化检测，不用来驱动 WorldInstanceContext 缓存。大树支持可展开子树与 `has_more`，不能未经说明截断成“完整拓扑”。
-
-## 5. 分叉与角色
-
-当用户在历史 Run R2 的 User Message 上选择“从这里创建另一种行动”，语义是：**把新 Run 挂到 R2.parent_run_id 作为 R2 的兄弟**（从同一个历史决策点重选），而不是把新 Run 接到 R2 或 R2 的 Assistant 后面。校验历史 R2 非 Root、其父 Run 已完成且状态可用、父 Run 子数小于 3；新分支继承**父 Run 结算状态**、读取该父 Run 的祖先消息，不混入 R2 的 User/Assistant。第三条分支允许，第四条拒绝。只有显式提交新分叉才自动切入该新 Run，不因世界线“预览”而切换。
-
-Session 的 `user_character_id` 从世界卡 `characters[]` 中受 `player_selectable` 和 Opening `player_characters` 共同许可的 ID 明确选择，用户身份快照保存在 Session；同一 Session 不为每条 Run 再随意覆盖用户身份。`{{user}}` 的取值来自 Session 内已持久化的角色快照，由本轮 metadata 传入 AgentContext。
-
-## 6. 对外领域接口与权威数据
-
-Session 领域建议：`createSession(worldId, openingId, userCharacterId, presetId, modelSelection)`、`getSession(id)`、`getRunPage(sessionId, leafId, beforeRunId, limit)`、`getRunAncestorPath(runId)`、`appendUserRun(sessionId, expectedLeafId, requestId, input)`、`completeRun(runId, generationId, assistantText, changeSet, stateResult)`、`retryRun(runId)`、`forkRun(sessionId, historicalRunId, newUserText)`、`editMessage(messageId, expectedRevision, content)`、`getCompressedWorldlines(sessionId)`、`switchActiveLeaf(sessionId, expectedLeafId, newLeafId)`。这些接口只处理**Run/Message/Session 持久化与一致性**，不在 Session 内写 Prompt NodeBuilder。
-
-每次 runAgent 根据 sessionId + 实际 parentRunId 调用 loadWorldInstanceContext，读取已保存的世界快照、角色、Preset ID 与模型选择；AgentContext 用对应父链历史构建 Messages；ProviderService 查询受支持模型并管理 API Key，PiExecutor 负责模型执行。不存在实例级 Context 缓存服务。`sessions.active_leaf_run_id` 为唯一持久化活动叶子；模型执行始终绑定请求创建时的 Run ID、父版本、Schema 版本，迟到响应不能在切线后覆盖另一条路线。
-
-## 7. 一致性与世界线计算
-
-Session/Run/Message/状态快照是唯一权威；Run 新增、Message 编辑、状态结算和切叶子都由 Session Domain 负责。按需读取 Run 轻量元数据即可计算 Root/Fork-only 压缩图，**不归 WorldInstanceContext，不引入缓存失效框架**。
-
-`run_tree_revision` / `run_content_revision` 若保留，主要服务于客户端世界线响应的变更提示、乐观并发与调试，不要求作为 Context 缓存键。初期完全可以每次按真实父子关系重新计算图，避免增量缓存的维护成本。切换叶子只更新持久化活动叶子和 UI 游标，不改变历史父链。
-
-单轮 `runAgent` 从读取实际父 Run 到结算期间冻结父状态、Schema、预设配置和模型选择；User Message 先随 `awaiting_ai` Run 原子提交。模型完成后的 Assistant 和状态只在状态校验完成、generationId/Run revision 确认有效后提交；取消/失败保留同一 Run 重试，不写半截 Assistant。
-
-## 8. 验收与不支持范围
-
-- Root 只有一条 Opening Assistant Message；普通 Run 的 User/Assistant 被完整打包返回；`limit=30` 表示 30 Run，不能拆断 Run。
-- Run 与 Message 的关系不会使模型历史重复插入当前 User；未完成 Run 可重试，重复请求不生成无意分叉或重复扣灵力。
-- 拓扑**只显示 Root/Fork**；分支起点、普通 Run 和叶子都只占边的准确 `collapsed_run_count`，可通过真实 `terminal_leaf_run_id` 进入终点。
-- 深分叉、没有任何分叉、Root 也是 Leaf、历史分叉超 3 限额、错误游标、异常父链、不同 Session 隔离均需验收。
-- 历史编辑不重生成后代或静默提交失败状态；模型失败、网络断开和服务重启不丢已保存用户 Run。
-- 不支持任意 Run 中间阅读模式、双向历史窗口、Run/Message 删除、跨设备阅读位置、自动推导虚构分叉。
-
-相关：[AgentContext](agent-context.md)、[WorldInstanceContext](world-instance-context.md)、[Storage](../technical/storage.md)、[State](state.md)。
+- 六张业务表足够：`sessions + entries` 保存整个世界实例、聊天、工具尝试和状态；Pi Session JSONL 不是第二数据权威。
+- Opening 唯一、成功 Entry 可按选中 Run 重建 User/Assistant，失败重试不产生新世界分叉。
+- 分叉沿真实 parent_entry_id 读取历史与状态；不同分支上下文不串线。
+- 压缩摘要与近 N 消息只影响模型历史窗口，不影响选择最新全量状态。
+- UI 近 30 Entry 分页、Root/Fork-only 线图、隐藏数、真实叶子进入可用。
+- 本地简单运行互斥足够，不需要 Run/Message/ToolCall/Checkpoint 独立表。

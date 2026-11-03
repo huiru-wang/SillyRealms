@@ -1,41 +1,37 @@
 # SillyRealms · 文档索引
 
-> 2026-11-03 精简架构方案，**设计阶段，尚未实现**。原先的双 Context 缓存/Provider Adapter 方案已收敛为一条单轮 Agent 链路；旧实验报告仍只代表对应 Pi SDK 版本的验证事实。
+> 2026-11-03 第二版单 Context + 六表方案，**仍是设计阶段**。核心约束：本地单人、世界卡驱动、真实 Entry 分叉、可选强类型状态和 Pi 模型流式执行。
 
-阅读顺序：[产品总纲](PRODUCT.md) → 各领域设计 → [技术架构](technical/architecture.md) → [持久化](technical/storage.md) → [实施计划](technical/implementation-plan.md)。
+## 推荐阅读顺序
 
-## 领域设计 · `design/`
+[产品总纲](PRODUCT.md) → [AgentContext](design/agent-context.md) → [Session/Entry](design/session.md) → [Storage](technical/storage.md) → [技术架构](technical/architecture.md) → [实施计划](technical/implementation-plan.md)。
 
-| 文档 | 职责 |
+## 领域设计
+
+| 文档 | 说明 |
 | --- | --- |
-| [world-card.md](design/world-card.md) | 世界卡、角色、Opening、单 WorldBook、强类型状态定义和导入导出 |
-| [preset.md](design/preset.md) | 预设节点配置、顺序、role、预算、导入导出与读取；不构建 Prompt |
-| [provider.md](design/provider.md) | **ProviderService**：查询 Pi 内置支持模型、用户 API Key 安全配置与校验、ModelSelection；不为每家重写适配器 |
-| [world-instance-context.md](design/world-instance-context.md) | **WorldInstanceContext**：每次输入从 Session 读取的普通运行时 metadata；没有缓存服务/生命周期 |
-| [agent-context.md](design/agent-context.md) | **AgentContext**：世界书、模板、预设编排与 Run 历史 → `ModelMessage[]` |
-| [session.md](design/session.md) | Session、Run 父树、Run 内 Messages、分叉/重试、Run 分页、Root/Fork-only 世界线 |
-| [state.md](design/state.md) | 强类型状态树、受限 ChangeSet、Run 全状态快照、一次状态范围选择和校验 |
+| [world-card.md](design/world-card.md) | 世界卡、Opening、角色、WorldBook、状态声明与加载条件 |
+| [preset.md](design/preset.md) | 系统/自定义节点、role、顺序、导入导出；系统 NodeBuilder 在 AgentContext 中 |
+| [provider.md](design/provider.md) | ProviderService 查询 Pi 内置模型、用户 Key 与凭据状态 |
+| [agent-context.md](design/agent-context.md) | **唯一 Context**：分支历史/最新全量状态、世界书/状态筛选、索引、节点构建 → Messages |
+| [text-rendering.md](design/text-rendering.md) | **共享文本能力**：变量、条件、状态引用、受控转换；Agent/世界卡/状态栏复用 |
+| [session.md](design/session.md) | Session 与 Entry 父树、内嵌 `runs[]`、Summary、分叉/重试/切叶子/世界线 |
+| [state.md](design/state.md) | 强类型状态 Schema、Module 加载、ChangeSet、完整快照 |
+| [architecture.md](technical/architecture.md) | AgentRuntime/Pi/SSE 和业务 Domain 分层 |
+| [storage.md](technical/storage.md) | **仅六张业务表**、内嵌 Run JSON、通用 tags、SQLite 最简写入 |
+| [implementation-plan.md](technical/implementation-plan.md) | 真实 SDK PoC、Domain/Agent/UI 实施与验收 |
 
-## 技术设计 · `technical/`
+## 例子与历史研究
 
-| 文档 | 主题 |
-| --- | --- |
-| [architecture.md](technical/architecture.md) | `createSession` 与 `runAgent` 单线流程、Domain / Agent Runtime 目录、Pi/SSE 与持久化 |
-| [storage.md](technical/storage.md) | SQLite 表和短事务、Run/Message/全状态快照、分页与并发约束 |
-| [implementation-plan.md](technical/implementation-plan.md) | PoC、分阶段实施、验收和回滚；工作区 `plan/sillyrealms-domain-refactor-tasks.md` 与其同步 |
+- [world-card.json](examples/world-card.json)：世界、角色、WorldBook/状态示例。
+- [default-preset.json](examples/default-preset.json)：有序系统/自定义节点、预算及关键词扫描深度。
+- [Pi SDK 实验报告](../experiments/pi-sdk-feasibility/REPORT.md)：2026-11-01 当时版本 mock 结果，不证明真实 Provider 的所有消息角色顺序。
+- [state-management-module.md](state-management-module.md)：**废弃草案**，不作为当前协议。
 
-## 示例与历史资料
+## 统一设计约定
 
-- [world-card.json](examples/world-card.json)：世界卡、Opening、WorldBook、状态数据示例。
-- [default-preset.json](examples/default-preset.json)：七系统节点和自定义文本、顺序与预算配置示例。
-- [Pi SDK 可行性实验报告](../experiments/pi-sdk-feasibility/REPORT.md)：2026-11-01 的本地 mock 实测，包含后置 system 不能无损保持位置的限制。
-- [state-management-module.md](state-management-module.md)：**历史废弃草案**，不是当前协议。
-
-## 统一约定
-
-1. **Session/Run/Message/State 的 SQLite 记录是唯一事实来源**。Session 保存世界卡快照、玩家身份、Preset ID 与模型选择；当前模型历史仅来自所选父 Run 祖先链。
-2. Provider Domain 保留 Service 提供模型和 API Key 配置；模型目录、调用协议、认证解析尽量复用 Pi；AgentContext 不读密钥，Pi 不替代业务 Session。
-3. WorldInstanceContext 每轮直接加载，不是常驻实例或缓存协调器；AgentContext 只构建 Messages。世界线拓扑属于 Session，不属于 Context。
-4. State Domain 计算同一轮只读状态范围，供 Prompt 和可选更新工具共用；工具不在生成中直接提交世界状态。
-5. 未经验证的 SDK 消息 role/order、实际 Provider Tool/流式表现不得称为已实现；真实世界卡脚本/HTML 可以保留来源，但 MVP 不默认执行。
-6. 修改协议时同步检查相关设计/架构/存储/示例，不把历史研究方案或旧 Entry 父链语义混入当前实现。
+1. 没有 `WorldInstanceContext`。AgentContext 自行加载会话、历史、状态与预设，并按 NodeBuilder 顺序产出 ModelMessage[]；最终渲染交由独立 TextRenderer。
+2. Session 关联世界快照和角色；Entry 是一整个回合，`parent_entry_id` 提供分叉；`runs_json` 保存生成/工具/状态尝试。只保留六张业务表，不设独立 Run/Message/工具/设置/标签关联表。
+3. 世界书/状态根的 `when` 使用真实分支**完整**状态；Summary 截断和近 N 消息只影响 Prompt 历史。
+4. 保留 ProviderService，但 Pi 负责内置模型目录和各供应商实际调用；API Key 不出现在 WorldCard/Preset/Session 导出和日志。
+5. 本地单人简化锁与并发，同时保证两行写入基本原子性；未来能力不得在 PoC 前宣称已实现。

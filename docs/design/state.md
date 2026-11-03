@@ -8,7 +8,7 @@
 - **单一类型定义**：发布世界卡中的 `data.state` 是受限、可序列化的定义 AST；编译器从同一 AST 分别生成 Zod 校验器、用于 Provider 的 JSON Schema 与运行时工具目标。不要把运行时 Zod 代码、EJS、任意 JS 直接存入世界卡，不依赖实验性 `z.fromJSONSchema` 作为关键反向转换。
 - **Schema 约束的是数据形状**，`description` 约束剧情语义；类型正确不等于叙事、数值演变正确。严格拒绝违反显式类型/范围的状态值，不擅自把错误数字夹回范围。
 - **写入不是通用 JSON Patch**：模型通过类型受限的 ChangeSet 描述少量变化，服务端执行并验证；可在诊断层导出差异 Patch，但 **RFC 6902 六操作不是模型协议**。JSON Pointer 只用于统一寻址，访问值与更新均遵循该路径。
-- **全快照**：每一个已持久化 Run 逻辑上对应一份完整运行状态 JSON，Snapshot 不含 `type`、`description`、`initial`、`load`、`global/entities/values` 包装。
+- **全快照**：每个 `Entry` 的选中成功 `runs[]` 项都保存一份完整运行状态 JSON，Snapshot 不含 `type`、`description`、`initial`、`load`、`global/entities/values` 包装。
 - 状态是可选插件。未定义状态的世界不必调用状态工具，也不注入状态协议。状态 UI 由应用渲染，不执行世界卡脚本。
 
 ## 2. 世界卡定义：显式类型树
@@ -83,7 +83,7 @@
 - 世界卡**只在 `data.state` 声明一棵统一状态树**；不再运行时拼接 `world/user`，不隐式生成虚拟 `全局` 或选中角色的 `user` 状态。
 - `characters[]` 仍负责角色设定、角色 ID 和可扮演许可。原有 `characters[].state` 属于**旧格式导入数据**；迁移时由导入器/作者显式映射到 `data.state.modules[目标根名称]`，处理重名与类型冲突，不能悄悄合并或只加载玩家角色的状态。选中的 `user` 只是 Session 的角色身份，并非状态根的特殊命名空间。
 - Opening 的 `initial_state` 是与运行值同形的**部分对象覆盖**：沿固定 `object` 递归到已定义叶子；`record/array/json` 叶子只能整体替换，不能把对象初值误当成深合并。所有覆盖值由 Zod 完整验证；未知键、额外固定字段、类型错误阻止开局初始化。
-- 创建 Session 时冻结 `state_definition_json` 和 `state_schema_hash`，按 `initial` 深拷贝构建快照并应用 Opening 覆盖。后续世界卡更新不会隐式重置既有快照或改变其结构；不兼容的 Schema 变更需要显式迁移或新建会话。
+- 创建 Session 时将整个世界卡 `data_json` 复制到 `sessions.world_snapshot_json`（其中包含状态 Schema），按 `initial` 深拷贝构建快照并应用 Opening 覆盖，写入根 Opening Entry 的成功 Run。后续世界卡更新不会隐式重置既有快照或改变其结构；不兼容的 Schema 变更需要显式迁移或新建会话。
 
 ## 3. 创作者 UI 与导入
 
@@ -151,13 +151,13 @@
 
 ### 6.1 根 Module 加载
 
-根 `load` 默认 `{"mode":"always"}`，支持 `always` 与 `on_mention`；`on_mention` 使用 `keywords`、`keyword_logic:any|all`、`exclude_keywords`，两者都可有受限布尔 `when`。扫描使用当前 User 和最近三个真实祖先正文（预设可配置深度）；`when` 在**同一冻结父快照**上求值。激活 Module 的当前值、路径、类型、描述一起进入 `worldState` 节点和动态写入目标；未激活根保留在快照但默认不向模型暴露、不可写。超出必需状态/工具预算则拒绝生成或显式要求收窄激活，不静默截断 schema 和变更约束。
+根 `load` 默认 `{"mode":"always"}`，支持 `always`、`on_mention` 和 `manual`（可从 Session 选项显式开启）；`on_mention` 使用 `keywords`、`keyword_logic:any|all`、`exclude_keywords`，两者都可有受限布尔 `when`。扫描使用当前 User 和 AgentContext 已加载的祖先 Entry 历史（默认当前 Entry 加三个祖先，预设 `scan_depth_entries` 可配置，且不超出最近 Summary / N 消息窗口）；`when` 在**同一条世界线最新完整状态快照**上求值。激活 Module 的当前值、路径、类型、描述一起进入 `worldState` 节点和动态写入目标；未激活根保留在快照但默认不向模型暴露、不可写。超出必需状态/工具预算则拒绝生成或显式要求收窄激活，不静默截断 schema 和变更约束。
 
 世界书保留 `always/on_mention/manual`，新增可选 `exclude_keywords` 与 `when`；正文和 description 可以读取状态而不能修改它。加载和状态面板显示无关；面板根据完整有效快照显示当前活动叶子所有字段。
 
 ### 6.2 文本读取
 
-统一状态读取 `{{state:/清月/灵力}}`；普通宏如 `{{user}}` 由 Context 单独处理。表达式 `get("/清月/灵力")`、`exists("/清月/身体/伤势")` 使用完整 RFC 6901 路径；null 是存在值，缺失与 null 不混淆。文本中的字符串原样插入，其余 JSON 类型使用紧凑 JSON，值仅展开一次，不再解释嵌套模板。缺失路径、非法转义提供来源定位诊断，不能默默创建字段。
+状态读取 `{{state:/清月/灵力}}` 与普通宏 `{{user}}` 均由独立共享的 [TextRenderer](text-rendering.md) 处理，AgentContext 只提供运行值。表达式 `get("/清月/灵力")`、`exists("/清月/身体/伤势")` 使用完整 RFC 6901 路径；null 是存在值，缺失与 null 不混淆。文本中的字符串原样插入，其余 JSON 类型使用紧凑 JSON，值仅展开一次，不再解释嵌套模板。缺失路径、非法转义提供来源定位诊断，不能默默创建字段。
 
 ```text
 灵力：{{state:/清月/灵力}}
@@ -168,29 +168,29 @@
 {{/if}}
 ```
 
-世界书正文、`load.when`、自定义 Prompt、状态 description 使用**同一个只读表达式解析器**，支持括号、有限数字/字符串/布尔/null、比较、算术及 `&& || !`、`if / else if / else`；无 JS/EJS、赋值、循环、网络/文件访问、动态执行或状态写入。仅布尔结果能作为 `when/if`；按标准类型严格比较，不做隐式强转。表达式对同一父快照求值、短路求值，错误给出可定位诊断。所有加载/模板结果在 Context 预算前解析并统一计量；预览和执行同一逻辑。
+世界书正文、`load.when`、自定义 Prompt、状态 description 和未来状态栏使用独立 `domain/text` 的**同一个只读表达式解析器**，支持括号、有限数字/字符串/布尔/null、比较、算术及 `&& || !`、`if / else if / else`；无 JS/EJS、赋值、循环、网络/文件访问、动态执行或状态写入。仅布尔结果能作为 `when/if`；按标准类型严格比较，不做隐式强转。表达式对当前分支最新完整状态快照求值、短路求值，错误给出可定位诊断。AgentContext 先筛选条目，再让所有 NodeBuilder 完成原始消息组装，统一使用共享 TextRenderer 解析/转换一次；预览和执行使用同样的规则。
 
-## 7. Run 生命周期、存储与冲突
+## 7. Entry 内 Run 的状态结算与恢复
 
-**一次互动属于一个 Run，状态快照也属于 Run，而不是单条 Message。** 普通 Run 有 User Message 和成功生成后的 Assistant Message；Opening Root Run 只有开局 Assistant Message。Run 的父链确定世界线，Message 只有 run_id/ordinal，不参与分叉父指针。
+**Entry 是世界线节点，Entry 内选中的成功 Run 拥有本回合的完整状态快照**。`entries.parent_entry_id` 提供父链；`runs_json[]` 保存同一回合多次模型尝试以及可选内部 Tool Call/Result，不存在独立 `runs/messages/run_tool_calls` 表。
 
-1. 创建 Session 时冻结已发布世界卡的 Schema/hash；Opening 的 partial initial_state 覆盖固定叶子、动态集合整值替换，整份 Zod 校验后在**根 Opening Run** 保存初始化状态。
-2. 发送用户输入时，新建 child Run（status=awaiting_ai），保存该 Run 的 User Message，直接继承**父 Run** 的完整有效状态，标记 inherited。用户希望采取行动不等于行动已经发生。
-3. runAgent 从父 Run 读取状态并由 StateService 按本轮输入/祖先文本选择一次状态范围（StateScope），供 AgentContext 的 worldState 消息和可选状态工具共用；AgentContext 只返回 ModelMessage[]。模型输出叙事 + ChangeSet。
-4. StateEngine 在继承快照副本上按序执行所有受限操作，校验每个输入值和最后整份 S'；任何错误均不部分落盘。
-5. 同一 Run AI 完成时，在短 SQLite 事务里校验 generation_id、父 Run revision、Schema hash 和预期活动叶子，追加 ordinal=1 的 Assistant Message，并保存清洗正文、ChangeSet、state_status 和**完整**新快照；不能新建第二个 Run 伪装成功，也不能二次执行 adjust。
-6. 允许的状态标记：success（含明确空 changes）、inherited、missing、invalid、stale。缺失/非法更新可保留 AI 叙事作诊断但不是已结算状态，继续生成前需显式重试、修复或确认继承状态并记录决定。
-7. 生成中断/取消不提交不完整 Assistant Message；当前 Run 保持 awaiting_ai 及其 User Message，重试**同一 Run**。分叉从真实父 Run 继承、历史消息编辑使依赖的 Run 和后代 stale，不能隐式重算其故事或引用其他分支的状态。
+1. 创建 Session 时将世界卡快照（含状态 Schema）保存到 `sessions.world_snapshot_json`。Opening `initial_state` 按原有类型规则覆盖并校验后写入根 `Entry.runs[0].stateSnapshot=S0`。
+2. 新增互动 Entry 立即保存本轮 User 文本和一个 running Run。**当前用户输入尚不是已发生的世界事实**；此时状态来自其完成父链的最近成功选中 Run。
+3. `AgentContext.create` 按实际 parentEntryId 查找最新全量状态，无论聊天历史是否被 Summary/近 N 消息截断；用这份完整值 + 实际扫描文本选择 `activeStateModules`，世界书和状态根的 `when` 共用共享表达式解析器。`worldState` NodeBuilder 和可选状态更新工具共享这份激活范围。
+4. 模型经 Pi 输出叙事 + 候选 ChangeSet。`StateEngine` 在父快照的副本上顺序应用所有受限操作，最后做整份 Schema 验证；任何错误都不部分提交。
+5. 模型成功、状态有效时，把清洗后 Assistant 叙事、原始输出/必要工具轨迹、候选变更和**完整 S'** 一起写入该 Entry 当前 Run，设为 `completed` 并更新 `selected_run_id`。`off` 模式直接继承 S；明确空变更也必须保存完整 S'。
+6. 缺失/非法状态更新时该 Run 可标为 `failed`（保留叙事供诊断），不使非法状态成为当前分支事实；用户可以在**同一 Entry** 添加下一次 Run 重试，或显式确认继承 S。
+7. 模型取消/中断只将尝试标记 `stopped/failed`，保留 Entry.text 和旧成功 Run（如有），不改变已选状态。若有后代，首期限制修改/重生成历史以避免整个 stale 状态传播系统；提供从旧父节点新建分叉路径。
 
-SQLite 以 `sessions.state_definition_json / state_schema_hash` 和 `runs.state_snapshot_json / state_changes_json / state_status / state_schema_hash / state_revision / parent_state_revision / generation_id` 为逻辑字段。物理存储可压缩/去重，但读取任意已提交 Run 必须能恢复**完整逻辑快照**。模型内部工具结果不放入可见消息历史；工具调用事件可独立持久化在 `run_tool_calls` 供诊断，**工具执行时只产生候选变化，不直接提交状态**，最终由 Run 结算事务更新全快照。Session、Run 与 Message 的事务见[会话](session.md)、[存储](../technical/storage.md)。
+**SQLite 事实来源**：`sessions.world_snapshot_json` 给出状态 Schema，`entries.runs_json[].stateSnapshot` 保存每次已完成尝试的完整状态；`entries.selected_run_id` 指向实际采用的 Run。工具调用日志如需保存仅内嵌在 `runs_json[].piEntries`，不进入玩家可见模型历史，也**绝不在工具执行时直接写状态**。
 
 ## 8. 验收与未解决问题
 
 - 类型：初始化所有基础类型、null、嵌套对象、record/array、JSON 逃生口、错误初值、Opening 部分覆盖、min/max/enum、额外键拒绝。
 - 更新：六种操作的路径白名单、record 新增/修改/删除、数组追加、数值区间、顺序、任何错误整组回滚，生成中断不部分提交。
-- 一致性：重复 generation_id、版本冲突、再生、分叉、历史编辑 stale、无变化也存完整逻辑快照。
-- Context：`{{state:/...}}`、`get/exists/if`、世界书 when、状态根 load、动态目标、预算、预览和执行一致；模板绝不写状态。
+- 一致性：同一 Entry 多次 Run 选择与重试、真实 parent_entry_id 分叉、无变化也存完整状态；本地 MVP 不引入 generation_id/乐观版本矩阵。
+- TextRenderer：`{{state:/...}}`、`get/exists/if`、世界书 when、状态根 load、动态目标、世界卡预览和未来状态栏行为一致；模板绝不写状态。
 - **Provider PoC 必须优先完成**：至少两类 Provider 的 strict Tool 支持、复杂 Schema 通过率、长篇 narrative 流式表现、内联失败率、输出正确率及输入/输出 Token、延迟和语义更新召回率。选择正式默认通道前必须量化，不能只看 JSON 合法率。
-- **迁移清单**：旧 `characters[].state` 显式并入统一 `data.state`，旧 `world/user` 快照须明确转换，旧 MVU / RFC6902 更新协议不自动兼容；新 Schema 生效前检查既有世界卡、Opening、历史 Run/Message，先备份再迁移。
+- **迁移清单**：旧 `characters[].state` 显式并入统一 `data.state`，旧 `world/user` 快照须明确转换，旧 MVU / RFC6902 更新协议不自动兼容；新 Schema 生效前检查既有世界卡、Opening、`entries.runs_json`，先备份再迁移。
 
 外部参考：[Zod JSON Schema](https://zod.dev/json-schema)、[JSON Schema](https://json-schema.org/)、[RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)、[RFC 6902](https://www.rfc-editor.org/rfc/rfc6902)、[OpenAI Structured Outputs](https://platform.openai.com/docs/guides/structured-outputs)、[Anthropic Tool Use](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview)。
