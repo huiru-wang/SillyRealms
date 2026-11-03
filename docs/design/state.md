@@ -8,7 +8,7 @@
 - **单一类型定义**：发布世界卡中的 `data.state` 是受限、可序列化的定义 AST；编译器从同一 AST 分别生成 Zod 校验器、用于 Provider 的 JSON Schema 与运行时工具目标。不要把运行时 Zod 代码、EJS、任意 JS 直接存入世界卡，不依赖实验性 `z.fromJSONSchema` 作为关键反向转换。
 - **Schema 约束的是数据形状**，`description` 约束剧情语义；类型正确不等于叙事、数值演变正确。严格拒绝违反显式类型/范围的状态值，不擅自把错误数字夹回范围。
 - **写入不是通用 JSON Patch**：模型通过类型受限的 ChangeSet 描述少量变化，服务端执行并验证；可在诊断层导出差异 Patch，但 **RFC 6902 六操作不是模型协议**。JSON Pointer 只用于统一寻址，访问值与更新均遵循该路径。
-- **全快照**：每一条已持久化 Entry 逻辑上对应一份完整运行状态 JSON，Snapshot 不含 `type`、`description`、`initial`、`load`、`global/entities/values` 包装。
+- **全快照**：每一个已持久化 Run 逻辑上对应一份完整运行状态 JSON，Snapshot 不含 `type`、`description`、`initial`、`load`、`global/entities/values` 包装。
 - 状态是可选插件。未定义状态的世界不必调用状态工具，也不注入状态协议。状态 UI 由应用渲染，不执行世界卡脚本。
 
 ## 2. 世界卡定义：显式类型树
@@ -170,17 +170,19 @@
 
 世界书正文、`load.when`、自定义 Prompt、状态 description 使用**同一个只读表达式解析器**，支持括号、有限数字/字符串/布尔/null、比较、算术及 `&& || !`、`if / else if / else`；无 JS/EJS、赋值、循环、网络/文件访问、动态执行或状态写入。仅布尔结果能作为 `when/if`；按标准类型严格比较，不做隐式强转。表达式对同一父快照求值、短路求值，错误给出可定位诊断。所有加载/模板结果在 Context 预算前解析并统一计量；预览和执行同一逻辑。
 
-## 7. Entry 生命周期、存储与冲突
+## 7. Run 生命周期、存储与冲突
 
-1. 创建 Session 时冻结已发布世界卡的状态定义和 hash；Opening initial_state 递归覆盖被声明的固定叶子、动态集合整值替换，整体 Zod 校验后在根 Entry 保存初始化完整快照。
-2. User Entry 继承其父完整有效快照。用户输入的愿望并不直接结算为已发生事实。
-3. AI 一轮基于固定父 Entry、父状态 revision、Schema hash 和已激活模块构建上下文与 Tool Schema，流式生成 narrative + changes。
-4. 服务端检查 JSON 与目标白名单、操作适用性、动态键、Schema 类型和上限；在父状态副本顺序应用所有变更，整份最终快照 Zod 验证成功才允许写入。
-5. 短 SQLite 事务中检查生成 ID 幂等、活动叶子、父 Entry、父状态修订及 Schema hash，原子保存清洗正文、原文（限制访问）、ChangeSet、结果状态和**完整**新快照；不得跨世界线写回或双扣 `adjust`。
-6. `success` 表示合法结算（包括 `changes:[]`），`inherited` 表示 User 复制，`missing` 表示缺失必需更新，`invalid` 表示失败，`stale` 表示历史修订/定义冲突后失效。失败可保留正文及父快照供诊断，但**不得作为已结算快照继续生成**；用户需显式重试、修复或确认继承状态并记录决定。
-7. AI 生成中断/取消不提交不完整 AI Entry；保留已完成 User 叶子供重试。分叉只继承各自父 Entry；重新生成重新从正确父版本结算；编辑旧正文使受影响的自己及后代状态 stale，不自动重写历史或重放操作。
+**一次互动属于一个 Run，状态快照也属于 Run，而不是单条 Message。** 普通 Run 有 User Message 和成功生成后的 Assistant Message；Opening Root Run 只有开局 Assistant Message。Run 的父链确定世界线，Message 只有 run_id/ordinal，不参与分叉父指针。
 
-SQLite 以 `sessions.state_definition_json / state_schema_hash` 和 `entries.state_snapshot_json / state_changes_json / state_status / state_schema_hash / state_revision / parent_state_revision / generation_id` 为建议逻辑字段。压缩/去重允许，但按任意已提交 Entry 必须能得到完整逻辑快照；不把模型 SDK 的对话 JSONL 当成第二权威源。Schema 迁移显式确认并留备份，不把新卡定义直接套到旧 Entry 的值。
+1. 创建 Session 时冻结已发布世界卡的 Schema/hash；Opening 的 partial initial_state 覆盖固定叶子、动态集合整值替换，整份 Zod 校验后在**根 Opening Run** 保存初始化状态。
+2. 发送用户输入时，新建 child Run（status=awaiting_ai），保存该 Run 的 User Message，直接继承**父 Run** 的完整有效状态，标记 inherited。用户希望采取行动不等于行动已经发生。
+3. AgentContext 在父 Run 状态上先完成 StateLoader，给 Provider 返回状态提交约束和 ModelMessage[]；模型输出叙事 + ChangeSet。
+4. StateEngine 在继承快照副本上按序执行所有受限操作，校验每个输入值和最后整份 S'；任何错误均不部分落盘。
+5. 同一 Run AI 完成时，在短 SQLite 事务里校验 generation_id、父 Run revision、Schema hash 和预期活动叶子，追加 ordinal=1 的 Assistant Message，并保存清洗正文、ChangeSet、state_status 和**完整**新快照；不能新建第二个 Run 伪装成功，也不能二次执行 adjust。
+6. 允许的状态标记：success（含明确空 changes）、inherited、missing、invalid、stale。缺失/非法更新可保留 AI 叙事作诊断但不是已结算状态，继续生成前需显式重试、修复或确认继承状态并记录决定。
+7. 生成中断/取消不提交不完整 Assistant Message；当前 Run 保持 awaiting_ai 及其 User Message，重试**同一 Run**。分叉从真实父 Run 继承、历史消息编辑使依赖的 Run 和后代 stale，不能隐式重算其故事或引用其他分支的状态。
+
+SQLite 以 `sessions.state_definition_json / state_schema_hash` 和 `runs.state_snapshot_json / state_changes_json / state_status / state_schema_hash / state_revision / parent_state_revision / generation_id` 为逻辑字段。物理存储可压缩/去重，但读取任意已提交 Run 必须能恢复**完整逻辑快照**。模型内部工具结果不放入可见消息历史；Session、Run 与 Message 的事务见[会话](session.md)、[存储](../technical/storage.md)。
 
 ## 8. 验收与未解决问题
 
@@ -189,6 +191,6 @@ SQLite 以 `sessions.state_definition_json / state_schema_hash` 和 `entries.sta
 - 一致性：重复 generation_id、版本冲突、再生、分叉、历史编辑 stale、无变化也存完整逻辑快照。
 - Context：`{{state:/...}}`、`get/exists/if`、世界书 when、状态根 load、动态目标、预算、预览和执行一致；模板绝不写状态。
 - **Provider PoC 必须优先完成**：至少两类 Provider 的 strict Tool 支持、复杂 Schema 通过率、长篇 narrative 流式表现、内联失败率、输出正确率及输入/输出 Token、延迟和语义更新召回率。选择正式默认通道前必须量化，不能只看 JSON 合法率。
-- **迁移清单**：旧 `characters[].state` 显式并入统一 `data.state`，旧 `world/user` 快照须明确转换，旧 MVU / RFC6902 更新协议不自动兼容；新 Schema 生效前检查既有世界卡、Opening、历史 Entry，先备份再迁移。
+- **迁移清单**：旧 `characters[].state` 显式并入统一 `data.state`，旧 `world/user` 快照须明确转换，旧 MVU / RFC6902 更新协议不自动兼容；新 Schema 生效前检查既有世界卡、Opening、历史 Run/Message，先备份再迁移。
 
 外部参考：[Zod JSON Schema](https://zod.dev/json-schema)、[JSON Schema](https://json-schema.org/)、[RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)、[RFC 6902](https://www.rfc-editor.org/rfc/rfc6902)、[OpenAI Structured Outputs](https://platform.openai.com/docs/guides/structured-outputs)、[Anthropic Tool Use](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview)。

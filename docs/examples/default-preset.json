@@ -1,63 +1,72 @@
 {
   "id": "builtin/default",
+  "is_builtin": true,
+  "schema_version": 1,
   "name": "基础默认",
-  "builtin": true,
+  "description": "SillyRealms 内置可编辑叙事预设",
   "nodes": [
     {
       "id": "main",
-      "type": "text",
+      "kind": "system",
+      "name": "主指令",
+      "source": "main",
       "role": "system",
       "enabled": true,
       "content": "你是虚构世界的叙事引擎。依据世界设定、人物、当前状态及已发生的故事推进叙事；保持情节连贯、角色行为合理，并尊重用户选定的参与方式。"
     },
     {
       "id": "personaInfo",
-      "type": "slot",
-      "source": "session.user_character",
+      "kind": "system",
+      "name": "玩家角色",
+      "source": "personaInfo",
       "role": "system",
       "enabled": true
     },
     {
       "id": "characterInfo",
-      "type": "slot",
-      "source": "world.characters",
+      "kind": "system",
+      "name": "其他角色",
+      "source": "characterInfo",
       "role": "system",
       "enabled": true
     },
     {
       "id": "worldState",
-      "type": "slot",
-      "source": "session.state",
+      "kind": "system",
+      "name": "世界状态",
+      "source": "worldState",
       "role": "system",
       "enabled": true
     },
     {
       "id": "chatHistory",
-      "type": "slot",
-      "source": "session.ancestors_before_user",
+      "kind": "system",
+      "name": "历史消息",
+      "source": "chatHistory",
       "role": "auto",
       "enabled": true
     },
     {
       "id": "userInput",
-      "type": "slot",
-      "source": "session.current_user_entry",
+      "kind": "system",
+      "name": "用户输入",
+      "source": "userInput",
       "role": "user",
       "enabled": true
     },
     {
       "id": "postHistory",
-      "type": "text",
+      "kind": "system",
+      "name": "后置指令",
+      "source": "postHistory",
       "role": "system",
       "enabled": false,
       "content": ""
     }
   ],
   "budget": {
-    "context_window_tokens": 32768,
     "max_output_tokens": 4096,
     "safety_margin_tokens": 1024
   },
-  "scan_depth": 4,
-  "state_output_mode": "auto"
+  "scan_depth_runs": 4
 }

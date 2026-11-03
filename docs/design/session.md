@@ -1,165 +1,143 @@
-# 会话：MVP 世界线选择、单向历史分页与 Entry 树
+# Session：Run 树、消息归属、分页与压缩世界线
 
-> 状态：2026-11-03 MVP 目标领域设计（尚未实现），状态协议已同步为强类型。返回[文档索引](../README.md)；SQLite/API 见[存储](../technical/storage.md)，模型输入见[Context](context.md)。
+> 2026-11-03 目标设计，**尚未实现**。本文件把过去的 Entry 树改为 **Run 树 + Run 内 Message**。分页、分叉、世界线统计、活动叶子和缓存 revision 以 **Run** 为唯一单位，不再使用 Message/Entry 当树节点。数据持久化细则见 [Storage](../technical/storage.md)。
 
-## 核心模型与边界
+## 1. 核心产品模型
 
-**一个世界实例（Session）保存一棵真实 Entry 树，但聊天页面每次只进入某条真实叶子的末尾。** 完整历史不因 UI 折叠而丢失；全局世界线页面只展示压缩拓扑摘要，不是第二套消息历史。
+`WorldCard` 是可重复使用的世界定义；`Session` 是一次独立的世界实例及其故事树；`Run` 是该故事树上一次完整的互动回合；`Message` 是某个 Run 内要展示的用户或模型消息。一次普通 Run 通常包含一条 User Message 和一条 Assistant Message，Opening Root Run 是特例，仅含初始 Assistant/Opening Message。模型内部工具消息、思维过程、SSE event 等不构成玩家可见 Message，也不额外创建 Run。
 
-- Entry 是实际用户（`user`）或 AI（`assistant`）消息。开局根 Entry 通常是 AI。正常故事沿 `AI → User → AI` 推进。
-- **真实叶子**是在本实例内没有子 Entry 的消息；通常是 AI，也可能是尚未获得回复、模型失败或等待重试的 User。`seq` 是全实例创建顺序，**不能**用来拼接单条世界线。
-- 实际分叉点是一个具有 **2～3 个直接 User 子节点**的 AI Entry。历史 User 的「创建世界分叉」操作，把新 User 挂到**这个历史 User 的父 AI**，不是挂到历史 User 自身。每个 AI 最多 3 个直接 User 子节点，一个 User 最多 1 个有效 AI 子节点；可嵌套分叉，全局叶子总量不限于 3。
-- `sessions.active_leaf_entry_id` 是**唯一持久化的当前活动世界线**；没有 `view_leaf_entry_id`、`focused_entry_id` 或需要按设备恢复的历史阅读位置。打开/切换世界线总是加载该叶子的最近消息。
-- 预览某条世界线只在前端暂存 `selected_leaf_id` 供高亮，**不修改** Session；点击「进入这条世界线」后才切换 `active_leaf_entry_id`、清空旧聊天分页、读取新叶子的末尾。
+~~~text
+Session (World Instance)
+└─ Run R0 (opening)  [Message: assistant 开局；初始状态 S0]
+   └─ Run R1 (turn) [Message: user U1, assistant A1；状态 S1]
+      ├─ Run R2 (turn) [U2,A2；状态 S2]    路线 A
+      │  └─ Run R4 [U4,A4]
+      └─ Run R3 (turn) [U3,A3；状态 S3]    路线 B
+~~~
 
-## 创建和进入世界实例
+**重要约束：**
+- Run 的 `parent_run_id` 指向同一 Session 的父 Run，Root 的 parent 为 null；**Message 只有 `run_id` 和顺序，不参与 Run 树父子关系**。
+- 单个父 Run 最多 **3 个直接子 Run**，表示至多 3 条后续选择；允许多级嵌套分叉，整棵世界线叶子总数没有 3 的限制。
+- 正常发送只能在 `sessions.active_leaf_run_id` 指向的真实叶子继续；用户从历史 Run 显式发起新分叉时，必须在有足额空位的父 Run 下新增兄弟 Run。
+- `seq` 可记录 Session 内创建顺序，但不得用全局 seq 推导祖先、分页顺序或隐藏 Run 数；唯一合法祖先关系是 `parent_run_id`。
+- 开局选中 `user_character_id` 来自世界卡/Opening 的可扮演名单，保存角色快照和完整强类型状态 Schema；不同 Session 彼此隔离。
 
-1. 用户从世界卡库打开实例列表，可创建或进入一局 Session；新实例保存发布世界卡的 JSON 快照、预设选择、Opening，以及**仅从世界卡 `characters[]` 与 Opening 共同许可名单中明确选中的 `user` 角色 ID 和完整角色快照**。`player_selectable` 决定世界卡总体允许的扮演角色，Opening 的 `player_characters` 只能收窄；二者不允许外部角色，规则见[世界卡](world-card.md)。Opening 正文作为根 Entry；启用状态时从世界卡统一 `data.state.modules` 强类型树生成默认完整快照，按 Opening 的部分 `initial_state` 覆盖并校验，保存单份**无 world/user 包装**的完整初始快照，同时冻结 Schema/hash。角色是否被选为 `user` 不会改变状态根映射，旧 `characters[].state` 必须显式迁移，仅初始化一次。
-2. 创建完成，`active_leaf_entry_id` 指向开局根 Entry；之后每次成功普通发送、AI 回复或显式分叉，指向最新有效真实叶子。失败 AI 生成可能留下 User 叶子，UI 提供恢复/重试，不自动改选其它路线。
-3. **打开已有实例**：服务端读取已保存的 `active_leaf_entry_id` 并校验它属于本实例且仍是真实叶子；直接读取其最近约 30 条祖先消息，前端默认滚动到底部。没有有效叶子时给出明确的恢复/修复提示，**不选择全实例 `seq` 最新节点代替**。
-4. 世界实例仍共享一棵树：不同世界实例完全隔离；同实例的多个世界线共享相同祖先。历史编辑及世界卡手动同步不会重置当前叶子。
+## 2. Run / Message 生命周期
 
-## 聊天页面：只读一条世界线，只向上分页
+`Run` 核心字段：`id, session_id, parent_run_id, kind(opening|turn), status(awaiting_ai|completed), seq, state_snapshot_json, state_status, state_schema_hash, state_revision, generation_id, created_at, updated_at`。`Message` 字段：`id, run_id, ordinal, role(user|assistant), content, raw_content?, revision, created_at, updated_at`。状态变化属于 Run，模型回复归属 Run 的 Assistant Message。Opening Run 只有 ordinal=0 的 assistant Message；普通 Run 最多 ordinal=0 user、ordinal=1 assistant。未来如果支持多段可见消息须显式扩展，不自动把工具回合算作玩家回合。
 
-- **顶部**：世界实例标题、当前活动世界线标识、世界线总览入口。
-- **消息列表**：按真实故事时间从旧到新展示**当前活动叶子唯一祖先链**；首屏为叶子附近最新一页，历史不一次性加载。向上滚动按最早已加载 Entry 的父链请求更早的一页；向下只是滚动已经加载的列表，**没有向下历史查询 API、任意 Entry 定位窗口或进入历史中间位置**。
-- **分叉标记**：在已加载的 AI 分叉点上显示 `2/3`、`3/3` 等真实 User 子节点数，普通消息不显示。点击标记只打开本处对应的分支/叶子选择浮层，不自动跳线；该浮层不拉取整段历史。
-- **输入**：普通发送永远接在当前活动**叶子**之后，不能从上滑到的历史消息隐式发送。用户在读旧消息时点击输入或「回到最新」，界面可以先回到底部以避免误解。生成中的增量输出只在用户已经停留底部时自动跟随；否则显示「有新内容」提示。
-- **长列表**：每页默认 30 条（服务端上限由实现固定，如 100），顶部插入时保持原消息锚点和像素位置、支持虚拟化/媒体延迟布局；到根 Entry 停止。**跨世界线切换**时清空旧消息列表、分页游标与未完成请求；**同一世界线正常生成**只是把新 User/AI 追加到末尾，保留已加载历史与用户当前滚动位置，更新活动叶子绑定，并废弃或重试旧 `leaf_id` 的未完成分页请求。
+~~~mermaid
+flowchart LR
+ A[活动完整 Run 叶子] --> B[提交用户文本]
+ B --> C[短事务: 新建 child Run status=awaiting_ai + User Message + 继承父快照]
+ C --> D[AgentContext 构建 Messages + Provider 执行]
+ D -->|成功| E[同一 Run 添加 Assistant Message + ChangeSet/完整状态 + status=completed]
+ D -->|取消或错误| F[Run 保持 awaiting_ai, User Message 已保存]
+ F -->|用户重试| D
+~~~
 
-### 只有两种历史读取动作
+- 创建 Run 与第一条 User Message 使用一次短事务、幂等客户端 request ID 防重复；同时更新 `active_leaf_run_id`。AI 生成期间不写占位 Assistant Message、不持有长事务。失败/取消保留同一 Run 供显式重试，不另建 Run、更不制造假分支。
+- 成功后一次事务提交清洗正文与 Raw、状态变更集、有效全量快照、Run 修订和 Assistant Message；`completed` 不等于状态一定有效，状态层可独立标记 `missing/invalid`，后续须修复或确认继承才能继续。
+- 如果还未收到 AI，`awaiting_ai` 的 Run 仍是合法真实**叶子 Run**；UI 显示用户文本和“重试生成”入口。重复生成响应必须绑定同一 generation ID 和父 Run/状态版本，避免再次 `adjust`。
+- 末尾 Assistant 重新生成/续写（未来功能）只重写**本 Run 的 Assistant Message**和状态结算，不新建 Run；若该 Run 已有子 Run，不允许无提示重写历史因果，可先走明确历史修复流程。
+- 编辑任意历史 User/Assistant Message 保留原有 Run 树和消息，不自动改写后代；该 Run 及其后代的状态与依赖摘要标记 `stale`，不能自动把旧有效快照作为新事实继续生成。
+- 只有完整有效的父 Run 才可被用作新 Run 的状态来源。用户说出行动不等于行动已经发生：User Message 创建时复制父快照，AI 成功解释剧情之后才应用本轮 ChangeSet。
 
-```http
-GET /sessions/{sessionId}/entries?limit=30
-GET /sessions/{sessionId}/entries?leaf_id=A900&before=U850&limit=30
-```
+## 3. 聊天：以 Run 为分页单元
 
-- 首次请求不带 `before`，服务端使用当前 `active_leaf_entry_id`；返回从旧到新排列的最近一页。
-- `before` 指客户端当前最早展示的 Entry ID，服务端返回**严格在它之前**的祖先消息，不重复该条。必须同时携带首次响应返回的 `leaf_id`，服务端检查其仍是当前活动叶子并验证 `before` 属于它的父链；不匹配返回冲突/无效游标而非混合其他路线。
-- 返回 `leaf_id`、`entries`、`next_before`、`has_more`；`next_before` 为当前返回页最早 Entry ID，只有 `has_more=true` 时继续使用；从用户视角不会把兄弟世界线的内容插进聊天中。
-- 前端维护单调递增的导航代号（如 `navigation_epoch`，纯内存）丢弃**跨世界线切换**后的旧响应。同线生成让活动叶子从 A → U → A 演进时，只更新分页请求绑定的 `leaf_id` 并取消/重试已发出的旧叶子查询，**不清空当前已加载的祖先消息，也不强制跳到底部**。服务端在生成、切线和历史分页时均要校验请求关联的叶子版本。
+进入 Session 读取 `active_leaf_run_id` 指向的真实叶子，默认取最近 **30 个 Run**（不是 30 条 Message），返回每个 Run 内完整可见 Messages，按 Run 旧→新/Run 内 ordinal 升序展示。向上滚动只读取更老的**祖先 Run**；不存在双向窗口或中间历史定位。不同 Run 包含不同数量消息，页面一次返回的可见 Message 数不固定，这是刻意选择。
 
-> UI **只向上加载历史**，不等于模型每轮也只读 30 条。模型 Context 从本次真实 User Entry 的父节点沿有效祖先链读取，`chatHistory` 排除该 User；按顺序预算选择历史。UI 的 `before` 游标不参与模型历史裁剪。
+~~~http
+GET /sessions/{sessionId}/runs?limit=30
+GET /sessions/{sessionId}/runs?leaf_run_id=R900&before_run_id=R850&limit=30
+~~~
 
-## 全局世界线：压缩拓扑，而非全消息画布
+响应：
 
-全局世界线页面展示 **Root → Fork → Branch Start → Leaf** 的有向树，连续无分叉的普通消息**隐藏在边里**。只请求保留节点的预览和轻量连接信息，不拉整局全部正文；不同真实路径共用祖先节点。
+~~~json
+{
+  "leaf_run_id": "R900",
+  "runs": [
+    {"id":"R899","parent_run_id":"R898","status":"completed","messages":[{"role":"user","content":"我进城"},{"role":"assistant","content":"守卫让开道路"}]},
+    {"id":"R900","parent_run_id":"R899","status":"awaiting_ai","messages":[{"role":"user","content":"继续向前"}]}
+  ],
+  "next_before_run_id":"R899",
+  "has_more":true
+}
+~~~
 
-| 类型 | 真实 Entry 的选择标准 | 展示内容 |
-| --- | --- | --- |
-| `root` | Opening 根 Entry | 开局标题/摘要 |
-| `fork` | 直接拥有至少 2 条 User 子节点的 AI Entry | 分叉处 AI 摘要、`2/3` 或 `3/3` |
-| `branch_start` | 每个 `fork` 的每个直接 User 子 Entry | 该选项的实际 User 输入摘要 |
-| `leaf` | 无直接子 Entry 的真实末尾消息 | 末尾摘要、状态（完成/失败/待回复）与「进入」 |
+`before_run_id` 为当前列表最早 Run ID，严格从它的父 Run 继续，不能重复返回当前 Run；服务端校验 `leaf_run_id` 是当前活动真实叶子、`before_run_id` 是其有效祖先且属于同一 Session。请求应在同一一致性读取视图中取得 Run 页和其 Message，避免 Chat 页出现半个 Run。返回 `limit+1` 个祖先 Run 判定是否有更多，展示最多 limit 个。跨世界线切换清空旧列表/游标、废弃旧请求；同线新增 Run 可以追加并更新 leaf 绑定，保留正在阅读的祖先页面和视觉锚点。前端虚拟化以 Run 分组为稳定锚点。
 
-同一个 Entry 如兼具多种意义，可按一条节点记录携带多个 `kinds` 标签，不允许重复产生视觉虚构节点。保留节点之间的边包含 `from`、`to`、`hidden_count`，数量按**该段实际父子链**上未显示的 Entry 数计算，**不能**相减全局 `seq`。无实际分叉的单链可显示 Root → Leaf；若 Root 本身也是 Leaf，则一个节点兼具两种标签。
+**模型 Context 不能只读取 UI 的最近 30 个 Run**。AgentContext 可单独按 Run 父链读取真实祖先，再按 Token 预算用 Run 作为最小历史裁剪单元；Chat 阅读页数不影响模型召回历史。
 
-```mermaid
-flowchart TD
-    R[Opening · Root] -->|隐藏 83 条消息| F1{AI 分叉点 · 2/3}
-    F1 --> U1[User · 出示通行证]
-    F1 --> U2[User · 从侧门潜入]
-    U1 -->|隐藏 126 条消息| F2{AI 分叉点 · 2/3}
-    U2 -->|隐藏 58 条消息| L2[Leaf B · 已完成]
-    F2 --> U3[User · 向王宫前进]
-    F2 --> U4[User · 返回商店]
-    U3 -->|隐藏 54 条消息| L3[Leaf A · 当前活动]
-    U4 --> L4[Leaf C · AI 回复失败]
-```
+## 4. 压缩世界线：只显示 Root 和 Fork
 
-**重要：** `branch_start` 不一定直接连到最终叶子，后面可能还有多个 `fork`。点击分叉第一条 User 仅意味着选择某个**子树**；若子树存在多条叶子，仍须明确选择其中一个实际叶子，不能暗中选 `seq` 最大或创建时间最近的叶子。
+**全局世界线不再绘制 Branch Start 和 Leaf 节点。** 可见节点只有：
+- `root`：Opening Run；
+- `fork`：拥有 2～3 个直接 Run 子节点的真实 Run；Root 也可能同时是 Fork。
 
-- **预览**：默认高亮当前活动叶子的压缩祖先路径。点击另一真实叶子，只更新临时 `selected_leaf_id`，高亮从根至该叶子的节点和边，并展示叶子摘要；不切换聊天、不读取中间消息正文。
-- **进入**：点击「进入这条世界线」→ 服务端验证叶子并原子更新 `active_leaf_entry_id` → 关闭总览 → 清空聊天分页数据和游标 → 从新叶子最新一页重新查询 → 滚到底部。若该叶子是失败 User，则给出重试入口。
-- **分叉标记入口**：聊天里点击 `2/3` 只展示其直接 User 分支及可选叶子/子树，引导到同一个世界线总览或叶子选择器；绝不以中间节点作为聊天入口。
-- **大树保护**：服务端可先扫描本实例全部**轻量元数据**（`id`、`parent_entry_id`、`role`、`status`），一次构图，然后**仅对保留节点**读取截断预览；千条消息不意味着千个 UI 节点。若实际分叉数也很多，接口需提供摘要节点上限和明确 `has_more` / 子树继续加载机制，**不得无提示截断**。完整画布缩放/搜索中间消息留待后续。
+其余普通、分支起点、叶子 Run 全部压在**连接线**上。每一条从 Root/Fork 出发的线延伸至**下一个 Fork 或终止**；边携带：
+- `from_run_id`：可见的起始 Root/Fork；
+- `to_fork_run_id?`：下一真实 Fork，若该路线走到终点则为 null；
+- `branch_start_run_id`：起始节点的该分支第一个子 Run（不单独画节点）；
+- `collapsed_run_count`：该段所有未画出来的真实 Run 数；**终止边把不可见 Leaf Run 也计入**，而中间通往可见 Fork 的边不计起终两端可见 Run；
+- `terminal_leaf_run_id?`：终止边实际叶子 Run，用于点击“进入此路线”；
+- `branch_preview?`：起点附近的简短 User 输入摘要，作为线标签，而非新节点。
 
-### 世界线切换动作
+普通线性故事：Root → 一条带“已折叠 N 个 Run”的**终止线**，可通过其 `terminal_leaf_run_id` 进入；没有显式 Leaf 圆点。只有 Root 没有子 Run 时仅显示 Root，它同时可作为终点。若中途产生历史分叉，则提升真实 Fork 节点并拆线重算折叠数。
 
-```http
+~~~mermaid
+flowchart LR
+ Root[Root Run R0] -->|折叠 8 个 Run| Fork1{Fork Run R9}
+ Fork1 -->|路线 A：折叠 12 个 Run| EndA[终止线端点，非实际 Run 节点]
+ Fork1 -->|路线 B：折叠 5 个 Run| Fork2{Fork Run R15}
+ Fork2 -->|折叠 3 个 Run| EndB[终止线端点，非实际 Run 节点]
+ Fork2 -->|折叠 7 个 Run| EndC[终止线端点，非实际 Run 节点]
+~~~
+
+图中的 `EndA/EndB/EndC` **只是为 Mermaid 说明终止线而写的图形端点，不属于 API 可见节点**；客户端不画它们为可选 Run。实际 API 在边上返回 `terminal_leaf_run_id`，线卡片可点。预览选择某条路线只是临时高亮 `selected_leaf_run_id`；必须点击“进入”才更新持久化 `active_leaf_run_id` 并重新加载 Chat 页。不能凭 seq 猜终点，更不能把中间 Fork 当成聊天可进入叶子。
+
+接口建议：
+
+~~~http
 GET /sessions/{sessionId}/worldlines
 PUT /sessions/{sessionId}/active-leaf
 Content-Type: application/json
 
-{"leaf_id":"A900","expected_active_leaf_id":"B700"}
-```
+{"leaf_run_id":"R900","expected_active_leaf_run_id":"R700"}
+~~~
 
-`expected_active_leaf_id` 作为乐观并发前置条件；若生成刚产生新叶子或其他操作已切线，返回冲突并刷新总览，不覆盖另一操作。选中拓扑节点只是 UI 动作，只有确认按钮调用 PUT。服务端始终验证同实例、真实叶子及正在运行的生成冲突。
+世界线接口只加载 Run 的轻量父指针/子数/简短预览等元信息；**不拉取全部 Message 正文**。`collapsed_run_count` 基于真实父链逐个 Run 计算，不是全局 seq 差，不是 Message 数。返回 `run_tree_revision` 和 `run_content_revision` 作为缓存一致性标记。大树支持可展开子树与 `has_more`，不能未经说明截断成“完整拓扑”。
 
-## 创建分叉与消息编辑仍然成立
+## 5. 分叉与角色
 
-假设原故事是：
+当用户在历史 Run R2 的 User Message 上选择“从这里创建另一种行动”，语义是：**把新 Run 挂到 R2.parent_run_id 作为 R2 的兄弟**（从同一个历史决策点重选），而不是把新 Run 接到 R2 或 R2 的 Assistant 后面。校验历史 R2 非 Root、其父 Run 已完成且状态可用、父 Run 子数小于 3；新分支继承**父 Run 结算状态**、读取该父 Run 的祖先消息，不混入 R2 的 User/Assistant。第三条分支允许，第四条拒绝。只有显式提交新分叉才自动切入该新 Run，不因世界线“预览”而切换。
 
-```text
-A1：你来到王城入口。
-└─ U1：我与守卫交谈。
-   └─ A2：守卫要求出示通行证。
-      └─ U2：我拿出通行证。
-         └─ A3：守卫允许你进入。（当前叶子）
-```
+Session 的 `user_character_id` 从世界卡 `characters[]` 中受 `player_selectable` 和 Opening `player_characters` 共同许可的 ID 明确选择，用户身份快照保存在 Session；同一 Session 不为每条 Run 再随意覆盖用户身份。`{{user}}` 的取值由 WorldInstanceContext 查询本局角色快照。
 
-在已经向上加载到的 **U1** 上点击「创建世界分叉」，输入「我绕开守卫，从侧门潜入」：
+## 6. 对外领域接口与权威数据
 
-1. 打开专用分叉输入状态，未发送前不创建 Entry、不修改当前叶子。
-2. 提交时找到 `U1.parent_entry_id = A1`；在同一 SQLite 短事务里校验 A1 是已完成的同实例 AI、实际直接 User 子节点少于 3、幂等请求未执行，再创建 `U4(parent=A1)`。**不是把 U4 挂在 U1 下面**。
-3. 使用 U4 的祖先路径生成 AI `A5(parent=U4)`，不重写/删除原分支。生成成功切到 A5 并滚到底部；若生成失败，保留 U4 及其重试状态，并可将其作为真实叶子进入，防止重复分叉请求。
+Session 领域建议：`createSession(worldId, openingId, userCharacterId, presetId, modelSelection)`、`getSession(id)`、`getRunPage(sessionId, leafId, beforeRunId, limit)`、`getRunAncestorPath(runId)`、`appendUserRun(sessionId, expectedLeafId, requestId, input)`、`completeRun(runId, generationId, assistantText, changeSet, stateResult)`、`retryRun(runId)`、`forkRun(sessionId, historicalRunId, newUserText)`、`editMessage(messageId, expectedRevision, content)`、`getCompressedWorldlines(sessionId)`、`switchActiveLeaf(sessionId, expectedLeafId, newLeafId)`。这些接口只处理**Run/Message/Session 持久化与一致性**，不在 Session 内写 Prompt NodeBuilder。
 
-```mermaid
-flowchart TD
-  A1[AI 分叉点 A1] --> U1[User 原路线 U1]
-  A1 --> U4[User 新路线 U4]
-  U1 --> A2[AI A2]
-  A2 --> U2[User U2]
-  U2 --> A3[AI 原叶子 A3]
-  U4 --> A5[AI 新叶子 A5]
-```
+WorldInstanceContext 在实例进入时恢复世界卡/身份/结构缓存；AgentContext 按本轮父 Run 读取状态和祖先 Runs；Provider 只拿 Messages 做模型执行。`sessions.active_leaf_run_id` 为唯一持久化活动叶子；模型执行始终绑定请求创建时的 Run ID、父版本、Schema 版本，迟到响应不能在切线后覆盖另一条路线。
 
-首次新分叉后是 `2/3`，第三条可继续创建，第四条被拒绝；嵌套分叉不受整局 3 条叶子限制。新分叉自动切换活动叶子属于**用户明确提交了分叉**，并非浏览世界线造成的隐式切换。
+## 7. 缓存与一致性
 
-| 操作 | MVP 规则 |
-| --- | --- |
-| 普通发送 | 只从 `active_leaf_entry_id` 继续，不因上滑位置变化而改变父节点；幂等处理以防重复 User |
-| 历史分叉 | 已加载旧 User 上显式触发；新 User 的父亲是旧 User 的父 AI，直接 User 分支最多 3 条 |
-| 末尾 AI 重新生成 / 续写 | 如果对应功能启用，只能编辑当前无后代 AI 叶子，不新增消息、不造出虚假分叉；此处不扩展 AI 帮答/续写的 Prompt 设计 |
-| 编辑历史消息 | 主动编辑已加载 User/AI 正文，原后代不自动重生成；公共祖先编辑影响经过它的所有分支，相关 Context、摘要和状态结算标记失效 |
-| 删除消息 | MVP 不支持 |
+`run_tree_revision` 在新增子 Run、子节点关系变化时递增，`run_content_revision` 在 Run 结算、状态徽标/预览内容变化或 Message 修改时递增。拓扑结构可按前者增量维护，预览缓存同时绑定后者。世界线缓存可按新 Run 做增量更新：
+- 单链尾部追加只更新终止线 `terminal_leaf_run_id` 和 `collapsed_run_count +1`；
+- 某历史 Run 从一个子 Run 变为两个时，**提升该 Run 为 Fork**，拆原来线段并分出两条边，重新计算涉及路径；
+- 编辑消息只使相应边标签/Preview 失效、状态与下游上下文 stale，**Run 树结构不变**；
+- 切活动叶子只改变选中高亮，不改变压缩拓扑。
 
-## MVP 最简 Entry 生成生命周期
+MVP 可优先每次按整个轻量 Run 元数据重建拓扑，避免复杂增量算法先污染正确性；以后用 revision-key 的增量缓存加速，必须和确定性全重建的结果对拍。缓存只在 [WorldInstanceContext](world-instance-context.md) 管理，不写第二份树的持久化事实。
 
-**只持久化已经确定的 User/AI 正文 Entry，生成过程不建 AI 占位消息、不建 Run 表、不保存 token 级临时状态。**
+## 8. 验收与不支持范围
 
-```mermaid
-flowchart LR
- A[活动 AI 叶子] --> B[事务保存已发送 User Entry 并设为活动叶子]
- B --> C[服务端生成中 状态仅内存/SSE]
- C -->|成功结束| D[保存清洗后的 AI Entry 和状态快照 活动叶子转向 AI]
- C -->|出错或取消| E[保留同一 User 叶子 可重试]
- E -->|显式重试| C
-```
+- Root 只有一条 Opening Assistant Message；普通 Run 的 User/Assistant 被完整打包返回；`limit=30` 表示 30 Run，不能拆断 Run。
+- Run 与 Message 的关系不会使模型历史重复插入当前 User；未完成 Run 可重试，重复请求不生成无意分叉或重复扣灵力。
+- 拓扑**只显示 Root/Fork**；分支起点、普通 Run 和叶子都只占边的准确 `collapsed_run_count`，可通过真实 `terminal_leaf_run_id` 进入终点。
+- 深分叉、没有任何分叉、Root 也是 Leaf、历史分叉超 3 限额、错误游标、异常父链、不同 Session 隔离均需验收。
+- 历史编辑不重生成后代或静默提交失败状态；模型失败、网络断开和服务重启不丢已保存用户 Run。
+- 不支持任意 Run 中间阅读模式、双向历史窗口、Run/Message 删除、跨设备阅读位置、自动推导虚构分叉。
 
-- `entries.status`：MVP 所有**已落盘**的 User 和 AI Entry 均为 `completed`；创建中的 AI 内容和 `generating` 仅在内存/SSE 中，不是独立 Entry 状态。`failed` / `cancelled` 描述**本次生成尝试**，并非一条已保存的 AI 消息。服务重启后若活动叶子为 User，UI 一律显示「尚未收到 AI 回复，可重试」，不需要第二份 Run 历史。
-- **发送**：服务端检查活动叶子预期值、幂等请求 ID 和无并发生成，在一次短事务里创建 User Entry、按父快照复制状态（若启用）、更新 `active_leaf_entry_id` 为这个 User；之后启动 Pi 流式，不持有事务。
-- **成功**：只创建一条 AI Entry，`parent_entry_id` 指向这个 User，正文已与 Tool 参数或内联 `<StateUpdate>` 分离，并一次性保存原文、ChangeSet、强类型校验结果及完整状态快照与 AI `completed` 记录；同事务将活动叶子改为 AI。状态解析/校验失败时**允许保存 AI 叙事正文作诊断**，但必须标记 `state_status=invalid` 或 `missing`，不能作为已结算状态；下次生成要明确重试/修复/确认继承，并记录决定。
-- **取消/失败/刷新/崩溃**：没有完成就不创建 AI Entry，模型已流出的部分文本只在本次页面临时展示；保留已经写入的 User Entry 及其完整继承状态，活动叶子保持 User；用户重试**同一条 User**，不额外新增 User、不占用第二条分叉，重复请求通过幂等 ID/当前叶子校验防止重入。初版不持久化中断时的部分 AI 文本。
-- **分叉**：显式从历史 User 的父 AI 建新 User 分支，随后完全复用上述生成链；取消/失败时新 User 仍是有效待回复叶子。`User` 最多存在**一个**有效 AI 子节点；不为重试创造第二条 AI 子节点。若操作指向错误/过期叶子或生成正在进行，返回明确冲突。
-- **末尾 AI 重生成/续写**：目前不扩展对应 Prompt 功能；后续实现时仅修改当前无后代 AI 叶子的正文并重新结算其状态，不使用新增 Entry 伪装生成失败重试。
-
-MVP 前端只需要 `idle / generating / error`（以及可选 `cancelled` 提示）的**临时请求 UI 状态**。这与 `state_status`（状态插件的 `inherited / success / missing / invalid / stale`）是两套不同概念，不能把状态解析失败当作模型生成失败。
-
-## 与 Context、状态和 Agent 的边界
-
-- `active_leaf_entry_id` 是创建 User 前选择真实世界线的**唯一持久化入口**；User 确认落盘后，本轮 Context 固定该 `user_entry_id` 并读取**它的父 Entry 祖先链**。`chatHistory` 只包含本轮 User 之前的历史，`userInput` 保存原文并把世界书锚点合并成一次有效 Query；扫描和状态读取均绑定同一路径，不能读取兄弟分支或 H5 最近 30 条。
-- 状态启用时，Opening 根 Entry 写统一强类型状态树的完整初值；User 继承父快照。AI 每轮提交叙事和 ChangeSet（已验证 Provider 优先 `submit_turn`，否则内联 `<StateUpdate>`）；引擎按类型受限语义操作原子结算并保存完整快照，无变化也保存。状态独立于聊天正文在状态抽屉/侧栏显示；切线后的状态取该叶子路径，不与兄弟分支或世界卡原始角色定义的状态混合。编辑历史导致后代状态失效，详见[状态](state.md)。
-- 模型生成过程中必须以本次 `user_entry_id` 和其父节点固定执行上下文；Pi `session.prompt(effectiveUserQuery)` 的有效 Query 可含 `userInput` 锚点，但数据库 User Entry 始终只保留原文。Pi Session 只是临时执行态，SQLite 是唯一权威。失败、取消、重试及迟到响应不能误写另一叶子或为原 User 追加第二个有效 AI 子节点。
-- 全局拓扑是派生视图：它的摘要/缓存不能被用作模型 Context，也不改变 Entry 的实际父子关系。
-
-## MVP 验收要点
-
-- 有 1000+ 消息时打开实例**只返回最近一页**，向上请求最多返回 `limit` 条祖先；向下滚动不发历史请求，不串兄弟分支；再次打开总是回当前叶子末尾。
-- 分叉标记只出现在拥有 2～3 个直接 User 子节点的 AI 消息上；点击不会改变活动世界线；从历史 User 创建新分支并进入新叶子，原分支仍能选择。
-- 世界线总览仅返回 Root/Fork/Branch Start/Leaf 及边和隐藏数量，不能全量返回所有 `content`；嵌套分叉与「分支首 User 不等于唯一叶子」正确处理。
-- 临时选中叶子只高亮；确认进入后更新活动叶子、废弃旧聊天分页和未完成响应、加载新叶子最新页；拒绝中间 Entry、跨实例 Entry、过期的预期活动叶子。
-- User 叶子（生成失败/待重试）可被进入且提供恢复；没有任何分叉的根到叶子单链、根本身为叶子、超大分叉树、孤立/异常父链有安全展示和错误处理。
-- 编辑历史不自动重新生成后代；消息删除不开放；流式失败/取消/并发切换不丢失已确认的真实世界线。
-
-**延后范围：** 任意 Entry 直接定位、历史中间进入、双向游标窗口、消息搜索跳转、长链展开成全部正文的全局画布、跨设备阅读锚点恢复、分支/消息删除以及超大树的高级可视化编辑器。
+相关：[AgentContext](agent-context.md)、[WorldInstanceContext](world-instance-context.md)、[Storage](../technical/storage.md)、[State](state.md)。
