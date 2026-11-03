@@ -1,6 +1,6 @@
 # 世界卡：内容定义、发布与实例同步
 
-> 状态：领域设计，2026-11-01；规范部分仍为草案。返回[文档索引](../README.md)，相关领域见[Context](context.md)、[会话](session.md)。
+> 状态：领域设计，2026-11-03；强类型状态协议已同步，**尚未实现**。返回[文档索引](../README.md)，相关领域见[Context](context.md)、[会话](session.md)。
 
 ## 定位和内容归属
 
@@ -15,7 +15,7 @@
 - 内容发布版本使用 `data.version = "X.Y"`（两段非负整数）。首次发布 `0.1`，例如 `0.1 → 0.2 → 1.0 → 1.1`；新版本按数值元组比较，必须严格递增，不以字符串排序。草稿可未发布，编辑草稿不会提升已发布版本。
 - 格式版本 `spec_version` 与内容版本相互独立。仅保留世界卡的**当前草稿**和**最新发布内容**，不维护可浏览的每次历史发布副本。
 - 创建世界实例时复制完整已发布 JSON 及其来源版本；新版本发布不会自动改动已有实例。用户查看可更新提示后可以手动同步。
-- **手动同步只覆盖实例中的完整世界 JSON 快照与来源版本**，不做逐字段合并，也不触碰消息、分叉、记忆和已有 Entry 状态快照。该实例所有分支下一次生成使用更新后的世界定义；需检查旧设定的派生缓存/摘要、`data.state` 及已选 `user` 角色字段定义兼容性。已存 Session 的 `user_character_id` 和选中角色快照不得自动更换；若新卡删除该角色、关闭其可扮演许可或更改状态定义，必须提示兼容冲突并阻止无声同步。**不会重新执行 Opening 初始化或重置已有世界线状态**；状态字段删除、改名、类型变化等不兼容更新必须明确处理迁移，不能隐式套用新规则。
+- **手动同步只覆盖实例中的完整世界 JSON 快照与来源版本**，不做逐字段合并，也不触碰消息、分叉、记忆和已有 Entry 状态快照。该实例所有分支下一次生成使用更新后的**非状态内容**；Session 已冻结的 `state_definition_json` / `state_schema_hash` 仍为当前状态权威，不因世界卡同步而直接替换；如要采用新卡状态定义必须显式进行兼容验证与迁移。还需检查旧设定的派生缓存/摘要、开局覆盖和角色身份映射兼容性。已存 Session 的 `user_character_id` 和选中角色快照不得自动更换；若新卡删除该角色、关闭其可扮演许可或更改状态定义，必须提示兼容冲突并阻止无声同步。**不会重新执行 Opening 初始化或重置已有世界线状态**；状态字段删除、改名、类型变化等不兼容更新必须明确处理迁移，不能隐式套用新规则。
 - 实例如果未来需要临时修改世界设定，应以独立的本局覆盖配置表达，不回写到原世界快照内。存储字段见[存储设计](../technical/storage.md)。
 
 ## 内容结构与导入边界
@@ -27,7 +27,7 @@ WorldCard
    ├─ name / summary / description / version / tags / cover
    ├─ characters[]           独立角色及其加载配置
    ├─ openings[]             多个开局及可选世界状态初值覆盖
-   ├─ state                  可选世界状态字段定义
+   ├─ state                  可选强类型状态树（schema_version + modules）
    ├─ lorebook               单个世界书：entries[] 及各自 load
    ├─ regex_scripts[]        来源规则/可选扩展（MVP 不执行）
    ├─ assets[]               资源清单
@@ -48,7 +48,7 @@ WorldCard
 | `characters[]` | array | 角色定义、可扮演许可及加载条件 |
 | `openings[]` | array | 故事开局 |
 | `lorebook` | object | 单个世界书，`entries[]` 存独立资料 |
-| `state` | object | 世界状态定义，实例中的运行值不回写世界卡 |
+| `state` | object，可选 | 唯一强类型状态定义 `schema_version + modules`；实例中的运行值不回写世界卡 |
 | `extensions` | object | 不自动解释或执行 |
 
 ## 独立角色
@@ -62,11 +62,11 @@ WorldCard
 | `tags` | string[] | 可选标签，用于展示、筛选和整理；缺省为空列表 |
 | `load` | object，见「世界书与角色加载条件」 | 角色资料何时进入 `characterInfo` |
 | `player_selectable` | boolean，默认 `false` | 世界卡级别的角色可扮演许可；仅 `true` 的角色能作为 `user` |
-| `state` | object，可选 | 角色的初始状态字段定义，结构与 `data.state` 完全一致；只有本局选作 `user` 的角色进入用户运行状态 |
+| `state` | 旧导入字段，不在新原生卡启用 | 旧角色状态须显式映射进入 `data.state.modules`；所有角色状态统一管理，不仅限玩家角色 |
 
 角色与世界书条目使用相同的基础加载条件，见下文「世界书与角色加载条件」。玩家在本局选中角色时，默认提供该角色资料；其他角色按其加载配置筛选，并最终填入预设的 `characterInfo` 插槽。
 
-角色设定直接放在 `description`，不要求通过世界书关联。角色可声明静态 `state` 初值/字段规则，但**实际变化的状态快照不写回世界卡**；角色的控制者和是否登场也不写在世界卡。`player_selectable=true` 只表示该角色**可以**被选为 `user`，不是每局自动被玩家控制；选择时会将该世界卡角色完整定义复制到 Session。
+角色设定直接放在 `description`，不要求通过世界书关联。新原生卡的角色动态状态统一在 `data.state.modules[角色状态根名]` 声明，`characters[].state` 不再作为生效定义；导入旧角色状态时须显式映射并检查重名。**实际变化的快照不写回世界卡**；角色的控制者和是否登场也不写在世界卡。`player_selectable=true` 只表示该角色**可以**被选为 `user`，不是每局自动被玩家控制；选择时会将该世界卡角色完整定义复制到 Session。
 
 ## 开局
 
@@ -76,83 +76,50 @@ WorldCard
 | `name` | string，必填 | 选择开局时显示的名称 |
 | `content` | string，必填 | 初始故事内容或特殊入口标记 |
 | `player_characters` | string[]，可选 | 该 Opening 允许作为 `user` 的世界卡角色 ID 子集；不支持 `custom` 或外部身份 |
-| `initial_state` | object，可选 | 只写**与 `data.state` 默认初始值不同**的字段初始值，字段值必须匹配定义类型 |
+| `initial_state` | object，可选 | 与运行快照同形的部分覆盖，根键对应 `data.state.modules`；固定 object 递归覆盖，record/array/json 叶子整值替换并接受强类型校验 |
 
 **可选角色 = 世界卡中 `player_selectable=true` 的角色 ∩ Opening 的 `player_characters`（如果提供）**。没有 `player_characters` 时默认使用世界卡全部可选角色；提供该字段时，所有 ID 都必须存在于本卡 `characters[]` 且满足 `player_selectable=true`，不能用 Opening 把不可扮演角色重新开放。空数组、未知 ID、重复 ID、禁用角色引用及 `custom` 等特殊标记都视为发布/创建校验错误。世界卡发布时至少有一名可扮演角色，每个有效 Opening 至少允许一名角色；草稿可以暂不完整。创建 Session 必须由用户从最终允许名单中**明确选定一个** `user`，并保存角色快照；MVP 不提供无角色参与、个人身份库或默认 `char`。
 
-默认建议选择第一项；所选开局写入会话初始历史，后续生成不重复注入。创建实例时将每个 `data.state.<字段>.initial` 与当前 `opening.initial_state` 合并成**完整初始状态**并保存至开局 Entry；未覆盖的字段使用世界卡默认值，已覆盖字段**整个值替换**，对象、数组不做深层合并。开局覆盖不能新增未定义字段、修改字段类型/描述/规则；不存在的字段、错误类型应阻止发布或实例初始化并提示作者。缺少 `state` 时允许不提供 `initial_state`；开局文本不触发第二次状态结算。此过程仅在创建世界实例时执行，不会因切换世界线、编辑历史或世界卡手动同步而重新执行。
+默认建议选择第一项；所选开局写入会话初始历史，后续生成不重复注入。创建实例时从 `data.state.modules` 递归产生完整默认运行值，叠加 `opening.initial_state` 中的**部分覆盖**并通过 Zod 全量校验后写入根 Entry。固定 object 沿已声明的子字段递归覆盖，record/array/json 作为一个完整叶子替换，不深合并记录成员。未知路径、额外固定键或类型错误阻止发布/初始化。初始状态仅在 Session 创建时构造一次，切分支和同步卡片不会重新初始化；详见[状态](state.md)。
 
-## 世界状态字段 `data.state`
+## 强类型状态定义 `data.state`
 
-这是**可选**的结构化状态插件，不替代叙事文本或世界书。世界卡只定义字段、默认初值和变化原则；真正的运行值属于 Session 的每个消息 Entry，按世界线继承。没有 `data.state` 的世界卡仍正常聊天；但如果本局选中的**世界卡角色**定义了 `character.state`，仍可维护该角色的用户运行状态。
+状态是可选的独立插件，不替代叙事和世界书；此处只约定**世界卡存什么**，具体类型校验、Tool ChangeSet 和 Entry 全量快照统一由[状态规范](state.md)规定。
 
-**最小字段定义只有三个属性**；仅 `initial: null` 时额外要求 `type`：
+原生格式固定为 `{"schema_version":1,"modules":{...}}`，`modules` 每个根为 `type:"object"` 的类型树，根可以是 `世界`、某位角色、地点或组织，根名就是快照顶层键。角色状态不再拆为单独的 `characters[].state` 或仅保存 `user`，作者在同一棵树里声明所有需要跟踪的实体。每个根可以有自己的 `load` 规则，内层状态不能设置 `load`。
 
-| 属性 | 含义 |
-| --- | --- |
-| `initial` | 默认初始值；通常通过 JSON 类型推断状态字段类型 |
-| `description` | 字段表示什么，供作者、UI 和 Agent 理解 |
-| `rule` | 自然语言更新原则：什么时候应该改变；它是 Agent 指引，不是程序可执行约束 |
+支持 `string`、`number`、`integer`、`boolean`、`enum`、`object`、`record`、`array`、`json`。固定 `object` 用 `properties` 定义可嵌套字段，`record` 用 `value` 定义动态键值的强类型结构，`array` 用 `items` 定义元素类型，`json` 是只能整值更新的弱类型逃生口；不从 `initial` 推断类型。普通作者在编辑器中只需填写**字段名/类型/初值/描述**，枚举、数值范围和 nullable 属于可选高级设置。每个已声明固定叶子都有初值，object 由其子字段初值递归生成；record 的每个 item 需符合 value Schema。
 
-字段 ID 是 `data.state` 的顶层键，可以使用有意义的中文或 `guard.attitude` 这类标识符；**整个键是一个字段 ID**，`.` 不表示必须存在嵌套对象。默认支持 JSON 的 `string`、`number`、`boolean`、`array`、`object` 五类初始值，类型来自 `initial`；为了避免复杂的类型系统，首期不区分 `integer/number`、`map/object`。初值为 `null` 无法推断类型时，**例外允许**在该字段额外填写 `type`（`string`/`number`/`boolean`/`array`/`object`），并允许它继续为 `null`；非 `null` 值须匹配该类型。其他字段不必填写 `type`。
+例子（省略无关世界卡字段）：
 
 ```json
 {
   "state": {
-    "当前时段": {
-      "initial": "白天",
-      "description": "故事当前的昼夜时段",
-      "rule": "只有剧情明确推进时间时才改变"
-    },
-    "守卫态度": {
-      "initial": 30,
-      "description": "守卫对玩家的态度",
-      "rule": "根据实际完成的互动调整，建议维持在 0~100"
-    },
-    "背包": {
-      "initial": [],
-      "description": "玩家实际持有的物品",
-      "rule": "获得物品后加入，丢弃或消耗后移除"
-    },
-    "已发现线索": {
-      "initial": {},
-      "description": "已发现线索，以线索 ID 为键",
-      "rule": "只有剧情实际发现线索时增加；线索失效时可移除"
+    "schema_version": 1,
+    "modules": {
+      "世界": {"type": "object", "load": {"mode": "always"}, "properties": {
+        "当前时段": {"type": "enum", "values": ["白天", "夜晚"], "initial": "白天", "description": "剧情确实推进时更新"}
+      }},
+      "清月": {"type": "object", "load": {"mode": "on_mention", "keywords": ["清月"]}, "properties": {
+        "灵力": {"type": "integer", "min": 0, "max": 100, "initial": 100, "description": "施法消耗，休息恢复"},
+        "背包": {"type": "record", "description": "键是物品 ID", "value": {"type": "object", "properties": {
+          "数量": {"type": "integer", "min": 0}, "说明": {"type": "string"}
+        }}, "initial": {"灵石": {"数量": 3, "说明": "随身"}}}
+      }}
     }
   },
-  "openings": [
-    {"id": "day", "name": "白日", "content": "天色已亮。"},
-    {"id": "night", "name": "夜行", "content": "夜幕降临。", "initial_state": {"当前时段": "夜晚"}}
-  ]
+  "openings": [{
+    "id": "night", "name": "夜行", "content": "夜幕降临。",
+    "initial_state": {"世界": {"当前时段": "夜晚"}}
+  }]
 }
 ```
 
-`openings[].initial_state` **仅保存不同开局的差异值**；不复制 `description`、`rule`，也不允许开局改变状态结构。覆盖以字段 ID 为单位：例如对象字段若被 Opening 覆盖，必须给出完整新对象，不与默认对象递归合并。新建实例时按 `state` 默认值 → Opening 覆盖值构建完整快照；详见[会话](session.md)及[存储](../technical/storage.md)。
+`initial_state` 不包含任何 schema/description，不允许改变定义结构。Opening 局部覆盖只作用于声明的固定叶子，record/array/json 只做整值替换；统一编译的 Zod 先验证覆盖，再校验最终完整初始状态。旧 `{"当前时段": {"initial": ...}}`、独立角色 `state` 和旧 Opening 顶层字段均为**待迁移格式**，不对新格式偷偷做运行时兼容。
 
-### Agent 更新操作与删除边界
+Agent 的六类受限操作为 `set/adjust/upsert/set_record_field/remove/append`，由引擎按当前类型和已加载根自动开放，作者不配置更新命令。Tool Call 优先但依赖真实 Provider 验证，内联 `<StateUpdate>{"changes":[...]}</StateUpdate>` 是回退格式，详见[状态](state.md)。**JSON Patch / MVU 命令不再是模型输入契约。**
 
-借鉴 MVU 的最小操作集合，**由状态引擎统一提供操作，不要求作者逐字段配置 `operations`/`min`/`max` 等参数**：
-
-| 操作 | 允许目标 | 效果 |
-| --- | --- | --- |
-| `set` | 已声明的任意字段 | 以同类型新值完整替换字段值 |
-| `add` | `number` 字段 | 将数字增量加到原值上，负数表示减小 |
-| `insert` | `array`、`object` 字段 | 在数组中插入元素，或在对象中新增成员 |
-| `delete` | `array`、`object` 的**成员** | 删除明确指定的数组元素或对象键 |
-| `move` | `array`、`object` 的**成员** | 在同一集合内调整数组元素位置或将对象成员从一个键迁至另一个键 |
-
-- **Agent 不得新增或删除世界卡/用户身份顶层状态字段**，也不能改变其类型或定义；`delete` 只删除集合内部成员。要清空集合，用 `set` 将它设置为 `[]` 或 `{}`。消息删除是另一项功能，当前会话产品仍不支持。
-- Agent 提交结构化操作，由程序检查目标字段是否存在、操作是否匹配类型、目标元素/键是否存在、值是否符合字段类型；修改对象成员不能越过顶层 Schema 的边界。数组定位必须明确，不按模糊文本猜测删除目标。非法操作拒绝，不执行世界卡提供的任意脚本。
-- `rule` 及 `description` 用于指导 Agent 的语义判断，不应谎称自然语言可作为硬约束；例如“建议保持 0~100”需模型遵守，程序不能据此自动推断数值界限。
-- Agent 的更新请求只描述**变化**，例如 `{"updates":[{"field":"守卫态度","op":"add","value":5}]}`；结构化协议具体参数按目标集合类型确定，不必暴露给世界卡作者。没有状态变化时返回空操作列表。
-
-### 运行和世界线边界
-
-- 默认 **User Entry 继承父消息完整状态；AI Entry 在叙事完成后分析并结算变化**。用户说“我打开城门”不等于剧情已经成功打开；以 AI 已发生的叙事作为结算依据。Opening 初始 Entry 直接写入已合并的初始快照，不重复解析开局。
-- 每条已处理 Entry **即使没有变化，也保存一份完整的状态快照**。Agent 提交增量操作，状态引擎以父 Entry 快照为基准校验、原子应用并保存，不让 Agent 直接覆盖整份运行状态。状态结算失败与“没有变化”必须区分，失败不能伪装成结算成功。
-- 新分支从分叉父 AI Entry 继承状态，不能读取其他兄弟世界线的快照；重生成/续写末尾 AI 时以正确父版本重新结算，防止重复 `add/insert`。
-- 用户主动编辑历史消息时，保留所有后代正文和树关系，不自动重生成；受影响的后代状态结算应标记失效/待处理，不能默默把旧结果当新事实。世界卡同步不清空或重初始化旧消息快照，状态定义发生不兼容变化时先提示显式迁移。
-- 作者编辑体验可只展示“字段名 / 初始值 / 描述 / 规则”；Opening 中列出字段默认值，并允许“覆盖初始值 / 恢复默认”。模型可见状态及结算的 Context 规则见 [Context](context.md)。
+`load.when`、世界书条件和文本引用可用冻结状态快照读取；在世界书正文/Prompt 中写 `{{state:/清月/灵力}}`，条件写 `get("/清月/灵力") < 20`。状态值和描述不能直接在卡片中执行 JS。
 
 ## 世界书与角色加载条件
 
@@ -167,6 +134,8 @@ WorldCard
 | `mode` | `always/on_mention/manual`，默认 `manual` | 常驻、关键词、手动加载 |
 | `keywords` | string[] / `[]` | `on_mention` 触发词 |
 | `keyword_logic` | `any/all` / `any` | 多关键词满足任一或全部 |
+| `exclude_keywords` | string[] / `[]` | 仅对 `on_mention` 排除任意命中项 |
+| `when` | string，可选 | 受限只读布尔表达式，在冻结父状态上求值；对所有 mode 生效 |
 | `order` | integer / `0` | **仅世界书**同一锚点同一侧排序，非预算优先级 |
 
 世界书条目额外配置：
@@ -186,7 +155,7 @@ WorldCard
       {
         "id": "gate-rule",
         "title": "王宫通行规则",
-        "content": "守卫需要核验通行证。",
+        "content": "守卫需要核验通行证。清月灵力：{{state:/清月/灵力}}。",
         "load": {
           "mode": "on_mention",
           "keywords": ["王宫", "守卫"],
@@ -227,6 +196,6 @@ Context 扫描默认本次 User 和最近三条祖先 Entry（`scan_depth=4`）�
 
 ## 示例与待讨论事项
 
-世界卡整理示例见 [world-card.json](../examples/world-card.json)。示例中的角色许可与加载方式属于人工整理，不是源角色卡既有权限。
+世界卡整理示例见 [world-card.json](../examples/world-card.json)，其中状态树已改为强类型结构；原始角色卡及旧状态定义不做运行时自动兼容。示例中的角色许可与加载方式属于人工整理，不是源角色卡既有权限。
 
 后续再讨论高级世界书触发、导入的正则和扩展兼容。Prompt 构建的确定性加载与合并规则见 [Context](context.md)。

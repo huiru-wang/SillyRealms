@@ -1,6 +1,6 @@
 # Context：内容扫描、Prompt 构建与预算
 
-> 状态：2026-11-02 MVP 目标设计，尚未实现。节点、锚点、角色与预设配置的唯一规范见[配置](configuration.md)；世界卡字段见[世界卡](world-card.md)，Entry 父链与状态见[会话](session.md)、[状态](state.md)。
+> 状态：2026-11-03 MVP 目标设计，尚未实现；强类型状态读取、加载和工具目标已同步。节点、锚点、角色与预设配置的唯一规范见[配置](configuration.md)；世界卡字段见[世界卡](world-card.md)，Entry 父链与状态见[会话](session.md)、[状态](state.md)。
 
 ## 目标和职责
 
@@ -30,6 +30,7 @@ type ContextResult = {
   messages: PromptMessage[];     // 各基础/自定义节点编排结果（历史展开）
   effectiveUserQuery: string;    // userInput.before + 原文 + userInput.after
   diagnostics: ContextDiagnostic[];
+  activeStateModules: string[];  // 与 worldState 实际加载一致，供 StateEngine 生成 Tool Schema
   tokenEstimate: { input: number; limit: number };
 };
 ```
@@ -42,7 +43,7 @@ Session 发送时先持久化已确认 User Entry 并锁定父节点，再传入
 flowchart TD
  A[固定 User Entry 和本轮快照] --> B[沿父链读取历史和有效状态]
  B --> C[整理近几条历史为扫描缓冲区]
- C --> D[筛选世界书与其它角色]
+ C --> D[筛选世界书/角色及状态 Module，按同一父快照求 when]
  D --> E[按锚点分桶、稳定排序去重]
  E --> F[按 Preset nodes 顺序渲染]
  F --> G[宏替换与必需内容预留]
@@ -57,7 +58,7 @@ flowchart TD
 借鉴 SillyTavern `world-info.js` 中的 `WorldInfoBuffer` / `checkWorldInfo`，但**不复制**它的全部高级条件：
 
 - 本轮 `userEntry.content` 作为深度 0；其前三条真实祖先 Entry 依次为深度 1～3。MVP 默认 `scan_depth=4`，属于预设扫描配置，可修改；超过路径根部就停止。
-- 扫描使用已清洗的正文，AI 的 `<UpdateVariable>` 不参与关键词匹配；不扫描兄弟分支、拓扑摘要或未发送的 AI 帮答候选。
+- 扫描使用已清洗的正文，AI 的内联 `<StateUpdate>` / Tool 参数不参与关键词匹配；不扫描兄弟分支、拓扑摘要或未发送的 AI 帮答候选。
 - 相同缓冲区用于本轮世界书 `on_mention` 与其他角色的 `on_mention`，避免扫描对象与最终内容不一致。`always` 不依赖关键词，`manual` 取 `manualLoreIds`，而 `disabledLoreIds` 在自动/手动命中前统一排除。所选玩家角色固定加载 `personaInfo`，不重复加载进 `characterInfo`。
 - 关键词支持 `keyword_logic=any|all`，默认 `any`；trim 后的非空关键词按普通 Unicode 子串匹配，拉丁文字可大小写折叠；不做词形还原、分词、正则、次要关键词或跨世界线扫描。
 - 世界书按稳定 `id` 去重，记录 `always / keyword / manual` 命中理由及来源 Entry ID（如存在）。不支持递归触发、概率、Sticky/Cooldown、互斥组、随机激活；它们以后扩展 Scanner 即可。
@@ -102,9 +103,11 @@ userInput.role = user
 
 ### 3. 宏与内容规范化
 
-MVP 只实现确定性宏 `{{user}}`，映射到 Session 选定的世界卡角色名称；不支持默认 `{{char}}`、随机数、`setvar/getvar` 等有副作用宏。未知宏保留文字并告警或按配置拒绝，不自行选择 NPC。宏替换发生在 Token 预算前，保证预算针对实际发送文本估算；预览和发送沿同一顺序执行，预览绝不改写状态。
+MVP 宏 `{{user}}` 映射到 Session 选定的世界卡角色名称；状态插值另由统一只读解释器处理 `{{state:/世界/时间}}`，支持 `get("/路径")`、`exists("/路径")` 与 `if/else if/else`。不支持默认 `{{char}}`、随机数、`setvar/getvar` 等有副作用宏。未知宏保留文字并告警或按配置拒绝，不自行选择 NPC。宏替换发生在 Token 预算前，保证预算针对实际发送文本估算；预览和发送沿同一顺序执行，预览绝不改写状态。
 
-`worldState` 使用本次 User 父快照（User 继承自其父 AI）的有效 `world/user` 值与状态字段规则，包含尾部 `<UpdateVariable>` 指令要求。字段均为空时不强制状态协议；若状态标记 `failed/stale`，必须先恢复/确认，不能采用错误快照。状态解析与结算由 StateEngine 执行，不属于 ContextManager。
+`worldState` 使用本次 User 的**冻结有效父快照**和对应 Session 强类型 Schema。根 Module 的 `load=always/on_mention`、排除词和 `load.when` 决定本轮是否加载，其当前值、路径、类型、description 合并为 `worldState` 片段；未加载 Module 不注入、默认不开放写入，但始终保留在完整快照。世界书 `load.when`、状态描述及全部 Prompt 文本统一在这一父快照上无副作用展开，插值只解释一次。解析缺失路径或非法条件必须产生来源诊断，不视为 null。`activeStateModules` 严格对应实际注入且允许更新的根。若状态为 `invalid/missing/stale`，继续生成前必须显式修复或确认继承，不可将失败快照当作有效状态。
+
+生成协议由 StateEngine/ProviderAdapter 统一选定：已实测可用的 Provider 可选 `submit_turn({narrative,changes})` 工具模式；否则默认流式正文附末尾 `<StateUpdate>{"changes": [...]}</StateUpdate>` 的内联模式。二者不可同轮重复应用，均在服务端执行强类型校验后结算。Context 预览应包含实际激活根、状态文本、工具目标及协议占用，不负责执行更新。
 
 ### 4. MVP Token 预算：先必需，再按构建顺序
 
@@ -112,7 +115,7 @@ MVP 只实现确定性宏 `{{user}}`，映射到 Session 选定的世界卡角�
 input_budget = context_window_tokens - max_output_tokens - safety_margin_tokens
 ```
 
-- **优先预留：** 本轮 User 原始输入、必要的 `worldState` 状态快照和更新协议，以及系统规定的不可删除运行约束。对应文本若超出预算则拒绝生成，不静默截断。
+- **优先预留：** 本轮 User 原始输入、实际激活的强类型 `worldState` 值/描述、状态输出协议和动态 Tool Schema（若使用工具模式），以及系统规定的不可删除运行约束。工具 Schema 也算输入预算，不能因它不属于 Prompt 文本就忽略。对应文本若超出预算则拒绝生成，不静默截断。
 - **可选片段：** 按最终 Preset 编排顺序尝试追加（包括本体及各世界书 before/after 条目）。条目以整条为单位；第一项放不下时，舍弃它与其后的可选片段。空文本不消耗预算。
 - **`chatHistory` 特例：** 在轮到这个节点时，从最近一条祖先向前保留可容纳的**连续完整 Entry**，直到下一条放不下后停止，最终按原时间正序展开；不从兄弟分支补洞。该步骤的可用空间同样取剩余预算。
 - **合并计算：** 片段预算计入最终消息的分隔符、角色及消息格式开销；先记录采纳的片段，再将单节点片段拼为一条并复核整条估算。模型精确 Tokenizer/Provider 细节尚需 PoC，不宣称绝对精确。
@@ -139,7 +142,7 @@ MVP 不做打分优化、重要性排序、历史摘要或长期记忆；之后�
 3. 世界书不能指定角色；前/后锚点同节点拼成一条消息，节点为空/禁用也继承节点角色。
 4. 改变 `characterInfo.role` 或调整它在预设中的位置，相关世界书角色与位置自动跟随；`userInput` 始终是单条 user 消息。
 5. 预算不足时按顺序丢弃可选片段，`chatHistory` 保留连续最近历史，必需输入不足明确报错；诊断与构建结果一致。
-6. 本轮状态仅取父 Entry 有效快照，`<UpdateVariable>` 不从原始 AI 输出回注历史。
+6. 本轮强类型状态只取冻结父 Entry 有效快照；`{{state:/...}}`、`get/exists/if`、世界书 `when` 及状态 `load.when` 展开一致，动态工具目标与激活根一致；`<StateUpdate>` 或工具参数不回注叙事历史，工具 Schema 消耗计入 Token 预算。
 
 ## 后续独立讨论
 

@@ -1,6 +1,6 @@
 # 持久化与接口：SQLite 数据模型
 
-> 状态：技术方案草案，2026-11-02；以下为逻辑结构和可选 DDL，并非已执行的数据库迁移。返回[文档索引](../README.md)。
+> 状态：技术方案草案，2026-11-03；强类型状态字段已同步；以下为逻辑结构和可选 DDL，并非已执行的数据库迁移。返回[文档索引](../README.md)。
 
 ## 事实来源和结构约定
 
@@ -19,8 +19,8 @@
 | 表 | 字段 | 用途 |
 | --- | --- | --- |
 | `worlds` | `id` 主键、`name`、`draft_json`、`published_json` 可空、`version` TEXT 可空、`created_at`、`updated_at`、`published_at` 可空 | 世界当前草稿和最新发布内容及两段内容版本；不保存历史版本 |
-| `sessions` | `id` 主键、`world_id`、`title`、`world_snapshot_json`、`source_world_version` TEXT、`preset_id`、`user_character_id`、`user_character_snapshot_json`、`context_options_json` 可空、`active_leaf_entry_id` 可空、`created_at`、`updated_at` | 一局世界实例 + 一棵 Entry 树；用户身份**只能从本世界卡许可角色中选取**；保存选中角色 ID 和完整快照，运行状态不反写卡片 |
-| `entries` | `id` 主键、`session_id`、`parent_entry_id` 可空、`seq`、`role`、`content`（纯叙事）、`raw_content` 可空、`status`、`state_snapshot_json` 可空、`state_status` 可空、`state_update_text` 可空、`updated_at`、`created_at` | 已提交的 User/AI 消息；MVP `status=completed`，AI 的原始模型输出和 MVU 风格更新块单独保存，状态启用时每条 Entry 完整快照 |
+| `sessions` | `id` 主键、`world_id`、`title`、`world_snapshot_json`、`source_world_version` TEXT、`preset_id`、`user_character_id`、`user_character_snapshot_json`、`state_definition_json` 可空、`state_schema_hash` 可空、`context_options_json` 可空、`active_leaf_entry_id` 可空、`created_at`、`updated_at` | 一局世界实例 + 一棵 Entry 树；用户身份**只能从本世界卡许可角色中选取**；保存选中角色 ID 和完整快照，运行状态不反写卡片 |
+| `entries` | `id` 主键、`session_id`、`parent_entry_id` 可空、`seq`、`role`、`content`（纯叙事）、`raw_content` 可空、`status`、`state_snapshot_json` 可空、`state_changes_json` 可空、`state_status` 可空、`state_schema_hash` 可空、`state_revision` 可空、`parent_state_revision` 可空、`generation_id` 可空、`updated_at`、`created_at` | 已提交的 User/AI 消息；MVP `status=completed`，状态启用时每条 Entry 持有完整逻辑快照与 ChangeSet、结果状态和幂等/版本元数据 |
 
 世界卡内容发布、版本递增与手动实例同步的业务语义以[世界卡领域设计](../design/world-card.md)为准；原生世界卡使用单个 `lorebook`，条目只保留受限 `load.anchor/position/order`，不允许 `load.role`，其内容与锚点节点合并为一条 Prompt 并继承节点角色；旧导入元数据只能归档或显式转为预设文本节点。本表只存 `worlds.version` 与实例单个 `source_world_version`，同步事务更新 JSON 快照与来源版本，不影响 Entry 树或既有状态快照。新卡 `data.state` 与现有快照的结构必须先做兼容性检查。
 
@@ -51,7 +51,7 @@
 | --- | --- | --- |
 | `schema_migrations` | `version` 主键、`applied_at` | 数据库结构迁移记录 |
 
-首期**不设计** `world_assets`、`entry_attachments`、`models`、`memories`、独立 `state_checkpoints` 表、`branches`、`branch_options` 或 `runs` 表；`context_checkpoints` 由压缩阶段按 Entry 锚点引入。**MVP 状态功能**采用每条 Entry 冗余完整快照，`state_snapshot_json` 结构为 `{"world":{...},"user":{...}}`，不以只存 Patch + 重放作为正常读取来源。AI 帮答行动项只是用户输入候选，不持久化为分支。世界卡中的资源引用可以保留，但资源文件管理不在本表设计范围。
+首期**不设计** `world_assets`、`entry_attachments`、`models`、`memories`、独立 `state_checkpoints` 表、`branches`、`branch_options` 或 `runs` 表；`context_checkpoints` 由压缩阶段按 Entry 锚点引入。**MVP 状态功能**采用每条 Entry 冗余完整快照，`state_snapshot_json` 结构直接对应强类型 `data.state.modules` 的顶层键，无额外包装；不以只存 Patch + 重放作为正常读取来源。AI 帮答行动项只是用户输入候选，不持久化为分支。世界卡中的资源引用可以保留，但资源文件管理不在本表设计范围。
 
 ## 一致性、索引和分页
 
@@ -72,17 +72,19 @@
 - **编辑历史**：允许用户主动更新任意已保存且没有运行中写冲突的 User/AI Entry 的 `content`（以及 `updated_at`），**不自动生成、改写或删除任何后代 Entry**。编辑共同祖先影响多条路径，UI 需明确提示。依赖该消息旧内容的 Context/摘要/记忆/状态派生数据需失效或重建，路径无关数据保留。
 - **删除消息暂不支持**：不设计 `DELETE /sessions/:id/entries/:entry_id` 或自动剪枝/重连父子链的用户操作；子树删除、历史编辑审计等作为后续独立方案。
 
-## MVP 世界/用户状态快照与 MVU 风格结算
+## 强类型状态快照、Schema 版本与事务
 
-**字段和初始化：** `world` 字段来自世界卡 `data.state`，`user` 字段来自本局从世界卡选中的角色 `state`。每个字段仍为 `{initial, description, rule}`（仅 `initial:null` 可额外有 `type`），`openings[].initial_state` 只覆盖 `world` 的已声明初值，数组/对象按字段整值替换；同一世界卡角色在其它实例中的运行变化不影响本局初值或状态。根 Opening Entry 一次性保存 `{"world": {...}, "user": {...}}` 完整运行快照，不额外触发模型。两组均无字段时状态机制可关闭。
+Session 固化 `state_definition_json`（由发布世界卡 `data.state` 复制）、`state_schema_hash`。运行快照统一为直接嵌套 JSON，例如 `{"世界":{"时间":"夜晚"},"清月":{"灵力":80}}`，**没有** `world/user`、`global/entities` 包装，也没有字段描述或类型定义。世界角色状态统一由 `data.state.modules` 声明，`characters[].state` 仅能在显式旧数据迁移时转换。
 
-**字段：** `state_snapshot_json` 保存每条完整 `world/user` 状态，`state_status` 对开局/AI 已结算为 `settled`、User 继承为 `inherited`，状态更新解析失败为 `failed`、历史被编辑后的依赖为 `stale`。正常生成期间没有持久化 AI Entry，因而**不需要持久化 `pending` AI 快照**。无变化也冗余保存，缺失更新标签要记录 `missing_update_block` 提示；错误时可暂存继承值但不能当作有效结算。状态相关的正文修订版本、父状态修订版本、状态定义指纹和明确用户确认操作应能验证，精确物理列名随迁移实现冻结。
+**创建/Opening**：从明确类型树递归生成默认值，Opening 部分对象覆盖已声明固定叶子；record/array/json 叶子整值替换。使用 Zod 校验初值与最终完整快照后，根 Opening Entry 冗余保存完整快照和 Schema hash，不执行额外模型更新。
 
-**单轮更新：** User Entry 继承其父 Entry 完整状态；AI **在同一模型回复**中输出叙事和 `<UpdateVariable>`，服务端存原文、把块从 `content` 与后续 Context 中移除，白名单解析 `_.set/add/insert/delete/move`，从其父 User 快照整批原子执行，失败不部分落盘。`set` 替换已定义字段的同类型值，`add` 仅数值，`insert/delete/move` 仅作用于数组或对象的具体成员；**不可删除顶层状态字段**，也不能由 Agent 改变 Schema。精确操作语义参见[世界卡](../design/world-card.md)。不执行用户世界卡里的任意脚本。
+**User/AI**：User 直接继承有效父快照并标记 `inherited`；AI 生成采用 Provider 可用模式（已验证 `submit_turn({narrative,changes})` 工具，或正文末尾 `<StateUpdate>{"changes":[...]}</StateUpdate>`），统一收敛为 `ChangeSet`。六种受限操作为 `set/adjust/upsert/set_record_field/remove/append`，从本轮激活且明确允许的目标中生成路径/参数约束，绝不执行 MVU 命令或模型提供的任意 JS。每个操作的目标、类型、范围、记录键必须校验，整组应用后再校验完整结果；任何失败拒绝部分更新。
 
-**幂等、分叉与失效：** 更新按 Entry ID、消息正文版本、父状态版本识别，不重复对同一结果执行 `add/insert`。分叉子 Entry 直接复制其**父 AI Entry 的状态**，不读取其他世界线的最新值。AI 末尾重生成或续写须以同一父快照重新结算（不能在旧 AI 快照上叠加）。历史消息正文被用户编辑后，保留全部后代消息和已有历史快照用于查看，但该消息及相关后代快照标记 `stale`，之后的生成不能把它当作有效状态；修复或重算状态是独立的后续操作，**不自动重生成叙事文本**。
+**状态值**：`state_status` 区分 `success`（含明确空 changes）、`inherited`、`missing`（本该返回但缺失）、`invalid`（解析/校验失败）、`stale`（历史修订失效）；不把 missing/invalid 当作无变化。状态失败可以保留 AI 清洗正文与父快照供诊断，但不能当作**有效已结算状态**继续生成，除非用户显式修复、重新生成或确认继承并留下决定记录。没有启用状态的 Entry 可令相关字段为空。
 
-**世界卡同步：** 实例手动同步新发布的世界卡仍只修改 `world_snapshot_json` 与 `source_world_version`，不重置 Opening、不改写任一 Entry 的快照。状态字段新增、删除、重命名、类型改变可能导致旧快照不兼容；同步时需明确提示并阻止不兼容的状态规则直接生效，直至制定显式迁移方案。不凭世界卡版本号直接推断状态一定兼容。
+**写入事务**：模型请求期间不持有长事务；完成后以冻结的父 Entry、父状态修订、Schema hash、预期活动叶子和 generation_id 做乐观并发/幂等检查，一次事务提交 AI Entry 的 `content`、`raw_content`、`state_changes_json`、`state_snapshot_json`、`state_schema_hash`、`state_status`、`state_revision`、`parent_state_revision`，再更新活动叶子。服务端是类型约束唯一最终裁判；不依赖 Provider strict 保证语义正确。原始输出和工具参数可能包含私人叙事，调试读取须受限。
+
+**历史与迁移**：每条已提交 Entry 都可获取完整逻辑快照，无更新也复制；物理存储可压缩/去重，不以重放所有历史 changes 作为日常读取方式。分叉独立继承正确父快照、重生成不二次 `adjust`；编辑历史影响自身/后代 `stale`。世界卡同步仍不能无声覆盖原 Session 的 Schema 定义或重写旧快照；兼容变更也须明确检查，类型/路径不兼容必须用户确认迁移并备份。迁移旧世界卡 `world/user`、角色状态及旧 MVU/JSON Patch 更新时提供 dry-run 和失败回滚，不宣称自动兼容。
 
 ## MVP 查询与 API 草案
 
@@ -191,7 +193,7 @@ Content-Type: application/json
 
 ## 同步事务与历史压缩数据
 
-- 世界卡同步使用一次短事务：将已发布 `worlds.published_json`、`worlds.version` 分别复制为实例 `sessions.world_snapshot_json`、`sessions.source_world_version`，可更新 `updated_at`；禁止使用未发布草稿或触碰 Entry 树、分叉关系、已有状态快照或已选交互叶子。若启用了 `data.state`，同步前必须检查新旧状态定义的兼容性，不兼容时拒绝隐式启用并提示显式迁移。
+- 世界卡同步使用一次短事务：将已发布 `worlds.published_json`、`worlds.version` 分别复制为实例 `sessions.world_snapshot_json`、`sessions.source_world_version`，可更新 `updated_at`；禁止使用未发布草稿或触碰 Entry 树、分叉关系、已有状态快照或已选交互叶子。`sessions.state_definition_json/state_schema_hash` 不随这次普通内容同步自动改变；若要启用新 `data.state`，必须单独兼容验证并显式迁移或创建新 Session，不可让世界卡 JSON 改变既有 Entry 快照的解释。
 - `context_checkpoints` 在历史压缩阶段引入，最小持久化字段包括 `id`、`session_id`、`anchor_entry_id`、摘要文本、用于有效性检查的世界快照/Context 指纹及时间。具体 DDL 等待 Pi 接入与压缩可行性验证。
 - 检查点仅对**锚点在当前叶子祖先链**上的路径有效。编辑历史节点 X 后，对覆盖 X 内容的检查点（锚点为 X 或其后代）标记失效或重新计算；严格位于 X 之前的检查点仍可有效。原始消息保留可分页；未来记忆与状态遵循类似的祖先隔离规则。
 
@@ -207,4 +209,4 @@ Content-Type: application/json
 - 打开实例仅从活动叶子取最近一页，向上游标仅沿父链，`before` 须属于当前活动叶子；没有向下历史分页或任意 Entry 窗口。1000+ 条单世界线只加载必要消息页，旧叶子游标切换后立即失效。
 - 全局世界线仅返回 Root/Fork/Branch Start/Leaf 及带 `hidden_count` 的边，不全量返回正文；叶子高亮仅保留前端 `selected_leaf_id`。用户确认进入后校验真实叶子与预期活动叶子，再更新持久化 `active_leaf_entry_id`、清空聊天列表并加载最新一页。
 - 取消/失败恢复（含失败 User 叶子）、服务重启、不同叶子的 Context 压缩可见性；仅末尾 AI 可重生成/续写，编辑历史不自动生成后代且派生 Context/状态失效；消息删除接口不存在，迁移回滚后数据一致。
-- 状态功能验证：不同 Opening 的初始值整字段覆盖；User 继承、AI 结算、无变化仍完整快照；`set/add/insert/delete/move` 合法性及不可删除顶层字段；同一 AI 消息重算幂等；分支间状态隔离；历史编辑后 `stale`；不兼容世界卡同步拒绝无声迁移。
+- 状态功能验证：强类型初值、Opening 固定对象部分覆盖与动态集合整值覆盖；User 继承、AI 结算、明确空 ChangeSet 仍完整快照；`set/adjust/upsert/set_record_field/remove/append` 类型合法性、整组失败回滚、禁止更改固定 Schema、generation_id 幂等；分支状态隔离、历史编辑 `stale`、不兼容世界卡同步拒绝无声迁移。

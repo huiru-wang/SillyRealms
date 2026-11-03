@@ -1,6 +1,6 @@
 # 会话：MVP 世界线选择、单向历史分页与 Entry 树
 
-> 状态：2026-11-02 MVP 目标领域设计（尚未实现）。返回[文档索引](../README.md)；SQLite/API 见[存储](../technical/storage.md)，模型输入见[Context](context.md)。
+> 状态：2026-11-03 MVP 目标领域设计（尚未实现），状态协议已同步为强类型。返回[文档索引](../README.md)；SQLite/API 见[存储](../technical/storage.md)，模型输入见[Context](context.md)。
 
 ## 核心模型与边界
 
@@ -14,7 +14,7 @@
 
 ## 创建和进入世界实例
 
-1. 用户从世界卡库打开实例列表，可创建或进入一局 Session；新实例保存发布世界卡的 JSON 快照、预设选择、Opening，以及**仅从世界卡 `characters[]` 与 Opening 共同许可名单中明确选中的 `user` 角色 ID 和完整角色快照**。`player_selectable` 决定世界卡总体允许的扮演角色，Opening 的 `player_characters` 只能收窄；二者不允许外部角色，规则见[世界卡](world-card.md)。Opening 正文作为根 Entry；启用状态时以世界 `data.state` 默认值叠加 Opening 的 `initial_state` 得到 `world`，以选中世界卡角色的 `state` 初值得到 `user`，保存两组完整初始状态快照，仅初始化一次。
+1. 用户从世界卡库打开实例列表，可创建或进入一局 Session；新实例保存发布世界卡的 JSON 快照、预设选择、Opening，以及**仅从世界卡 `characters[]` 与 Opening 共同许可名单中明确选中的 `user` 角色 ID 和完整角色快照**。`player_selectable` 决定世界卡总体允许的扮演角色，Opening 的 `player_characters` 只能收窄；二者不允许外部角色，规则见[世界卡](world-card.md)。Opening 正文作为根 Entry；启用状态时从世界卡统一 `data.state.modules` 强类型树生成默认完整快照，按 Opening 的部分 `initial_state` 覆盖并校验，保存单份**无 world/user 包装**的完整初始快照，同时冻结 Schema/hash。角色是否被选为 `user` 不会改变状态根映射，旧 `characters[].state` 必须显式迁移，仅初始化一次。
 2. 创建完成，`active_leaf_entry_id` 指向开局根 Entry；之后每次成功普通发送、AI 回复或显式分叉，指向最新有效真实叶子。失败 AI 生成可能留下 User 叶子，UI 提供恢复/重试，不自动改选其它路线。
 3. **打开已有实例**：服务端读取已保存的 `active_leaf_entry_id` 并校验它属于本实例且仍是真实叶子；直接读取其最近约 30 条祖先消息，前端默认滚动到底部。没有有效叶子时给出明确的恢复/修复提示，**不选择全实例 `seq` 最新节点代替**。
 4. 世界实例仍共享一棵树：不同世界实例完全隔离；同实例的多个世界线共享相同祖先。历史编辑及世界卡手动同步不会重置当前叶子。
@@ -139,17 +139,17 @@ flowchart LR
 
 - `entries.status`：MVP 所有**已落盘**的 User 和 AI Entry 均为 `completed`；创建中的 AI 内容和 `generating` 仅在内存/SSE 中，不是独立 Entry 状态。`failed` / `cancelled` 描述**本次生成尝试**，并非一条已保存的 AI 消息。服务重启后若活动叶子为 User，UI 一律显示「尚未收到 AI 回复，可重试」，不需要第二份 Run 历史。
 - **发送**：服务端检查活动叶子预期值、幂等请求 ID 和无并发生成，在一次短事务里创建 User Entry、按父快照复制状态（若启用）、更新 `active_leaf_entry_id` 为这个 User；之后启动 Pi 流式，不持有事务。
-- **成功**：只创建一条 AI Entry，`parent_entry_id` 指向这个 User，正文已经从原始输出中剥离 `<UpdateVariable>`，并一次性保存原文/状态快照及 AI `completed` 记录；同事务将活动叶子改为 AI。即使状态解析失败，**AI 叙事正文可保存**，但其 `state_status=failed` 且下次生成要明确恢复/确认，不能假装状态结算成功。
+- **成功**：只创建一条 AI Entry，`parent_entry_id` 指向这个 User，正文已与 Tool 参数或内联 `<StateUpdate>` 分离，并一次性保存原文、ChangeSet、强类型校验结果及完整状态快照与 AI `completed` 记录；同事务将活动叶子改为 AI。状态解析/校验失败时**允许保存 AI 叙事正文作诊断**，但必须标记 `state_status=invalid` 或 `missing`，不能作为已结算状态；下次生成要明确重试/修复/确认继承，并记录决定。
 - **取消/失败/刷新/崩溃**：没有完成就不创建 AI Entry，模型已流出的部分文本只在本次页面临时展示；保留已经写入的 User Entry 及其完整继承状态，活动叶子保持 User；用户重试**同一条 User**，不额外新增 User、不占用第二条分叉，重复请求通过幂等 ID/当前叶子校验防止重入。初版不持久化中断时的部分 AI 文本。
 - **分叉**：显式从历史 User 的父 AI 建新 User 分支，随后完全复用上述生成链；取消/失败时新 User 仍是有效待回复叶子。`User` 最多存在**一个**有效 AI 子节点；不为重试创造第二条 AI 子节点。若操作指向错误/过期叶子或生成正在进行，返回明确冲突。
 - **末尾 AI 重生成/续写**：目前不扩展对应 Prompt 功能；后续实现时仅修改当前无后代 AI 叶子的正文并重新结算其状态，不使用新增 Entry 伪装生成失败重试。
 
-MVP 前端只需要 `idle / generating / error`（以及可选 `cancelled` 提示）的**临时请求 UI 状态**。这与 `state_status`（状态插件的 `inherited / settled / failed / stale`）是两套不同概念，不能把状态解析失败当作模型生成失败。
+MVP 前端只需要 `idle / generating / error`（以及可选 `cancelled` 提示）的**临时请求 UI 状态**。这与 `state_status`（状态插件的 `inherited / success / missing / invalid / stale`）是两套不同概念，不能把状态解析失败当作模型生成失败。
 
 ## 与 Context、状态和 Agent 的边界
 
 - `active_leaf_entry_id` 是创建 User 前选择真实世界线的**唯一持久化入口**；User 确认落盘后，本轮 Context 固定该 `user_entry_id` 并读取**它的父 Entry 祖先链**。`chatHistory` 只包含本轮 User 之前的历史，`userInput` 保存原文并把世界书锚点合并成一次有效 Query；扫描和状态读取均绑定同一路径，不能读取兄弟分支或 H5 最近 30 条。
-- 状态启用时，Opening 根 Entry 写世界/用户身份的完整初值；User 继承父状态，AI **一次性输出叙事及末尾 `<UpdateVariable>`**，引擎提取并移除更新块、校验结算后保存完整快照，无变化也保存。状态独立于聊天正文在状态抽屉/侧栏显示；切线后的状态取该叶子路径，不与兄弟分支或世界卡原始角色定义的状态混合。编辑历史导致后代状态失效，详见[状态](state.md)。
+- 状态启用时，Opening 根 Entry 写统一强类型状态树的完整初值；User 继承父快照。AI 每轮提交叙事和 ChangeSet（已验证 Provider 优先 `submit_turn`，否则内联 `<StateUpdate>`）；引擎按类型受限语义操作原子结算并保存完整快照，无变化也保存。状态独立于聊天正文在状态抽屉/侧栏显示；切线后的状态取该叶子路径，不与兄弟分支或世界卡原始角色定义的状态混合。编辑历史导致后代状态失效，详见[状态](state.md)。
 - 模型生成过程中必须以本次 `user_entry_id` 和其父节点固定执行上下文；Pi `session.prompt(effectiveUserQuery)` 的有效 Query 可含 `userInput` 锚点，但数据库 User Entry 始终只保留原文。Pi Session 只是临时执行态，SQLite 是唯一权威。失败、取消、重试及迟到响应不能误写另一叶子或为原 User 追加第二个有效 AI 子节点。
 - 全局拓扑是派生视图：它的摘要/缓存不能被用作模型 Context，也不改变 Entry 的实际父子关系。
 

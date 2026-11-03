@@ -58,5 +58,6 @@
     "max_output_tokens": 4096,
     "safety_margin_tokens": 1024
   },
-  "scan_depth": 4
+  "scan_depth": 4,
+  "state_output_mode": "auto"
 }

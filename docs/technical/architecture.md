@@ -1,6 +1,6 @@
 # 运行架构：本地服务、Context 与 Pi 适配
 
-> 状态：技术方案草案，2026-11-02；**应用尚未实现**，Pi 1.4.0 离线与本地模拟服务验证已记录，SQLite 端到端集成未完成。返回[文档索引](../README.md)，产品范围见[PRODUCT](../PRODUCT.md)、[Pi 可行性报告](../../experiments/pi-sdk-feasibility/REPORT.md)。
+> 状态：技术方案草案，2026-11-03；强类型状态架构已同步；**应用尚未实现**，Pi 1.4.0 离线与本地模拟服务验证已记录，SQLite 端到端集成未完成。返回[文档索引](../README.md)，产品范围见[PRODUCT](../PRODUCT.md)、[Pi 可行性报告](../../experiments/pi-sdk-feasibility/REPORT.md)。
 
 ## 架构边界
 
@@ -10,7 +10,7 @@
 
 ## MVP 目标与技术方向
 
-MVP 支持：加载和管理世界卡、按 `player_selectable` 和 Opening 限制明确选择世界卡 `user` 角色、提供不可删除但可编辑的七节点默认 Prompt 预设、自定义预设与顺序 Token 预算、配置 API 连接、按预设节点顺序构建世界内容与历史并聊天；**包含基础世界分叉与压缩世界线总览、单轮 MVU 风格状态结算与独立状态面板**，切换必须明确选择真实叶子。打开实例仅从 `active_leaf_entry_id` 读取最近一页，聊天只向上加载祖先历史，适配移动端。**Entry 从首期开始采用父子树结构**；不提供任意消息定位、双向分页、全量树消息画布。长期记忆、复杂状态跟踪、资源管理和云同步均非此部分的已实现能力。目标设计见[会话](../design/session.md)。
+MVP 支持：加载和管理世界卡、按 `player_selectable` 和 Opening 限制明确选择世界卡 `user` 角色、提供不可删除但可编辑的七节点默认 Prompt 预设、自定义预设与顺序 Token 预算、配置 API 连接、按预设节点顺序构建世界内容与历史并聊天；**包含基础世界分叉与压缩世界线总览、单轮强类型状态 ChangeSet 结算与独立状态面板**，切换必须明确选择真实叶子。打开实例仅从 `active_leaf_entry_id` 读取最近一页，聊天只向上加载祖先历史，适配移动端。**Entry 从首期开始采用父子树结构**；不提供任意消息定位、双向分页、全量树消息画布。长期记忆、复杂状态跟踪、资源管理和云同步均非此部分的已实现能力。目标设计见[会话](../design/session.md)。
 
 - 前端：React + Vite + TypeScript，移动端优先的 H5。
 - 本地服务：Hono + TypeScript，负责 API、Context、Provider 和数据读写；正式运行提供构建后的静态页面。
@@ -32,13 +32,17 @@ flowchart LR
 
 SQLite 是应用持久化数据的唯一权威来源；Pi 的运行时对象或缓存不能成为另一份独立事实来源。手机访问电脑上的本地服务时，电脑需要运行且网络可达。
 
-## MVP 状态引擎（目标设计）
+## MVP 强类型状态引擎（目标设计）
 
-MVP 使用**一个叙事模型请求**：按预设 `worldState` 插槽注入本路径 `world/user` 状态字段和值，AI 一次性输出叙事正文 + 尾部 `<UpdateVariable>`，服务端流式过滤该标签避免露出给聊天 UI，完成后白名单解析 `set/add/insert/delete/move` 并原子结算，单条 Entry 冗余保存完整状态。世界卡/角色定义状态初值和自然语言规则，Opening 只覆盖世界初值；实际更新不写回世界卡角色定义。状态查看由独立抽屉/桌面侧栏渲染，禁止执行卡片 JS/HTML。详情见[状态协议](../design/state.md)、[世界卡](../design/world-card.md)与[存储](storage.md)。这是 **MVP 目标而非已实现功能**。
+世界卡 `data.state` 是显式类型树（string/number/integer/boolean/enum/object/record/array/json），通过受限定义 AST 编译 Zod 校验器与 Provider 的 JSON Schema；角色/世界状态都在统一顶层 Module 命名空间中，不再拼接 `world/user` 或运行旧 MVU/JSON Patch 更新命令。作者只配置字段名称、类型、初值、描述及少量高级约束，复杂 Record 通过稳定 key 更新。
+
+`worldState` 仅注入本轮冻结父快照中已激活 Module 的当前值、路径、类型和描述；Context 处理只读状态插值和世界书 `when`，StateEngine 与 ProviderAdapter 生成当轮可写目标/动态 Tool Schema。候选优先通道为 `submit_turn({narrative,changes})`，要求真实模型验证 strict Tool 与长篇流式表现；无已验证能力的 Provider 采用叙事正文 + 末尾 `<StateUpdate>{"changes":[...]}</StateUpdate>`。二者归一为受类型约束的 ChangeSet（`set/adjust/upsert/set_record_field/remove/append`），同一轮只能选择一个，完成后校验整组操作和完整结果，并与 AI Entry 在短事务中提交。模型/工具参数不作为叙事历史回注，状态面板由应用独立渲染。
+
+每条 Entry 仍冗余完整状态逻辑快照（无定义包装），Session 冻结状态 Schema/hash；分支按父 Entry 独立继承。状态失败要显式诊断/修复，不默认为无变化。此设计**尚未实现**，Provider 的动态 anyOf、参数深度、Tool stream、Pi SDK 适配、实际 Token 和正确率均须先做 PoC；详见[状态](../design/state.md)与[存储](storage.md)。
 
 ## Pi 最小接入的前置验证
 
-目标为 `@earendil-works/pi-coding-agent`，只使用**模型执行能力与受控 Context 适配**，不开启 coding tools、自动发现的技能与扩展。独立实验已实测工具/资源禁用、内存 Session、流式及取消，但仍需工程级 SQLite 接入与真实 Provider 验证，详见[报告](../../experiments/pi-sdk-feasibility/REPORT.md)。
+目标为 `@earendil-works/pi-coding-agent`，只使用**模型执行能力与受控 Context 适配**，不开启 coding tools、自动发现的技能与扩展；新定义的 `submit_turn` 是 SillyRealms 专用的**可选状态提交工具**，须独立验证 SDK/Provider 是否可注册并在单次生成中传回，不能与 coding tools 混为一谈。独立实验已实测工具/资源禁用、内存 Session、流式及取消，但仍需工程级 SQLite 接入与真实 Provider 验证，详见[报告](../../experiments/pi-sdk-feasibility/REPORT.md)。
 
 [Pi Coding Agent SDK](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md) 中，SessionManager 管理会话树与有效上下文。不能假定简单修改内存消息就改变最终请求，也不能假定内存 SessionManager 支持从 SQLite 任意无损恢复。
 
@@ -53,9 +57,9 @@ MVP 使用**一个叙事模型请求**：按预设 `worldState` 插槽注入本�
 | 世界卡 | 加载、创建、编辑、发布、搜索与实例快照 |
 | 预设 | 不可删除但可编辑的基础默认七节点预设及其它预设；基础节点各一次、排序保存在完整节点数组中，引用 API 连接 |
 | Provider | 管理 API 连接、凭据、选中的模型及模型请求 |
-| Context | 从本轮 User 的真实父链读取历史，扫描世界书并按相对锚点分组，将命中片段与每个基础节点合并成一条继承角色的 Prompt；按顺序预算裁剪，`chatHistory` 排除本次 User，`userInput` 生成唯一有效 Query |
+| Context | 从本轮 User 的真实父链读取历史与冻结强类型状态，扫描世界书/状态 Module、运行只读模板并按相对锚点分组；按顺序预算裁剪（含动态 Tool Schema），`chatHistory` 排除本次 User，`userInput` 生成唯一有效 Query |
 | 会话 | 保存真实父子 Entry 树及唯一持久化活动叶子；按 Opening 复制用户身份快照；只持久化完成的 User/AI Entry、向上祖先分页；支持历史 User 分叉与压缩拓扑 |
-| Pi 适配 | 用固定 Pi 版本建立临时执行态，`session.prompt(effectiveUserQuery)` 发起本轮生成，处理 SSE/取消与终态 |
+| Pi / Provider 适配 | 用固定 Pi 版本建立临时执行态，`session.prompt(effectiveUserQuery)` 发起本轮生成；经模型能力验证选择 `submit_turn` 或内联 JSON ChangeSet，处理 SSE/取消与终态；Tool 参数流式仍待 PoC |
 | 存储 | 统一处理 SQLite 读写、事务和迁移 |
 
 ```mermaid
@@ -77,7 +81,7 @@ sequenceDiagram
 
 每次生成固定当前预设和连接快照；生成过程中编辑只影响下一轮。`builtin/default` 是持久化的可编辑默认预设（不可删除），可直接绑定 API 连接；出厂模板只用于显式恢复。API 密钥不写入消息、预设或世界卡。Context 记录命中、片段来源、同节点合并和预算结果。
 
-消息先以 `completed` 保存 User 并将活动叶子指向它，再开始模型请求。AI `generating`/出错/取消仅是执行态，不提前持久化 AI 占位 Entry；失败或取消时**复用同一 User 叶子重试**，不会重复创建 User。成功完成后清理 `<UpdateVariable>` 并写入 AI 叙事、原文及状态快照，再将活动叶子指向 AI；状态解析失败与模型生成失败分开呈现。外部模型请求期间不持有 SQLite 写事务。
+消息先以 `completed` 保存 User 并将活动叶子指向它，再开始模型请求。AI `generating`/出错/取消仅是执行态，不提前持久化 AI 占位 Entry；失败或取消时**复用同一 User 叶子重试**，不会重复创建 User。成功完成后拆分工具参数或过滤内联 `<StateUpdate>`，对 ChangeSet 强类型校验并写入 AI 叙事、原文、变化集及完整状态快照，再将活动叶子指向 AI；状态解析失败与模型生成失败分开呈现。外部模型请求期间不持有 SQLite 写事务。
 
 ## API 与移动端
 
@@ -104,6 +108,6 @@ H5 支持软键盘、安全区和手机窄屏；分页展示不要求加载完�
 4. 在目标 H5 环境测试移动端键盘、安全区、最新 30 条首屏、只向上游标、虚拟列表视觉锚点、世界线压缩预览与叶子切换，并覆盖 Wi-Fi 访问及服务端访问控制。
 5. 测量约 1000 轮长篇对话的最近页加载、祖先查询、压缩拓扑构建、Prompt 预算与内存占用；已实测的 Pi 内存投影不等于 SQLite 和 H5 生产性能阈值。
 6. 验证默认预设可编辑但不可删除；所有预设七个基础节点完整不重复，`chatHistory` 在 `userInput` 之前且两者启用；预算按顺序舍弃可选片段，世界书不能配置独立角色，旧注入字段不能生效。
-7. 验证世界卡和 Opening 的角色白名单、Session 角色快照及状态隔离、`{{user}}`、单轮 `<UpdateVariable>` 流式隐藏与安全状态结算、没有 AI 占位消息的失败/取消重试；全部留在后续 Demo/工程验收阶段。
+7. 验证世界卡和 Opening 的角色白名单、Session 角色快照及强类型状态隔离、`{{user}}`/`{{state:/...}}`、Schema/Zod 编译、受限 ChangeSet、内联状态块流式隐藏、Tool Call/Provider 差异及没有 AI 占位消息的失败/取消重试；全部留在后续 Demo/工程验收阶段.
 
 **待定：** SQLite 驱动、认证/密钥安全存储、工具调用支持范围、云端部署、跨设备同步与原生 App 均不在本文宣称为已实现能力。

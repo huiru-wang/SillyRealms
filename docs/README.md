@@ -1,6 +1,6 @@
 # SillyRealms · 文档索引
 
-> 文档重组日期：2026-11-02。当前仍在产品与技术设计阶段；**设计不表示已实现**。
+> 文档重组日期：2026-11-03。当前仍在产品与技术设计阶段；**设计不表示已实现**。
 
 本目录按 **产品总纲 → 领域设计 → 技术实现 → 示例** 组织。同一规则只在其所属文档定义一次，其余文档引用，不复制并维护第二份。
 
@@ -15,9 +15,9 @@
 
 | 文档 | 唯一负责的领域 |
 | --- | --- |
-| [world-card.md](design/world-card.md) | 世界卡内容、单个世界书与受限锚点、角色加载、状态字段及 Opening 初值覆盖；世界书不可指定消息角色 |
+| [world-card.md](design/world-card.md) | 世界卡内容、单个世界书与受限锚点、角色加载、统一 `data.state` 强类型树及 Opening 部分覆盖；世界书不可指定消息角色 |
 | [session.md](design/session.md) | MVP 活动叶子入口、只向上祖先分页、压缩世界线拓扑、最简 Entry 生命周期、显式历史分叉及消息操作 |
-| [state.md](design/state.md) | MVU 风格 `<UpdateVariable>`、单轮更新、安全解析、完整状态快照与独立状态渲染 |
+| [state.md](design/state.md) | 强类型状态树与 Zod 校验、自动工具 Schema、受限 ChangeSet、状态模板读取、每 Entry 完整快照与独立展示 |
 | [context.md](design/context.md) | 按世界线历史扫描世界书、按七节点编排并合并锚点、宏、顺序预算与构建诊断 |
 | [configuration.md](design/configuration.md) | 可编辑且不可删除的基础默认预设、七个固定节点、世界书锚点角色继承、Token 预算及模型连接 |
 
@@ -30,7 +30,7 @@
 
 ## 示例 · `examples/`
 
-- [world-card.json](examples/world-card.json)：原生世界卡结构示例，单个世界书及无角色字段的相对锚点，含状态定义和不同 Opening 的初值覆盖。`spec_version` 是数据格式版本，`data.version` 是两段内容发布版本。
+- [world-card.json](examples/world-card.json)：原生世界卡结构示例，单个世界书及无角色字段的相对锚点，含 `schema_version + modules` 强类型状态定义和不同 Opening 的部分初值覆盖。`spec_version` 是数据格式版本，`data.version` 是两段内容发布版本。
 - [default-preset.json](examples/default-preset.json)：可编辑的基础默认预设七节点、userInput、角色、顺序和 Token 预算示例。
 
 ## 文档维护规则

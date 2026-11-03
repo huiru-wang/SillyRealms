@@ -1,261 +1,194 @@
-# 状态管理：定义、快照、引用与 JSON Patch
+# 状态管理：强类型状态树、语义变更与完整快照
 
-> 2026-11-03 目标设计，尚未实现。本文是新状态协议的设计基准；[世界卡](world-card.md)、[Context](context.md)、[配置](configuration.md)、[会话](session.md)和[存储](../technical/storage.md)中仍有旧 `world/user`、MVU 命令等约定，实施前必须同步，不能视作已兼容。旧的[状态管理草案](../state-management-module.md)仅供历史参考。
->
-> 参考 [MVU 教程](https://github.com/MagicalAstrogy/MagVarUpdate/blob/beta/doc/tutorial.md)的状态与描述、单轮输出思路；参考 [ST-Prompt-Template](https://github.com/zonde306/ST-Prompt-Template) 的变量插值和条件分支。后者使用 EJS 和 JavaScript，本文使用受限、无副作用的表达式，**不兼容或执行 EJS、JavaScript，也不提供 setvar**。
+> 2026-11-03 目标设计，**尚未实现**。本文为 SillyRealms 状态唯一权威规范，替代旧的基于 `initial` 推断类型、`world/user` 运行值、MVU `<UpdateVariable>` 和模型直接提交 RFC 6902 JSON Patch 的方案。背景决策与测试计划见工作区 `plan/realms-typed-state-redesign-design.md` / `-tasks.md`。其中动态工具 Schema、长叙事 Tool Call 流式及 Provider 兼容性仍须 PoC，不能标称已验证。
 
-## 1. 边界和基本原则
+## 1. 目标、取舍及术语
 
-- 状态定义是作者维护的树；加载条件只配置在根节点，每个状态叶子有初始值和描述。分组只组织路径，不是运行值包装。
-- 每条已提交消息保存一份完整的嵌套 JSON 状态快照，只有实际值；不放 `global`、`entities`、`values`、描述或加载配置。`全局` 不是保留虚拟节点，根字段直接用 `/时间` 访问。
-- 仅有已声明的叶子状态和分组；对象、数组叶子内部可以是自由 JSON，不自动生成独立的定义、描述或加载条件。无 `compute`、自动计算字段或状态联动；描述引用不会修改状态。
-- 更新使用 [RFC 6902 JSON Patch](https://www.rfc-editor.org/rfc/rfc6902)，路径使用 [RFC 6901 JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901)。读取、表达式、更新都指向同一快照路径。
-- 一轮生成采用一次模型请求：正文末尾附带 JSON Patch；也定义同语义的工具调用接口，具体生成配置二选一，不重复应用。状态栏由应用基于数据渲染，不执行卡片脚本。
-- 自然语言描述用于提示模型，不是程序级类型、边界、数值或剧情正确性保证。所有示例为目标协议，不声称已有实现。
+- **作者只负责业务含义**：使用可视化编辑器创建「名称、类型、初始值、描述」，可选设置数值上下限、枚举、可空和加载规则；作者不需要理解 Zod、Tool Schema、JSON Pointer 或更新操作。
+- **单一类型定义**：发布世界卡中的 `data.state` 是受限、可序列化的定义 AST；编译器从同一 AST 分别生成 Zod 校验器、用于 Provider 的 JSON Schema 与运行时工具目标。不要把运行时 Zod 代码、EJS、任意 JS 直接存入世界卡，不依赖实验性 `z.fromJSONSchema` 作为关键反向转换。
+- **Schema 约束的是数据形状**，`description` 约束剧情语义；类型正确不等于叙事、数值演变正确。严格拒绝违反显式类型/范围的状态值，不擅自把错误数字夹回范围。
+- **写入不是通用 JSON Patch**：模型通过类型受限的 ChangeSet 描述少量变化，服务端执行并验证；可在诊断层导出差异 Patch，但 **RFC 6902 六操作不是模型协议**。JSON Pointer 只用于统一寻址，访问值与更新均遵循该路径。
+- **全快照**：每一条已持久化 Entry 逻辑上对应一份完整运行状态 JSON，Snapshot 不含 `type`、`description`、`initial`、`load`、`global/entities/values` 包装。
+- 状态是可选插件。未定义状态的世界不必调用状态工具，也不注入状态协议。状态 UI 由应用渲染，不执行世界卡脚本。
 
-## 2. 状态定义
+## 2. 世界卡定义：显式类型树
 
-### 2.1 节点结构
+### 2.1 唯一数据结构
 
-`data.state` 是根节点名称到定义的映射。每个根节点用 `state` 保存自己的字段或嵌套分组定义，可选的 `load` 决定整棵根节点是否加载；根节点的 `state` 是定义包装，不进入运行快照。根节点名即快照顶层键，不另设 `kind` 或 `children`。
+`data.state = { "schema_version": 1, "modules": { "<rootName>": <objectNode> } }`。`modules` 的名字直接对应运行快照顶层键；根 Module 必须为 object，根上可配置可选 `load`（默认 always），不能为内部字段独立配置加载条件。根可代表世界、角色、地点、组织或任务，并不自动表示玩家身份。缺省 `data.state` 相当于无状态。
 
-- 根节点 `state` 必填；`load` 可选，省略时默认 `{"mode":"always"}`。除 `state`、`load` 外不接受其他根节点配置。
-- `state` 内包含 `initial` 键的对象是字段，`initial` 必填且可为任意合法 JSON 值；`description` 可选，默认为空字符串。字段定义只接受这两个属性，不接受 `load`。
-- 其他对象是分组，成员名映射到字段或分组，可任意嵌套或为空。每个分组下名称唯一，名称是非空字符串；分组下 `initial` 保留用于识别字段，不能作为子状态名称。字段自由 JSON 初值内部的 `initial` 不受此限制；其他名称包括 `description`、`load` 可以是分组内的子状态名。
-- 使用上述判别规则严格校验字段：`initial` 所在对象如带有除 `initial`、`description` 之外的键，或 `description` 不是字符串，均为非法定义，不猜测作者意图。若作者把 `initial` 当作子状态名且结构恰好符合字段定义，则语法上无法消歧，编辑器应禁止以该名称新增分组子节点。
-- 对象或数组字段内部是自由 JSON，不自动定义独立子字段；需要对内部成员单独描述时将其定义为嵌套分组与字段。同一路径不能同时是字段和分组。字段更新不限制类型，`compute` 不存在。
-- 名称允许中文、点号、斜杠和波浪号，引用时按 JSON Pointer 编码；加载条件只控制整个根节点，不允许子节点另设 `load`。
+支持的节点：
+| `type` | 数据含义 | 定义属性 | 更新约束 |
+| --- | --- | --- | --- |
+| `string` | 字符串 | `initial`, `description?`, `nullable?` | `set` |
+| `number` / `integer` | 有限数 / 整数 | `initial`, `min?`, `max?`, `description?`, `nullable?` | `set/adjust`；nullable 时 adjust 仅在现值为数字时允许 |
+| `boolean` | 布尔 | `initial`, `description?`, `nullable?` | `set` |
+| `enum` | 枚举字符串 | `values` 至少一个、无重复；`initial`, `description?`, `nullable?` | `set` |
+| `object` | 固定字段结构 | `properties` 字段映射、`description?` | 递归更新已声明字段；不增删固定子字段 |
+| `record` | 动态键映射 | `value` 子节点 Schema、`initial` 对象、`description?` | `upsert/remove/set_record_field` |
+| `array` | 有序同类列表 | `items` 子节点 Schema、`initial` 数组、`description?` | `append`；确需整体重写可按受限 `set` 校验 |
+| `json` | 自由 JSON 逃生口 | `initial` 合法 JSON、`description?` | 仅整体 `set`，不承诺内部类型 |
 
-完整示例覆盖 JSON 的各种值、多层嵌套、空分组以及根节点加载：
+- 所有**静态状态叶子**都必须有 `initial`；`object.properties` 递归生成初始对象，不要求作者重复提交整份初值。处于 `record.value` 或 `array.items` 的子节点用于验证新元素，其静态叶子初值**可以省略**；`upsert/append` 必须提供符合 Schema 的完整 item，不暗中补默认字段。
+- `nullable` 允许 `null`，不等于字段可以缺席。MVP 不支持 optional、union、判别联合、正则或任意用户自定义函数。所有固定 object 字段必需且禁止额外键；`record` 可以动态增加或删除键。
+- 数字只接受有限数字；整数、枚举、min/max 作为**硬约束**。`description` 是唯一自然语言变化原则，不另设易混淆的 `rule`；缺少描述可为空串，不代表程序保证剧情合理。
+- `object`、`record`、`array` 可以嵌套，嵌套深度、字段个数、JSON 字节和 Tool Schema 字节有实现侧上限，发布时报错而非截断。标识符为非空字符串，允许中文和点号；指针路径中 `~` 转义 `~0`、`/` 转义 `~1`。
+- `json` 刻意弱类型。编辑器显著提示该字段不享有内部强类型更新能力，不应为方便而把整棵复杂状态全部放进自由 JSON。
+
+### 2.2 完整示例
 
 ```json
 {
-  "时间": {
-    "load": {"mode": "always"},
-    "state": {"initial": "白天", "description": "故事当前时间，剧情明确推进时更新。"}
-  },
-  "当前地点": {
-    "state": {"initial": "", "description": "当前场景的位置。"}
-  },
-  "清月": {
-    "load": {"mode": "on_mention", "keywords": ["清月", "仙子"], "keyword_logic": "any", "exclude_keywords": ["幻觉"]},
-    "state": {
-      "心情": {"initial": "平静", "description": "此刻是{{/时间}}。根据经历和性格判断心情，不受其他状态自动改写。"},
-      "灵力": {"initial": 100, "description": "实际剩余灵力，施法消耗，休息可能恢复。"},
-      "负伤": {"initial": false, "description": "角色当前是否受伤。"},
-      "伤势": {"initial": null, "description": "未受伤时为空；出现伤势后记录其情况。"},
-      "随身物品": {"initial": ["储物袋", "灵石"], "description": "实际持有的物品。"},
-      "秘密": {"initial": {"身份": "未知", "线索": []}, "description": "已知秘密及线索；内部结构不单独声明。"},
-      "衣服": {
-        "袖口": {
-          "材质": {"initial": "丝绸", "description": "袖口当前材质。"}
+  "schema_version": 1,
+  "modules": {
+    "世界": {
+      "type": "object",
+      "load": {"mode": "always"},
+      "properties": {
+        "时间": {"type": "enum", "values": ["白天", "夜晚"], "initial": "白天", "description": "剧情实际推进时间时更新"}
+      }
+    },
+    "清月": {
+      "type": "object",
+      "load": {"mode": "on_mention", "keywords": ["清月", "仙子"]},
+      "properties": {
+        "灵力": {"type": "integer", "min": 0, "max": 100, "initial": 100, "description": "施法消耗，休息可能恢复"},
+        "心情": {"type": "string", "initial": "平静", "description": "按已发生的剧情判断"},
+        "身体": {"type": "object", "properties": {
+          "伤势": {"type": "string", "nullable": true, "initial": null, "description": "无伤时为 null"}
+        }},
+        "背包": {
+          "type": "record",
+          "description": "键是稳定物品 ID",
+          "value": {"type": "object", "properties": {
+            "数量": {"type": "integer", "min": 0, "description": "持有数量"},
+            "说明": {"type": "string", "description": "来源及状态"}
+          }},
+          "initial": {"灵石": {"数量": 3, "说明": "随身携带"}}
         }
       }
     }
-  },
-  "玄风": {"state": {}}
-}
-```
-
-`initial` 的 JSON 数字必须有限；不接受 `NaN`、`Infinity`、未定义值或重复对象键。定义属于世界卡/会话的定义快照，运行值不回写世界卡。
-
-### 2.2 初始化与开局
-
-创建会话时逐个读取根节点的 `state` 并递归遍历，将每个字段的 `initial` 深拷贝至同名根节点及相应嵌套路径；`state` 和 `load` 不进入快照，空分组产生 `{}`。Opening 可提供与运行快照同形的 `initial_state` 差异，只能覆盖已定义叶子的完整值；分组递归匹配，对象/数组叶子整体替换，不深合并。未覆盖叶子保留默认值。覆盖不推断或限制类型，但必须是合法 JSON；未知路径、把分组当叶子覆盖或非法 JSON 均报错并阻止初始化。根 Opening Entry 保存完整初始化快照，不对开局文本再结算。
-
-角色可作为根分组（例如 `清月`）；所有角色、地点和世界字段都使用同一棵树。若现有 `character.state` 需导入，创建会话时须明确映射到实际角色根路径，检查重名；本设计不隐式创建 `user` 或将角色状态合并到 `world`。映射与冲突解决需在世界卡同步时明确规定。
-
-## 3. 消息状态快照与生命周期
-
-每条 Entry 逻辑上保存一份完整快照，例如：
-
-```json
-{
-  "时间": "夜晚",
-  "当前地点": "",
-  "清月": {
-    "心情": "放松",
-    "灵力": 80,
-    "随身物品": ["储物袋", "灵石"]
-  },
-  "玄风": {},
-  "龙洞": {"大门": "打开", "温度": "100"}
-}
-```
-
-上述字段必须事先有对应定义；示例为另一套定义生成的快照，故不要求与第 2 节字段完全一致。字符串 `"100"` 和数字 `100` 不同。运行快照不包含描述、load、状态变更原因或实体生命周期元数据。
-
-- User Entry 原样继承父 Entry 的完整有效快照；用户声称采取行动不等于行动已在剧情中发生。
-- AI Entry 基于其父 User 快照应用本轮 Patch 后保存完整快照；`[]` 也保存完整副本。物理层可压缩或去重，但按任一 Entry 恢复必须得到完整逻辑快照。
-- 分支基于各自父 Entry；重新生成从同一个正确父版本重新计算，绝不重复应用旧操作。快照与消息正文修订及父快照修订绑定。
-- 编辑历史正文后，受影响的自身和后代状态标记 `stale`，保留旧数据供诊断，不作为有效状态。状态结算失败为 `failed`；不得当作无变化。继续生成前必须显式修复或确认采用继承状态，并记录决定。
-- 动态创建、归档、重命名状态定义不由普通 Patch 隐式完成；首期由作者显式管理，具体定义同步和历史迁移单独设计。无定义的运行字段不能凭模型输出创建。定义不兼容变更不得静默重写历史快照。
-
-## 4. JSON Pointer：读取与路径
-
-根指针为 `""`；非根路径以 `/` 开始，每段是对象键或数组下标，`~` 编码为 `~0`、`/` 编码为 `~1`，按 RFC 解码。点号无特殊意义。`/清月/衣服/袖口/材质` 对应四层，`/清月.心情` 对应名为 `清月.心情` 的单个根键。数组下标从零开始、十进制，无前导零（`0` 除外）；`-` 仅用于 Patch `add` 目标的数组末尾，不是可读取元素。非法转义、缺失路径、穿过标量、越界均报诊断，不自动创建中间对象。根整体读取允许，根整体写入本方案禁止。
-
-文本中的取值语法为 `{{<JSON Pointer>}}`，例如 `{{/时间}}`、`{{/清月/衣服/袖口/材质}}`、`{{/清月/随身物品/0}}`；`{{}}` 保留，不作为根读取。引用值为字符串时原样插入；数字、布尔、null、数组和对象采用紧凑 JSON。插入文本只展开一次，不再作为模板解析。`{{`、`}}` 作为路径键的一部分时不得直接使用此插值语法，可在表达式中使用 `get("路径")`。缺失路径不是 null：插值保留原文字面量并报告诊断；描述中有错误时该字段上下文构建失败，世界书正文有错误时该条目不注入并报告诊断。普通文本可以通过 `\{{` 输出字面 `{{`，`\\` 表示字面反斜杠；其他反斜杠原样保留。已有 `{{user}}` 宏由 Context 单独处理，不视为状态引用。
-
-## 5. 受限表达式与模板
-
-### 5.1 范围和求值
-
-表达式借鉴提示词模板的变量读取、条件与分支，不采用其 EJS 语法、任意 JS、循环、赋值、外部访问或副作用。**相同解释器**用于世界书 `when`、状态根节点 `load.when` 和 `if`。使用函数 `get("JSON Pointer")` 避免 `/` 与除法冲突；`exists("JSON Pointer")` 检查路径存在性，存在且值为 null 时返回 true。路径参数是 JSON 双引号字符串字面量，可包含 `\"`、`\\`、`\n` 等标准 JSON 转义。两函数都只读取本轮冻结的完整父快照，不因状态是否注入模型而改变。
-
-```text
-get("/清月/灵力") < 20 && get("/时间") == "夜晚"
-exists("/清月/秘密/身份") && get("/清月/秘密/身份") != "未知"
-```
-
-支持的值为 JSON 字符串、有限数字、`true`、`false`、`null`；不支持对象/数组字面量。运算符优先级从高到低：括号；一元 `!`、`-`；`* / %`；`+ -`；`< <= > >=`；`== !=`；`&&`；`||`。同级二元运算从左到右。`&&`、`||` 短路且操作数必须为布尔；`!` 也只接受布尔。不做隐式类型转换或真值判断。
-
-- 数学运算仅接受有限数字，除零、余零、溢出为错误；`+` 不做字符串拼接。
-- 大小比较仅接受两个数字或两个字符串；字符串按 Unicode 码点顺序比较。相等比较支持 JSON 值的深度结构比较：不同类型不等，数组按顺序，对象按键和值，键顺序无关。`!=` 为其否定。
-- `get` 缺失或指针错误为错误，不能将其当作 `null`；用 `exists` 和短路防护。表达式必须完整解析，禁止多余输入、未声明函数、属性访问或代码执行。`when` 和 `if` 结果必须是布尔值。
-- 实现设置长度、解析深度、节点数及执行步数上限；超限报诊断，不执行部分副作用。具体数值由实现配置并在发布前固定、覆盖测试。
-
-### 5.2 条件文本
-
-世界书正文和状态 `description` 支持插值与分支：
-
-```text
-{{#if get("/清月/灵力") < 20}}
-清月灵力不足，应结合剧情表现疲惫。
-{{else if get("/清月/灵力") < 50}}
-清月灵力有所消耗。
-{{else}}
-清月灵力充足。
-{{/if}}
-当前时间：{{/时间}}
-```
-
-支持多层嵌套 `if`、可选多个 `else if` 和最多一个 `else`；模板按结构解析，条件按顺序短路，只渲染首个成立分支。缺失闭合、非法表达式、非布尔条件或选中分支插值错误按第 4 节处理；未选分支不求值。描述输出只是提示词，不写回状态。不支持循环、宏、include 或模板生成模板。纯文本本身不是表达式；反斜杠转义按第 4 节处理。
-
-## 6. 状态和世界书加载
-
-每个根节点的 `load` 决定该根节点全部状态的**当前值和已展开描述**是否一起进入本轮 `worldState` 上下文，不改变完整快照，也不构成更新权限。内层分组和字段不能设置独立加载条件；状态面板独立展示完整有效快照，不按模型加载结果隐藏。
-
-| 属性 | 规则 |
-| --- | --- |
-| `mode` | 必填，`always` 常驻；`on_mention` 关键词触发 |
-| `keywords` | `on_mention` 必填、至少一个非空字符串；`always` 不使用 |
-| `keyword_logic` | `any` 或 `all`，`on_mention` 默认 `any` |
-| `exclude_keywords` | 可选非空字符串数组，默认 `[]`；任一命中即排除 |
-| `when` | 可选布尔表达式；缺省为 true |
-
-关键词匹配复用 Context 的当前 User 和最近三条祖先 Entry 的普通子串扫描（深度 4，大小写规则与世界书一致）。`always` 忽略关键词和排除词；`on_mention` 的正向条件按 `any/all`，并要求排除词均未命中。最终激活 = 基础模式条件 AND `when`。非法配置在发布/初始化时报错；运行时 `when` 错误视为不激活并诊断。加载选择不递归扫描已注入内容。
-
-世界书沿用其 `always/on_mention/manual` 模式，也可加相同的 `exclude_keywords` 和 `when`；`when` 对三种模式都额外生效。`manual` 的基础条件是本局选择；排除词只作用于 `on_mention`。例如：
-
-```json
-{
-  "id": "qingyue-trust", "title": "清月的信任",
-  "content": "{{#if get(\"/时间\") == \"夜晚\"}}她愿意在夜里谈心。{{else}}她向你微笑。{{/if}}",
-  "load": {
-    "mode": "on_mention", "keywords": ["清月", "仙子"],
-    "keyword_logic": "any", "exclude_keywords": ["幻觉"],
-    "when": "get(\"/清月/好感度\") >= 60",
-    "anchor": "characterInfo", "position": "after", "order": 0
   }
 }
 ```
 
-上述 `/清月/好感度` 须在实际定义中存在。加载顺序：固定有效父快照及扫描文本 → 检查状态根节点和世界书条目的基础条件及 `when` → 展开命中内容中的模板 → 按 Context 锚点排序和预算处理。模板错误的条目不注入并诊断；不重新扫描展开文本。命中的根节点按声明顺序输出其全部字段路径、值和描述；未命中根节点不提供给模型，但模型仍可能提出对其的 Patch，是否接受由第 7 节的结构规则决定。必要协议和已激活根节点的状态若超预算则拒绝生成，不截断为错误 JSON；世界书按 Context 可选内容规则裁剪。
+初始化运行值（注意没有 `modules`、`properties`、`type`、`initial` 包装）：
 
-## 7. 状态更新协议
+```json
+{"世界":{"时间":"白天"},"清月":{"灵力":100,"心情":"平静","身体":{"伤势":null},"背包":{"灵石":{"数量":3,"说明":"随身携带"}}}}
+```
 
-### 7.1 一次性输出
+### 2.3 世界卡、角色与开局的关系
 
-默认同一次模型回复先输出叙事，末尾至多一个 `<StateUpdate>` 块，内容是严格 JSON 数组，无 Markdown 代码围栏和注释：
+- 世界卡**只在 `data.state` 声明一棵统一状态树**；不再运行时拼接 `world/user`，不隐式生成虚拟 `全局` 或选中角色的 `user` 状态。
+- `characters[]` 仍负责角色设定、角色 ID 和可扮演许可。原有 `characters[].state` 属于**旧格式导入数据**；迁移时由导入器/作者显式映射到 `data.state.modules[目标根名称]`，处理重名与类型冲突，不能悄悄合并或只加载玩家角色的状态。选中的 `user` 只是 Session 的角色身份，并非状态根的特殊命名空间。
+- Opening 的 `initial_state` 是与运行值同形的**部分对象覆盖**：沿固定 `object` 递归到已定义叶子；`record/array/json` 叶子只能整体替换，不能把对象初值误当成深合并。所有覆盖值由 Zod 完整验证；未知键、额外固定字段、类型错误阻止开局初始化。
+- 创建 Session 时冻结 `state_definition_json` 和 `state_schema_hash`，按 `initial` 深拷贝构建快照并应用 Opening 覆盖。后续世界卡更新不会隐式重置既有快照或改变其结构；不兼容的 Schema 变更需要显式迁移或新建会话。
+
+## 3. 创作者 UI 与导入
+
+默认编辑视图是一棵可展开的状态树；作者添加「字段/对象/字典/列表」，只需看**字段名、类型、默认值、描述**。数字范围、枚举项、可为空等在高级设置。对象内新增固定字段；字典配置 item 结构与初值映射；列表配置 item 结构与有序初值；预览区实时给出实际运行 JSON、完整路径及类型错误。
+
+可从示例 JSON 生成建议定义，但空数组、空字典、null、数组混合类型均需作者确认；不能以猜测结果静默发布。发布时必须验证定义、所有初值、Opening 覆盖及编译后的 Schema；作者不用手写工具调用、路径枚举或更新操作。
+
+## 4. 类型引擎和安全边界
+
+- 服务端目标 Hono/TypeScript，使用 **Zod** 验证。受限定义 AST 是存储事实来源，直接编译出运行校验器；另编译为通用 JSON Schema/Provider strict 子集，不依赖 Zod 反向解析任意 JSON Schema。
+- 用同一冻结 Schema 检查创建时初始快照、每个操作参数及每轮最终完整快照；失败返回具体路径、期待类型、实际值和操作索引。JSON Schema 对 Provider 是减少错误的生成提示，不取代服务端 Zod 验证。
+- 避免原型污染和路径混淆：以安全字典处理 `__proto__`、`constructor` 等键，严格检查 Pointer 转义与目标存在性；限制键名、深度、条目数、变更数与字节大小。拒绝未知固定字段与整个根/模块写入。
+- 状态管理只保证结构约束与提交一致性；不会根据自然语言描述自动修正剧情、推断不确定的值，或调用额外隐形模型补状态。
+
+## 5. 模型更新协议：ChangeSet
+
+模型不直接生成任意 JSON Patch；统一内部协议是 `changes: StateChange[]`。一轮变化按顺序作用于冻结父快照 S 的副本，全部通过后才能提交完整 S'。
+
+| op | 参数 | 语义 |
+| --- | --- | --- |
+| `set` | `target, value` | 设置已声明的标量/可空/枚举或有容量限制的整块 `json/array` 叶子；不替换固定 object 根/分组或整个 record |
+| `adjust` | `target, delta` | 对已声明 number/integer 做加减，计算后的值必须通过 min/max、整数校验；原值为 null 时拒绝 |
+| `upsert` | `target, key, value` | 在已声明 record 中新增或替换一个稳定键；value 必须完整符合 record.value Schema |
+| `set_record_field` | `target, key, field, value` | 更新已存在 record 成员的一个已声明固定子字段；field 是相对 JSON Pointer（如 `/数量`），不得跨 item |
+| `remove` | `target, key` | 只删除 record 中已存在的动态键；不能删除固定字段 |
+| `append` | `target, item` | 只向已声明数组末尾追加一个符合 items Schema 的完整元素 |
+
+`target` 为 RFC 6901 JSON Pointer，例如 `/清月/灵力`、`/清月/背包`。动态 `key` 单独传递，避免模型拼接大量未知下标路径；`field` 的候选字段从 record.value 定义生成，允许固定嵌套路径，不接受模型猜测新结构。`json` 逃生口仅支持整体 set。动态记录建议 `record`，会发生索引变动的背包或角色关系不建议用 array；首期不提供数组按索引删除/移动。
+
+示例（假设回春丹事先在背包中且灵力不会超限）：
+
+```json
+{
+  "narrative": "清月服下回春丹，灵力恢复十点。",
+  "changes": [
+    {"op": "adjust", "target": "/清月/灵力", "delta": 10},
+    {"op": "remove", "target": "/清月/背包", "key": "回春丹"}
+  ]
+}
+```
+
+`[]` 表示模型**明确无变化**，不等于未返回状态更新。引擎须校验当前 record key 确实存在、最终数值仍满足类型和范围；任何一个操作失败，整个 ChangeSet 不提交部分结果。没有 `set/add/insert/delete/move` 的 MVU 兼容执行通道。
+
+### 5.1 Tool Call 优先，但能力门槛必须实测
+
+目标工具 `submit_turn` 接收 `{narrative: string, changes: StateChange[]}`，以**一次模型生成输出**承载叙事与增量状态。工具描述从**本轮已激活、允许写入的状态 Module** 动态编译，尽量为每个 op/target 生成类型受限的 JSON Schema 分支：例如 `/清月/灵力` 的 delta 必须是数字，`/清月/背包` upsert value 必须是具体 item object；`target` 优先固定枚举而非裸字符串。模型没有看到/未激活的 Module 默认不可写，仍始终存在于完整快照中。
+
+动态 Schema 需要限制枚举目标数量、嵌套深度和总输入 Token。不同 Provider 对 `anyOf`、严格工具、复杂嵌套、工具参数流式支持不同，不能假设任何 Provider 都能一次请求完成且无损逐字流式展示长叙事。**仅在实际 Provider PoC 验证后设为该连接默认**；不存在已验证支持时使用内联兼容通道。无论生成侧是否声称 strict，服务端始终执行完整验证。
+
+### 5.2 内联回退
+
+流式文本能力优先或 Provider 无法稳定调用结构化工具时，模型回复正文后仅允许**一个末尾** `<StateUpdate>`，其中为合法 JSON `{"changes":[...]}`，与 Tool Call 进入同一 ChangeSet 校验器：
 
 ```text
-清月收起长剑，夜色渐深。
+清月缓缓放下剑。
 
 <StateUpdate>
-[
-  {"op":"replace","path":"/时间","value":"夜晚"},
-  {"op":"replace","path":"/清月/心情","value":"放松"},
-  {"op":"add","path":"/清月/随身物品/-","value":"回春丹"}
-]
+{"changes":[{"op":"set","target":"/清月/心情","value":"放松"}]}
 </StateUpdate>
 ```
 
-`[]` 表示明确无变化。模型未输出块时继承父快照并标记 `missing_update_block` 提醒，不等同明确无变化；重复块、非末尾块、未闭合或非法 JSON 是失败。无任何状态定义时不要求状态协议。生成未完成时不提交不完整 Patch。流式分段器须跨 token 缓冲潜在标签前缀，不将状态块推入聊天正文；完成后严格确认位置和闭合，限制块长度。正文及原始输出分别保存，块不回注下一轮历史。
+严格拦截分段标签避免流式露出，块中不允许 Markdown 围栏或其他文本；原始输出与清洗后的正文分开存储，更新块不回注后续聊天历史。缺失块状态为 `missing`，重复、提前出现、未闭合、非法 JSON 或模型中断为 `invalid`，不解释成 `[]`。每轮只选择 tool/inline 之一，不重复执行；工具返回是否需要后续模型请求是 Provider/Pi 的待验证能力，协议不承诺零续轮。
 
-### 7.2 六个标准操作
+## 6. 加载、读取与模板
 
-| op | 必需字段 | 作用 |
-| --- | --- | --- |
-| `add` | `path`, `value` | 对象成员新增或替换；数组指定索引插入，`-` 追加 |
-| `remove` | `path` | 删除已有成员或数组项 |
-| `replace` | `path`, `value` | 替换已有值 |
-| `move` | `from`, `path` | 移动已有值，先移除再按 add 写入；不能移到自身后代 |
-| `copy` | `from`, `path` | 深拷贝已有值，按 add 写入 |
-| `test` | `path`, `value` | 比较已有值，不相等则整组失败 |
+### 6.1 根 Module 加载
 
-操作严格按数组顺序在副本执行；RFC 对路径存在性、数组索引、`add` 父节点、`move`、`test` 的规则适用。`value` 可为任意合法 JSON，`null` 是值而不是删除。对对象成员的 `add` 可能覆盖已有值，不能误当作仅创建。标准 Patch 没有数值加减或按值删除数组项：需先基于快照求出结果和索引，再使用 `replace` 或 `remove`；并发时可先 `test` 旧值并检查父快照版本。操作只表达变化，不执行 JavaScript。
+根 `load` 默认 `{"mode":"always"}`，支持 `always` 与 `on_mention`；`on_mention` 使用 `keywords`、`keyword_logic:any|all`、`exclude_keywords`，两者都可有受限布尔 `when`。扫描使用当前 User 和最近三个真实祖先正文（预设可配置深度）；`when` 在**同一冻结父快照**上求值。激活 Module 的当前值、路径、类型、描述一起进入 `worldState` 节点和动态写入目标；未激活根保留在快照但默认不向模型暴露、不可写。超出必需状态/工具预算则拒绝生成或显式要求收窄激活，不静默截断 schema 和变更约束。
 
-**定义边界**：模型不得新增、删除或移动已声明字段及分组；不能整体替换分组或根。对已声明叶子允许整体 `replace`，以及操作其当前数组/对象值内部；内部成员 `add/remove/move/copy` 只能作用在同一个自由 JSON 叶子内部。`test` 可以检查叶子或其内部现存路径。跨叶子的 `move/copy`、修改 group、未声明路径或穿越叶子外边界均拒绝；如需清空叶子集合则 `replace` 为 `[]` 或 `{}`。这限制的是协议结构，不检查类型、范围或描述语义。自定义节点名如 `__proto__` 必须按普通 JSON 键安全处理，禁止污染原型。
+世界书保留 `always/on_mention/manual`，新增可选 `exclude_keywords` 与 `when`；正文和 description 可以读取状态而不能修改它。加载和状态面板显示无关；面板根据完整有效快照显示当前活动叶子所有字段。
 
-### 7.3 可选工具调用
+### 6.2 文本读取
 
-工具通道与内联通道每轮只能选一个。工具调用的参数完整声明如下；`value` 是任意 JSON 值，工具运行时还须执行第 7.2 节语义校验：
+统一状态读取 `{{state:/清月/灵力}}`；普通宏如 `{{user}}` 由 Context 单独处理。表达式 `get("/清月/灵力")`、`exists("/清月/身体/伤势")` 使用完整 RFC 6901 路径；null 是存在值，缺失与 null 不混淆。文本中的字符串原样插入，其余 JSON 类型使用紧凑 JSON，值仅展开一次，不再解释嵌套模板。缺失路径、非法转义提供来源定位诊断，不能默默创建字段。
 
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "update_state",
-    "description": "按顺序原子提交本轮状态的 JSON Patch；只描述已发生剧情引起的变化。空数组表示无变化。",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "operations": {
-          "type": "array",
-          "items": {
-            "oneOf": [
-              {"type":"object","properties":{"op":{"type":"string","enum":["add","replace","test"]},"path":{"type":"string"},"value":{}},"required":["op","path","value"],"additionalProperties":false},
-              {"type":"object","properties":{"op":{"type":"string","enum":["remove"]},"path":{"type":"string"}},"required":["op","path"],"additionalProperties":false},
-              {"type":"object","properties":{"op":{"type":"string","enum":["move","copy"]},"from":{"type":"string"},"path":{"type":"string"}},"required":["op","from","path"],"additionalProperties":false}
-            ]
-          }
-        }
-      },
-      "required": ["operations"],
-      "additionalProperties": false
-    }
-  }
-}
+```text
+灵力：{{state:/清月/灵力}}
+{{#if get("/清月/灵力") < 20}}
+灵力不足，应结合剧情表现疲惫。
+{{else}}
+仍有余力。
+{{/if}}
 ```
 
-示例调用参数：
+世界书正文、`load.when`、自定义 Prompt、状态 description 使用**同一个只读表达式解析器**，支持括号、有限数字/字符串/布尔/null、比较、算术及 `&& || !`、`if / else if / else`；无 JS/EJS、赋值、循环、网络/文件访问、动态执行或状态写入。仅布尔结果能作为 `when/if`；按标准类型严格比较，不做隐式强转。表达式对同一父快照求值、短路求值，错误给出可定位诊断。所有加载/模板结果在 Context 预算前解析并统一计量；预览和执行同一逻辑。
 
-```json
-{"operations":[{"op":"replace","path":"/清月/心情","value":"放松"}]}
-```
+## 7. Entry 生命周期、存储与冲突
 
-每轮最多一次工具调用；工具返回 `{ "success": true }` 或 `{ "success": false, "error": { "operation_index": 0, "code": "...", "message": "..." } }`。索引从零开始；整体解析错误的索引为 `null`。工具结果是本轮暂存校验结果，只有生成成功且父版本未变化才随消息原子提交；失败不产生部分状态。Provider 如不支持该 JSON Schema 的 `oneOf` 或任意 JSON，适配层须做等价校验，不改变协议；工具调用可能需要模型续轮或供应商支持，不能保证所有 Provider 严格只需一次请求，因此 MVP 默认内联通道。
+1. 创建 Session 时冻结已发布世界卡的状态定义和 hash；Opening initial_state 递归覆盖被声明的固定叶子、动态集合整值替换，整体 Zod 校验后在根 Entry 保存初始化完整快照。
+2. User Entry 继承其父完整有效快照。用户输入的愿望并不直接结算为已发生事实。
+3. AI 一轮基于固定父 Entry、父状态 revision、Schema hash 和已激活模块构建上下文与 Tool Schema，流式生成 narrative + changes。
+4. 服务端检查 JSON 与目标白名单、操作适用性、动态键、Schema 类型和上限；在父状态副本顺序应用所有变更，整份最终快照 Zod 验证成功才允许写入。
+5. 短 SQLite 事务中检查生成 ID 幂等、活动叶子、父 Entry、父状态修订及 Schema hash，原子保存清洗正文、原文（限制访问）、ChangeSet、结果状态和**完整**新快照；不得跨世界线写回或双扣 `adjust`。
+6. `success` 表示合法结算（包括 `changes:[]`），`inherited` 表示 User 复制，`missing` 表示缺失必需更新，`invalid` 表示失败，`stale` 表示历史修订/定义冲突后失效。失败可保留正文及父快照供诊断，但**不得作为已结算快照继续生成**；用户需显式重试、修复或确认继承状态并记录决定。
+7. AI 生成中断/取消不提交不完整 AI Entry；保留已完成 User 叶子供重试。分叉只继承各自父 Entry；重新生成重新从正确父版本结算；编辑旧正文使受影响的自己及后代状态 stale，不自动重写历史或重放操作。
 
-### 7.4 事务、冲突与故障
+SQLite 以 `sessions.state_definition_json / state_schema_hash` 和 `entries.state_snapshot_json / state_changes_json / state_status / state_schema_hash / state_revision / parent_state_revision / generation_id` 为建议逻辑字段。压缩/去重允许，但按任意已提交 Entry 必须能得到完整逻辑快照；不把模型 SDK 的对话 JSONL 当成第二权威源。Schema 迁移显式确认并留备份，不把新卡定义直接套到旧 Entry 的值。
 
-按父 Entry ID、正文修订和父快照版本冻结基准；校验完整 JSON、数量与大小上限、允许的路径及定义边界；按序在副本应用全部操作。任何错误、`test` 失败、版本变化或中断均不得部分提交。完成时正文、Patch、状态状态和快照以同一消息事务提交；并发生成不能把基于旧父快照的结果覆盖到新版本。
+## 8. 验收与未解决问题
 
-`success`、`missing_update_block`、`failed`、`stale` 要可区分。失败可保存正文、原始块、诊断和继承的父快照供排查，但该副本不是已结算结果。用户可重新生成，或显式确认忽略更新并继承父状态；不得悄悄二次调用模型。原始模型输出和错误日志可能含私人内容，不默认公开或回注。
+- 类型：初始化所有基础类型、null、嵌套对象、record/array、JSON 逃生口、错误初值、Opening 部分覆盖、min/max/enum、额外键拒绝。
+- 更新：六种操作的路径白名单、record 新增/修改/删除、数组追加、数值区间、顺序、任何错误整组回滚，生成中断不部分提交。
+- 一致性：重复 generation_id、版本冲突、再生、分叉、历史编辑 stale、无变化也存完整逻辑快照。
+- Context：`{{state:/...}}`、`get/exists/if`、世界书 when、状态根 load、动态目标、预算、预览和执行一致；模板绝不写状态。
+- **Provider PoC 必须优先完成**：至少两类 Provider 的 strict Tool 支持、复杂 Schema 通过率、长篇 narrative 流式表现、内联失败率、输出正确率及输入/输出 Token、延迟和语义更新召回率。选择正式默认通道前必须量化，不能只看 JSON 合法率。
+- **迁移清单**：旧 `characters[].state` 显式并入统一 `data.state`，旧 `world/user` 快照须明确转换，旧 MVU / RFC6902 更新协议不自动兼容；新 Schema 生效前检查既有世界卡、Opening、历史 Entry，先备份再迁移。
 
-## 8. 状态展示与可编辑性
-
-状态面板读取当前活动叶子的完整有效快照，按树分组显示基础值、数组和对象；切换分支时切换快照，滚动旧消息不改变当前面板。消息可展示结构化变更摘要；`failed/stale` 和缺失更新块须标明。状态显示不依赖世界书 HTML、JS 或固定状态栏脚本。手动编辑需要作为新的明确状态事件/检查点或新消息修订，不能静默篡改旧消息及后代；其 UI 和审计交互后续设计。
-
-## 9. 验收和待同步事项
-
-1. 用字符串、数字、布尔、null、数组、对象、多层组及空组初始化；开局仅覆盖声明叶子，其他默认值保留。
-2. 每条消息获得完整快照；无变化、失败、历史编辑、重新生成和跨分支分别验证状态及隔离。
-3. JSON Pointer 的中文、`.`、`/`、`~`、数组索引、缺失路径及根写入限制均有测试；引用只展开一次。
-4. 六类 Patch 的顺序、存在性、数组插入、`test` 失败及整组回滚；禁止组/根修改、跨叶子移动和未声明路径。
-5. 工具与内联输入产生相同结果；截断、重复标签、流式拆分、错误及版本冲突不部分提交。
-6. 比较、布尔短路、算术、优先级、类型错误、`exists`、null、嵌套条件、转义与解析上限均覆盖；模板不能写状态或执行代码。
-7. 状态根节点和世界书 `always/on_mention`、`any/all`、排除词、`when`、manual 及错误诊断符合第 6 节；读取条件始终使用同一父快照。
-8. 核实 Context 预算、节点合并、状态面板与消息隐私；描述对模型的提示不被宣称为硬性业务验证。
-
-实施前须同步 [世界卡](world-card.md)的状态定义、Opening、角色映射与世界书 `load`；[Context](context.md)和[配置](configuration.md)的加载、表达式及预算；[会话](session.md)与[存储](../technical/storage.md)的 Entry 快照、事务和状态标记；并检查示例、索引与工作区 AGENTS.md 是否有受影响约定。历史数据迁移须先备份并单独制定；本设计不自动迁移或覆盖。
+外部参考：[Zod JSON Schema](https://zod.dev/json-schema)、[JSON Schema](https://json-schema.org/)、[RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)、[RFC 6902](https://www.rfc-editor.org/rfc/rfc6902)、[OpenAI Structured Outputs](https://platform.openai.com/docs/guides/structured-outputs)、[Anthropic Tool Use](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview)。
