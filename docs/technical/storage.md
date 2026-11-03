@@ -1,32 +1,27 @@
-# Storage：六张业务表与 Entry 分叉树
+# Storage：六张业务表、消息级 Entries、全量 Agent 消息
 
-> 2026-11-03 第二版精简方案，**尚未实现**。目标是本地单人 SQLite，不为未来多端、分布式并发或复杂审计提前建表。完整业务协议见 [Session/Entry](../design/session.md)、[AgentContext](../design/agent-context.md)、[Provider](../design/provider.md)、[文本渲染](../design/text-rendering.md) 和 [State](../design/state.md)。
+> 2026-11-04 目标方案，尚未迁移生产数据库。个人本地应用：只保留 `worlds/presets/provider_credentials/tags/sessions/entries` 六张业务表。各模块分别见 [Session](../design/session.md)、[Context Strategy](../design/context-strategy.md)、[State](../design/state.md)、[Preset](../design/preset.md)。
 
-## 1. 唯一六张业务表
+## 1. 六表职责
 
-| 表 | 核心字段 | 作用 |
+| 表 | 核心字段 | 含义 |
 | --- | --- | --- |
-| `worlds` | `id, name, data_json, status, created_at, updated_at` | 世界卡当前数据，包含角色、Opening、WorldBook、状态 Schema、资源；`status=draft/published` |
-| `presets` | `id, name, config_json, is_builtin, created_at, updated_at` | 预设节点数组、role/启停/顺序、预算、触发扫描深度 |
-| `provider_credentials` | `provider_id, credential_ref, updated_at` | ProviderService 管理用户 API Key 的安全存储引用；Pi 模型目录不入库 |
-| `tags` | `id, type, target_id, name, created_at` | **唯一通用标签关联表**：`type=world/preset/session` 等明确对象类型，替代 `world_tags` |
-| `sessions` | `id, world_id, world_snapshot_json, opening_id, user_character_id, preset_id, model_selection_json, options_json, active_entry_id, title, created_at, updated_at` | 一局世界快照、身份、选项、当前世界线叶子 |
-| `entries` | `id, session_id, parent_entry_id, kind, text, runs_json, selected_run_id, created_at, updated_at` | 一次可分叉回合；`runs_json` 内保存生成/重试、内部工具消息、全量状态 |
+| worlds | id, name, data_json, created_at, updated_at | 单份当前 WorldCard；无 draft/status/版本链，含 Context 策略、Opening、角色、状态、世界书 |
+| presets | id, name, config_json, is_builtin, created_at, updated_at | 模型 Provider/ID/参数、七系统节点/自定义节点、摘要 Prompt |
+| provider_credentials | provider_id, credential_ref, updated_at | 用户 API Key 的安全引用，密钥本体存专用 CredentialStore |
+| tags | id, type, name, sort_order, created_at | 同一 type 内可排序的标签字典；世界卡可在 data_json 引用 tag ID 数组 |
+| sessions | id, world_id, preset_id, user_character_id, tip_entry_id, title, created_at, updated_at | 仅世界/预设/角色/当前 Entry 关联；世界卡和预设每轮读最新 |
+| entries | id, session_id, parent_id, seq, type, timestamp, payload | 一条 Pi Agent Message 或 Summary；原始 ToolCall/ToolResult 正常留存；parent_id 构成分叉树 |
 
-`worlds.data_json` 只保存世界卡完整当前内容；不再额外保存 `published_json`/`draft_json` 两套。编辑发布是世界卡当前的状态标志；Session 创建时复制当时内容作为世界快照，后续改卡不影响旧 Session。`sessions.world_snapshot_json` 已含角色信息和 State Schema，因此不建角色/状态 Schema 的重复字段。
+**明确删除** `world_snapshot_json、opening_id、model_selection_json、options_json、runs_json、selected_run_id、status(draft)` 及单独的 `runs/messages/tool_calls/world_tags/app_settings/context_checkpoints` 表。世界卡只有当前数据，旧状态 Schema 不兼容时允许重置旧状态。`tip_entry_id` 是分支真实末尾指针。
 
-**不创建** `runs`、`messages`、`run_tool_calls`、`app_settings`、`world_tags`、`context_checkpoints` 或 `schema_migrations` 表。SQLite 的迁移版本可使用 `PRAGMA user_version`，由代码中的 migration 文件升级。世界卡资源引用保留在 JSON/本地文件路径中，MVP 不新建资源表。
-
-### 1.1 六表最简 SQLite DDL（示意）
-
-以下是可直接作为第一版迁移基础的字段设计。`JSON` 在 SQLite 使用 `TEXT` 存储，由领域服务验证结构；不额外建子表或复杂约束。`created_at/updated_at` 使用 Unix 毫秒。
+## 2. 最小 SQLite DDL（目标）
 
 ~~~sql
 CREATE TABLE worlds (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   data_json TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'draft',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -49,22 +44,18 @@ CREATE TABLE provider_credentials (
 CREATE TABLE tags (
   id TEXT PRIMARY KEY,
   type TEXT NOT NULL,
-  target_id TEXT NOT NULL,
   name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
-  UNIQUE (type, target_id, name)
+  UNIQUE (type, name)
 );
 
 CREATE TABLE sessions (
   id TEXT PRIMARY KEY,
-  world_id TEXT NOT NULL,
-  world_snapshot_json TEXT NOT NULL,
-  opening_id TEXT NOT NULL,
+  world_id TEXT NOT NULL REFERENCES worlds(id),
+  preset_id TEXT NOT NULL REFERENCES presets(id),
   user_character_id TEXT NOT NULL,
-  preset_id TEXT NOT NULL,
-  model_selection_json TEXT NOT NULL,
-  options_json TEXT NOT NULL DEFAULT '{}',
-  active_entry_id TEXT,
+  tip_entry_id TEXT,
   title TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -73,114 +64,84 @@ CREATE TABLE sessions (
 CREATE TABLE entries (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id),
-  parent_entry_id TEXT REFERENCES entries(id),
-  kind TEXT NOT NULL DEFAULT 'turn',
-  text TEXT NOT NULL,
-  runs_json TEXT NOT NULL DEFAULT '[]',
-  selected_run_id TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  parent_id TEXT REFERENCES entries(id),
+  seq INTEGER NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('message','summary')),
+  timestamp INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  UNIQUE (session_id, seq)
 );
 
-CREATE INDEX idx_entries_session_parent
-  ON entries(session_id, parent_entry_id);
-CREATE INDEX idx_entries_session_time
-  ON entries(session_id, created_at);
-CREATE INDEX idx_tags_target ON tags(type, target_id);
-CREATE INDEX idx_tags_name ON tags(type, name);
+CREATE INDEX idx_entries_parent ON entries(session_id, parent_id);
+CREATE INDEX idx_tags_type_sort ON tags(type, sort_order, name);
 ~~~
 
-`sessions.active_entry_id` 指向同 Session 的 Entry，`selected_run_id` 指向本 Entry 的 `runs_json[]` 中一个成功 Run，这两项用简单服务校验，不强行做跨 JSON 的 SQLite 外键。`tags.target_id` 是多类型目标，同样由 TagService 验证。初始化应启用 `PRAGMA foreign_keys=ON`；不额外创建迁移历史表，使用 `PRAGMA user_version`。`provider_credentials.credential_ref` 是密钥位置/别名而非明文 API Key。
+SQLite 中 JSON 存 TEXT，由应用层验证对应类型；用 `PRAGMA foreign_keys=ON` 维护基础引用，用 `PRAGMA user_version` 管理数据库迁移版本，无 `schema_migrations` 表。`sessions.tip_entry_id` 同 Session、`entries.parent_id` 不跨 Session、摘要锚点属于祖先链等用最简单的服务校验即可；不搞多用户并发锁矩阵。
 
-## 2. Entries 保存 Run 列表
+## 3. Entry.payload 是原始 Agent 消息
 
 ~~~ts
 type Entry = {
   id: string;
   sessionId: string;
-  parentEntryId: string | null;
-  kind: "opening" | "turn" | "summary";
-  text: string;
-  runs: Array<{
-    id: string;
-    status: "running" | "completed" | "failed" | "stopped";
-    assistantText?: string;
-    rawText?: string;
-    stateSnapshot?: Record<string, unknown>; // 每次完成生成的全量状态
-    stateChanges?: StateChange[];             // 可选增量，不是权威快照
-    piEntries?: unknown[];                    // 可选内部模型/工具往返
-    usage?: unknown;
-    error?: string;
-    createdAt: string;
-    finishedAt?: string;
-  }>;
-  selectedRunId: string | null;
+  parentId: string | null;
+  seq: number;
+  type: "message" | "summary";
+  timestamp: number;
+  payload: {
+    message: PiMessage;        // message 类型：真实 user/assistant/toolResult
+    stateSnapshot?: StateSnapshot;
+    stateChanges?: StateChange[];
+    stateReset?: boolean;
+    origin?: "pi" | "derived_tool_narrative";
+  } | {
+    text: string;              // summary 类型：摘要文本
+    coveredThroughEntryId: string;
+    generation: { requestMessages: PiMessage[]; responseMessages: PiMessage[] }; // 必存摘要调用
+  };
 };
 ~~~
 
-每个 Entry 一行，`parent_entry_id` 构成分叉树；`runs_json` 是上述 `runs[]` 的 JSON 数组，不需要单独的消息/运行表。
+所有主 Agent 运行产生的真实 Message 都存成独立 Entry：`user`、`assistant`（含其 content[].toolCall）、`toolResult`；不能只存用户可见的 Assistant 文本。Summary 是独立技术 Entry，摘要调用的真实请求和回复可放在其 generation 元数据中持久化；不为工具调用另建表。生成流的中间 token delta 可以不逐条存储，因为它不是 Pi 完成的 Message。
 
-- `opening`：一条根 Entry，`text` 为开局文本，`runs` 有已完成初始状态 S0。
-- `turn`：`text` 是玩家本轮输入；一次或多次 `runs` 表示生成、失败、取消、重试或将来的重新生成。`selected_run_id` 指向本分支真正采用的**completed** Run。
-- `summary`：`text` 是压缩摘要；`runs` 有一条已完成、携带压缩锚点完整状态的记录。摘要只用于上下文裁剪，不算玩家新行为。
-- 成功 Run 的 `stateSnapshot` 是该分支截至此 Entry 的**完整权威状态**；失败或未选中的 Run 不覆盖它。没有状态定义时使用空对象。
-- `piEntries` 仅用于需要的调试/重试信息，允许保存 toolCall 与 toolResult，建议脱敏、体积限制；不为每个流式 token 落库。回灌模型历史时只取选中 Run 的可见 `assistantText`，不回灌工具调试消息。
+### NarrativeProjection
 
-普通消息展示可由 `Entry.text` 和所选 Run 的 `assistantText` 生成，不必冗余保存 `messages`。如用户重试同一个 Entry，只追加 Run，不产生新的树节点。
+提供唯一读取视图，从 `message.role=user|assistant` 的内容**只提取叙事 text**（排除 ToolCall/思维/状态更新内联结构），空文本忽略；`toolResult` 和 Summary 不作为普通聊天消息。UI 和未来模型历史、关键词扫描都使用这个相同的投影函数；Summary 只按上下文策略转换为临时 assistant 前缀。
 
-## 3. Session 选项与模型默认值
+Raw Entries 必须保证工具调用与结果顺序、原始字段和 parent_id 结构不丢失。下一轮 Pi 真实历史**不回放**旧 toolCall/toolResult，但本轮执行内部仍可以使用工具协议。
 
-`sessions.options_json` 可以容纳以下轻量配置：
+## 4. 世界状态与世界卡更新
 
-~~~json
-{
-  "history": { "max_messages": 40 },
-  "state_update_mode": "inline",
-  "manual_lore_ids": [],
-  "manual_state_ids": []
-}
-~~~
+- Opening 选择后直接创建根 Assistant Entry，`payload.stateSnapshot=S0`；Session 不再保存 opening_id。
+- 已完成的最终 Assistant Entry 存本轮完整 `stateSnapshot` 和每项带 `reason` 的 `stateChanges`。状态工具先候选计算、完成校验后再写有效结果；`toolResult` 本身不得被当作已结算状态。
+- 下一轮状态读取沿当前分支完整原始父链，找最近有效的 Assistant 全量快照；**不因窗口/摘要而漏状态**。
+- 世界卡 `worlds.data_json` 修改后直接影响已有 Session。若旧状态快照与当前 Schema 不兼容，**允许丢弃旧状态并按新 Schema + 初始值重新构建**；无需冻结 Session Schema 或做复杂兼容迁移。旧 Entry 自身仍保留历史 JSON，不保证新卡再能解释旧快照。
 
-`history.max_messages` 应只计最近 Summary 之后的 User/Assistant 可见消息，摘要作为前缀总是保留；缺省表示不设条数上限（仅受模型实际上下文和必要裁剪约束）；它与 Preset 的触发扫描深度不同。若没有用户选项也可以保存 `{}`，不要为每个选项建列、修订、版本链。
+## 5. 标签和预设模型
 
-模型选择保存在 `sessions.model_selection_json = { "provider": "...", "modelId": "..." }`。**不设 `app_settings` 表**：MVP 创建 Session 时明确选择模型；如前端希望记住上次选择，可以存在本地前端偏好或本地应用配置文件，绝不需要为此单建一个任意键值表。Preset 不保存模型 ID。
+`tags` 是多类型通用**标签字典**：`UNIQUE(type,name)`，`ORDER BY sort_order,name,id` 可保证 type 内稳定排序；世界卡 `data.tags` 存标签 ID 数组，保存世界卡时校验对应 ID 的 type=world。不建 `world_tags` 关联表、不通过标签行记录 target_id。以后扩展 Preset 标签也只需在其 config_json 存标签 ID 数组。
 
-`provider_credentials` 仅保存 Provider ID 到安全凭据的引用；密钥实体由与 Pi `CredentialStore` 兼容的本地安全存储持有。项目需设计数据目录与备份策略，不能把明文 Key 写进导出世界卡或 Session。
+`presets.config_json` 中保存 `model: {provider,modelId,params}` 和 `summary_prompt`；`sessions.preset_id` 关联该预设。ProviderService 查询 Pi 的模型和凭据能力。没有 Session 模型 JSON，也没有 AppSettings 表。
 
-## 4. 标签使用一张表
+## 6. 三种上下文策略落库
 
-~~~text
-tags
-  id         TEXT PRIMARY KEY
-  type       TEXT NOT NULL     -- world / preset / session（可扩展枚举）
-  target_id  TEXT NOT NULL     -- 被打标签对象的 ID
-  name       TEXT NOT NULL
-  created_at INTEGER NOT NULL
-~~~
+WorldCard `data.context` 保存 `strategy:none|window|summary`、`max_messages`、`keep_recent_messages`。Session 不再存 `options_json`。Summary Entry 的 payload 保存 `coveredThroughEntryId`，作为原始历史的压缩边界；用户可见历史仍能读取全部消息。
 
-标签列表：`WHERE type='world' AND target_id=?`；按标签筛世界：`WHERE type='world' AND name=?`。建议 `UNIQUE(type,target_id,name)`；不用 `world_tags` 关系表，也不创建复杂的标签字典 ID + 多对多映射。标签更名首期按 `type/name` 更新对应行即可。
+重点：**Summary 物理追加在 tip 后面，但逻辑历史按「Summary + coveredThroughEntryId 后的可见消息」重建**，不会在 Summary 处简单截断祖先。详见 [Context Strategy](../design/context-strategy.md)。
 
-## 5. 最小索引
+## 7. 最小写入/读取过程
 
-索引已直接定义在 §1.1 的 DDL 中：Entry 父链、Entry 会话时间、标签按对象及名称筛选。没有世界线物化索引、状态快照索引和单独的 Run/Message 索引。§entries.id§ 及其它实体 id 由主键覆盖。
+1. 创建 Session + Opening Assistant 根 Entry + S0，用一个短 SQLite 事务写两行。
+2. 首先从原 tip 读取真实历史和最新 State；若达到摘要阈值，**先追加 Summary Entry 到原 tip** 并更新 tip，再将玩家 User Entry 接在它后面（无摘要时直接接原 tip）。之后将模型输出的每一条 Assistant/ToolResult 继续按实际 Pi Message 顺序追加，更新 tip。取消失败时不删除已成型的工具消息。
+3. 最终成功 Assistant Message 中保存原始 Pi 内容、有效状态快照、含 reason 的变更；若终止工具只有 `submit_turn.narrative` 而没有单独 Assistant 正文，则额外保存 `origin=derived_tool_narrative` 的规范化 Assistant Entry，保留原始 ToolCall/ToolResult。不重复已有的 Assistant 叙事；无有效状态结算时不能盖上成功快照。
+4. 重生成 Assistant = 从历史 User 下创建新 Assistant 子分支；重选 User = 从旧 User 的父 Entry 下建新 User 兄弟分支。
+5. 访问模型历史/关键词统一通过 NarrativeProjection 和 WorldCard Context Strategy；访问状态始终从原始父链独立读取有效全量快照。
+6. 世界线 UI 压缩 Root/Fork，只计真正互动的 User 轮次，不把 ToolResult/Summary 当成分叉选择。
 
-## 6. 最简写入过程
+## 8. 数据验收
 
-1. **创建 Session**：校验世界卡/Opening/用户角色/Preset/模型与本地凭据，读取世界 JSON 一次；写 Session、Opening Entry、active_entry_id。用一个小型 SQLite 事务避免半初始化。
-2. **提交用户输入**：在活动叶子下写一个 `turn Entry`，`text` 为玩家原文、`runs[]` 首条 running；更新 `sessions.active_entry_id`。可用一个小事务。
-3. **生成成功**：将完成的 Run 正文/必要工具轨迹/状态变化/完整快照写入该 Entry 的 `runs_json`，`selected_run_id` 选择它。**若状态必须更新而更新格式无效，则此 Run 标为失败/需修复，不把非法状态结算成成功。**
-4. **取消/失败**：将当次 Run 标 failed/stopped，保留玩家 Entry.text；重试直接向这条 Entry 的 `runs[]` 追加新 Run。没有额外的 Run 行、Message 行、Tool 行要同步。
-5. **世界线切换**：只改 Session.active_entry_id；历史从新叶子沿 `parent_entry_id` 读取，选定 Run 的全状态从对应分支查找。
-6. **历史压缩**：创建一个 `summary Entry` 作为当前分支的后继，其 `text` 是摘要，`runs[]` 携带锚点完整状态；之后从它继续。历史保留以便分叉，但 AgentContext 从最近摘要起构建历史。
-
-本地单人应用只对同一 Session 的**一条正在生成请求**做内存互斥；保留关键多行写入的小事务，不设计 request_id、generation_id、乐观 revision、分布式锁、版本失效矩阵、状态过期图。编辑已有有子节点的 Entry 时提示从该位置分叉，不自动传播修改到后代。
-
-## 7. 查询与验收
-
-- 获取历史：沿 `active_entry_id` 的真实父链查询，按 Entry 分页，例如最近 30 个互动 Entry，显示选中 Run 的 User/Assistant；Summary 可渲染为历史压缩标识。
-- 获取全量状态：沿当前目标父 Entry 向上找最近一个有成功选中 Run 的 `stateSnapshot`，不依赖上下文近期 N 条或最近 summary 之前的模型历史。
-- 世界线：从同 Session 的 `entries.id/parent_entry_id/kind` 派生 Root/Fork-only 压缩图，非交互 summary 不计入分叉/隐藏回合。
-- 工具执行：只可嵌入 `runs_json.piEntries`，不另建 `run_tool_calls`。
-- 最终校验数据库只含上述 **6 张业务表**（SQLite 系统表不算业务表）、每条世界线能恢复正确叙事和状态、应用重启后可恢复未完成 Entry。
-
-如已存在旧实验 SQLite，迁移前备份并明确映射老 Run/Message 为 Entry + 内嵌 Runs；当前仍为设计阶段，不自动迁移真实用户数据。
+- 实际数据库只有六张业务表；DDL 可以在 SQLite 内存环境执行。
+- Raw Entries 全量含 toolCall/toolResult、Message role/顺序；聊天与模型/关键词均只含 user/assistant 叙事。
+- 三种 Context 策略和最新 Summary 锚点行为正确；切分支/重生成不丢历史。
+- 世界/预设变更立即生效，旧不兼容状态可重置，旧消息保留；没有世界快照与冗余模型设置。
+- Key 不回显、不落 WorldCard/Preset/Session 导出，关键多行初始化短事务通过。

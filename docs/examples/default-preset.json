@@ -68,5 +68,13 @@
     "max_output_tokens": 4096,
     "safety_margin_tokens": 1024
   },
-  "scan_depth_entries": 4
+  "model": {
+    "provider": "deepseek",
+    "modelId": "deepseek-chat",
+    "parameters": {
+      "temperature": 0.8
+    }
+  },
+  "state_update_mode": "inline",
+  "summary_prompt": "请总结已发生的主要剧情、人物关系、关键承诺和未解决事件。当前时间：{{state:/世界/时间}}。"
 }

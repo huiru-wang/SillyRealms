@@ -1,63 +1,56 @@
-# AgentContext：单次请求的上下文加载与模型消息构建
+# AgentContext：真实消息持久化与叙事 Context 的唯一构建入口
 
-> 2026-11-03 第二版精简设计，尚未实现。**不再存在 WorldInstanceContext**。AgentContext 承担一次模型请求所需 Session、历史、完整状态、触发条目和预设的加载与编排，最终向 Pi 返回 `ModelMessage[]`。不持久化 Context，不管理跨轮缓存。
+> 2026-11-04 设计稿。只有一个 AgentContext，无 WorldInstanceContext。Session、WorldCard、Preset/模型、完整 Entry、叙事 Context、状态均由本轮直接读取；构建完成仅输出 ModelMessage[]。三种策略的算法见 [Context Strategy](context-strategy.md)。
 
-## 1. 输入和输出
+## 1. 对外接口
 
 ~~~ts
 class AgentContext {
   static async create(input: {
     sessionId: string;
-    parentEntryId: string;  // 本轮实际父节点，决定世界线
-    userInput: string;      // 重试时从已持久化的 Entry.text 获取
+    parentEntryId: string;  // 当前分支的实际父 Entry
+    userInput: string;
   }): Promise<AgentContext>;
 
   readonly fullState: StateSnapshot;
+  readonly narrativeHistory: NarrativeMessage[];
   readonly activeStateModules: StateModuleSelection[];
   readonly worldBookIndex: WorldBookIndex;
-
   async buildMessages(): Promise<ModelMessage[]>;
 }
 ~~~
 
-`create` 完成本轮数据加载与条目筛选；`buildMessages` 遍历预设节点执行 NodeBuilder，最终**只返回消息数组**。`activeStateModules` 仅作为本轮状态工具构建的只读依据，不需要额外返回大而全的 `BuildResult` 或独立 WorldInstanceContext DTO。前端预览可以复用同一构建流程，不调用模型。
+AgentRuntime 负责 Pi 真实执行、每条 Agent Message（含 toolCall 和 toolResult）正常持久化及 SSE；AgentContext 不把这些工具消息重新注入下一轮的模型历史。
 
-## 2. 唯一构建流程
+## 2. 构建步骤（有序）
 
-1. **加载 Session**：`SessionService.getSession(sessionId)` 取得世界快照、选中角色、Preset ID、模型选择、选中分支 `parentEntryId` 和历史加载选项；验证目标父节点属于该会话，同时读取本轮 PresetSnapshot 的扫描深度配置（节点内容等到步骤 6 才构建），恢复本次生成需要的事实。
-2. **加载会话历史**：从 `parentEntryId` 向上沿 `entries.parent_entry_id` 读取**这一条分支**。若有历史压缩，读到最近的 `kind=summary` Entry 为止，并保留该摘要；若配置 `history.max_messages=N`，从最新可见消息向前保留至少 N 条，按**完整 Entry** 边界截取以避免拆散 User/Assistant。两项同时启用时**保留最近 Summary 作为压缩前缀，再限制其后的最近 N 条可见消息**；无 Summary 则直接限制最近 N 条。Summary 不计入 N。`summary` 是数据库中的普通 Entry，不建 checkpoint 表。压缩前消息仍存在，可供 UI 查看，不进入当前 Prompt。
-3. **加载最新完整状态**：从实际 `parentEntryId` 向上寻找最近一个**成功选中的 Run** 的 `state_snapshot`；不管历史截断 N 多小，都要读取完整状态，绝不依据被裁掉的叙事还原，也不读取另一分支的所谓「全局最新」状态。`awaiting_ai`/失败 Entry 退回父节点状态；Opening Root 持有 S0。
-4. **筛选世界书和状态根**：使用本轮**已加载的历史窗口 + 当前用户输入**构建扫描文本；如 Preset 设置独立的 `scan_depth_entries`，仅在此窗口内取最近若干回合。读取世界书条目的 `always / on_mention / manual`、关键词包含/排除、`when` 状态表达式；状态 Module 加载支持 `always / on_mention`、关键词/排除及 `when`。**所有条件读取步骤 3 的全量状态**，按相同解析器执行，不允许只拿显示状态或筛选后的状态来判断其它条目。产出 `activeStateModules` 和 WorldBook 匹配列表。
-5. **构建 WorldBook 位置索引**：激活的世界书条目依 `anchor` + `position` 分组，`order` 升序；同 `order` 时按原世界书位置稳定排序。形式为 `worldBookIndex[systemNodeId].before/after`。它是本轮临时对象，不入库。
-6. **加载 Preset**：使用步骤 1 已读取的 `PresetSnapshot` 中完整有序的 `nodes[]`，含七系统节点、自定义 Prompt、role/启停/顺序及预算；模型选择仍来自 Session，Preset 不绑定 Provider。
-7. **按节点顺序构建消息**：遍历 `nodes[]`。系统节点执行其对应 NodeBuilder：拉索引中的 `before` 文本 → 构建节点本体内容 → 拉 `after` 文本，合并为目标 role 的原始消息；`chatHistory` 返回按顺序的多条历史消息，`userInput` 保证仅出现一次本轮输入。自定义节点由 `CustomTextNodeBuilder` 处理。全部原始消息组装完成后，调用**共享 TextRenderer** 统一处理**允许渲染的模板片段**（变量、条件、状态引用和受控转换），对真实用户输入与历史原文保留 literal 片段，不重新插值，再做必要的消息/上下文上限检查，返回 `ModelMessage[]`。
+1. **加载 Session**：只有 world_id、preset_id、user_character_id、tip_entry_id；通过 world_id 读取**当前最新世界卡**，通过 preset_id 读取有序 Preset（其中包含模型选择、生成参数及摘要 Prompt）。不使用世界卡快照、session opening_id、session model_selection/options。
+2. **读取完整 Raw Entry 父链**：从本轮实际 parentEntryId 向上沿 entries.parent_id 取得真实历史。原始记录包括 user、assistant（可能含 toolCall）、toolResult、summary。不能直接按 seq 拼接历史，也不能因为工具消息不进入模型而删除它们。
+3. **获取当前 Narrative Context**：从**本轮 User 尚未写入前的父链**统一投影 user/assistant 叙事文本，排除工具结果、Assistant 内 toolCall/thinking、状态内联标记；按当前 WorldCard 的 none/window/summary 算法决定最终历史。summary 达阈值时**先读取当前完整 State** 供 Preset 摘要 Prompt 渲染，再把 Summary 写在原 tip 之后，才追加当前 User Entry。逻辑消息顺序为 Summary + 未覆盖真实历史 + 当前 User，当前 User 在模型输入里只能出现**一次**。
+4. **独立加载最新全量 State**：沿真实父链寻找最近完成的 Assistant 的 stateSnapshot；不受第 3 步历史窗口限制。对照当前世界卡 State Schema，若旧状态不兼容**直接允许舍弃并初始化最新 Schema 初值**，无需阻止旧 Session 继续；本轮结束状态元数据可标记 stateReset。
+5. **激活 WorldBook、State Module 与角色**：以**第 3 步真正送给模型的 user/assistant 叙事历史 + 当前 User** 为唯一关键词文本范围；没有额外 scan_depth。条目只支持 always/on_mention。on_mention 的关键词命中和可选 when(fullState) 通过逻辑 AND 共同判定；排除词优先。角色同样支持 order，按升序排列；当前玩家角色不能在 characterInfo 重复。
+6. **建立 WorldBook 位置索引**：按 anchor/position(before|after) 分组，再以 order 升序、同序原始位置稳定排序。本轮索引无需入库。
+7. **执行 Preset Nodes**：按预设的 nodes[] 顺序执行七个系统 NodeBuilder 和自定义节点。系统 Builder 从索引取 before 内容，构建本体，再取 after；chatHistory 展开本轮 Narrative Context（Summary 为 assistant 前缀），userInput 仅一条真实用户输入。
+8. **统一模板处理**：所有 Builder 输出 RawMessage 后，交给独立共享 TextRenderer，对可渲染的预设/角色/世界书模板片段执行变量、条件、状态引用和受控转换。历史叙事和当前 User 为 literal，绝不二次执行。
+9. **输出 ModelMessage[]**：校验真实 Pi 模型窗口限制与 role/order；如果超限，明确执行 WorldCard 已选策略或报错。**绝不在完成关键词匹配后静默裁掉历史**，防止 Context 与加载的条目不一致。
 
-**顺序是历史 → 全量状态 → 世界书与状态筛选 → 位置索引 → Preset → NodeBuilder → 全局文本渲染 → Messages。** 加载状态不受模型历史预算和压缩边界限制。
+在内部可先独立加载 State 再压缩摘要（摘要 Prompt 需要 State）；但最终 Context 和世界书命中必须使用同一份固定的叙事消息集合，状态读取不受压缩影响。
 
-## 3. NodeBuilder 可扩展结构
-
-保留「**一个系统节点对应一个 Builder**」的设计；这次不再为了削减类数量而删除真正有用的扩展点。固定注册表足够，不需要插件生命周期或动态发现系统。
+## 3. NodeBuilder 保持可扩展
 
 ~~~ts
-type NodeBuildContext = {
-  session: Session;
-  history: EntryView[];
-  fullState: StateSnapshot;
-  activeStateModules: StateModuleSelection[];
-  userInput: string;
-  worldBookIndex: WorldBookIndex;
-};
-
 type TextPart = { text: string; template: boolean };
-type RawMessage = { role: "system" | "user" | "assistant"; parts: TextPart[] };
+type RawMessage = {
+  role: "system" | "user" | "assistant";
+  parts: TextPart[];
+};
 interface NodeBuilder {
-  build(node: PresetNode, ctx: NodeBuildContext): Promise<RawMessage[]>;
+  build(node: PresetNode, ctx: AgentBuildContext): Promise<RawMessage[]>;
 }
-
 const systemNodeBuilders = {
   main: mainNodeBuilder,
-  personaInfo: personaInfoNodeBuilder,
-  characterInfo: characterInfoNodeBuilder,
+  personaInfo: personaNodeBuilder,
+  characterInfo: characterNodeBuilder,
   worldState: worldStateNodeBuilder,
   chatHistory: chatHistoryNodeBuilder,
   userInput: userInputNodeBuilder,
@@ -65,68 +58,37 @@ const systemNodeBuilders = {
 } satisfies Record<SystemNodeId, NodeBuilder>;
 ~~~
 
-普通系统 NodeBuilder 的实现示意：
-
-~~~ts
-async function buildSystemNode(node: PresetNode, ctx: NodeBuildContext): Promise<RawMessage[]> {
-  const { before = [], after = [] } = ctx.worldBookIndex[node.id] ?? {};
-  const body = node.enabled ? await buildSystemBody(node, ctx) : "";
-  const parts: TextPart[] = [
-    ...before.map(e => ({ text: e.content, template: true })),
-    { text: body, template: node.id !== "userInput" },
-    ...after.map(e => ({ text: e.content, template: true })),
-  ].filter(p => p.text);
-  return parts.length ? [{ role: node.role, parts }] : [];
-}
-~~~
-
-`chatHistory` 特例会展开多个 User/Assistant 消息，不能把历史压成单一系统消息，且其文本片段全为 `template:false`；`userInput` 的原始用户文字也是 `template:false`，before/after 世界书片段为 `template:true`。这样全局文本处理只执行一遍，却不会改写用户真实输入。系统节点关闭时可保留其世界书挂钩（沿用当前 Preset 语义）。每个 Builder **只处理自己的来源/本体内容**；位置排序在匹配阶段完成，模板执行统一在所有 Builder 完成后进行。
+对于普通 System Node：按索引取 before（有序模板片段）→ 本体 → after（有序模板片段），统一使用该节点 role。chatHistory 特例保留多条 user/assistant 消息各自 role（只含叙事文本），userInput 不可重复发送。各系统节点独立 Builder 便于后续扩展，不引入动态 Plugin Registry 或 Cache 生命周期。
 
 建议目录：
 
 ~~~text
-src/
-  agent/
-    agent-runtime.ts
-    context/
-      agent-context.ts          # create/load/buildMessages
-      world-book.ts             # 匹配、按位置和 order 索引
-      node-builders/
-        index.ts                # 固定映射
-        main.ts
-        persona-info.ts
-        character-info.ts
-        world-state.ts
-        chat-history.ts
-        user-input.ts
-        post-history.ts
-        custom-text.ts
-  domain/
-    text/
-      text-renderer.ts          # 供 Agent、世界卡详情、状态栏共同使用
-      expressions.ts
-      transforms.ts
+apps/server/src/agent/
+  agent-runtime.ts
+  context/
+    agent-context.ts
+    narrative-projection.ts     # 供 UI/Context/关键词扫描共用的投影契约
+    world-book.ts
+    context-strategy.ts
+    node-builders/             # main / persona / character / state / history / input / postHistory
+  pi/
+    executor.ts
+    events.ts
+
+packages/core/src/
+  text/                        # RenderText、evaluateCondition、状态引用，Web/Server 共享
+  world/                       # WorldCard/State/Preset 的纯类型、校验与算法
 ~~~
 
-## 4. 状态工具与共享文本引擎的边界
+## 4. 状态和工具
 
-`AgentContext.activeStateModules` 是本轮筛选结果，`AgentRuntime` 根据它与用户的状态更新配置构造 Pi 工具或内联状态说明。工具定义由 State Domain 生成，AgentContext 不处理工具的实际执行/提交；用户选择的 `off/inline/tool` 模式和实际模型工具支持仍需检查。
+- 当前状态是本分支最近有效全量快照（经新 Schema 校验/重置），并不等于 Prompt 历史或 UI 可见消息。
+- AgentContext 选择的 activeStateModules 同时用于 worldState Node 内容与本轮 StateTool Schema；候选变更必须带 reason，StateEngine 验证后结算到最终 Assistant Message 的元数据。
+- **本轮 Pi 执行过程仍传递、持久化真实 ToolCall/ToolResult 消息**；下一轮只用 user/assistant **叙事投影**重建历史，不携带旧工具消息。
+- 用户看到的历史也只显示叙事投影，完整历史仍保留可用于开发者诊断与世界线恢复。
 
-`TextRenderer` **不属于 Agent Context**，因为世界卡详情、预设预览、未来状态栏渲染也要用变量/条件/状态引用和文字转换。它接受文本 + 明确提供的值和安全配置，不主动查 Session/SQLite，不拥有世界书筛选或状态更新能力。见 [文本渲染](text-rendering.md)。
+## 5. Pi 实测约束和验收
 
-## 5. 历史、预算与 Pi 限制
+此前 Mock PoC 已证实某些 OpenAI-compatible 模型协议可能重排后置 system；Pi prompt(text) 也可能自动追加 User。执行层必须核查最终 HTTP role/order 和消息去重，不能把示例函数签名当 Pi 原生 API。
 
-`history.max_messages` 是实际进入模型的会话窗口，不是 UI 分页参数；`scan_depth_entries` 是触发扫描范围。压缩摘要即使在近 N 条消息的窗口外也作为固定前缀，摘要内容按 system/assistant 的已定义渲染方式参与模型上下文，但**绝不能当成真实新发生的世界事件**。模型历史只取当前分支已选 Run 的叙事，不回灌调试/失败/中断的工具内部记录。
-
-优先执行用户配置的历史窗口，然后检查 Pi 模型上下文上限；仍过长时按完整 Entry 继续从头裁剪，当前用户输入、世界设定和必要状态说明不得被静默截断。`max_messages` 计可见 User/Assistant 消息，遇到临界点为保留完整回合可以稍微超过 N。
-
-`@earendil-works/pi-coding-agent@1.4.0` 的本地 mock 实验已证明 OpenAI-compatible 路径可能重排后置 system；Pi 的 `prompt(text)` 不等价于直接发送任意 `ModelMessage[]`。执行层必须验证真正发出的消息序列，防止当前 User 被自动追加第二次；见 [PoC](../../experiments/pi-sdk-feasibility/REPORT.md)。
-
-## 6. 验收
-
-- 六步输入变更中只有当前分支历史与状态可影响本轮，分叉不串线。
-- 压缩窗口、近 N 消息窗口、扫描深度和全量状态的职责严格区分。
-- `always/on_mention/manual/when` 的世界书与状态模块筛选一致，`when` 始终用完整快照。
-- 同一 anchor/position 内按 order 排序；系统 NodeBuilder 按预设顺序执行且 before/body/after 正确。
-- 所有原始消息构建完再执行一次共享 TextRenderer；预览、世界卡详情和状态栏复用相同基础规则。
-- 只返回 `ModelMessage[]`，不引入额外世界实例 Context 或二级缓存。
+验收：所有 Agent Message（含 ToolCall/ToolResult）都写 Entry；三个读取场景复用 NarrativeProjection；none/window/summary 后的关键词扫描与真实历史一致；完整 State 独立；when 与 keyword AND；角色/世界书 order 正确；每轮输出有序 ModelMessage[]，不二次插入当前 User。

@@ -1,11 +1,11 @@
 # 状态管理：强类型状态树、语义变更与完整快照
 
-> 2026-11-03 目标设计，**尚未实现**。本文为 SillyRealms 状态唯一权威规范，替代旧的基于 `initial` 推断类型、`world/user` 运行值、MVU `<UpdateVariable>` 和模型直接提交 RFC 6902 JSON Patch 的方案。背景决策与测试计划见工作区 `plan/realms-typed-state-redesign-design.md` / `-tasks.md`。其中动态工具 Schema、长叙事 Tool Call 流式及 Provider 兼容性仍须 PoC，不能标称已验证。
+> 2026-11-04 目标设计，**尚未实现**。本文为 SillyRealms 状态唯一权威规范，替代旧的基于 `initial` 推断类型、`world/user` 运行值、MVU `<UpdateVariable>` 和模型直接提交 RFC 6902 JSON Patch 的方案。背景决策与测试计划见工作区 `plan/realms-typed-state-redesign-design.md` / `-tasks.md`。其中动态工具 Schema、长叙事 Tool Call 流式及 Provider 兼容性仍须 PoC，不能标称已验证。
 
 ## 1. 目标、取舍及术语
 
 - **作者只负责业务含义**：使用可视化编辑器创建「名称、类型、初始值、描述」，可选设置数值上下限、枚举、可空和加载规则；作者不需要理解 Zod、Tool Schema、JSON Pointer 或更新操作。
-- **单一类型定义**：发布世界卡中的 `data.state` 是受限、可序列化的定义 AST；编译器从同一 AST 分别生成 Zod 校验器、用于 Provider 的 JSON Schema 与运行时工具目标。不要把运行时 Zod 代码、EJS、任意 JS 直接存入世界卡，不依赖实验性 `z.fromJSONSchema` 作为关键反向转换。
+- **单一类型定义**：当前世界卡中的 `data.state` 是受限、可序列化的定义 AST；编译器从同一 AST 分别生成 Zod 校验器、用于 Provider 的 JSON Schema 与运行时工具目标。不要把运行时 Zod 代码、EJS、任意 JS 直接存入世界卡，不依赖实验性 `z.fromJSONSchema` 作为关键反向转换。
 - **Schema 约束的是数据形状**，`description` 约束剧情语义；类型正确不等于叙事、数值演变正确。严格拒绝违反显式类型/范围的状态值，不擅自把错误数字夹回范围。
 - **写入不是通用 JSON Patch**：模型通过类型受限的 ChangeSet 描述少量变化，服务端执行并验证；可在诊断层导出差异 Patch，但 **RFC 6902 六操作不是模型协议**。JSON Pointer 只用于统一寻址，访问值与更新均遵循该路径。
 - **全快照**：每个 `Entry` 的选中成功 `runs[]` 项都保存一份完整运行状态 JSON，Snapshot 不含 `type`、`description`、`initial`、`load`、`global/entities/values` 包装。
@@ -32,7 +32,7 @@
 - 所有**静态状态叶子**都必须有 `initial`；`object.properties` 递归生成初始对象，不要求作者重复提交整份初值。处于 `record.value` 或 `array.items` 的子节点用于验证新元素，其静态叶子初值**可以省略**；`upsert/append` 必须提供符合 Schema 的完整 item，不暗中补默认字段。
 - `nullable` 允许 `null`，不等于字段可以缺席。MVP 不支持 optional、union、判别联合、正则或任意用户自定义函数。所有固定 object 字段必需且禁止额外键；`record` 可以动态增加或删除键。
 - 数字只接受有限数字；整数、枚举、min/max 作为**硬约束**。`description` 是唯一自然语言变化原则，不另设易混淆的 `rule`；缺少描述可为空串，不代表程序保证剧情合理。
-- `object`、`record`、`array` 可以嵌套，嵌套深度、字段个数、JSON 字节和 Tool Schema 字节有实现侧上限，发布时报错而非截断。标识符为非空字符串，允许中文和点号；指针路径中 `~` 转义 `~0`、`/` 转义 `~1`。
+- `object`、`record`、`array` 可以嵌套，嵌套深度、字段个数、JSON 字节和 Tool Schema 字节有实现侧上限，编辑验证时报错而非截断。标识符为非空字符串，允许中文和点号；指针路径中 `~` 转义 `~0`、`/` 转义 `~1`。
 - `json` 刻意弱类型。编辑器显著提示该字段不享有内部强类型更新能力，不应为方便而把整棵复杂状态全部放进自由 JSON。
 
 ### 2.2 完整示例
@@ -83,24 +83,24 @@
 - 世界卡**只在 `data.state` 声明一棵统一状态树**；不再运行时拼接 `world/user`，不隐式生成虚拟 `全局` 或选中角色的 `user` 状态。
 - `characters[]` 仍负责角色设定、角色 ID 和可扮演许可。原有 `characters[].state` 属于**旧格式导入数据**；迁移时由导入器/作者显式映射到 `data.state.modules[目标根名称]`，处理重名与类型冲突，不能悄悄合并或只加载玩家角色的状态。选中的 `user` 只是 Session 的角色身份，并非状态根的特殊命名空间。
 - Opening 的 `initial_state` 是与运行值同形的**部分对象覆盖**：沿固定 `object` 递归到已定义叶子；`record/array/json` 叶子只能整体替换，不能把对象初值误当成深合并。所有覆盖值由 Zod 完整验证；未知键、额外固定字段、类型错误阻止开局初始化。
-- 创建 Session 时将整个世界卡 `data_json` 复制到 `sessions.world_snapshot_json`（其中包含状态 Schema），按 `initial` 深拷贝构建快照并应用 Opening 覆盖，写入根 Opening Entry 的成功 Run。后续世界卡更新不会隐式重置既有快照或改变其结构；不兼容的 Schema 变更需要显式迁移或新建会话。
+- 创建 Session 时直接读取世界卡当前 `data_json` 的 State Schema，根据 `initial` 构建完整 S0，应用 Opening 初始覆盖后写入根 Assistant Entry 的 `payload.stateSnapshot`；**Session 不复制 Schema 或世界快照**。下一轮世界卡变更若使旧快照不兼容，允许舍弃旧值并以最新 Schema 的初值重建；既有故事消息仍保留。
 
 ## 3. 创作者 UI 与导入
 
 默认编辑视图是一棵可展开的状态树；作者添加「字段/对象/字典/列表」，只需看**字段名、类型、默认值、描述**。数字范围、枚举项、可为空等在高级设置。对象内新增固定字段；字典配置 item 结构与初值映射；列表配置 item 结构与有序初值；预览区实时给出实际运行 JSON、完整路径及类型错误。
 
-可从示例 JSON 生成建议定义，但空数组、空字典、null、数组混合类型均需作者确认；不能以猜测结果静默发布。发布时必须验证定义、所有初值、Opening 覆盖及编译后的 Schema；作者不用手写工具调用、路径枚举或更新操作。
+可从示例 JSON 生成建议定义，但空数组、空字典、null、数组混合类型均需作者确认；不能以猜测结果直接保存为可用定义。创建 Session/编辑状态时必须验证定义、所有初值、Opening 覆盖及编译后的 Schema；作者不用手写工具调用、路径枚举或更新操作。
 
 ## 4. 类型引擎和安全边界
 
 - 服务端目标 Hono/TypeScript，使用 **Zod** 验证。受限定义 AST 是存储事实来源，直接编译出运行校验器；另编译为通用 JSON Schema/Provider strict 子集，不依赖 Zod 反向解析任意 JSON Schema。
-- 用同一冻结 Schema 检查创建时初始快照、每个操作参数及每轮最终完整快照；失败返回具体路径、期待类型、实际值和操作索引。JSON Schema 对 Provider 是减少错误的生成提示，不取代服务端 Zod 验证。
+- 用每次运行时从最新世界卡读取的 Schema 检查初始快照、每个操作参数及本轮最终完整快照；失败返回具体路径、期待类型、实际值和操作索引。JSON Schema 对 Provider 是减少错误的生成提示，不取代服务端 Zod 验证。
 - 避免原型污染和路径混淆：以安全字典处理 `__proto__`、`constructor` 等键，严格检查 Pointer 转义与目标存在性；限制键名、深度、条目数、变更数与字节大小。拒绝未知固定字段与整个根/模块写入。
 - 状态管理只保证结构约束与提交一致性；不会根据自然语言描述自动修正剧情、推断不确定的值，或调用额外隐形模型补状态。
 
 ## 5. 模型更新协议：ChangeSet
 
-模型不直接生成任意 JSON Patch；统一内部协议是 `changes: StateChange[]`。一轮变化按顺序作用于冻结父快照 S 的副本，全部通过后才能提交完整 S'。
+模型不直接生成任意 JSON Patch；统一内部协议是 `changes: StateChange[]`，**所有状态变更项必须有非空 reason 描述**，供状态栏解释变化。一轮变化按顺序作用于当前分支全量状态 S 的副本，全部通过后才能提交完整 S'。
 
 | op | 参数 | 语义 |
 | --- | --- | --- |
@@ -111,6 +111,8 @@
 | `remove` | `target, key` | 只删除 record 中已存在的动态键；不能删除固定字段 |
 | `append` | `target, item` | 只向已声明数组末尾追加一个符合 items Schema 的完整元素 |
 
+所有操作（set/adjust/upsert/set_record_field/remove/append）都必须带 `reason: string`，说明对应变化在叙事中的原因。`reason` 是模型的说明而不是程序可证明的事实；程序校验类型、非空字符串和目标状态约束。没有变化时使用 `changes: []`，不需要凭空编造说明。
+
 `target` 为 RFC 6901 JSON Pointer，例如 `/清月/灵力`、`/清月/背包`。动态 `key` 单独传递，避免模型拼接大量未知下标路径；`field` 的候选字段从 record.value 定义生成，允许固定嵌套路径，不接受模型猜测新结构。`json` 逃生口仅支持整体 set。动态记录建议 `record`，会发生索引变动的背包或角色关系不建议用 array；首期不提供数组按索引删除/移动。
 
 示例（假设回春丹事先在背包中且灵力不会超限）：
@@ -119,8 +121,8 @@
 {
   "narrative": "清月服下回春丹，灵力恢复十点。",
   "changes": [
-    {"op": "adjust", "target": "/清月/灵力", "delta": 10},
-    {"op": "remove", "target": "/清月/背包", "key": "回春丹"}
+    {"op": "adjust", "target": "/清月/灵力", "delta": 10, "reason": "服用回春丹，灵力恢复"},
+    {"op": "remove", "target": "/清月/背包", "key": "回春丹", "reason": "回春丹已经服用"}
   ]
 }
 ```
@@ -141,19 +143,23 @@
 清月缓缓放下剑。
 
 <StateUpdate>
-{"changes":[{"op":"set","target":"/清月/心情","value":"放松"}]}
+{"changes":[{"op":"set","target":"/清月/心情","value":"放松","reason":"战斗结束后清月放松了下来"}]}
 </StateUpdate>
 ```
 
-严格拦截分段标签避免流式露出，块中不允许 Markdown 围栏或其他文本；原始输出与清洗后的正文分开存储，更新块不回注后续聊天历史。缺失块状态为 `missing`，重复、提前出现、未闭合、非法 JSON 或模型中断为 `invalid`，不解释成 `[]`。每轮只选择 tool/inline 之一，不重复执行；工具返回是否需要后续模型请求是 Provider/Pi 的待验证能力，协议不承诺零续轮。
+严格拦截分段标签避免流式露出，块中不允许 Markdown 围栏或其他文本；原始输出与清洗后的正文分开存储，更新块不回注后续聊天历史。缺失块状态为 `missing`，重复、提前出现、未闭合、非法 JSON 或模型中断为 `invalid`，不解释成 `[]`。每轮只选择 tool/inline 之一，不重复执行；工具返回是否需要后续模型请求是 Provider/Pi 的待验证能力，协议不承诺零续轮。**重要**：`submit_turn` 的 `narrative` 可能仅存在于 Assistant 的 ToolCall 参数中；原始 Assistant ToolCall 和 ToolResult 仍须全部持久化。若本轮没有另行生成最终可见的 Assistant 叙事，则在状态校验成功后，将该 narrative 按原文写成一条 `origin=derived_tool_narrative` 的规范化 Assistant Entry；模型下轮历史只读取其叙事 text，不回放旧工具参数或 ToolResult，且已有独立 Assistant 正文时不能重复追加。
 
 ## 6. 加载、读取与模板
 
-### 6.1 根 Module 加载
+### 6.1 状态根与世界书的条件加载
 
-根 `load` 默认 `{"mode":"always"}`，支持 `always`、`on_mention` 和 `manual`（可从 Session 选项显式开启）；`on_mention` 使用 `keywords`、`keyword_logic:any|all`、`exclude_keywords`，两者都可有受限布尔 `when`。扫描使用当前 User 和 AgentContext 已加载的祖先 Entry 历史（默认当前 Entry 加三个祖先，预设 `scan_depth_entries` 可配置，且不超出最近 Summary / N 消息窗口）；`when` 在**同一条世界线最新完整状态快照**上求值。激活 Module 的当前值、路径、类型、描述一起进入 `worldState` 节点和动态写入目标；未激活根保留在快照但默认不向模型暴露、不可写。超出必需状态/工具预算则拒绝生成或显式要求收窄激活，不静默截断 schema 和变更约束。
+状态根 `load` 默认 `{"mode":"always"}`，仅支持 `always` 与 `on_mention`；**不支持 manual**。关键词检测只扫描本次实际送模型的 user/assistant 叙事历史（经 WorldCard `none/window/summary` 策略处理）和当前 User 输入。`on_mention` 使用 `keywords`、`keyword_logic:any|all`、`exclude_keywords`，基础条件未命中则不加载。
 
-世界书保留 `always/on_mention/manual`，新增可选 `exclude_keywords` 与 `when`；正文和 description 可以读取状态而不能修改它。加载和状态面板显示无关；面板根据完整有效快照显示当前活动叶子所有字段。
+若存在 `when`，它是附加的 **AND 条件**：`active = modeMatched && evaluateWhen(fullState)`。`always + when` 必须满足 when；`on_mention + when` 必须同时命中关键词且 when=true；排除词命中一票否决。`when` 对当前世界线最新**完整状态**求值，不能用筛选出来的局部状态代替全量 State。条件引擎由 [TextRenderer](text-rendering.md) 共享。
+
+状态根激活后，其描述与当前值进入 `worldState` NodeBuilder，也用于构造受限状态更新 Tool Schema；未激活的根仍留在全量状态中，但不默认暴露给模型或允许更新。摘要、滑窗、工具消息过滤只改变关键词来源，**不改变完整状态的读取**。
+
+状态栏根据全量状态展示字段，不取决于状态根是否加载进模型。世界书和状态根的匹配范围完全一致，不独立设置 Preset scan_depth。
 
 ### 6.2 文本读取
 
@@ -170,27 +176,25 @@
 
 世界书正文、`load.when`、自定义 Prompt、状态 description 和未来状态栏使用独立 `domain/text` 的**同一个只读表达式解析器**，支持括号、有限数字/字符串/布尔/null、比较、算术及 `&& || !`、`if / else if / else`；无 JS/EJS、赋值、循环、网络/文件访问、动态执行或状态写入。仅布尔结果能作为 `when/if`；按标准类型严格比较，不做隐式强转。表达式对当前分支最新完整状态快照求值、短路求值，错误给出可定位诊断。AgentContext 先筛选条目，再让所有 NodeBuilder 完成原始消息组装，统一使用共享 TextRenderer 解析/转换一次；预览和执行使用同样的规则。
 
-## 7. Entry 内 Run 的状态结算与恢复
+## 7. 状态结算、完整 Agent 消息和世界卡更新
 
-**Entry 是世界线节点，Entry 内选中的成功 Run 拥有本回合的完整状态快照**。`entries.parent_entry_id` 提供父链；`runs_json[]` 保存同一回合多次模型尝试以及可选内部 Tool Call/Result，不存在独立 `runs/messages/run_tool_calls` 表。
+1. 创建 Session 时只写 `world_id`，不保存世界快照。Opening 正文成为根 Assistant Entry，初始状态 S0 根据当前世界卡 Schema 和 `opening.initial_state` 构造，保存于该 Entry 的 `payload.stateSnapshot`。
+2. 玩家输入是新的 User Message Entry；Assistant 生成可能有多个包含 `toolCall` 块的完整消息，并可能产生独立 `toolResult` Message Entry。**每条真实 Pi 消息都按原样持久化**，不可把工具消息仅留在内存或作为可选日志。
+3. AgentContext 独立沿真实 parent_id 父链找到最近一个**有效、已完成 Assistant Entry** 的全量状态；Prompt 摘要/近 N 消息/工具过滤都不影响 State 的查询。
+4. 模型输出叙事和 `StateChange[]`，每项 Change 强制 `reason`。StateEngine 在完整 S 副本上顺序应用并验证每个变更和最终新状态；工具返回不是已结算状态，失败时不将非法更改标记为成功。
+5. 生成成功后，将完整 S' 和含 reason 的变更元数据写入最终 Assistant Message Entry（必要时为由终止型 ToolCall.narrative 规范化生成的 Assistant Entry）。`off` 模式继承 S；明确 `changes: []` 也保留完整状态。Chat UI/新模型历史只提取 user/assistant **叙事文本**，剔除 ToolCall/ToolResult、思维块及内联状态标记；但 Raw Entries 保留原始 ToolCall/ToolResult。
+6. **世界卡只有最新一份，允许旧状态失效**：下一次使用新的 `worlds.data_json` 状态 Schema 读取历史 S。若结构不兼容，允许舍弃旧值并按最新 Schema 的 initial 重建一个完整初态，标记 `stateReset` 以便诊断。不要把旧 Schema 状态强行转换、导致旧 Session 无法继续；旧历史消息和它们当时保存的状态 JSON 仍保留。
+7. 多分支从当前 tip 的真实父链取状态，不能从数据库全局最近 Entry 或另一个分支取值。对有后代的历史编辑/重新生成，不静默重写后代状态；可通过新分支保存新的输出。
 
-1. 创建 Session 时将世界卡快照（含状态 Schema）保存到 `sessions.world_snapshot_json`。Opening `initial_state` 按原有类型规则覆盖并校验后写入根 `Entry.runs[0].stateSnapshot=S0`。
-2. 新增互动 Entry 立即保存本轮 User 文本和一个 running Run。**当前用户输入尚不是已发生的世界事实**；此时状态来自其完成父链的最近成功选中 Run。
-3. `AgentContext.create` 按实际 parentEntryId 查找最新全量状态，无论聊天历史是否被 Summary/近 N 消息截断；用这份完整值 + 实际扫描文本选择 `activeStateModules`，世界书和状态根的 `when` 共用共享表达式解析器。`worldState` NodeBuilder 和可选状态更新工具共享这份激活范围。
-4. 模型经 Pi 输出叙事 + 候选 ChangeSet。`StateEngine` 在父快照的副本上顺序应用所有受限操作，最后做整份 Schema 验证；任何错误都不部分提交。
-5. 模型成功、状态有效时，把清洗后 Assistant 叙事、原始输出/必要工具轨迹、候选变更和**完整 S'** 一起写入该 Entry 当前 Run，设为 `completed` 并更新 `selected_run_id`。`off` 模式直接继承 S；明确空变更也必须保存完整 S'。
-6. 缺失/非法状态更新时该 Run 可标为 `failed`（保留叙事供诊断），不使非法状态成为当前分支事实；用户可以在**同一 Entry** 添加下一次 Run 重试，或显式确认继承 S。
-7. 模型取消/中断只将尝试标记 `stopped/failed`，保留 Entry.text 和旧成功 Run（如有），不改变已选状态。若有后代，首期限制修改/重生成历史以避免整个 stale 状态传播系统；提供从旧父节点新建分叉路径。
-
-**SQLite 事实来源**：`sessions.world_snapshot_json` 给出状态 Schema，`entries.runs_json[].stateSnapshot` 保存每次已完成尝试的完整状态；`entries.selected_run_id` 指向实际采用的 Run。工具调用日志如需保存仅内嵌在 `runs_json[].piEntries`，不进入玩家可见模型历史，也**绝不在工具执行时直接写状态**。
+SQLite `entries.payload` 记录 Pi Message 和完成 Assistant 的完整状态；`sessions` 只通过 `world_id/preset_id/user_character_id/tip_entry_id` 关联事实。**不建 run_tool_calls/runs/messages 独立表，不用 Session 世界快照或 selected_run_id。**
 
 ## 8. 验收与未解决问题
 
 - 类型：初始化所有基础类型、null、嵌套对象、record/array、JSON 逃生口、错误初值、Opening 部分覆盖、min/max/enum、额外键拒绝。
 - 更新：六种操作的路径白名单、record 新增/修改/删除、数组追加、数值区间、顺序、任何错误整组回滚，生成中断不部分提交。
-- 一致性：同一 Entry 多次 Run 选择与重试、真实 parent_entry_id 分叉、无变化也存完整状态；本地 MVP 不引入 generation_id/乐观版本矩阵。
+- 一致性：消息级 Entry 的真实 parent_id 分叉、Assistant 重新生成/工具消息顺序、无变化也保存完整状态；本地 MVP 不引入复杂 revision 矩阵。
 - TextRenderer：`{{state:/...}}`、`get/exists/if`、世界书 when、状态根 load、动态目标、世界卡预览和未来状态栏行为一致；模板绝不写状态。
 - **Provider PoC 必须优先完成**：至少两类 Provider 的 strict Tool 支持、复杂 Schema 通过率、长篇 narrative 流式表现、内联失败率、输出正确率及输入/输出 Token、延迟和语义更新召回率。选择正式默认通道前必须量化，不能只看 JSON 合法率。
-- **迁移清单**：旧 `characters[].state` 显式并入统一 `data.state`，旧 `world/user` 快照须明确转换，旧 MVU / RFC6902 更新协议不自动兼容；新 Schema 生效前检查既有世界卡、Opening、`entries.runs_json`，先备份再迁移。
+- **迁移清单**：旧 `characters[].state` 显式并入统一 `data.state`，旧 `world/user` 快照须明确转换，旧 MVU / RFC6902 更新协议不自动兼容；升级旧格式前检查当前世界卡、Opening、`entries.payload`，先备份再迁移；新 WorldCard Schema 可以使历史状态失效，而非强制全局迁移。
 
 外部参考：[Zod JSON Schema](https://zod.dev/json-schema)、[JSON Schema](https://json-schema.org/)、[RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)、[RFC 6902](https://www.rfc-editor.org/rfc/rfc6902)、[OpenAI Structured Outputs](https://platform.openai.com/docs/guides/structured-outputs)、[Anthropic Tool Use](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview)。

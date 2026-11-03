@@ -1,37 +1,37 @@
-# SillyRealms · 文档索引
+# SillyRealms · 设计文档索引
 
-> 2026-11-03 第二版单 Context + 六表方案，**仍是设计阶段**。核心约束：本地单人、世界卡驱动、真实 Entry 分叉、可选强类型状态和 Pi 模型流式执行。
+> 2026-11-04 目标规范，尚未实现。**Monorepo + 6 张业务表 + 消息级 Entry + 原始工具消息全量持久化 + 叙事 Context/State 分离**。
 
-## 推荐阅读顺序
+建议阅读顺序：[产品总纲](PRODUCT.md) → [Session/Entry](design/session.md) → [Context Strategy](design/context-strategy.md) → [AgentContext](design/agent-context.md) → [Storage](technical/storage.md) → [架构](technical/architecture.md)。
 
-[产品总纲](PRODUCT.md) → [AgentContext](design/agent-context.md) → [Session/Entry](design/session.md) → [Storage](technical/storage.md) → [技术架构](technical/architecture.md) → [实施计划](technical/implementation-plan.md)。
+## 核心文档
 
-## 领域设计
-
-| 文档 | 说明 |
+| 文档 | 职责 |
 | --- | --- |
-| [world-card.md](design/world-card.md) | 世界卡、Opening、角色、WorldBook、状态声明与加载条件 |
-| [preset.md](design/preset.md) | 系统/自定义节点、role、顺序、导入导出；系统 NodeBuilder 在 AgentContext 中 |
-| [provider.md](design/provider.md) | ProviderService 查询 Pi 内置模型、用户 Key 与凭据状态 |
-| [agent-context.md](design/agent-context.md) | **唯一 Context**：分支历史/最新全量状态、世界书/状态筛选、索引、节点构建 → Messages |
-| [text-rendering.md](design/text-rendering.md) | **共享文本能力**：变量、条件、状态引用、受控转换；Agent/世界卡/状态栏复用 |
-| [session.md](design/session.md) | Session 与 Entry 父树、内嵌 `runs[]`、Summary、分叉/重试/切叶子/世界线 |
-| [state.md](design/state.md) | 强类型状态 Schema、Module 加载、ChangeSet、完整快照 |
-| [architecture.md](technical/architecture.md) | AgentRuntime/Pi/SSE 和业务 Domain 分层 |
-| [storage.md](technical/storage.md) | **仅六张业务表**、内嵌 Run JSON、通用 tags、SQLite 最简写入 |
-| [implementation-plan.md](technical/implementation-plan.md) | 真实 SDK PoC、Domain/Agent/UI 实施与验收 |
+| [world-card.md](design/world-card.md) | 世界卡唯一版本、Opening/角色、WorldBook/状态加载、三种上下文策略 |
+| [preset.md](design/preset.md) | Preset 关联 Pi 模型、参数、状态模式、摘要 Prompt 和有序节点 |
+| [provider.md](design/provider.md) | ProviderService 内置模型列表、API Key 安全管理 |
+| [session.md](design/session.md) | 一条 Entry 对应一条 Agent Message，包含 ToolCall/ToolResult，parent_id 世界线分叉 |
+| [context-strategy.md](design/context-strategy.md) | 三种 Context 策略 none/window/summary 的触发、锚点与真实历史差异 |
+| [agent-context.md](design/agent-context.md) | 唯一 AgentContext：历史投影、全量状态、条目筛选、七 NodeBuilder → ModelMessage[] |
+| [text-rendering.md](design/text-rendering.md) | Web/Server 复用变量、条件、状态引用与受控文本转换；摘要 Prompt 可用 |
+| [state.md](design/state.md) | 类型 Schema、状态根加载、ChangeSet(reason 必填)、全量快照和失效重置 |
+| [architecture.md](technical/architecture.md) | Monorepo 分层、Pi 执行/SSE 和消息全量持久化 |
+| [storage.md](technical/storage.md) | 六表 SQLite DDL、tags type 内排序、Entry payload、世界线 |
+| [implementation-plan.md](technical/implementation-plan.md) | 实现阶段与 PoC/验收清单 |
 
-## 例子与历史研究
+## 示例和历史资料
 
-- [world-card.json](examples/world-card.json)：世界、角色、WorldBook/状态示例。
-- [default-preset.json](examples/default-preset.json)：有序系统/自定义节点、预算及关键词扫描深度。
-- [Pi SDK 实验报告](../experiments/pi-sdk-feasibility/REPORT.md)：2026-11-01 当时版本 mock 结果，不证明真实 Provider 的所有消息角色顺序。
-- [state-management-module.md](state-management-module.md)：**废弃草案**，不作为当前协议。
+- [world-card.json](examples/world-card.json)：世界卡原生数据示例，支持 context；没有 Opening 的 player_characters。
+- [default-preset.json](examples/default-preset.json)：当前预设格式，含 model/state_update_mode/summary_prompt。
+- [Pi SDK 可行性 PoC](../experiments/pi-sdk-feasibility/REPORT.md)：角色顺序和实际 Pi SDK 适配的已有本地实验，不能代替真实 Provider 端到端测试。
+- [state-management-module.md](state-management-module.md)：历史讨论草案，**不是当前权威规范**。
 
-## 统一设计约定
+## 必须遵守的统一约束
 
-1. 没有 `WorldInstanceContext`。AgentContext 自行加载会话、历史、状态与预设，并按 NodeBuilder 顺序产出 ModelMessage[]；最终渲染交由独立 TextRenderer。
-2. Session 关联世界快照和角色；Entry 是一整个回合，`parent_entry_id` 提供分叉；`runs_json` 保存生成/工具/状态尝试。只保留六张业务表，不设独立 Run/Message/工具/设置/标签关联表。
-3. 世界书/状态根的 `when` 使用真实分支**完整**状态；Summary 截断和近 N 消息只影响 Prompt 历史。
-4. 保留 ProviderService，但 Pi 负责内置模型目录和各供应商实际调用；API Key 不出现在 WorldCard/Preset/Session 导出和日志。
-5. 本地单人简化锁与并发，同时保证两行写入基本原子性；未来能力不得在 PoC 前宣称已实现。
+1. **Raw Entries 全量持久化**：包含 user、assistant（其中的 toolCall）、toolResult 和 Summary，不能用过滤后的聊天文本替换数据库记录。
+2. **叙事投影一致**：用户聊天、下一轮模型历史和关键词扫描只含 user/assistant 的叙事文本；过滤旧 toolCall/toolResult/思维/内联状态更新。
+3. **State 独立**：沿真实 parent_id 父链取最新有效全量状态；不因窗口/摘要而丢失。世界卡最新 Schema 不兼容时允许重置旧状态，旧消息留存。
+4. **world_id/preset_id 关联最新数据**：Session 不保存 World Snapshot、Opening ID、模型选择或 Options。模型与摘要 Prompt 属 Preset，上下文策略属 WorldCard。
+5. **加载条件**：只用 always/on_mention，when 与关键词是 AND；角色也支持 order。没有 manual 与 Preset 独立扫描深度。
+6. **首期 Monorepo 仅 Web/Server**：Android/Desktop 后续进入，packages/core/shared 只在有实际复用需求时落地。

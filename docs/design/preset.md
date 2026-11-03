@@ -1,101 +1,78 @@
-# Preset：提示词预设、节点模型与编排配置
+# Preset：模型、摘要 Prompt、系统节点和自定义编排
 
-> 2026-11-03 目标设计，未实现。本文件是 **Preset 领域唯一规范**：只管提示词预设配置、导入导出、持久化及向 AgentContext 提供不可变编排快照；**不存模型选择**。**不负责**节点内容构建、世界书命中、变量替换、Token 裁剪、模型调用与 API Key。构建规则见 [AgentContext](agent-context.md)，模型连接见 [Provider](provider.md)。
+> 2026-11-04 目标设计，未实现。Preset 管理**本局使用的模型、生成参数、状态更新模式、摘要 Prompt 和所有提示词节点**。Session 只保存 preset_id，ProviderService 负责模型目录/API Key，AgentContext 负责实际拼装与筛选。
 
-## 1. 产品体验与边界
+## 1. 配置归属
 
-Preset 是可复用的“**模型输入编排清单**”，而非完整 Prompt 文本。创作者可查看、复制、编辑、导入、导出和选择预设；在一个有序列表中编辑各节点的标题、Prompt、角色、启用状态并拖动排序。界面明确区分 **系统节点（有稳定来源，内容由系统构建）** 与 **自定义文本节点（作者直接编辑 Prompt）**，并提供最终编排顺序、角色和预算规则预览。编辑 Preset 不改写既有 Entry 和内嵌 Run；从下一次 AgentContext 构建开始使用新配置。
+- `model`：`provider`、`modelId`、`parameters`，通过 ProviderService 校验当前 Pi 内置模型，**不在 Session 重复保存 model_selection_json**，Preset 导出不得包含 API Key。
+- `state_update_mode`：`off / inline / tool`，由 Provider 模型实际能力确认；StateEngine 验证变更。
+- `summary_prompt`：用户可编辑的历史摘要指令模板，仅世界卡设置 `context.strategy=summary` 且达到阈值时使用。模板允许通过共享 TextRenderer 读取 `{{state:/...}}`、`{{user}}` 等只读变量与条件，使用当前完整世界状态作为环境。
+- `nodes[]`：七个系统节点与任意自定义文本节点，单个有序数组决定角色、启停、先后顺序，不额外保存 order 列。
+- `budget`：`max_output_tokens`、`safety_margin_tokens`、`max_input_tokens?`；只做实际模型窗口校验，不额外改变 WorldCard 的上下文策略。
+- **不保存 `scan_depth_entries`**：所有 WorldBook、状态根和角色的关键词匹配范围就是经过世界卡 Context 策略处理的**当前实际叙事历史 + 当前 User**。
 
-首期提供一个持久化预设 `builtin/default`：**不可删除、不可改 ID，但可修改标题、节点顺序、内容、角色及预算**。恢复出厂配置须显式确认，不能在启动、升级或模型切换时自动覆盖用户修改。用户可复制、新建空预设（自动生成七系统节点）、从 JSON 导入预设。选择模型/API Key 属 Provider/Session，不写入 Preset。
+默认持久化 `builtin/default` 预设可编辑但不可删除；允许复制、新建、导入、导出、恢复默认。配置变更从旧 Session 下一轮开始立即生效，不回写已保存 Entry。
 
-## 2. 领域对象及不变量
+## 2. 七个系统节点
 
-`Preset`：`id`、`name`、`description?`、`schema_version`、`is_builtin`、有序 `nodes[]`、`budget`、`scan_depth_entries`、时间信息。`schema_version` 仅为导入导出格式版本，MVP 本地个人应用不做预设乐观锁 revision。
-
-`PresetNode` 分两种：
-
-| 字段 | 系统节点 `kind=system` | 自定义 `kind=text` |
-| --- | --- | --- |
-| `id` | 固定系统 ID | 预设内稳定唯一 ID（随机生成） |
-| `name` | 可编辑展示名称 | 必填可编辑名称 |
-| `role` | `system/user/assistant`，部分系统节点固定 | `system/user/assistant` |
-| `enabled` | 可编辑，但必需节点不能关闭 | 可编辑 |
-| `content` | 只允许 `main` 和 `postHistory` 声明可编辑基础文本；其余由 AgentContext 构建 | Prompt 正文，允许变量/状态只读模板 |
-| `source` | 固定为系统 slot，与 id 一一对应 | 不提供 |
-| `order` | **不存在**独立排序值；位置完全由 `nodes[]` 决定 | 同左 |
-
-七个系统节点**每个恰好出现一次**，不得删除、复制、改 ID、改 kind 或改 source：
-
-| ID | 本体来源 | 角色约束 | 配置行为 |
+| ID | 本体来源 | 角色规则 | 额外约束 |
 | --- | --- | --- | --- |
-| `main` | 预设正文 `content` | 可选 | 全局基础指令 |
-| `personaInfo` | 本局选中玩家角色资料 | 可选 | 支持 WorldBook 前/后挂钩 |
-| `characterInfo` | 其它激活角色资料 | 可选 | 支持前/后挂钩 |
-| `worldState` | 本轮已加载状态描述与值 | 可选 | 状态启用时必须 enabled；支持前/后挂钩 |
-| `chatHistory` | 祖先 Run 内可见消息 | `auto`，保持消息原 role | 必需；没有 WorldBook 挂钩 |
-| `userInput` | 当前 Run 的用户输入 | 固定 `user` | 必需；支持前/后挂钩；原始输入仅一次 |
-| `postHistory` | 预设正文 `content` | 可选 | 默认关闭 |
+| `main` | 预设可编辑基础 Prompt | 可选 system/user/assistant | WorldBook 不可挂钩 |
+| `personaInfo` | 当前世界卡玩家角色（当前 Session.user_character_id） | 可选 | 支持 WorldBook before/after |
+| `characterInfo` | 其它命中的角色，按 order 升序 | 可选 | 支持 before/after；不重复玩家角色 |
+| `worldState` | 被激活的状态根的当前值/描述 | 可选 | 状态更新启用时需要；支持 before/after |
+| `chatHistory` | 当前 WorldCard 策略得到的 NarrativeProjection | 自动保留 user/assistant 角色 | 必需，无挂钩 |
+| `userInput` | 本轮 User 原文 | 固定 user | 必需且恰好出现一次；支持 before/after |
+| `postHistory` | 预设可编辑后置 Prompt | 可选 | 默认关闭 |
 
-仅 `chatHistory` 与 `userInput` 必须启用，且前者在后者之前；启用状态时 `worldState` 也必须启用。系统节点即使自身关闭，关联 WorldBook 前/后钩子仍可生效；禁用本体不等于禁止挂钩。系统节点的具体构建与钩子执行由 AgentContext 内各个**独立系统 NodeBuilder** 实现：before 条目 → 本体 → after 条目。全部 Node 构建完毕后由独立的共享 TextRenderer 统一渲染变量、条件、状态引用和受控文本转换。Preset 不含脚本调度器。
+每个系统节点有固定 `id/source/kind=system`，恰好出现一次，不能重命名 ID 或删除。自定义 `kind=text` 有独立 ID、名称、role、content、enabled，可以在系统节点之间任意拖动排序；不伪装系统 source。`chatHistory` 必须先于 `userInput`，必需节点不能关闭。系统节点本体关闭时，其 WorldBook before/after 仍可按规则注入。
 
-自定义文本节点允许插在系统节点任意位置，支持自定义名称、role、Prompt 内容和启停；不允许伪装系统 `source`、自定义内部钩子或执行任意代码。自定义文本在运行时与其它节点使用独立于 Agent 的共享 [TextRenderer](text-rendering.md)。
+**保留七个独立系统 NodeBuilder**，每个从 WorldBook 的 `anchor/position/order` 索引取得 before 条目 → 拼自身正文 → 追加 after 条目。全部节点构建完后，统一让独立共享 TextRenderer 展开模板。历史消息和当前 User 作为 literal，不二次执行表达式。
 
-## 3. 排序与 Token 配置
-
-有序 `nodes[]` 是**唯一编排权威**，UI 拖动直接改变数组顺序；不维护第二份独立顺序表。WorldBook 的 `before/after` 只附着固定系统锚点，跟随节点移动，不作为 Preset 节点持久化。
-
-`budget` 保存**策略**而非实际消费：`max_output_tokens`（响应保留）、`safety_margin_tokens`、`max_input_tokens?`（额外输入上限）。模型上下文窗口从本轮调用配置提供给 AgentContext 的中立 `BudgetLimits`，不是 Preset 的模型引用。实际输入额度 = min(模型窗口 - 输出保留 - 安全裕量, 可选预设输入上限)。`scan_depth_entries` 默认 4，指**当前 Entry 的用户输入 + 至多 3 个已加载祖先互动 Entry** 的可见文本扫描；与 Session `history.max_messages` 是两个不同选项。扫描窗口不能越过最近 Summary 和模型可见历史窗口。
-
-Preset 只验证预算数字的基本合法性；实际预算使用由 AgentContext 做最简限额检查与完整 Entry 历史裁剪，不引入独立的全局片段预算框架；模型上下文能力可由 ProviderService 从 Pi 目录提供。
-
-## 4. 可序列化配置示例
+## 3. 预设 JSON 示例
 
 ~~~json
 {
   "schema_version": 1,
   "name": "叙事默认",
   "description": "基础角色扮演预设",
+  "model": {
+    "provider": "deepseek",
+    "modelId": "deepseek-chat",
+    "parameters": {"temperature": 0.8}
+  },
+  "state_update_mode": "inline",
+  "summary_prompt": "总结已有剧情、人物关系、重要事件、承诺和未解决线索。当前世界时间：{{state:/世界/当前时段}}。",
   "nodes": [
-    {"id":"main","kind":"system","name":"主指令","source":"main","role":"system","enabled":true,"content":"遵循世界设定，连贯地推进叙事。"},
+    {"id":"main","kind":"system","name":"主指令","source":"main","role":"system","enabled":true,"content":"遵循世界设定，连贯推进叙事。"},
     {"id":"personaInfo","kind":"system","name":"玩家角色","source":"personaInfo","role":"system","enabled":true},
     {"id":"characterInfo","kind":"system","name":"其他角色","source":"characterInfo","role":"system","enabled":true},
     {"id":"worldState","kind":"system","name":"世界状态","source":"worldState","role":"system","enabled":true},
-    {"id":"custom-style","kind":"text","name":"叙事风格","role":"system","enabled":true,"content":"叙事细致、保持角色一致性。"},
+    {"id":"custom-style","kind":"text","name":"风格","role":"system","enabled":true,"content":"叙事细致，保持角色一致性。"},
     {"id":"chatHistory","kind":"system","name":"历史消息","source":"chatHistory","role":"auto","enabled":true},
     {"id":"userInput","kind":"system","name":"用户输入","source":"userInput","role":"user","enabled":true},
     {"id":"postHistory","kind":"system","name":"后置指令","source":"postHistory","role":"system","enabled":false,"content":""}
   ],
-  "budget":{"max_output_tokens":4096,"safety_margin_tokens":1024},
-  "scan_depth_entries":4
+  "budget":{"max_output_tokens":4096,"safety_margin_tokens":1024}
 }
 ~~~
 
-`id / is_builtin / created_at` 是库记录元数据；导出 JSON 不携带内置身份、用户 ID、密钥或运行时内容。导入后按目标库分配新 `id`；自定义节点重复 ID 可拒绝并提示修复，不能隐式丢节点。
+真实用户可修改模型 ID，示例默认 ID 不代表本机 API Key 已配置或真实可调用；ProviderService 必须在运行时校验。摘要 Prompt 的状态引用仍按只读完整 State 展开，摘要文本来自 user/assistant 叙事，**不包含工具调用或工具结果**；具体流程见 [Context Strategy](context-strategy.md)。
 
-## 5. 持久化与 API
+## 4. 存储与领域 API
 
-SQLite 的 `presets` 表只需：`id TEXT PK`、`name`、`config_json`、`is_builtin`、`created_at`、`updated_at`。描述、`schema_version`、完整 `nodes[]/budget/scan_depth_entries` 均在 `config_json`。`builtin/default` 首次初始化创建且不能删除，出厂预设为应用只读资源。编辑时检查配置合法后直接覆盖，无 `expected_revision`、不建历史版本表。Session 保存 `preset_id`；每次 AgentContext 构建读取当前配置，不改写已完成 Entry。
+SQLite `presets` 表：`id TEXT PK, name, config_json, is_builtin, created_at, updated_at`。`config_json` 保存完整 ModelSelection、参数、状态更新模式、`nodes[]`、`budget`、`summary_prompt`，不存 API Key，不设置乐观 revision 矩阵。
 
-管理接口（逻辑契约，路由可依实际风格统一）：
+领域接口：`listPresets/getPreset/createPreset/clonePreset/updatePreset/deletePreset/importPreset/exportPreset/restoreDefault/getPresetSnapshot`。首期只需验证系统节点唯一、角色合法、必需节点启用和顺序、模型可被 ProviderService 发现、预算合法。摘要 Prompt 由创作者自己编辑，导出时跟随预设。
 
-- `listPresets() / getPreset(id)`：列表/编辑详情；
-- `createPreset(input) / clonePreset(id) / updatePreset(id, input) / deletePreset(id)`；
-- `importPreset(json, conflictPolicy) / exportPreset(id) / restoreDefault(confirmed)`；
-- **供 AgentContext 的唯一读取口**：`getPresetSnapshot(id): PresetSnapshot`，返回已验证、有序的 `nodes[]`、`budget`、`scan_depth_entries`，不拼 Prompt、不访问 WorldBook、不提供模型连接。
+Preset 不负责 WorldBook 匹配、实际摘要执行、文本模板渲染、状态结算或 Pi HTTP 调用。`getPresetSnapshot` 是 AgentContext 的配置读取口，返回当前有序节点、模型、摘要 Prompt 和预算。
 
-建议对外 REST：`GET /presets`、`GET /presets/:id`、`POST /presets`、`PUT /presets/:id`、`DELETE /presets/:id`、`POST /presets/import`、`GET /presets/:id/export`。状态查询应复用读取口，不另造运行时“动态预设”存储。
+## 5. 验收
 
-## 6. 导入、导出与兼容
+- 模型与摘要 Prompt 在 Preset 中可编辑，当前 Session 下一轮读取最新配置；Session 不存模型/参数。
+- WorldCard 的 none/window/summary 策略不归 Preset，但 summary_prompt 在 Preset，并支持只读状态引用。
+- 七个系统 NodeBuilder 保留，before/body/after 和自定义节点顺序生效，最终统一模板展开。
+- 聊天历史节点只展开 user/assistant 叙事，不插入旧工具消息。
+- 导入导出不包含密钥，不存在手动条目激活或独立 scan_depth。
 
-导入：解析 JSON → 检查文件格式版本 → 验证七系统节点唯一性/角色/必需性/顺序 → 校验自定义 ID/文本、预算上下限 → 预览差异 → 新建预设。旧格式如果含 `api_connection_id`、`model_id`、`credential_ref` 等提供**迁移提示但不自动写入 Preset**。未知执行字段、脚本或任意注入角色标记不得悄悄生效。导出只含可移植配置，首期单预设文件，无资源或引用文件打包。
-
-不同世界卡可以引用同一 Preset；不存在运行时自动继承/覆盖、自动版本合并及双重节点顺序。未来如引入预设共享市场，独立设计版本和来源。
-
-## 7. 验收与非目标
-
-- 拖动前/后系统节点和自定义文本节点后，`nodes[]` 顺序、role、enabled、content round-trip 一致；七基础节点无法丢失。
-- 自定义节点的名字、角色、正文可分别编辑；恢复默认需确认；本地单人编辑直接保存，无需 revision 锁。
-- JSON 导出→导入后除本地 ID 外语义相同；非法/旧格式报清晰诊断，任何凭据不会出现在导出。
-- AgentContext 读取的仅是不可变预设配置；Preset 领域**完全不处理** WorldBook 扫描、Hook 内容、变量、Token 裁剪或 Provider。ProviderService 只读 Pi 模型目录并负责用户 Key。
-
-相关：[Provider](provider.md)、[AgentContext](agent-context.md)、[TextRenderer](text-rendering.md)、[存储](../technical/storage.md)。
+相关：[Provider](provider.md)、[AgentContext](agent-context.md)、[Context Strategy](context-strategy.md)、[TextRenderer](text-rendering.md)、[Storage](../technical/storage.md)。

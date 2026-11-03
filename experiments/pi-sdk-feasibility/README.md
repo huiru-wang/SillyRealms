@@ -1,6 +1,6 @@
 # SillyRealms · Pi SDK 可行性实验
 
-> 验证日期：2026-11-01；本目录是**可重复运行的隔离技术实验**，不是 SillyRealms 应用工程或正式 SDK 集成。结论见 [REPORT.md](REPORT.md)。实验报告采用当时的 Entry/Context 方案作为背景，**当前架构以 docs/ 下 2026-11-03 单 Context + Entry 六表方案为准**，不改写历史 PoC 事实。
+> 验证日期：2026-11-01；本目录是**可重复运行的隔离技术实验**，不是 SillyRealms 应用工程或正式 SDK 集成。结论见 [REPORT.md](REPORT.md)。实验报告采用当时的 Entry/Context 方案作为背景，**当前架构以 docs/ 下 2026-11-04 单 Context + 消息级 Entry + 六表方案为准**，不改写历史 PoC 事实。
 
 ## 目录结构
 
@@ -49,6 +49,6 @@ node scripts/mock-probe.mjs
 - [产品与技术方案](../../docs/technical/architecture.md)
 - [预设设计](../../docs/design/preset.md) 和 [Provider 设计](../../docs/design/provider.md)
 - [单一 AgentContext 组装](../../docs/design/agent-context.md) 和 [共享 TextRenderer](../../docs/design/text-rendering.md)
-- [SQLite/Run 树（当前目标方案）](../../docs/technical/storage.md)
+- [SQLite/消息级 Entry 分叉树（当前目标方案）](../../docs/technical/storage.md)
 - SDK 官方说明：https://pi.dev/docs/latest/sdk
 - 会话管理 API 与 Session 投影：https://github.com/earendil-works/pi/tree/main/packages/coding-agent/src/core

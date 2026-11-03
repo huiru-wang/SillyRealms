@@ -1,10 +1,10 @@
 # Text Rendering：独立共享的文本解析与转换能力
 
-> 2026-11-03 设计，尚未实现。文本变量、条件表达式、状态引用与受控脚本/文本转换**不属于 Agent Context**。它们是 WorldCard 详情、Prompt 预览、Agent 输入构建和未来状态栏渲染都要共享的基础能力。
+> 2026-11-04 设计，尚未实现。文本变量、条件表达式、状态引用与受控脚本/文本转换**不属于 Agent Context**。它们是 WorldCard 详情、Prompt 预览、Agent 输入构建和未来状态栏渲染都要共享的基础能力。
 
 ## 1. 模块职责
 
-建议代码位置：`src/domain/text/`（或明确独立的 `src/shared/text/`）。不要放在 `agent/context/`；不提供数据库访问、世界书筛选、状态更新、模型调用或 UI 渲染生命周期。
+建议代码位置：`packages/core/src/text/`（Monorepo Web/Server 可共享）。不要放在 `agent/context/`；不提供数据库访问、世界书筛选、状态更新、模型调用或 UI 渲染生命周期。
 
 ~~~ts
 type RenderEnvironment = {
@@ -30,12 +30,12 @@ function renderMessages(messages: RawMessage[], env: RenderEnvironment, transfor
 | 场景 | 输入来源 | 行为 |
 | --- | --- | --- |
 | AgentContext | 预设节点、世界书内容、角色正文、完整状态、历史 | 所有 NodeBuilder 输出带 `template:true/false` 片段的 RawMessages 后统一调用 `renderMessages` 一次，真实模型输入随之确定；用户原话、历史正文为 literal，不参与模板展开 |
-| WorldCard 详情与创作者预览 | 世界卡正文、变量示例、默认初始状态或手动提供预览上下文 | 使用相同的 `renderText`，不创建 Session，也不调用模型 |
+| WorldCard 详情、摘要 Prompt 与创作者预览 | 世界卡正文、Preset.summary_prompt、变量示例、当前完整状态或编辑器提供的初始状态 | 使用相同的 `renderText`，不创建 Session，也不调用模型 |
 | 状态栏/扩展 UI（未来） | UI 模板与当前活动分支全量状态 | 使用 `renderText` 安全渲染展示内容；状态变更来自 State Domain，不由模板执行修改 |
 
 ## 3. 条件加载的共享解析器
 
-世界书 `load.when` 与状态根 `load.when` 调用**同一个** `evaluateCondition`，参数必须包含这一轮**完整 StateSnapshot**，不能使用筛选后的小状态片段进行判定；否则可能出现循环依赖。关键词/常驻/手动选择的命中逻辑在 AgentContext/WorldBook 和 State Domain 负责，表达式求值则复用此模块。
+世界书 `load.when` 与状态根 `load.when` 调用**同一个** `evaluateCondition`，参数必须包含这一轮**完整 StateSnapshot**，不能使用筛选后的小状态片段进行判定；否则可能出现循环依赖。关键词/常驻加载的命中逻辑在 AgentContext/WorldBook 和 State Domain 负责，表达式求值则复用此模块。
 
 条件错误由调用方定位到世界卡条目或状态 Module；不直接把无效表达式变成“命中”或任意执行代码。
 

@@ -1,6 +1,6 @@
-# 世界卡：内容定义、发布与实例同步
+# 世界卡：唯一当前版本、角色、WorldBook 与上下文策略
 
-> 状态：领域设计，2026-11-03；强类型状态协议已同步，**尚未实现**。返回[文档索引](../README.md)，相关领域见[AgentContext](agent-context.md)、[会话](session.md)。
+> 状态：领域设计，2026-11-04；强类型状态协议已同步，**尚未实现**。返回[文档索引](../README.md)，相关领域见[AgentContext](agent-context.md)、[会话](session.md)。
 
 ## 定位和内容归属
 
@@ -8,14 +8,15 @@
 
 `data.description` 可以是 HTML 等展示内容，不自动进入 Prompt。故事前提、地点、事件、场景规则与示例等需供模型使用的信息属于 `data.lorebook.entries[]`；本期没有独立的 `scenes[]` 或 `examples` Prompt 插槽。角色的人物设定仍直接放在 `characters[]` 下。
 
-用户扮演的 `user` **只能来自本世界卡 `characters[]` 中被允许的角色**；不支持外部个人身份或自由身份。世界卡保存静态定义，Session 的 world_snapshot_json 保存本局完整卡片和所选玩家角色 ID；`entries.parent_entry_id` 构成分叉树，成功选中 `Entry.runs[]` 的 stateSnapshot 保存运行状态。
+用户扮演的 `user` 只能选当前世界卡 `characters[]` 中 `player_selectable=true` 的角色；若一个也没有，必须先在世界卡中**创建并保存**新角色，设置 `player_selectable=true`，再创建 Session。`Opening` 不单独限制可选角色。
 
-## 发布版本与同步
+## 当前唯一世界卡与实例引用
 
-- 世界卡当前内容只保存在 `worlds.data_json`，`status=draft/published` 区分是否完成发布检查。`data.version` 可保持 `X.Y` 展示版本，但不另外保留 `draft_json/published_json` 两份，也不建立历史版本表。
-- 编辑当前已发布卡即进入 draft，重新校验发布后变为 published；若用户要保存旧发布版，需先复制世界卡，不能假装一张表有两套版本。创建 Session 只允许发布态或经过等价内容校验的卡。
-- 创建 Session 时复制完整世界内容到 `sessions.world_snapshot_json`，选中角色只保存 `user_character_id`。后续改卡不自动覆盖已有 Session；已有 Entry 运行结果只读取本局快照。
-- 如果未来开放主动同步世界卡到已开局 Session：先确认并检查状态 Schema/玩家角色是否兼容，再整体更新世界快照。绝不回写或重演已有 Entry、改变各 Run 的全状态快照；不额外设计 WorldInstanceContext 缓存和版本失效体系。
+- `worlds.data_json` 只保存**一份当前世界卡**，不支持 draft、published 或历史内容版本；可以编辑、保存，创建 Session 时进行最基础的内容合法性校验。`spec_version` 仍表示文件**格式规范版本**，不是世界卡多版本机制。
+- `sessions.world_id` 直接引用此世界卡，**每次交互重新读取最新 data_json**；Session 不复制世界快照，也不保存 opening_id。所选开局的正文在创建 Session 时就是第一条 Assistant Entry。
+- 世界卡内容编辑立即影响旧 Session 的后续 Prompt。**允许旧状态失效**：若当前 Schema 与历史完整快照不兼容，下次状态读取可丢弃不兼容值并按最新状态定义的初值重建，不要求 Schema 迁移、不阻止继续旧剧情。原历史 Entry 仍然完整留存。
+- `data.context` 是 WorldCard 专属的上下文策略配置，支持 `none` / `window` / `summary`，和模型参数、摘要 Prompt（属 Preset）相互独立。详见 [Context Strategy](context-strategy.md)。
+- 若编辑世界卡时删除了某个 Session 所选的玩家角色，或将其 `player_selectable` 改为 false，下次进入该 Session 应要求重新选一个当前可选角色；没有可选角色时先创建并写回世界卡，再更新 Session.user_character_id。不得继续注入不存在的身份信息。
 
 ## 内容结构与导入边界
 
@@ -23,9 +24,10 @@
 WorldCard
 ├─ spec / spec_version
 └─ data
-   ├─ name / summary / description / version / tags / cover
+   ├─ name / summary / description / tags / cover
    ├─ characters[]           独立角色及其加载配置
    ├─ openings[]             多个开局及可选世界状态初值覆盖
+   ├─ context                可选上下文策略（none / window / summary）
    ├─ state                  可选强类型状态树（schema_version + modules）
    ├─ lorebook               单个世界书：entries[] 及各自 load
    ├─ regex_scripts[]        来源规则/可选扩展（MVP 不执行）
@@ -33,7 +35,7 @@ WorldCard
    └─ extensions             非执行扩展/来源归档
 ```
 
-结构外壳使用 `spec: "world_card"`、`spec_version: "0.1"`；`spec_version` 是格式版本，`data.version` 为两段递增的内容发布版本。有效卡需名称、至少一个有效 Opening 及可选玩家角色；草稿可以尚未完整。未知来源字段可归档保留，但不能未经支持就生效。
+结构外壳使用 `spec: "world_card"`、`spec_version: "0.1"`；`spec_version` 只表示导入导出**格式版本**，不作为世界卡业务版本。有效卡需要名称和至少一个 Opening；没有可玩角色时在创建 Session 之前要求用户新增角色并存入世界卡。未知来源字段可归档保留，但不能未经支持就生效。
 
 | 字段 | 类型 | 用途 |
 | --- | --- | --- |
@@ -41,13 +43,13 @@ WorldCard
 | `summary` | string | 列表简介，不发送模型 |
 | `description` | string 或 `{format,content}` | 展示用说明，不自动发送模型 |
 | `creator` / `creator_notes` | string | 作者与说明，不发送模型 |
-| `version` | string | `X.Y` 内容发布版本 |
-| `tags` | string[] | 搜索与分类 |
+| `tags` | string[] | 本地 `tags(type=world)` 标签 ID 数组；按 type 内 sort_order 排序展示 |
 | `cover` | string | 可选 `asset:<ID>` 封面引用 |
 | `characters[]` | array | 角色定义、可扮演许可及加载条件 |
 | `openings[]` | array | 故事开局 |
 | `lorebook` | object | 单个世界书，`entries[]` 存独立资料 |
-| `state` | object，可选 | 唯一强类型状态定义 `schema_version + modules`；实例中的运行值不回写世界卡 |
+| `context` | object，可选 | `strategy:none/window/summary`、`max_messages`、`keep_recent_messages`；规则见 [Context Strategy](context-strategy.md) |
+| `state` | object，可选 | 唯一强类型状态定义 `schema_version + modules`；运行值不回写世界卡 |
 | `extensions` | object | 不自动解释或执行 |
 
 ## 独立角色
@@ -60,12 +62,13 @@ WorldCard
 | `avatar` | string | 可选头像资源引用 |
 | `tags` | string[] | 可选标签，用于展示、筛选和整理；缺省为空列表 |
 | `load` | object，见「世界书与角色加载条件」 | 角色资料何时进入 `characterInfo` |
-| `player_selectable` | boolean，默认 `false` | 世界卡级别的角色可扮演许可；仅 `true` 的角色能作为 `user` |
+| `player_selectable` | boolean，默认 `false` | 仅 `true` 可被选为玩家角色；若没有则创建新角色写入世界卡 |
+| `order` | integer / `0` | 可选角色资料排序值，升序；同序按 characters 原数组顺序 |
 | `state` | 旧导入字段，不在新原生卡启用 | 旧角色状态须显式映射进入 `data.state.modules`；所有角色状态统一管理，不仅限玩家角色 |
 
 角色与世界书条目使用相同的基础加载条件，见下文「世界书与角色加载条件」。玩家在本局选中角色时，默认提供该角色资料；其他角色按其加载配置筛选，并最终填入预设的 `characterInfo` 插槽。
 
-角色设定直接放在 `description`，不要求通过世界书关联。新原生卡的角色动态状态统一在 `data.state.modules[角色状态根名]` 声明，`characters[].state` 不再作为生效定义；导入旧角色状态时须显式映射并检查重名。**实际变化的快照不写回世界卡**；角色的控制者和是否登场也不写在世界卡。`player_selectable=true` 只表示该角色**可以**被选为 `user`，不是每局自动被玩家控制；选择时会把当前世界卡完整内容快照复制到 Session，角色仅保存选中的 ID，不再复制第二份角色 JSON。
+角色设定直接放在 `description`，不要求通过世界书关联。新原生卡的角色动态状态统一在 `data.state.modules[角色状态根名]` 声明，`characters[].state` 不再作为生效定义；导入旧角色状态时须显式映射并检查重名。**实际变化的快照不写回世界卡**；角色的控制者和是否登场也不写在世界卡。`player_selectable=true` 只表示该角色**可以**被选为 `user`，不是每局自动被玩家控制；Session 只保存该角色 ID，后续从世界卡最新数据读取完整角色设定。
 
 ## 开局
 
@@ -74,18 +77,17 @@ WorldCard
 | `id` | string，必填 | 卡内稳定标识 |
 | `name` | string，必填 | 选择开局时显示的名称 |
 | `content` | string，必填 | 初始故事内容或特殊入口标记 |
-| `player_characters` | string[]，可选 | 该 Opening 允许作为 `user` 的世界卡角色 ID 子集；不支持 `custom` 或外部身份 |
 | `initial_state` | object，可选 | 与运行快照同形的部分覆盖，根键对应 `data.state.modules`；固定 object 递归覆盖，record/array/json 叶子整值替换并接受强类型校验 |
 
-**可选角色 = 世界卡中 `player_selectable=true` 的角色 ∩ Opening 的 `player_characters`（如果提供）**。没有 `player_characters` 时默认使用世界卡全部可选角色；提供该字段时，所有 ID 都必须存在于本卡 `characters[]` 且满足 `player_selectable=true`，不能用 Opening 把不可扮演角色重新开放。空数组、未知 ID、重复 ID、禁用角色引用及 `custom` 等特殊标记都视为发布/创建校验错误。世界卡发布时至少有一名可扮演角色，每个有效 Opening 至少允许一名角色；草稿可以暂不完整。创建 Session 必须由用户从最终允许名单中**明确选定一个** `user`，并保存角色 ID；MVP 不提供无角色参与、个人身份库或默认 `char`。
+**可选角色 = 世界卡中所有 `player_selectable=true` 的角色。** Opening 不设置 `player_characters`。如果当前可选角色为空，创建 Session 的流程必须提示用户新建一个完整角色，直接保存到当前 `worlds.data_json.characters[]` 并标记 `player_selectable=true`；然后选择该角色，Session 仅保存其 ID。
 
-默认建议选择第一项；所选开局写入会话根 Opening Entry，后续生成不重复注入。创建实例时从 `data.state.modules` 递归产生完整默认运行值，叠加 `opening.initial_state` 中的**部分覆盖**并通过 Zod 全量校验后写入根 Opening Entry 的已完成 Run。固定 object 沿已声明的子字段递归覆盖，record/array/json 作为一个完整叶子替换，不深合并记录成员。未知路径、额外固定键或类型错误阻止发布/初始化。初始状态仅在 Session 创建时构造一次，切分支和同步卡片不会重新初始化；详见[状态](state.md)。
+选择开局后将 `opening.content` 作为**第一条 Assistant Entry** 保存，首条消息附带基于当前 `data.state.modules` 的初始完整状态 S0，并允许 `opening.initial_state` 做受限覆盖，经过 Zod 校验。Session 不需要 opening_id，后续模型历史只通过 Entry 父链恢复，不重复注入 Opening。详见 [Session](session.md)。
 
 ## 强类型状态定义 `data.state`
 
-状态是可选的独立插件，不替代叙事和世界书；此处只约定**世界卡存什么**，具体类型校验、Tool ChangeSet 和 Entry 内选中 Run 的全量快照统一由[状态规范](state.md)规定。
+状态是可选的独立插件，不替代叙事和世界书；此处只约定**世界卡存什么**，具体类型校验、Tool ChangeSet 和已完成 Assistant Entry 的全量状态快照统一由[状态规范](state.md)规定。
 
-原生格式固定为 `{"schema_version":1,"modules":{...}}`，`modules` 每个根为 `type:"object"` 的类型树，根可以是 `世界`、某位角色、地点或组织，根名就是快照顶层键。角色状态不再拆为单独的 `characters[].state` 或仅保存 `user`，作者在同一棵树里声明所有需要跟踪的实体。每个根可以有自己的 `load` 规则，内层状态不能设置 `load`。 根加载支持 `always / on_mention / manual` 和可选 `when`；`manual` 根据 Session.options_json.manual_state_ids 选择，`when` 读取当前分支**完整**状态。
+原生格式固定为 `{"schema_version":1,"modules":{...}}`，`modules` 每个根为 `type:"object"` 的类型树，根可以是 `世界`、某位角色、地点或组织，根名就是快照顶层键。角色状态不再拆为单独的 `characters[].state` 或仅保存 `user`，作者在同一棵树里声明所有需要跟踪的实体。每个根可以有自己的 `load` 规则，内层状态不能设置 `load`。 根加载只支持 `always / on_mention` 和可选 `when`；`when` 读取本分支**完整**状态。
 
 支持 `string`、`number`、`integer`、`boolean`、`enum`、`object`、`record`、`array`、`json`。固定 `object` 用 `properties` 定义可嵌套字段，`record` 用 `value` 定义动态键值的强类型结构，`array` 用 `items` 定义元素类型，`json` 是只能整值更新的弱类型逃生口；不从 `initial` 推断类型。普通作者在编辑器中只需填写**字段名/类型/初值/描述**，枚举、数值范围和 nullable 属于可选高级设置。每个已声明固定叶子都有初值，object 由其子字段初值递归生成；record 的每个 item 需符合 value Schema。
 
@@ -130,12 +132,14 @@ Agent 的六类受限操作为 `set/adjust/upsert/set_record_field/remove/append
 
 | 字段 | 类型 / 默认 | 作用 |
 | --- | --- | --- |
-| `mode` | `always/on_mention/manual`，默认 `manual` | 常驻、关键词、手动加载 |
+| `mode` | `always/on_mention`，默认 `always` | 常驻或关键词加载；无手动模式 |
 | `keywords` | string[] / `[]` | `on_mention` 触发词 |
 | `keyword_logic` | `any/all` / `any` | 多关键词满足任一或全部 |
 | `exclude_keywords` | string[] / `[]` | 仅对 `on_mention` 排除任意命中项 |
 | `when` | string，可选 | 受限只读布尔表达式，在本轮最新完整状态快照上求值；对所有 mode 生效 |
-| `order` | integer / `0` | **仅世界书**同一锚点同一侧排序，非预算优先级 |
+| `order` | integer / `0` | **仅世界书 load.order**：同锚点同侧排序；角色排序由 `characters[].order` 顶层字段指定 |
+
+`when` 是附加的 AND 条件：`always + when` 需要 when=true；`on_mention + keywords + when` 需要关键词逻辑命中**且** when=true；`exclude_keywords` 命中则不加载。缺少 when 即没有该附加限制；表达式读取当前分支最新全量状态，**不能**读截断前的聊天文本。
 
 世界书条目额外配置：
 
@@ -169,19 +173,19 @@ Agent 的六类受限操作为 `set/adjust/upsert/set_record_field/remove/append
 }
 ```
 
-角色的 `load` 不接受 `anchor/position/role`，其资料进入 `characterInfo` 基础节点，按原始角色数组顺序稳定排列；当前选为玩家的角色固定由 `personaInfo` 读取，不在 `characterInfo` 重复出现。世界书按 `(anchor,position,order,原始列表位置)` 稳定编排；同一条目在同一次构建中去重。`mode=always` 也受本局资料禁用策略影响，但即便节点本体被关闭，该节点锚点仍能生成合并后的消息；具体见[Preset](preset.md)。
+角色的 `load` 不接受 `anchor/position/role`，其资料进入 `characterInfo` 基础节点，先按 `order` 升序、同序再按角色原数组位置稳定排列；当前选为玩家的角色固定由 `personaInfo` 读取，不在 `characterInfo` 重复出现。世界书按 `(anchor,position,order,原始列表位置)` 稳定编排；同一条目在同一次构建中去重。`mode=always` 仍需要可选 `when` 为 true（若配置），但即便节点本体被关闭，该节点锚点仍能生成合并后的消息；具体见[Preset](preset.md)。
 
-AgentContext 默认扫描当前 Entry 的 User 文本及最近三个已加载祖先互动 Entry（`scan_depth_entries=4`）；若存在最近 Summary 或近 N 消息窗口，不扫描窗口之外的历史。`on_mention` 使用普通子串匹配；`manual` 从 Session 选项读取。世界书条件中的 `when` 由共享 [TextRenderer](text-rendering.md) 表达式引擎读取**完整状态**；索引按 anchor/position/order 稳定排序，节点由独立 NodeBuilder 执行 before/body/after，MVP 不支持递归、概率、Sticky/Cooldown、历史内部深度插入或跨分支关键词触发。
+AgentContext 只扫描本轮**实际送给模型的 Narrative Context（仅 user/assistant 叙事）加当前 User**，不额外限制扫描深度。window 时是最后 N 条，summary 时是最新 Summary + 未覆盖的保留消息。`on_mention` 用关键词匹配；若同时配置 `when`，必须 **关键词命中 AND when(fullState)=true**，排除关键词优先否决。世界书条件中的 `when` 由共享 [TextRenderer](text-rendering.md) 表达式引擎读取**完整状态**；索引按 anchor/position/order 稳定排序，节点由独立 NodeBuilder 执行 before/body/after，MVP 不支持递归、概率、Sticky/Cooldown、历史内部深度插入或跨分支关键词触发。
 
 ### 禁止隐式 Prompt 注入
 
 原生格式不接受生效的 `load.role`、`injection_role/depth/order` 或 `data.prompts` 字段。旧来源可以归档在非执行扩展中；**对原生新卡应校验拒绝**未知的角色/深度注入控制，不能靠忽略非法字段掩盖内容行为差异。原世界卡 Prompt 如需生效，必须由用户明确导入为预设自定义文本节点。
 
-本地 UI 标签统一由 `tags(type=world,target_id,name)` 管理；世界卡 JSON 中的 `data.tags` 可作为导入/导出的来源元数据，导入时可转换到通用标签表，但不建立 `world_tags`，也不把来源元数据当作运行时标签的第二权威。
+本地标签是通用 `tags(id,type,name,sort_order)` 字典，`data.tags` 引用 `type=world` 的标签 ID；UI 按 `sort_order/name` 排序。导入来源标签名称时先映射为标签字典 ID，不建立 `world_tags`。
 
 ## 文本规则与资源
 
-文本规则可以定义输出转换和界面呈现需要的内容；规则是否在本局启用由实例或会话配置。导入内容中出现的 HTML、脚本和外部链接应保留，但导入成功不表示客户端支持其运行。
+文本规则可以定义输出转换和界面呈现需要的内容；共享 TextRenderer 可读取当前状态，规则配置在当前世界卡或预设中，不需要 Session options_json。导入内容中出现的 HTML、脚本和外部链接应保留，但导入成功不表示客户端支持其运行。
 
 `assets[]` 是可选资源清单；可使用资源 ID 引用封面和角色头像。资源清单、资源路径和实际文件应区分：外链不等于已打包。PNG 角色卡可能以图片本身作为卡面；仅有 JSON 时不能恢复未提供的 PNG 头像。
 

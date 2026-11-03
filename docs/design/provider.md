@@ -1,17 +1,17 @@
 # Provider：模型目录、模型选择与 API Key 服务
 
-> 2026-11-03 精简设计，尚未实现。Provider **仍是独立业务 Domain**，提供用户可见的供应商/模型查询、API Key 管理与模型选择校验；不自行维护每个供应商的 SDK 适配器。**模型目录、认证解析和真实模型调用尽量直接复用 Pi**。
+> 2026-11-04 精简设计，尚未实现。Provider **仍是独立业务 Domain**，提供用户可见的供应商/模型查询、API Key 管理与模型选择校验；不自行维护每个供应商的 SDK 适配器。**模型目录、认证解析和真实模型调用尽量直接复用 Pi**。
 
 ## 1. 职责与非职责
 
-- **ProviderService** 是设置页、Session 创建与 AgentRuntime 的统一业务入口，负责 `listProviders / listModels / getModel / getAvailableModels`、配置/验证/删除用户 API Key、解析可调用的模型选择与能力信息。
+- **ProviderService** 是设置页、Preset 模型配置与 AgentRuntime 的统一业务入口，负责 `listProviders / listModels / getModel / getAvailableModels`、配置/验证/删除用户 API Key、解析可调用的模型选择与能力信息。
 - 内置 Provider/Model 集合来自项目锁定版本的 `@earendil-works/pi-ai`（或统一选定的兼容 Pi 版本）。MVP 可以采用应用级**允许列表**决定在 UI 中开放哪些 Pi 内置 Provider；这只是过滤和产品配置，不是为每个供应商编写一套 Adapter。
 - API Key 属于用户可管理配置。`ProviderService` 通过应用实现的 `CredentialStore` 持久化凭据，向 Pi 的 `Models` 注入该 Store；私密值不写到 Session、Preset、世界卡、日志或导出内容。
 - Provider Domain **不构建 Prompt、不创建 Session/Entry、不负责 SSE、不应用状态 ChangeSet**。PiAgentExecutor 负责调用和事件转发；状态工具与校验归 State Domain。
 
 ## 2. 模型与凭据契约
 
-`ModelSelection` 仅保存 `{ provider: string, modelId: string }`，按需另存普通生成参数；`provider` 和 `modelId` 必须以运行时选定的 Pi 模型目录实际值为准。Session 持久化该选择；本地 MVP 创建 Session 时要求明确选择模型，不建 app_settings 表，也不把模型写入 Preset。
+`ModelSelection` 仅保存 `{ provider: string, modelId: string }`，按需另存普通生成参数；`provider` 和 `modelId` 必须以运行时选定的 Pi 模型目录实际值为准。Preset 的 config_json.model 持久化该选择及生成参数；Session 只引用 preset_id，每轮读取当前 Preset 模型。不建 app_settings 表。
 
 模型展示信息直接从 Pi `Model` 映射：`provider`、`id`、`name`、`contextWindow`、`maxTokens`、`reasoning`、`input`、`api` 等（以锁定依赖版本的字段为准）。模型在目录中存在**不代表**已配置 API Key、远端仍可调用或支持当前的状态工具 Schema；因此要区分：
 
@@ -47,7 +47,7 @@ API 建议：
 - `GET /providers/available-models`：本地认证完整的模型（非实时云端可用性）。
 - `PUT /providers/:providerId/api-key`、`DELETE /providers/:providerId/api-key`：用户 Key 配置/删除，不提供明文读取。
 - `POST /providers/:providerId/test`：指定模型、显式执行连接验证。
-- MVP 创建 Session 时明确选择模型；上次选择可以仅记在前端本地偏好/客户端配置文件，无 app_settings 表。
+- 用户在编辑 Preset 时选择模型，创建 Session 时通过 Preset 的模型校验 Provider/API Key；不在 Session 保存模型或参数。
 
 ## 4. Pi 复用方式
 
@@ -70,7 +70,7 @@ ProviderService 对外使用 Pi 目录，**不重复定义**每个模型的最�
 
 ## 5. 与一次 Agent 执行的关系
 
-`runAgent()` 通过 `AgentContext.create(sessionId, parentEntryId, userInput)` 构建本轮历史/全状态/条目与 `ModelMessage[]`，并通过 `ProviderService.resolveModel` 解析 Session 的模型与凭据；`PiAgentExecutor` 负责调用与 SSE 转发。是否开启状态 Tool 由本轮 Session/状态配置和已验证的模型能力共同决定，ProviderService 只提供查询与校验信息。
+`runAgent()` 通过 `AgentContext.create(sessionId, parentEntryId, userInput)` 构建本轮消息，`ProviderService.resolveModel` 从 Session 引用的**当前 Preset** 解析模型与凭据；`PiAgentExecutor` 负责调用与 SSE 转发。是否开启状态 Tool 由本轮 Session/状态配置和已验证的模型能力共同决定，ProviderService 只提供查询与校验信息。
 
 **已知限制**：SillyRealms 在 2026-11-01 对 `@earendil-works/pi-coding-agent@1.4.0` 的离线 mock 实测发现：`prepareRequest` 可以覆盖发送的 Messages，但 OpenAI-compatible 路径会把历史后方的 `system` 节点规范化到头部。`session.prompt(text)` 也不能直接当成「接受完整任意数组」的 API；正式实现必须以实际 HTTP 请求为准验证 role/order、避免重复追加当前 User。必要时使用受支持的更底层 Pi Agent / Pi AI 接口，**不静默重排**。参考 [实验报告](../../experiments/pi-sdk-feasibility/REPORT.md)。
 
@@ -79,7 +79,7 @@ ProviderService 对外使用 Pi 目录，**不重复定义**每个模型的最�
 - 列表直接映射 Pi 支持的模型，允许列表与 SDK 升级行为明确；未知模型拒绝。
 - API Key 可以安全保存、覆盖、删除、显示「已配置」和显式测试；接口/日志不回显敏感值。
 - `getAvailableModels` 不把认证完整误称远端健康；状态工具能力必须在模型级经真实 PoC。
-- Preset 与模型选择独立；Session 保存 provider/model ID，下一轮可重新解析当前凭据。
+- Preset 保存 provider/model ID 与参数；Session 只保存 preset_id，下一轮从最新 Preset 重新解析模型和当前凭据。
 - 不存在按 Provider 重复实现模型 HTTP/stream 适配或第二套模型目录。
 
 相关：[技术架构](../technical/architecture.md)、[AgentContext](agent-context.md)、[Session](session.md)。

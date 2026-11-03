@@ -1,56 +1,62 @@
 # SillyRealms · 产品总纲
 
-> 2026-11-03 第二版目标，**尚未实现**。世界卡驱动、本地单人优先、持续叙事与可分叉世界线。
+> 2026-11-04 目标方案，尚未实现。以世界卡驱动多角色叙事、分叉故事、可选状态管理与可配置预设。产品定位为本地个人应用，兼容通用 Pi Agent 消息语义。
 
-## 1. 产品定位
+## 1. 产品和平台
 
-玩家从世界卡选择 Opening、允许扮演的角色、Preset 和模型创建世界实例，沿不同互动路线推进故事。创作者可以编辑世界、WorldBook、状态 Schema、预设节点和状态栏展示。主旅程：
+首期 Monorepo 只开发 **H5 Web + Server**，未来支持 Android、PC/Mac 桌面客户端；Web/Server 共用 WorldCard、模板、状态等纯逻辑。技术设计见 [Monorepo 架构](technical/architecture.md)。
 
-**世界卡库 → 世界卡/Opening/角色 + Preset + 模型 → 创建 Session → 互动 Entry → 世界线分叉/切换 → 继续。**
+主路径：**世界卡库 → 选择 Opening、玩家角色和 Preset → Session → 聊天/状态栏 → 分叉世界线**。
 
-世界卡定义持续可编辑，Session 保存创建时的完整快照，后续修改源卡不静默影响已有故事。
+## 2. 产品对象
 
-## 2. 用户可感知的对象
-
-| 对象 | 能力 |
+| 对象 | 基本能力 |
 | --- | --- |
-| WorldCard | 世界、角色/扮演许可、Opening、单 WorldBook、状态 Schema、资源、发布/导入/导出 |
-| Preset | 七系统节点与自定义 Prompt、role、启用、顺序、预算和条件扫描深度；可视化编辑与导入导出 |
-| Provider | ProviderService 列出 Pi 内置支持的模型，用户配置/删除/验证 API Key，选择 Session 模型 |
-| Session | 一局世界实例：世界卡快照、用户角色、Opening、Preset、模型和当前世界线 Entry |
-| Entry | 一次互动回合，包含玩家输入和多次 AI 生成尝试 `runs[]`；`parent_entry_id` 构成世界线分叉 |
-| Run（Entry 内） | 模型调用结果、AI 叙事、可选工具调用记录、全量状态快照、失败与重试 |
-| AgentContext | **唯一单轮 Context**：加载历史/全状态、筛选 WorldBook/状态条目、预设节点编排，输出有序 ModelMessage[] |
-| 共享 TextRenderer | 世界卡详情、Agent Prompt 和未来状态栏公用变量/条件/状态引用与受控文本处理 |
-| State | 统一强类型状态定义，当前世界线完整快照存放在选中 Entry Run，AI 候选增量经验证才生效 |
-| 世界线 | 只显示 Opening Root 与真正分叉点，其余互动 Entry 折叠成边；可进入真实叶子 |
+| WorldCard | 唯一当前版本，世界、角色、Opening、WorldBook、状态定义、三种 Context 策略；Session 通过 world_id 每轮读取最新值 |
+| Preset | 选择模型和参数，配置 `off/inline/tool` 状态模式、摘要 Prompt、七系统节点/自定义节点及顺序 |
+| Provider | 查询 Pi 内置模型；用户配置、测试、删除 API Key，模型可用性校验 |
+| Tags | `id/type/name/sort_order`，同一 type 内排序，世界卡引用标签 ID |
+| Session | `world_id/preset_id/user_character_id/tip_entry_id`，不存 World 快照、Opening ID 或模型/Options 冗余 |
+| Entry | **一条 Pi Agent 消息**或 Summary；`parent_id` 构成世界分叉，ToolCall（Assistant 内容）与 ToolResult（独立消息）都完整入库 |
+| Narrative Context | 将 Raw Entries 统一投影成仅 user/assistant **叙事文本**；供 UI、模型历史和关键词扫描 |
+| State | 独立沿当前原始父链恢复最近有效全量状态；StateChange 必须提供非空 reason |
+| AgentContext | 单轮构建器：当前 WorldCard/Preset、叙事策略、全量 State、WorldBook/状态筛选、NodeBuilder → ModelMessage[] |
+| Shared TextRenderer | 变量、条件、状态引用、受限文本变换，供 Agent/摘要 Prompt/世界卡预览/未来状态栏复用 |
 
-## 3. 创作者与玩家体验
+## 3. 世界卡和玩家身份
 
-- **世界卡编辑**：角色可扮演许可、Opening、WorldBook 条目及 anchor/position/order/关键词/when、状态根加载条件和资源管理。
-- **预设管理**：系统/自定义节点有序拖拽、启停、名称、role、内容；系统节点有自己的 NodeBuilder，从激活世界书位置索引中按 before/body/after 构建。
-- **状态管理与渲染**：状态面板显示当前活动分支的**完整**世界状态；状态模板使用共享 TextRenderer。WorldBook 与状态 Module 可根据历史/输入关键词和完整状态表达式条件加载。
-- **Provider 设置**：用户配置 Pi 内置模型的 API Key，支持列表/状态/验证，不提供用户自定义 Provider/Endpoint。
-- **Agent Context 预览**：准确显示模型历史窗口、摘要、已匹配世界书/状态条目、最终 role 和消息顺序；不调用收费模型。
-- **聊天与世界线**：一 Entry 通常显示一条 User 和一条 AI；失败可在原 Entry 重试，不制造额外分叉；从旧行动重选创建 sibling Entry，每个父节点最多三个互动 child；世界线只画 Root/Fork。
+世界卡只保存一份最新数据，没有 draft/published 历史版本；编辑立即影响已关联的 Session 下一轮生成。若世界卡状态 Schema 与旧快照不兼容，**允许旧状态失效并按新 Schema 初始值重置**，旧故事消息依旧保存，不需要阻止继续游玩。
 
-## 4. Agent 主流程
+Opening 不设置 `player_characters`。可选角色就是世界卡中 `player_selectable=true` 的角色；如果一个也没有，用户先创建角色并**直接保存到当前世界卡**，再创建会话。选定 Opening 之后，它的正文就是第一条 Assistant 消息，不在 Session 另存 Opening ID。
 
-1. 载入 Session 及所选 `parentEntryId` 的真实分支历史（最近压缩 Summary + 可选近 N 消息）。
-2. **独立**读取这一分支最近成功选中 Run 的全量状态，不受模型历史裁剪影响。
-3. 用历史与当前 User 匹配 WorldBook、状态根的关键词/常驻/手动/when；`when` 读取完整状态。
-4. WorldBook 按 anchor/position/order 建本轮索引；加载 Preset 节点顺序。
-5. 调用对应系统 NodeBuilder 的 before/body/after 或自定义文本 Builder；统一 TextRenderer 进行变量/条件/状态引用/受控转换，产出 `ModelMessage[]`。
-6. Pi 模型流式 SSE；成功后将叙事、可选工具记录和完整新状态写入 Entry 内被选中的 Run。
+世界书/角色/状态加载只支持 `always` 和 `on_mention`。当关键词和 `when` 同时配置时，**关键词命中 AND when(fullState) 为 true** 才激活；排除词命中则不激活。角色支持 `order`，世界书按 `anchor/position/order` 排序。不存在 manual 激活模式。
 
-**无 WorldInstanceContext，亦无单独的 runs/messages/run_tool_calls 业务表。**
+## 4. 三种上下文策略
 
-## 5. 技术与 MVP
+WorldCard `data.context` 决定每轮进入模型的叙事历史：
 
-前端 React/Vite/TypeScript H5，Hono/TypeScript 本地服务，SQLite 只保留六张业务表：`worlds`、`presets`、`provider_credentials`、`tags`、`sessions`、`entries`。`tags` 用 `type` 指向世界卡等不同对象，不建 `world_tags`；模型默认选择不需要 `app_settings` 表。
+| 策略 | 基本流程 |
+| --- | --- |
+| `none` | 加载当前分支全部 user/assistant 叙事，不压缩也不裁剪；超过模型上下文上限报错 |
+| `window` | 只加载最近 N 条 user/assistant 叙事作为模型历史；旧消息仍保存在 SQLite，不生成摘要 |
+| `summary` | 当尚未摘要的叙事消息达到 N 条时，调用 Preset 的摘要 Prompt，总结较老历史，保留最新 K 条；后续 Context = 最新 Summary + 保留消息 + 当前 User |
 
-MVP：世界卡/状态/预设管理、Provider API Key、Session/Entry 分叉历史、摘要/近 N 消息、AgentContext + NodeBuilder/共享模板、状态栏、Pi SSE、Root/Fork-only 世界线。文档均为目标设计，**不代表已有实现**。
+摘要 Prompt 可通过共享文本引擎**读取当前全量状态**。摘要是独立 Entry，保存历史覆盖边界；历史原始消息仍完整保留。
 
-延期：多用户/分布式事务、自定义模型 Endpoint、任意来源 JS/EJS 脚本、完整插件兼容、长期记忆压缩算法策略（仅保留 summary 存储与加载机制）、图片/TTS、云端同步。
+**三个概念不能混淆**：Raw History 是全部消息和分支；Narrative Context 是当前真正输入模型的 user/assistant 叙事；State 是独立的当前分支完整快照。关键词只扫描 Narrative Context + 当前 User；when 始终读取完整 State。
 
-详细说明：[AgentContext](design/agent-context.md)、[TextRenderer](design/text-rendering.md)、[Session/Entry](design/session.md)、[存储](technical/storage.md)、[预设](design/preset.md)、[Provider](design/provider.md)、[世界卡](design/world-card.md)、[状态](design/state.md)、[架构](technical/architecture.md)、[实施计划](technical/implementation-plan.md)。
+## 5. 工具消息与显示
+
+每次 Pi Agent 产生的 **user、assistant（含 toolCall 内容块）、toolResult** 消息都正常持久化到 Entries；不能把 ToolCall/ToolResult 仅当调试日志或丢弃。
+
+但用户聊天页面、下一轮模型真实聊天历史、世界书和状态根关键词扫描都使用同一个 NarrativeProjection：**只包含 user 和 assistant 的叙事文本**，从 Assistant 中移除 ToolCall、思维和状态更新内联块，ToolResult 整条不入投影。
+
+本次模型执行过程中仍可使用真实工具交换；只是下一次模型调用不把上一轮状态工具消息重放。StateEngine 在最终有效 Assistant 上保存全量状态和每项带 reason 的变更，状态栏可展示原因。
+
+## 6. 最小可行技术范围
+
+SQLite 只保留六张业务表：`worlds/presets/provider_credentials/tags/sessions/entries`。Raw Entry 包含全 Pi Message payload，不需要额外 Run、Message、ToolCall、WorldTag 或 AppSettings 表。
+
+Monorepo 首期完成 H5、Server、六表数据库、Provider API Key、世界卡、预设、状态、三策略 Context、消息级分叉、Root/Fork 世界线与状态栏。暂不做 Android、Desktop、云端同步、多用户协作、来源任意 JS/EJS 执行和复杂分布式并发。
+
+详见 [WorldCard](design/world-card.md)、[Preset](design/preset.md)、[Session](design/session.md)、[Context Strategy](design/context-strategy.md)、[AgentContext](design/agent-context.md)、[State](design/state.md)、[Storage](technical/storage.md)、[架构](technical/architecture.md)、[实施计划](technical/implementation-plan.md)。
