@@ -1,105 +1,165 @@
-# 技术架构：领域服务、双 Context 与 Pi 执行
+# 技术架构：Session → Metadata → Messages → Pi Agent → SQLite
 
-> 2026-11-03 目标技术设计，尚未实现。目标技术栈：**React + Vite + TypeScript**（移动端优先 H5）、**Hono + TypeScript**（本地服务）、**SQLite**（唯一权威存储），Pi Agent 作为可替换模型执行底座。产品领域见 [PRODUCT](../PRODUCT.md)；职责与详细接口依 [Preset](../design/preset.md)、[Provider](../design/provider.md)、[AgentContext](../design/agent-context.md)、[WorldInstanceContext](../design/world-instance-context.md)、[Session](../design/session.md) 和 [State](../design/state.md)。
+> 2026-11-03 精简目标方案，**尚未实现**。目标技术栈为 React/Vite/TypeScript（移动 H5）、Hono/TypeScript（本地服务）、SQLite（唯一权威存储）、Pi Agent/Pi AI（模型运行底座）。详细业务契约见 [Preset](../design/preset.md)、[Provider](../design/provider.md)、[WorldInstanceContext](../design/world-instance-context.md)、[AgentContext](../design/agent-context.md)、[Session](../design/session.md)、[State](../design/state.md)。
 
-## 1. 核心原则
+## 1. 核心边界
 
-- **Run 是唯一会话树节点**，Message 是 Run 内内容；History/分页/世界线压缩统一按 Run；已保存的 Run/Message/State 在 SQLite 中，Pi 运行时对象不是第二份历史。
-- **Preset 提供配置**：仅存有序 Nodes、自定义文本、role、预算和扫描深度，提供只读 Snapshot；不拼 Prompt、不绑定 Provider。
-- **WorldInstanceContext 提供世界运行资料**：本局世界快照、玩家身份、宏、状态定义、WorldBook 钩子预索引和可丢弃的压缩 Run 拓扑缓存；不保存跨分支“当前全局值”。
-- **AgentContext 提供一次构建**：先加载冻结的父 Run 状态，再逐个执行 Preset NodeBuilder 的 before/body/after、通用模板，主流程统一 Token 预算和裁剪，返回完整有序的 `ModelMessage[]`；不依赖 Provider 连接。
-- **Provider/Pi 负责执行**：只选预置 Provider/模型和 API Key；各 Provider 独立封装差异。Pi 只运行受控模型请求，默认 Coding Tools/自动技能禁用；自定义 Provider/Endpoint MVP 不开放。
-- **StateEngine 负责独立结算**：统一强类型 Schema、ChangeSet、快照/修订；不在 Context/Provider 内写状态业务校验。
+- **Session Domain**：创建 Session，保存已选 Opening、角色、世界卡快照、Preset ID、模型选择、当前叶子；管理 Run/Message/工具执行记录/状态快照、历史父链、分叉/重试/世界线。SQLite 唯一事实来源。
+- **Preset Domain**：节点配置、CRUD、导入导出与 `getPresetSnapshot(id)`；不拼模型请求。
+- **Provider Domain**：**必须保留 `ProviderService`**，统一查询 Pi 内置支持的供应商/模型、用户 API Key 的安全配置/删除/测试、模型选择及能力校验；不再写每 Provider 独立 HTTP Adapter。
+- **State Domain**：初始状态、按同一父状态选择本轮可见范围、状态更新工具 Schema/内联协议、ChangeSet 校验及完整快照结算；不拥有 Agent 运行态。
+- **Agent Runtime**：唯一模型执行编排入口 `runAgent`。`WorldInstanceContext` 是每轮从 Session 加载的普通 metadata；`AgentContext` 是输出 `ModelMessage[]` 的纯构建逻辑；`PiAgentExecutor` 将已构建消息接入 Pi 并转发 SSE。
+- **没有独立 WorldInstanceContextService**、常驻世界实例、Context 缓存失效框架或第二套 Pi Session 持久化。
 
-## 2. 模块和依赖方向
+## 2. 目录建议（参考 Fanto，但不搬运完整 Harness）
+
+~~~text
+src/
+  domain/
+    world/              world-service.ts, world-repository.ts
+    preset/             preset-service.ts, preset-repository.ts
+    provider/           provider-service.ts, credential-store.ts
+    session/            session-service.ts, session-repository.ts, worldline.ts
+    state/              state-service.ts, state-engine.ts
+  agent/
+    agent-runtime.ts    # 唯一执行入口
+    context/
+      world-instance-context.ts
+      agent-context.ts
+      world-book.ts
+      template.ts
+    pi/
+      models.ts         # Pi builtinModels({ credentials })
+      executor.ts       # Pi Agent / Pi AI 请求适配
+      events.ts         # Pi 事件转 SSE
+    tools/
+      state-update.ts   # 只调用 State Domain，不写库
+  routes/
+    sessions.ts
+    agent.ts
+    worlds.ts
+    presets.ts
+    providers.ts
+  infrastructure/
+    database/
+~~~
+
+这里只是**模块边界示意**；不强制每个 Service 再复制多层接口/Registry。世界线在 Session Domain，模型列表/API Key 在 Provider Domain，动态 Prompt 在 Agent Context，模型 IO 在 Pi。
+
+## 3. 依赖图
 
 ~~~mermaid
 flowchart TD
-  UI[React H5] --> API[Hono API]
-  API --> SessionService
-  API --> PresetService
-  API --> ProviderService
-  SessionService --> WIC[WorldInstanceContextService]
-  SessionService --> AC[AgentContextBuilder]
-  PresetService -->|PresetSnapshot| AC
-  WIC -->|WorldInstanceContextView| AC
-  SessionService -->|Run history and State| AC
-  AC -->|ModelMessage array + StateOutputContract| Executor[PiAgentExecutor]
-  SessionService -->|ModelSelection| ProviderService
-  ProviderService -->|Built-in Adapter + Credential| Executor
-  Executor -->|Narrative + Changes| StateEngine
-  StateEngine -->|Validated State Result| SessionService
-  SessionService --> SQLite[(SQLite)]
-  PresetService --> SQLite
-  WIC --> SQLite
-  ProviderService --> Credentials[(Secure Credential Store)]
+  UI[H5] --> Routes[Hono Routes]
+  Routes --> Session[SessionService]
+  Routes --> Provider[ProviderService]
+  Routes --> Preset[PresetService]
+  Routes --> Runtime[runAgent]
+  Runtime --> Session
+  Runtime --> Meta[loadWorldInstanceContext]
+  Meta --> Session
+  Meta --> Preset
+  Meta --> Provider
+  Runtime --> Scope[StateService: 选择本轮状态范围]
+  Runtime --> Context[buildAgentContext]
+  Meta --> Context
+  Scope --> Context
+  Runtime --> Executor[PiAgentExecutor]
+  Provider --> PiModels[Pi builtinModels + CredentialStore]
+  PiModels --> Executor
+  Runtime --> State[StateEngine: ChangeSet 校验]
+  State --> Session
+  Session --> SQLite[(SQLite)]
 ~~~
 
-依赖必须单向：`NodeBuilder` 不 import Provider/SQLite；`ProviderAdapter` 不 import WorldBook/Preset；`WorldInstanceContext` 不构建最终 Prompt；`SessionService` 作为应用层编排者，不包含文本模板实现。每个领域提供尽可能窄的**只读读取口**与负责修改的命令口，避免共享可变大对象。
+Domain 不 import Agent Runtime；Agent 调用领域 Service；ProviderService 不 import Preset/WorldBook；PiExecutor 不了解 SQLite/world-card 业务；AgentContext 不依赖 CredentialStore。
 
-## 3. 一次 Run 的完整执行链
+## 4. Session 创建与每轮执行
+
+### 4.1 创建世界实例
+
+`createSession(worldId, openingId, userCharacterId, presetId, modelSelection)`：
+
+1. 校验已发布世界卡、Opening、可扮演角色、存在且可用的 Preset；通过 `ProviderService` 校验模型受支持且用户已配置必要凭据（需要真实连通性时显式测试，不将本地存在当作云端有效）。
+2. 在**一个 SQLite 短事务**保存 Session（世界卡完整快照、所选角色快照、Preset ID、模型选择、状态 Schema/Hash、Opening ID 等），创建 Opening Root Run、初始 Assistant Message、完整状态 S0，设置活动叶子。
+3. 创建完毕不启动独立常驻 WorldInstanceContext。之后每轮依据 Session 数据加载。
+
+### 4.2 一轮用户输入
 
 ~~~mermaid
 sequenceDiagram
  participant UI as H5
+ participant A as runAgent
  participant S as SessionService
  participant DB as SQLite
- participant W as WorldInstanceContext
- participant P as PresetService
- participant C as AgentContext
- participant M as Provider/Pi
- participant E as StateEngine
- UI->>S: 发送文本 + expectedLeafRunId + requestId
- S->>DB: 新建 awaiting_ai Run + User Message + 继承状态
- S->>W: open/refresh 本局世界快照与索引
- S->>P: getPresetSnapshot(presetId)
- S->>DB: 读取冻结父 Run 状态与祖先 Runs
- S->>C: build(Preset, WorldView, Run, ParentState, BudgetLimits)
- C->>C: StateLoader -> Hooks -> NodeBuilders -> Render -> Budget
- C-->>S: ModelMessage[] + StateOutputContract + diagnostics
- S->>M: execute(Messages, ModelSelection, StateOutputContract)
- M-->>UI: 文本 delta / 诊断（暂态）
- M-->>S: narrative + change payload / usage
- S->>E: 校验 ChangeSet + 全快照
- S->>DB: 乐观并发检查 + Assistant Message + Run 结算事务
- S-->>UI: completed / error
+ participant W as loadWorldInstanceContext
+ participant C as buildAgentContext
+ participant P as ProviderService + Pi
+ participant T as StateEngine
+ UI->>A: sessionId + userText + expectedLeaf + requestId
+ A->>S: 校验用户/父 Run/分支/状态、预占执行权
+ A->>W: 从 Session 加载本轮 metadata
+ W->>S: 世界快照/角色/父 Run 全快照
+ W->>P: 解析当前 ModelSelection
+ A->>S: 原子 startRun
+ S->>DB: child Run(awaiting_ai) + User Message + 继承父快照
+ A->>S: getAncestorRuns(parentRunId)
+ A->>T: 对同一输入/父状态选择一次 StateScope
+ A->>C: metadata + history + input + StateScope
+ C-->>A: ModelMessage[]
+ A->>P: 模型 + messages + 可选状态 tools
+ P-->>UI: SSE 文本和工具事件
+ P-->>A: 完整响应/候选状态变更
+ A->>T: 校验 ChangeSet + 生成完整 S'
+ A->>S: completeRun(runId, generationId, result)
+ S->>DB: 短事务提交 Assistant + 新状态/状态标记
+ A-->>UI: 仅提交成功后 done；否则 error/stopped
 ~~~
 
-**调用开始时冻结**：runId、parentRunId、PresetSnapshot revision、world_snapshot_revision、context_options_revision、状态 Schema hash/父状态 revision、ModelSelection 与 TokenBudget 限额；调用中不能随其他操作改写组成当前请求的材料。请求失败/取消只留下已经保存的 User Run；状态失败须显式可诊断，不当作无变化。
+`startRun` 和 User Message 必须在调用外部模型之前持久化；失败/取消时保留同一 awaiting_ai Run 供重试，不保存半截 Assistant。成功后一次短事务完成 Run 结算、Assistant Message、有效状态快照和生成幂等校验。Pi 工具调用的开始/结果可按 toolCallId/generationId 幂等持久化至 `run_tool_calls`（限制/脱敏参数与结果），但不当作玩家可见 Message，也不在工具执行时直接提交状态。SSE token delta 不逐 token 写 SQLite。
 
-## 4. Pi Adapter 与 Provider 设计边界
+**分叉与并发**：正常继续从当前有效叶子创建子 Run；历史新分叉从指定旧 Run 的父 Run 创建兄弟 Run。加载 metadata 必须绑定实际 `parentRunId`；运行期间保留选中父状态和生成 ID，落盘时校验父状态/Schema/Run 状态等，防止迟到响应写错世界线。预占同一 Session/Run 的并发执行，取消/失败释放。
 
-Pi SDK 已提供内存 Session 和流式执行能力，现有本地 Mock 可用于基础接入验证；但 **`session.prompt(userText)` 不自动意味着能传入任意排序的全量 ModelMessages**。Provider/Pi 适配需要先用固定 Pi SDK 版本验证受控历史恢复、完整 Message 数组角色顺序、流式、取消、实际 model/Key 映射和一次生成状态 Tool 调用。若无法在 Pi 当前公共 API 中无损呈现构建好的 Messages，须记录阻塞并评估它所支持的更底层模型接口；**不得悄悄重排角色或扁平化全部消息**。
+### 4.3 运行编排伪代码
 
-每个内置 Provider 模块声明模型能力、凭据来源、Pi 模型映射、stream/tool 差异和 Provider 特殊错误转换；对 Session 只暴露统一执行契约与 Event Stream。可用的 `submit_turn` Tool Call 必须经真实模型验证长文本流式与复杂 Schema，不支持时采用带 `<StateUpdate>` 的内联回退。状态更新语义归 StateEngine，不在每个 Provider 重写校验逻辑。
+~~~ts
+async function runAgent(input: RunRequest, emit: StreamEmitter) {
+  const reserved = await sessionService.reserveRun(input); // 鉴权/父 Run/幂等/串行
+  try {
+    const metadata = await loadWorldInstanceContext(input.sessionId, reserved.parentRunId);
+    const model = providerService.resolveModel(metadata.modelSelection);
+    const run = await sessionService.startRun(reserved, input.userText);
+    const history = await sessionService.getAncestorRuns(input.sessionId, reserved.parentRunId);
+    const stateScope = stateService.selectScope(metadata, history, input.userText);
+    const messages = await buildAgentContext(metadata, {
+      userMessage: input.userText, ancestorRuns: history, stateScope
+    });
+    const tools = stateService.buildToolsIfSupported(metadata, model, stateScope);
+    const result = await piExecutor.prompt({ model, messages, tools, emit, signal: input.signal });
+    const settled = stateService.settle(metadata, stateScope, result);
+    await sessionService.completeRun(run.id, reserved.generationId, settled);
+    emit({ type: "done" }); // 仅成功提交后
+  } finally {
+    await sessionService.releaseRun(reserved);
+  }
+}
+~~~
 
-## 5. 运行时 Context 与缓存
+伪代码仅展示编排边界，细节如重试已有 awaiting_ai Run、内联解析、错误/超时/取消、SSE 连接关闭和 generationId 校验仍需实现。`stateService.selectScope` 不必做成框架：一份只读选择结果让 WorldState Prompt 与工具 Schema 共用；`off` 模式可跳过。
 
-进入世界实例时 `WorldInstanceContextService.open(sessionId)` 重建索引（首期最容易保证正确），会话期间缓存可按 revision 失效并重新加载。角色宏由选中角色 Session 快照确定。WorldBook/状态定义的加载前索引属于 WIC；**真正按本轮文本激活什么条目和状态**属于 AgentContext。进入世界实例不重做 Opening/状态初始化，切换活动叶子只改变运行状态读取路径。
+## 5. Pi 的职责与已知限制
 
-全局世界线从 Runs 轻量父链派生 Root/Fork-only 压缩图，连线按折叠 Run 数量计数，并通过终止边 `terminal_leaf_run_id` 进入路线。WorldInstanceContext 可按 `(run_tree_revision, run_content_revision)` 缓存图，消息编辑/Run 结算更新内容修订以失效摘要/状态依赖，静态世界索引不受 Run 追加影响。缓存不是 SQLite 之外的第二套权威历史。
+使用 Pi 内置 `builtinModels({ credentials })` 获取 `getProviders/getModels/getModel/getAvailable` 与模型认证、运行能力；本项目只维护产品允许列表和凭据管理服务，不重写每家 Provider HTTP/错误/流式协议。`PiAgentExecutor` 统一适配 SDK 的 prompt、事件、取消和消息格式。无状态工具时 `tools=[]`；允许状态更新时才提供受限的 `state-update`/`submit_turn`，绝不默认暴露 Shell/文件工具、用户扩展或自动技能。
 
-## 6. API 和 MVP UI
+**PoC 事实，不能越过**：2026-11-01 的 `@earendil-works/pi-coding-agent@1.4.0` 本地 mock 实测支持 `prepareRequest` 覆盖消息、SSE/abort，但 OpenAI-compatible 会把历史后的 `system` 消息规范化到开头。`prompt(userText)` 也可能自行附加 User。实际接入必须验证最终 HTTP role/order、Prompt 预览一致性、User 去重、额外 system/cwd 内容；必要时选择 Pi 更底层公共接口，不能声称数组参数直接被 SDK 接收，也不能静默改变角色语义。真实 Provider/复杂 Tool 流式及 SQLite 端到端尚未验证。参考 [实验报告](../../experiments/pi-sdk-feasibility/REPORT.md)。
 
-H5 路由/页面聚焦世界卡库、世界实例列表、Chat、Root/Fork 压缩世界线、Preset 编辑、预置 Provider 模型/密钥设置和独立状态面板。聊天历史只向上按 Run 分页，默认 30 Run，Run 内可呈现 1～2 条可见消息；全局世界线仅展示 Root/Fork 和带隐藏 Run 计数的线，允许点击终止线进入真实叶子。
+## 6. 功能与验证边界
 
-接口边界：
-- Preset：`GET/POST/PUT/DELETE /presets`、导入导出，更新基于 revision；
-- Provider：`GET /providers` / `GET /providers/:id/models`、设置/验证/删除 API Key，绝不回显密钥；
-- Session：`GET /sessions/:id/runs`、`POST /sessions/:id/runs`、`POST /sessions/:id/forks`、`GET /sessions/:id/worldlines`、`PUT /sessions/:id/active-leaf`；
-- Agent Context Preview：`POST /sessions/:id/agent-context/preview`（只读，不调用模型），返回规范化消息/来源/预算/错误，剔除私人密钥；
-- Model invocation：一次 Run 的 SSE，事件和错误由 Provider 适配规范化，完成后由 Session 持久化。
+- AgentContext 只返回 messages，不负责状态工具契约；Preset 是配置，Provider 是模型与凭据，State 是更新协议和结算。
+- Token 预算首期只做必要消息保护、基于完整 Run 的连续历史裁剪和上限错误；不引入多层 TokenBudget/NodeBuilder 采纳框架。
+- 世界书命中与状态根选择按本轮真实祖先历史计算；禁止跨分支读取和从 UI 分页拼模型历史。
+- 原有状态 Tool/内联协议可选，但模型能力需实测，未知模型默认不开复杂工具或明确报不支持；不在失败时把非法状态默认为无变化。
+- 全局世界线 Root/Fork-only 压缩计算归 Session；不属于 WorldInstanceContext，不要求 MVP 先实现增量图缓存。
+- MVP API 包括世界卡、Preset、`GET /providers`、`GET /providers/:id/models`、`PUT/DELETE /providers/:id/api-key`、测试连接、Session/Run/分叉/状态/SSE/Context Preview。API Key 不回显。
 
-MVP 不提供自定义 Provider/URL、任意聊天中间窗口、跨设备会话阅读锚点、Run/Message 删除、任意世界卡 JS 脚本。世界卡导入的脚本/HTML 可归档但**不默认执行**。
-
-## 7. 实施阶段与验证门槛
-
-1. **基础领域模型**：固定 PresetNode/ProviderDefinition/Run/Message/WorldInstanceContextView/ModelMessage/StateOutputContract 的 TypeScript 契约和 import 层次，编译无环。
-2. **Preset + Provider**：Preset 增删改导入导出、预置模型目录、密钥保存/验证、固定 Pi 版本受控执行 PoC，模型无损多 role/order 验证。
-3. **WorldInstanceContext + AgentContext**：索引、版本失效、状态先加载、节点注册表、before/body/after、统一文本管道、主流程 Token 预算/Run 整组裁剪。
-4. **Session/Storage**：SQLite Run/Message 事务和分页、Root/Fork-only 世界线、按 Run 的状态快照与分支隔离、前端 Run 消息组。
-5. **整体验证**：世界卡资料变化、用户身份/宏、条件世界书、不同预设顺序、Token 预算、Provider 状态工具、1000+ Runs、失败/重试/分叉/历史编辑/应用重启。
-
-**尚未验证**：生产 SQLite 接入、真正 Provider 连接和 Tokenizer 计量、长篇 Tool Call 流式、Pi SDK 是否能按原始 Messages 保序注入。不能把本文件内容当成已完成的代码或服务能力。
-
-更多任务与里程碑见工作区 `plan/sillyrealms-domain-refactor-tasks.md`。
+实施任务见 [implementation-plan.md](implementation-plan.md)。

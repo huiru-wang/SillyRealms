@@ -1,6 +1,6 @@
 # Preset：提示词预设、节点模型与编排配置
 
-> 2026-11-03 目标设计，未实现。本文件是 **Preset 领域唯一规范**：只管配置模型、导入导出、持久化及向 AgentContext 提供不可变编排快照。**不负责**节点内容构建、世界书命中、变量替换、Token 裁剪、模型调用与 API Key。构建规则见 [AgentContext](agent-context.md)，模型连接见 [Provider](provider.md)。
+> 2026-11-03 目标设计，未实现。本文件是 **Preset 领域唯一规范**：只管提示词预设配置、导入导出、持久化及向 AgentContext 提供不可变编排快照；**不存模型选择**。**不负责**节点内容构建、世界书命中、变量替换、Token 裁剪、模型调用与 API Key。构建规则见 [AgentContext](agent-context.md)，模型连接见 [Provider](provider.md)。
 
 ## 1. 产品体验与边界
 
@@ -46,7 +46,7 @@ Preset 是可复用的“**模型输入编排清单**”，而非完整 Prompt �
 
 `budget` 保存**策略**而非实际消费：`max_output_tokens`（响应保留）、`safety_margin_tokens`、`max_input_tokens?`（额外输入上限）。模型上下文窗口从本轮调用配置提供给 AgentContext 的中立 `BudgetLimits`，不是 Preset 的模型引用。实际输入额度 = min(模型窗口 - 输出保留 - 安全裕量, 可选预设输入上限)。`scan_depth_runs` 默认 4，指**当前 Run + 至多 3 个祖先 Run** 的文本扫描，而非 4 条 Message。
 
-Preset 只验证预算数字的基本合法性；实际 Token 计量、必需/可选内容与历史裁剪归 AgentContext 主流程，不属于本模块。
+Preset 只验证预算数字的基本合法性；实际预算使用由 buildAgentContext 做最简限额检查与完整 Run 历史裁剪，不引入独立的全局片段预算框架；模型上下文能力可由 ProviderService 从 Pi 目录提供。
 
 ## 4. 可序列化配置示例
 
@@ -96,6 +96,6 @@ SQLite 一张 `presets` 表即可：`id TEXT PK`、`name`、`description`、`is_
 - 拖动前/后系统节点和自定义文本节点后，`nodes[]` 顺序、role、enabled、content round-trip 一致；七基础节点无法丢失。
 - 自定义节点的名字、角色、正文可分别编辑；恢复默认需确认；并发 revision 不覆盖他人更改。
 - JSON 导出→导入后除本地 ID/revision 外语义相同；非法/旧格式报清晰诊断，任何凭据不会出现在导出。
-- AgentContext 接口读取到的仅是不可变配置；Preset 领域**完全不处理** WorldBook 扫描、Hook 内容、变量、Token 裁剪或 Provider。
+- AgentContext 读取的仅是不可变预设配置；Preset 领域**完全不处理** WorldBook 扫描、Hook 内容、变量、Token 裁剪或 Provider。ProviderService 只读 Pi 模型目录并负责用户 Key。
 
 相关：[Provider](provider.md)、[AgentContext](agent-context.md)、[WorldInstanceContext](world-instance-context.md)、[存储](../technical/storage.md)。

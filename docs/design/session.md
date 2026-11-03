@@ -1,10 +1,10 @@
 # Session：Run 树、消息归属、分页与压缩世界线
 
-> 2026-11-03 目标设计，**尚未实现**。本文件把过去的 Entry 树改为 **Run 树 + Run 内 Message**。分页、分叉、世界线统计、活动叶子和缓存 revision 以 **Run** 为唯一单位，不再使用 Message/Entry 当树节点。数据持久化细则见 [Storage](../technical/storage.md)。
+> 2026-11-03 目标设计，**尚未实现**。本文件把过去的 Entry 树改为 **Run 树 + Run 内 Message**。分页、分叉、世界线统计、活动叶子和必要的并发修订以 **Run** 为唯一单位，不再使用 Message/Entry 当树节点。数据持久化细则见 [Storage](../technical/storage.md)。
 
 ## 1. 核心产品模型
 
-`WorldCard` 是可重复使用的世界定义；`Session` 是一次独立的世界实例及其故事树；`Run` 是该故事树上一次完整的互动回合；`Message` 是某个 Run 内要展示的用户或模型消息。一次普通 Run 通常包含一条 User Message 和一条 Assistant Message，Opening Root Run 是特例，仅含初始 Assistant/Opening Message。模型内部工具消息、思维过程、SSE event 等不构成玩家可见 Message，也不额外创建 Run。
+`WorldCard` 是可重复使用的世界定义；`Session` 是一次独立的世界实例及其故事树；`Run` 是该故事树上一次完整的互动回合；`Message` 是某个 Run 内要展示的用户或模型消息。一次普通 Run 通常包含一条 User Message 和一条 Assistant Message，Opening Root Run 是特例，仅含初始 Assistant/Opening Message。模型内部工具消息、思维过程、SSE event 等不构成玩家可见 Message，也不额外创建 Run；工具调用可在 `run_tool_calls` 按 generationId/toolCallId 存储脱敏内部记录，供追踪和重试诊断，不参与玩家历史分页。
 
 ~~~text
 Session (World Instance)
@@ -107,29 +107,27 @@ Content-Type: application/json
 {"leaf_run_id":"R900","expected_active_leaf_run_id":"R700"}
 ~~~
 
-世界线接口只加载 Run 的轻量父指针/子数/简短预览等元信息；**不拉取全部 Message 正文**。`collapsed_run_count` 基于真实父链逐个 Run 计算，不是全局 seq 差，不是 Message 数。返回 `run_tree_revision` 和 `run_content_revision` 作为缓存一致性标记。大树支持可展开子树与 `has_more`，不能未经说明截断成“完整拓扑”。
+世界线接口只加载 Run 的轻量父指针/子数/简短预览等元信息；**不拉取全部 Message 正文**。`collapsed_run_count` 基于真实父链逐个 Run 计算，不是全局 seq 差，不是 Message 数。可以返回 `run_tree_revision` 和 `run_content_revision` 供 UI 并发/变化检测，不用来驱动 WorldInstanceContext 缓存。大树支持可展开子树与 `has_more`，不能未经说明截断成“完整拓扑”。
 
 ## 5. 分叉与角色
 
 当用户在历史 Run R2 的 User Message 上选择“从这里创建另一种行动”，语义是：**把新 Run 挂到 R2.parent_run_id 作为 R2 的兄弟**（从同一个历史决策点重选），而不是把新 Run 接到 R2 或 R2 的 Assistant 后面。校验历史 R2 非 Root、其父 Run 已完成且状态可用、父 Run 子数小于 3；新分支继承**父 Run 结算状态**、读取该父 Run 的祖先消息，不混入 R2 的 User/Assistant。第三条分支允许，第四条拒绝。只有显式提交新分叉才自动切入该新 Run，不因世界线“预览”而切换。
 
-Session 的 `user_character_id` 从世界卡 `characters[]` 中受 `player_selectable` 和 Opening `player_characters` 共同许可的 ID 明确选择，用户身份快照保存在 Session；同一 Session 不为每条 Run 再随意覆盖用户身份。`{{user}}` 的取值由 WorldInstanceContext 查询本局角色快照。
+Session 的 `user_character_id` 从世界卡 `characters[]` 中受 `player_selectable` 和 Opening `player_characters` 共同许可的 ID 明确选择，用户身份快照保存在 Session；同一 Session 不为每条 Run 再随意覆盖用户身份。`{{user}}` 的取值来自 Session 内已持久化的角色快照，由本轮 metadata 传入 AgentContext。
 
 ## 6. 对外领域接口与权威数据
 
 Session 领域建议：`createSession(worldId, openingId, userCharacterId, presetId, modelSelection)`、`getSession(id)`、`getRunPage(sessionId, leafId, beforeRunId, limit)`、`getRunAncestorPath(runId)`、`appendUserRun(sessionId, expectedLeafId, requestId, input)`、`completeRun(runId, generationId, assistantText, changeSet, stateResult)`、`retryRun(runId)`、`forkRun(sessionId, historicalRunId, newUserText)`、`editMessage(messageId, expectedRevision, content)`、`getCompressedWorldlines(sessionId)`、`switchActiveLeaf(sessionId, expectedLeafId, newLeafId)`。这些接口只处理**Run/Message/Session 持久化与一致性**，不在 Session 内写 Prompt NodeBuilder。
 
-WorldInstanceContext 在实例进入时恢复世界卡/身份/结构缓存；AgentContext 按本轮父 Run 读取状态和祖先 Runs；Provider 只拿 Messages 做模型执行。`sessions.active_leaf_run_id` 为唯一持久化活动叶子；模型执行始终绑定请求创建时的 Run ID、父版本、Schema 版本，迟到响应不能在切线后覆盖另一条路线。
+每次 runAgent 根据 sessionId + 实际 parentRunId 调用 loadWorldInstanceContext，读取已保存的世界快照、角色、Preset ID 与模型选择；AgentContext 用对应父链历史构建 Messages；ProviderService 查询受支持模型并管理 API Key，PiExecutor 负责模型执行。不存在实例级 Context 缓存服务。`sessions.active_leaf_run_id` 为唯一持久化活动叶子；模型执行始终绑定请求创建时的 Run ID、父版本、Schema 版本，迟到响应不能在切线后覆盖另一条路线。
 
-## 7. 缓存与一致性
+## 7. 一致性与世界线计算
 
-`run_tree_revision` 在新增子 Run、子节点关系变化时递增，`run_content_revision` 在 Run 结算、状态徽标/预览内容变化或 Message 修改时递增。拓扑结构可按前者增量维护，预览缓存同时绑定后者。世界线缓存可按新 Run 做增量更新：
-- 单链尾部追加只更新终止线 `terminal_leaf_run_id` 和 `collapsed_run_count +1`；
-- 某历史 Run 从一个子 Run 变为两个时，**提升该 Run 为 Fork**，拆原来线段并分出两条边，重新计算涉及路径；
-- 编辑消息只使相应边标签/Preview 失效、状态与下游上下文 stale，**Run 树结构不变**；
-- 切活动叶子只改变选中高亮，不改变压缩拓扑。
+Session/Run/Message/状态快照是唯一权威；Run 新增、Message 编辑、状态结算和切叶子都由 Session Domain 负责。按需读取 Run 轻量元数据即可计算 Root/Fork-only 压缩图，**不归 WorldInstanceContext，不引入缓存失效框架**。
 
-MVP 可优先每次按整个轻量 Run 元数据重建拓扑，避免复杂增量算法先污染正确性；以后用 revision-key 的增量缓存加速，必须和确定性全重建的结果对拍。缓存只在 [WorldInstanceContext](world-instance-context.md) 管理，不写第二份树的持久化事实。
+`run_tree_revision` / `run_content_revision` 若保留，主要服务于客户端世界线响应的变更提示、乐观并发与调试，不要求作为 Context 缓存键。初期完全可以每次按真实父子关系重新计算图，避免增量缓存的维护成本。切换叶子只更新持久化活动叶子和 UI 游标，不改变历史父链。
+
+单轮 `runAgent` 从读取实际父 Run 到结算期间冻结父状态、Schema、预设配置和模型选择；User Message 先随 `awaiting_ai` Run 原子提交。模型完成后的 Assistant 和状态只在状态校验完成、generationId/Run revision 确认有效后提交；取消/失败保留同一 Run 重试，不写半截 Assistant。
 
 ## 8. 验收与不支持范围
 

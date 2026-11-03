@@ -1,95 +1,85 @@
-# Provider：预置模型供应商与 Pi Agent 适配
+# Provider：模型目录、模型选择与 API Key 服务
 
-> 2026-11-03 产品/领域/架构设计，尚未实现。Provider 与 Preset 完全分离：本模块只管预置 Provider、模型选择、API Key 及 Pi 调用适配；AgentContext 仅返回已编排好的 Messages，不持有连接、凭据或 Provider 实例。Pi SDK 当前文档的执行能力可参考 [官方 SDK](https://pi.dev/docs/latest/sdk) 与 [Provider](https://pi.dev/docs/latest/custom-provider)；具体版本、完整消息顺序与状态工具兼容必须真实 PoC。
+> 2026-11-03 精简设计，尚未实现。Provider **仍是独立业务 Domain**，提供用户可见的供应商/模型查询、API Key 管理与模型选择校验；不自行维护每个供应商的 SDK 适配器。**模型目录、认证解析和真实模型调用尽量直接复用 Pi**。
 
-## 1. 产品体验
+## 1. 职责与非职责
 
-MVP **不允许用户创建 Provider、编辑 API Base URL、编写 Header 或自行添加模型提供商**。设置页：选择内置 Provider → 选择该 Provider 的模型 → 输入 API Key → 保存/验证 → 将所选模型设置为默认或当前 Session 使用。只显示经过当前适配版本验证、可调用的模型；不可用模型明确标注，不自动选择其它供应商。Provider 列表由应用随版本发布的**静态声明文件**决定，不需要 `providers` 数据表。
+- **ProviderService** 是设置页、Session 创建与 AgentRuntime 的统一业务入口，负责 `listProviders / listModels / getModel / getAvailableModels`、配置/验证/删除用户 API Key、解析可调用的模型选择与能力信息。
+- 内置 Provider/Model 集合来自项目锁定版本的 `@earendil-works/pi-ai`（或统一选定的兼容 Pi 版本）。MVP 可以采用应用级**允许列表**决定在 UI 中开放哪些 Pi 内置 Provider；这只是过滤和产品配置，不是为每个供应商编写一套 Adapter。
+- API Key 属于用户可管理配置。`ProviderService` 通过应用实现的 `CredentialStore` 持久化凭据，向 Pi 的 `Models` 注入该 Store；私密值不写到 Session、Preset、世界卡、日志或导出内容。
+- Provider Domain **不构建 Prompt、不创建 Session/Run、不负责 SSE、不应用状态 ChangeSet**。PiAgentExecutor 负责调用和事件转发；状态工具与校验归 State Domain。
 
-候选首批内置提供商包括 OpenAI、Anthropic、Google Gemini、DeepSeek 等 Pi 已支持的供应商；最终启用名单以真实 API/流式/工具 PoC 和当前 SDK 支持为准。模型 ID、上下文长度和支持能力不在这份设计里硬编码为永久事实。
+## 2. 模型与凭据契约
 
-## 2. 领域对象与配置
+`ModelSelection` 仅保存 `{ provider: string, modelId: string }`，按需另存普通生成参数；`provider` 和 `modelId` 必须以运行时选定的 Pi 模型目录实际值为准。Session 持久化该选择；没有显式选择时按应用默认配置读取，不把模型写入 Preset。
 
-- `ProviderDefinition`：`id`、`displayName`、`piProviderId`、`authMode=api_key`、`models[]` / 从固定 Pi 目录筛选规则、`capabilityProfile`、`adapterKind`。内置声明不可被用户改写。每个 Provider 是独立的内部模块/适配配置，不能把 Provider 分支散落在 Session/AgentContext 中。
-- `ModelDefinition`：稳定 `providerId/modelId`、展示名称、上下文窗口、输出上限、tool/structured-output 能力标记、能力检测来源及更新时间。来源优先固定版本 Pi model registry 和产品验证白名单；升级时可刷新，但展示与本轮执行必须冻结一致的实际模型定义。
-- `ProviderCredential`：`provider_id`、`credential_ref`、`updated_at`、`last_test_result?`。API Key 不出现在 Provider JSON、Preset、世界卡、Prompt、日志、Session 导出。凭据默认放 OS 安全凭据存储；如不得不使用数据库，必须有明确密钥加密/文件权限策略，不能在 SQLite 中明文存储。
-- `ModelSelection`：`provider_id`、`model_id`、`generation_options?`。全局默认可保存到应用设置；一个 Session 可保存自身选择，优先于全局。**不属于 Preset**。运行中按调用冻结，模型切换只影响下一 Run。
+模型展示信息直接从 Pi `Model` 映射：`provider`、`id`、`name`、`contextWindow`、`maxTokens`、`reasoning`、`input`、`api` 等（以锁定依赖版本的字段为准）。模型在目录中存在**不代表**已配置 API Key、远端仍可调用或支持当前的状态工具 Schema；因此要区分：
 
-内置声明文件（示意，具体 ID 与启用型号由版本化模型目录确定）：
+1. **支持的模型**：`models.getModels(provider?)` 可发现，且符合本产品允许列表。
+2. **已配置的模型**：`models.getAvailable(provider?)` 根据当前 CredentialStore / 授权上下文筛选；这只是本地认证完整性检查，不等于云端请求成功。
+3. **已验证能力**：针对实际 Provider/模型做 SSE、取消、完整 Messages 角色顺序和状态 Tool Call 验证。未验证的不承诺可执行复杂状态工具。
 
-~~~json
-{
-  "catalog_version": 1,
-  "providers": [
-    {"id":"openai","display_name":"OpenAI","pi_provider_id":"openai","auth_mode":"api_key","adapter_kind":"openai"},
-    {"id":"anthropic","display_name":"Anthropic","pi_provider_id":"anthropic","auth_mode":"api_key","adapter_kind":"anthropic"},
-    {"id":"deepseek","display_name":"DeepSeek","pi_provider_id":"deepseek","auth_mode":"api_key","adapter_kind":"deepseek"}
-  ]
+MVP 不允许添加自定义 Provider、Endpoint、Header 或模型定义；没有必要维护 `providers` / `models` 用户表或每供应商文件。
+
+## 3. ProviderService 核心接口
+
+~~~ts
+type ModelSelection = { provider: string; modelId: string };
+
+interface ProviderService {
+  listProviders(): ProviderSummary[];
+  listModels(provider?: string): ModelSummary[];
+  getModel(selection: ModelSelection): ModelSummary;
+  getAvailableModels(provider?: string): Promise<ModelSummary[]>;
+  hasApiKey(provider: string): Promise<boolean>;
+  saveApiKey(provider: string, key: string): Promise<void>;
+  deleteApiKey(provider: string): Promise<void>;
+  testConnection(selection: ModelSelection): Promise<ConnectionTestResult>;
+  resolveModel(selection: ModelSelection): PiModel;
 }
 ~~~
 
-用户通过 `listSupportedProviders()` 和 `listModels(providerId)` 得到受支持的模型集合，而非任意输入模型名。未通过验证的新模型不会仅凭远端目录变化就自动开放核心功能。
+`getModel/resolveModel` 验证模型是否在本产品支持目录内，不返回密钥；`testConnection` 才真实发起最小模型调用，可能产生成本，返回脱敏错误。`hasApiKey` 表示本地凭据存在，不宣称其有效。`saveApiKey` 校验 Provider 支持 API Key，并交给安全凭据存储；无凭据/模型不支持应显式报错，不隐式改选其它模型。
 
-## 3. Pi 适配架构
+API 建议：
 
-~~~mermaid
-flowchart LR
-  SessionService --> AgentContext
-  AgentContext -->|Messages| AgentExecutor
-  SessionService -->|ModelSelection| ProviderRegistry
-  ProviderRegistry -->|Model + CredentialRef| ProviderAdapter
-  AgentExecutor -->|Messages + ExecutionOptions| ProviderAdapter
-  ProviderAdapter -->|Pi SDK/AI| ProviderAPI
-  ProviderAdapter -->|Normalized Stream/Result| AgentExecutor
-~~~
+- `GET /providers`、`GET /providers/:providerId/models`：支持的目录和能力、配置状态。
+- `GET /providers/available-models`：本地认证完整的模型（非实时云端可用性）。
+- `PUT /providers/:providerId/api-key`、`DELETE /providers/:providerId/api-key`：用户 Key 配置/删除，不提供明文读取。
+- `POST /providers/:providerId/test`：指定模型、显式执行连接验证。
+- 默认模型设置在应用配置；Session 创建/修改模型时验证 `ModelSelection`。
 
-代码边界建议：`ProviderRegistry`（静态目录/实例解析）、`CredentialStore`（密钥读写/测试）、`ProviderAdapter`（某 Provider 的模型映射/差异）、`PiAgentExecutor`（统一执行生命周期）、`ModelCapabilityResolver`（返回模型限制，供编排层使用中立 BudgetLimits）。
+## 4. Pi 复用方式
 
-- 每个内置 Provider 有独立适配单元（或独立注册实现），统一实现 `listModels`、`resolvePiModel`、`validateKey`、`normalizeGenerationOptions`、`supportsSubmitTurn`、`execute` 能力。平台特有参数、strict Tool Schema 子集、推理 token 参数、流式事件、错误码、限速/重试策略在 Provider 内消化。
-- 共性执行器负责可取消的一次模型生成、统一 SSE 事件与成功/失败结果、终止回收；保留 Pi 的模型消息、usage、tool 生命周期，**禁用默认 coding tools、工作目录自动发现技能和外部副作用**。只有经验证的 SillyRealms 状态提交工具可按生成模式注册，不允许模型获得 shell/文件执行工具。
-- `AgentContext.build()` 返回**真正有序的**中立 `ModelMessage[]`。Pi 适配必须测试如何在内存 Session/受控上下文中无损注入这些消息并保持 role/order；不能假设 `session.prompt()` 可直接接收完整任意角色数组，也不可以静默把所有内容塞到一个 system prompt 伪装等价。若当前 Pi 公共 API 不满足，先记录阻塞并考虑 Pi 提供的受支持底层执行接口，**不双写 Pi JSONL 和 SQLite**。
-- 一次用户 Run 的模型调用在成功前不应在持久化数据库创建 AI 占位消息；内部 Pi Session /流式 token 是执行态。Provider 使用明确的 ModelSelection 与 CredentialRef，不读取 Preset 或 WorldBook。
-
-## 4. 统一执行契约
+Fanto 当前使用的 `@earendil-works/pi-ai@0.85.1` 已提供以下 API；正式 SillyRealms 采用哪套版本及与 agent-core/coding-agent 的兼容关系，应先固定并测试，而不是混用实验版本。
 
 ~~~ts
-type ModelExecutionInput = {
-  messages: ModelMessage[];         // AgentContext 已完成的有序消息
-  model: ModelSelection;            // Session/全局选择
-  generationOptions: GenerationOptions;
-  stateOutputContract?: StateOutputContract; // 状态模块生成的工具约束，非 Provider 自行决定业务
-  requestId: string;
-  abortSignal: AbortSignal;
-};
-type ModelExecutionResult = {
-  narrative: string;
-  stateChangePayload?: unknown;     // 待状态引擎校验
-  usage?: TokenUsage;
-  finishReason: string;
-  diagnostics: ProviderDiagnostic[];
-};
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+
+const models = builtinModels({ credentials: credentialStore });
+const providers = models.getProviders();
+const allModels = models.getModels();
+const providerModels = models.getModels("deepseek");
+const selected = models.getModel("deepseek", "deepseek-v4-flash");
+const available = await models.getAvailable();
 ~~~
 
-`ProviderRegistry.execute(input)` 输出统一事件 `started / text_delta / tool_delta / usage / completed / failed / cancelled`，返回上述结果。Provider 必须规范化平台格式差异和错误，且流式片段**不代表可以提交的最终消息或状态**。错误类型至少区分凭据无效、限额、速率限制、网络/超时、模型不支持、工具/格式错误、取消；重试仅对幂等且安全场景自动尝试，不在同一 Run 上重复提交变更。
+`CredentialStore` 适配 Pi 的 `read/list/modify/delete` 约定，应用实现可以接 OS Keychain/安全密钥存储；通过依赖注入供 Pi 请求时读取。环境变量只作为明确配置的开发/部署方式，生产用户 Key 不默认明文写入 SQLite。
 
-### 状态工具策略
+ProviderService 对外使用 Pi 目录，**不重复定义**每个模型的最大上下文、stream 参数、错误转换或 API 协议。确有版本级兼容/允许列表时，可以在一个 `models.ts` 中集中声明薄配置；不建 `openai.ts` / `anthropic.ts` / `deepseek.ts` 等同构适配器。若某内置模型需要 Pi 不支持的差异处理，先验证并记录真实问题，再做最小的隔离修复。
 
-状态引擎给出 `StateOutputContract`，包含本轮可写目标及受限 ChangeSet；Provider 声明 `submit_turn` 结构化工具及长文本流式的**实测**支持情况。`tool` 模式需验证单次请求能获取叙事与状态；`inline` 模式保持正文流式并解析尾部 `<StateUpdate>`。Provider 仅负责把平台执行结果规范化，不负责解释状态业务、修改 Snapshot、跳过校验或决定“灵力应该减少多少”。模型缺乏严格工具支持时，可选择内联回退但不降低服务端强类型校验。用模型/适配版本记录能力，未知视为不支持。
+## 5. 与一次 Agent 执行的关系
 
-## 5. 存储、接口和安全
+`runAgent()` 根据 `sessionId` 加载 `WorldInstanceContext`，通过 `ProviderService.resolveModel` 解析实际模型与认证配置，`AgentContext` 只返回 `ModelMessage[]`，`PiAgentExecutor` 负责把消息适配到 Pi 的模型请求并 SSE 转发。是否开启状态 Tool 由本轮 Session/状态配置和已验证的模型能力共同决定，ProviderService 只提供查询与校验信息。
 
-建议 `provider_credentials`：`provider_id` 主键、`credential_ref`、`updated_at`、`last_verified_at` 可空、`status`；`app_settings` 只保存 `default_model_selection_json`，`sessions.model_selection_json` 保存本局模型选择；**不建用户自定义 providers/models 表**。模型目录为代码/只读资源与可丢弃缓存。
+**已知限制**：SillyRealms 在 2026-11-01 对 `@earendil-works/pi-coding-agent@1.4.0` 的离线 mock 实测发现：`prepareRequest` 可以覆盖发送的 Messages，但 OpenAI-compatible 路径会把历史后方的 `system` 节点规范化到头部。`session.prompt(text)` 也不能直接当成「接受完整任意数组」的 API；正式实现必须以实际 HTTP 请求为准验证 role/order、避免重复追加当前 User。必要时使用受支持的更底层 Pi Agent / Pi AI 接口，**不静默重排**。参考 [实验报告](../../experiments/pi-sdk-feasibility/REPORT.md)。
 
-逻辑接口：`listSupportedProviders()`、`listModels(providerId)`、`saveApiKey(providerId, key)`、`testConnection(providerId, modelId)`、`deleteApiKey(providerId)`、`getDefaultModelSelection() / setDefaultModelSelection()`、`resolveExecution(modelSelection)`；API Key 不通过读取接口回显，UI 只拿 `configured: true/false`、尾部脱敏提示和验证状态。
+## 6. MVP 验收
 
-安全：私有密钥服务端使用，禁止客户端持有明文；不允许 Provider 声明执行任意脚本、URL 或第三方插件；HTTP 请求必须使用可信内置 Endpoint/SDK，日志屏蔽密钥及原始个人聊天内容；网络连接失败不得修改 Run/State。
+- 列表直接映射 Pi 支持的模型，允许列表与 SDK 升级行为明确；未知模型拒绝。
+- API Key 可以安全保存、覆盖、删除、显示「已配置」和显式测试；接口/日志不回显敏感值。
+- `getAvailableModels` 不把认证完整误称远端健康；状态工具能力必须在模型级经真实 PoC。
+- Preset 与模型选择独立；Session 保存 provider/model ID，下一轮可重新解析当前凭据。
+- 不存在按 Provider 重复实现模型 HTTP/stream 适配或第二套模型目录。
 
-## 6. 验收和延期
-
-- 用户只能选内置 Provider/模型并提供 API Key；不能创建自定义 Provider 或 Base URL；无凭据无法静默执行。
-- 不同 Provider 在统一事件流和 Message 角色顺序契约上有可重复的真实测试；Provider 失败不会把 Run 结算为成功。
-- 真实验证 Pi 模型映射、API Key 隔离、取消、流式、长输出、工具支持和状态提交差异；没有证据不声称已支持。
-- Preset 和 AgentContext 不含 providerId/modelId/apiKey；模型的 Context 容量通过中立 `BudgetLimits` 输入，具体映射留在 Provider 层。
-- 订阅 OAuth、OpenAI-compatible 自定义 Endpoint、用户注册新 Provider、多个账号轮换、模型自动切换等延后。
-
-相关：[Preset](preset.md)、[AgentContext](agent-context.md)、[技术架构](../technical/architecture.md)、[存储](../technical/storage.md)。
+相关：[技术架构](../technical/architecture.md)、[AgentContext](agent-context.md)、[Session](session.md)。

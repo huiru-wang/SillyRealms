@@ -129,9 +129,9 @@
 
 ### 5.1 Tool Call 优先，但能力门槛必须实测
 
-目标工具 `submit_turn` 接收 `{narrative: string, changes: StateChange[]}`，以**一次模型生成输出**承载叙事与增量状态。工具描述从**本轮已激活、允许写入的状态 Module** 动态编译，尽量为每个 op/target 生成类型受限的 JSON Schema 分支：例如 `/清月/灵力` 的 delta 必须是数字，`/清月/背包` upsert value 必须是具体 item object；`target` 优先固定枚举而非裸字符串。模型没有看到/未激活的 Module 默认不可写，仍始终存在于完整快照中。
+目标工具 `submit_turn` 接收 `{narrative: string, changes: StateChange[]}`，以**一次模型生成输出**承载叙事与增量状态。工具描述由 StateService 从**本轮已激活、允许写入的状态 Module（StateScope）** 动态编译，尽量为每个 op/target 生成类型受限的 JSON Schema 分支：例如 `/清月/灵力` 的 delta 必须是数字，`/清月/背包` upsert value 必须是具体 item object；`target` 优先固定枚举而非裸字符串。模型没有看到/未激活的 Module 默认不可写，仍始终存在于完整快照中。
 
-动态 Schema 需要限制枚举目标数量、嵌套深度和总输入 Token。不同 Provider 对 `anyOf`、严格工具、复杂嵌套、工具参数流式支持不同，不能假设任何 Provider 都能一次请求完成且无损逐字流式展示长叙事。**仅在实际 Provider PoC 验证后设为该连接默认**；不存在已验证支持时使用内联兼容通道。无论生成侧是否声称 strict，服务端始终执行完整验证。
+动态 Schema 需要限制枚举目标数量、嵌套深度和总输入 Token。不同模型/Provider 对 `anyOf`、严格工具、复杂嵌套、工具参数流式支持不同，不能假设任何模型都能一次请求完成且无损逐字流式展示长叙事。底层调用尽量使用 Pi 内置实现，ProviderService 负责查询/校验模型能力而不是为各供应商重复写 Adapter。**只对实际模型 PoC 验证过的模型开启工具模式**；未验证时使用明确选定的内联模式或报不支持，不在生成中途静默切换协议。无论生成侧是否声称 strict，服务端始终执行完整验证。
 
 ### 5.2 内联回退
 
@@ -176,13 +176,13 @@
 
 1. 创建 Session 时冻结已发布世界卡的 Schema/hash；Opening 的 partial initial_state 覆盖固定叶子、动态集合整值替换，整份 Zod 校验后在**根 Opening Run** 保存初始化状态。
 2. 发送用户输入时，新建 child Run（status=awaiting_ai），保存该 Run 的 User Message，直接继承**父 Run** 的完整有效状态，标记 inherited。用户希望采取行动不等于行动已经发生。
-3. AgentContext 在父 Run 状态上先完成 StateLoader，给 Provider 返回状态提交约束和 ModelMessage[]；模型输出叙事 + ChangeSet。
+3. runAgent 从父 Run 读取状态并由 StateService 按本轮输入/祖先文本选择一次状态范围（StateScope），供 AgentContext 的 worldState 消息和可选状态工具共用；AgentContext 只返回 ModelMessage[]。模型输出叙事 + ChangeSet。
 4. StateEngine 在继承快照副本上按序执行所有受限操作，校验每个输入值和最后整份 S'；任何错误均不部分落盘。
 5. 同一 Run AI 完成时，在短 SQLite 事务里校验 generation_id、父 Run revision、Schema hash 和预期活动叶子，追加 ordinal=1 的 Assistant Message，并保存清洗正文、ChangeSet、state_status 和**完整**新快照；不能新建第二个 Run 伪装成功，也不能二次执行 adjust。
 6. 允许的状态标记：success（含明确空 changes）、inherited、missing、invalid、stale。缺失/非法更新可保留 AI 叙事作诊断但不是已结算状态，继续生成前需显式重试、修复或确认继承状态并记录决定。
 7. 生成中断/取消不提交不完整 Assistant Message；当前 Run 保持 awaiting_ai 及其 User Message，重试**同一 Run**。分叉从真实父 Run 继承、历史消息编辑使依赖的 Run 和后代 stale，不能隐式重算其故事或引用其他分支的状态。
 
-SQLite 以 `sessions.state_definition_json / state_schema_hash` 和 `runs.state_snapshot_json / state_changes_json / state_status / state_schema_hash / state_revision / parent_state_revision / generation_id` 为逻辑字段。物理存储可压缩/去重，但读取任意已提交 Run 必须能恢复**完整逻辑快照**。模型内部工具结果不放入可见消息历史；Session、Run 与 Message 的事务见[会话](session.md)、[存储](../technical/storage.md)。
+SQLite 以 `sessions.state_definition_json / state_schema_hash` 和 `runs.state_snapshot_json / state_changes_json / state_status / state_schema_hash / state_revision / parent_state_revision / generation_id` 为逻辑字段。物理存储可压缩/去重，但读取任意已提交 Run 必须能恢复**完整逻辑快照**。模型内部工具结果不放入可见消息历史；工具调用事件可独立持久化在 `run_tool_calls` 供诊断，**工具执行时只产生候选变化，不直接提交状态**，最终由 Run 结算事务更新全快照。Session、Run 与 Message 的事务见[会话](session.md)、[存储](../technical/storage.md)。
 
 ## 8. 验收与未解决问题
 

@@ -13,9 +13,10 @@
 | 表 | 关键字段 | 权威职责 |
 | --- | --- | --- |
 | `worlds` | `id, name, draft_json, published_json, version, created_at, updated_at, published_at` | 世界卡当前草稿/最新发布 |
-| `sessions` | `id, world_id, world_snapshot_json, source_world_version, world_snapshot_revision, title, opening_id, user_character_id, user_character_snapshot_json, preset_id, model_selection_json, context_options_json, context_options_revision, state_definition_json, state_schema_hash, active_leaf_run_id, run_tree_revision, run_content_revision, created_at, updated_at` | 一个世界实例、选中身份、Preset、模型选择、冻结 Schema、唯一活动叶子及缓存修订 |
+| `sessions` | `id, world_id, world_snapshot_json, source_world_version, world_snapshot_revision, title, opening_id, user_character_id, user_character_snapshot_json, preset_id, model_selection_json, context_options_json, context_options_revision, state_definition_json, state_schema_hash, active_leaf_run_id, run_tree_revision, run_content_revision, created_at, updated_at` | 一个世界实例、选中身份、Preset、模型选择、冻结 Schema、唯一活动叶子及必要并发修订 |
 | `runs` | `id, session_id, parent_run_id, seq, kind, status, user_request_id?, generation_id?, state_snapshot_json?, state_changes_json?, state_status?, state_schema_hash?, state_revision?, parent_state_revision?, last_error_code?, created_at, updated_at` | 一次 Opening 或互动回合；完整状态逻辑快照与树关系 |
-| `messages` | `id, run_id, ordinal, role, content, raw_content?, revision, created_at, updated_at` | Run 内可见 User/Assistant 内容，`(run_id, ordinal)` 唯一 |
+| `messages` | `id, run_id, ordinal, role, content, raw_content?, revision, created_at, updated_at` | Run 内玩家可见 User/Assistant 内容，`(run_id, ordinal)` 唯一 |
+| `run_tool_calls` | `id, run_id, generation_id, tool_call_id, name, arguments_json?, result_json?, status, created_at, updated_at` | 只记录 Pi 工具调用的受限内部执行事实，和玩家可见 Message 分离 |
 | `presets` | `id, name, description, is_builtin, schema_version, revision, config_json, created_at, updated_at` | 完整、有序节点数组与预算策略；不可删除默认预设 |
 | `provider_credentials` | `provider_id, credential_ref, updated_at, last_verified_at?, status` | 仅指向独立安全存储，不存 API Key 明文 |
 | `app_settings` | `key, value_json, updated_at` | 默认 `model_selection` 等少量持久配置 |
@@ -23,7 +24,7 @@
 | `schema_migrations` | `version, applied_at` | 数据库结构迁移记录 |
 | `context_checkpoints`（以后） | `session_id, anchor_run_id, summary_json/text, source_hash, created_at` | 可选历史压缩摘要；仅使用锚点 Run 的真实祖先链 |
 
-**不建立**用户自定义 `providers` 或 `models` 表。内置供应商目录跟随应用资源；模型目录由 Provider 适配版本和只读缓存提供，选择结果只记录 `provider_id/model_id`。不保存冗余的世界线图节点/边表，压缩拓扑由 Runs 轻量元数据派生，可在 WorldInstanceContext 内存缓存。
+**不建立**用户自定义 `providers` 或 `models` 表。支持的供应商/模型由锁定版本的 Pi 内置模型目录提供，ProviderService 只做产品允许列表、模型选择/能力查询及用户 API Key 管理；`sessions.model_selection_json` 仅保存 `{provider, modelId}`（及普通生成参数）。`provider_credentials` 如需在 SQLite 保存，仅保存安全凭据引用/脱敏配置，实际 Key 由注入 Pi 的 CredentialStore 安全保存。世界线从 Run 元数据按需计算，MVP 不建 WorldInstanceContext 或拓扑缓存。
 
 ## 3. Run、Message 约束与状态
 
@@ -31,20 +32,21 @@
 - 普通 `kind=turn` 必须有同 Session 的 `parent_run_id`，第 0 条 Message `role=user`；如果已生成，第 1 条 Message `role=assistant`。`runs.status=awaiting_ai` 表示只有 User，`completed` 表示叙事已提交。不要把模型生成中间流式 token 当成已完成 Message。
 - 一个父 Run 最多 3 个直接 child Run，必须在并发创建事务内检查并分配 `seq`；唯一 Request ID/模型 generation ID 保护重试，`seq` 只代表分配顺序不能用于祖先拼接。
 - 每个已保存 Run **逻辑上保存完整** `state_snapshot_json`，直接对应 `state_definition_json.modules` 的运行值顶层键，无 `world/user` 包装；`awaiting_ai` 继承父快照，`completed` 结算受限 ChangeSet。状态可为 `success/inherited/missing/invalid/stale`；状态失败不得作为已结算结果继续生成。
+- Tool Call 产生时按 `(run_id, generation_id, tool_call_id)` 幂等持久化 `run_tool_calls` 事件/最终状态，包含允许存储的脱敏参数及结果；取消或失败的工具调用记录可保留以供诊断，但**不得**被当成已结算状态或玩家可见消息。结果与参数需有大小限制和隐私过滤；模型下一轮以真实 User/Assistant 父链和已结算状态为准，不把失败工具输出当故事事实。
 - 当前只持久化 `completed` 的可见 AI 正文；如果 AI 正文成功而状态更新失败，可保存 Assistant Message 但设置 Run `state_status=invalid/missing`，明确需要修复。取消/网络故障保持 Run `awaiting_ai` 和 User Message，允许对**同一 Run**重新生成。
-- `messages.raw_content` 保存原始模型输出（若有）但必须限制访问，不回注历史；Provider tool/trace 结果如需诊断只能另存**受限运行日志**，不伪造第二条 Assistant/Run。
+- `messages.raw_content` 保存原始模型输出（若有）但必须限制访问，不回注历史；`run_tool_calls` 保存工具的受限诊断记录，普通 SSE token delta 和 Pi 全量内部 Trace 不逐条落库，也不伪造额外 Assistant/Run。
 
 ## 4. Preset 与模型配置
 
 `presets.config_json` 保存所有七系统节点及自定义文本节点的**完整有序 `nodes[]`**、Budget 与 `scan_depth_runs`，而不是已展开的 Prompt。`builtin/default` 有稳定 ID，允许编辑但不删除；`revision` 防止并发覆盖。导入/导出只针对可移植配置，不带密钥、运行历史、具体模型绑定。
 
-模型选择优先当前 `sessions.model_selection_json`，没有则读取 `app_settings.default_model_selection_json`；Preset 不包含 model/provider。`provider_credentials.credential_ref` 引用 OS 凭据管理/专门的安全密钥存储，不在 SQLite 明文持有 API Key。Credential 读取 API 只返回配置状态，禁止回显。
+模型选择优先当前 `sessions.model_selection_json`，没有则读取 `app_settings.default_model_selection_json`；Preset 不包含 model/provider。ProviderService 从 Pi 内置模型目录校验 model ID 与所需凭据是否已配置；真实 API 仍由 Pi 调用，不维护每 Provider HTTP Adapter。`provider_credentials.credential_ref` 引用 OS 凭据管理/专门的安全密钥存储，不在 SQLite 明文持有 API Key。Credential 读取 API 只返回配置状态，禁止回显。
 
-## 5. 版本与 WorldInstanceContext 缓存
+## 5. 会话快照与并发版本
 
-`sessions.world_snapshot_json` 是本局实际采用的世界卡内容；手动同步更新它及 `world_snapshot_revision`，使 WorldInstanceContext 的 lore/role/hook 索引失效。`context_options_revision` 变化失效手动 WorldBook 选择。`run_tree_revision` 每次添加父子 Run 时变化；`run_content_revision` 在 Run 成功结算、失败结果变更、Assistant 重生成、Message 编辑等**不改变树却影响预览/状态徽标**的操作时变化。压缩拓扑缓存需同时比较这两个版本（或显式失效/全量重建）。纯切换活动叶子不增加树/内容版本，但会使前端 Chat 游标和高亮路径失效。`messages.revision` 用于单条编辑的乐观并发校验；不能仅凭树修订号忽略内容变化。
+`sessions.world_snapshot_json` 是本局权威世界卡内容；仅显式同步时更新快照及 `world_snapshot_revision`。下一轮 `loadWorldInstanceContext` 直接重新读取 Session，**无需 Context 缓存失效框架**。`context_options_json` 保存本局手动世界书选择、状态更新模式 `state_update_mode` 等会话配置；如果保留 `context_options_revision`，用途只是并发编辑保护，不是 Context 缓存版本。
 
-`state_definition_json + state_schema_hash` 在 Session 初始化时冻结。世界卡普通内容同步**不自动覆盖**这个 Schema 或旧 Run 快照；启用新 Schema 必须做兼容性检查、备份和显式迁移/新建 Session。动态状态值只属于具体 Run，不写回 worlds/sessions。
+`run_tree_revision` / `run_content_revision` 可以保留用于 UI 变化通知与乐观并发，但世界线初期按 Run 元数据重新计算，不增量维护缓存。切换活动叶子只改变指针并更新 Chat 游标绑定；`messages.revision` 用于乐观并发编辑。正在执行的本轮冻结父 Run/Schema/预设/模型的必要值，最终以 Run/generationId 与必要修订校验拒绝迟到结果。
 
 ## 6. 事务与并发
 
