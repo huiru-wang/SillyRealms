@@ -1,4 +1,4 @@
-# 世界卡：唯一当前版本、角色、WorldBook 与上下文策略
+# 世界卡：唯一当前版本、角色、lorebook 与上下文策略
 
 > 状态：领域设计，2026-11-04；强类型状态协议已同步，**尚未实现**。返回[文档索引](../README.md)，相关领域见[AgentContext](agent-context.md)、[会话](session.md)。
 
@@ -15,7 +15,7 @@
 - `worlds.data_json` 只保存**一份当前世界卡**，不支持 draft、published 或历史内容版本；可以编辑、保存，创建 Session 时进行最基础的内容合法性校验。`spec_version` 仍表示文件**格式规范版本**，不是世界卡多版本机制。
 - `sessions.world_id` 直接引用此世界卡，**每次交互重新读取最新 data_json**；Session 不复制世界快照，也不保存 opening_id。所选开局的正文在创建 Session 时就是第一条 Assistant Entry。
 - 世界卡内容编辑立即影响旧 Session 的后续 Prompt。**允许旧状态失效**：若当前 Schema 与历史完整快照不兼容，下次状态读取可丢弃不兼容值并按最新状态定义的初值重建，不要求 Schema 迁移、不阻止继续旧剧情。原历史 Entry 仍然完整留存。
-- `data.context` 是 WorldCard 专属的上下文策略配置，支持 `none` / `window` / `summary`，和模型参数、摘要 Prompt（属 Preset）相互独立。详见 [Context Strategy](context-strategy.md)。
+- `data.context` 是 WorldCard 专属的上下文策略配置，仅支持 `window`（默认）/`summary`，和模型参数、摘要 Prompt（属 Preset）相互独立。详见 [Context Strategy](context-strategy.md)。
 - 若编辑世界卡时删除了某个 Session 所选的玩家角色，或将其 `player_selectable` 改为 false，下次进入该 Session 应要求重新选一个当前可选角色；没有可选角色时先创建并写回世界卡，再更新 Session.user_character_id。不得继续注入不存在的身份信息。
 
 ## 内容结构与导入边界
@@ -27,7 +27,7 @@ WorldCard
    ├─ name / summary / description / tags / cover
    ├─ characters[]           独立角色及其加载配置
    ├─ openings[]             多个开局及可选世界状态初值覆盖
-   ├─ context                可选上下文策略（none / window / summary）
+   ├─ context                可选上下文策略（window 默认 / summary）
    ├─ state                  可选强类型状态树（schema_version + modules）
    ├─ lorebook               单个世界书：entries[] 及各自 load
    ├─ regex_scripts[]        来源规则/可选扩展（MVP 不执行）
@@ -48,7 +48,7 @@ WorldCard
 | `characters[]` | array | 角色定义、可扮演许可及加载条件 |
 | `openings[]` | array | 故事开局 |
 | `lorebook` | object | 单个世界书，`entries[]` 存独立资料 |
-| `context` | object，可选 | `strategy:none/window/summary`、`max_messages`、`keep_recent_messages`；规则见 [Context Strategy](context-strategy.md) |
+| `context` | object，可选 | `strategy:window/summary`、`max_messages`、`keep_recent_messages`；规则见 [Context Strategy](context-strategy.md) |
 | `state` | object，可选 | 唯一强类型状态定义 `schema_version + modules`；运行值不回写世界卡 |
 | `extensions` | object | 不自动解释或执行 |
 
@@ -77,7 +77,7 @@ WorldCard
 | `id` | string，必填 | 卡内稳定标识 |
 | `name` | string，必填 | 选择开局时显示的名称 |
 | `content` | string，必填 | 初始故事内容或特殊入口标记 |
-| `initial_state` | object，可选 | 与运行快照同形的部分覆盖，根键对应 `data.state.modules`；固定 object 递归覆盖，record/array/json 叶子整值替换并接受强类型校验 |
+| `initial_state` | object，可选 | 与运行快照同形的部分覆盖，根键对应 `data.state.modules`；固定 object 递归覆盖，array/json 叶子整值替换并接受强类型校验 |
 
 **可选角色 = 世界卡中所有 `player_selectable=true` 的角色。** Opening 不设置 `player_characters`。如果当前可选角色为空，创建 Session 的流程必须提示用户新建一个完整角色，直接保存到当前 `worlds.data_json.characters[]` 并标记 `player_selectable=true`；然后选择该角色，Session 仅保存其 ID。
 
@@ -89,7 +89,7 @@ WorldCard
 
 原生格式固定为 `{"schema_version":1,"modules":{...}}`，`modules` 每个根为 `type:"object"` 的类型树，根可以是 `世界`、某位角色、地点或组织，根名就是快照顶层键。角色状态不再拆为单独的 `characters[].state` 或仅保存 `user`，作者在同一棵树里声明所有需要跟踪的实体。每个根可以有自己的 `load` 规则，内层状态不能设置 `load`。 根加载只支持 `always / on_mention` 和可选 `when`；`when` 读取本分支**完整**状态。
 
-支持 `string`、`number`、`integer`、`boolean`、`enum`、`object`、`record`、`array`、`json`。固定 `object` 用 `properties` 定义可嵌套字段，`record` 用 `value` 定义动态键值的强类型结构，`array` 用 `items` 定义元素类型，`json` 是只能整值更新的弱类型逃生口；不从 `initial` 推断类型。普通作者在编辑器中只需填写**字段名/类型/初值/描述**，枚举、数值范围和 nullable 属于可选高级设置。每个已声明固定叶子都有初值，object 由其子字段初值递归生成；record 的每个 item 需符合 value Schema。
+支持 `string`、`number`、`integer`、`boolean`、`enum`、`object`、`array`、`json`。固定 `object` 用 `properties` 定义可嵌套字段，`array` 用 `items` 定义元素类型，`json` 是只能整值更新的弱类型逃生口；不从 `initial` 推断类型。普通作者在编辑器中只需填写**字段名/类型/初值/描述**，枚举、数值范围和 nullable 属于可选高级设置。每个已声明固定叶子都有初值，object 由其子字段初值递归生成。
 
 例子（省略无关世界卡字段）：
 
@@ -103,9 +103,7 @@ WorldCard
       }},
       "清月": {"type": "object", "load": {"mode": "on_mention", "keywords": ["清月"]}, "properties": {
         "灵力": {"type": "integer", "min": 0, "max": 100, "initial": 100, "description": "施法消耗，休息恢复"},
-        "背包": {"type": "record", "description": "键是物品 ID", "value": {"type": "object", "properties": {
-          "数量": {"type": "integer", "min": 0}, "说明": {"type": "string"}
-        }}, "initial": {"灵石": {"数量": 3, "说明": "随身"}}}
+        "背包": {"type": "json", "description": "键是物品 ID，物品变化时整体更新", "initial": {"灵石": {"数量": 3, "说明": "随身"}}}
       }}
     }
   },
@@ -116,9 +114,9 @@ WorldCard
 }
 ```
 
-`initial_state` 不包含任何 schema/description，不允许改变定义结构。Opening 局部覆盖只作用于声明的固定叶子，record/array/json 只做整值替换；统一编译的 Zod 先验证覆盖，再校验最终完整初始状态。旧 `{"当前时段": {"initial": ...}}`、独立角色 `state` 和旧 Opening 顶层字段均为**待迁移格式**，不对新格式偷偷做运行时兼容。
+`initial_state` 不包含任何 schema/description，不允许改变定义结构。Opening 局部覆盖只作用于声明的固定叶子，array/json 只做整值替换；统一编译的 Zod 先验证覆盖，再校验最终完整初始状态。旧 `{"当前时段": {"initial": ...}}`、独立角色 `state` 和旧 Opening 顶层字段均为**待迁移格式**，不对新格式偷偷做运行时兼容。
 
-Agent 的六类受限操作为 `set/adjust/upsert/set_record_field/remove/append`，由引擎按当前类型和已加载根自动开放，作者不配置更新命令。Tool Call 优先但依赖真实 Provider 验证，内联 `<StateUpdate>{"changes":[...]}</StateUpdate>` 是回退格式，详见[状态](state.md)。**JSON Patch / MVU 命令不再是模型输入契约。**
+Agent 的三类受限操作为 `set/adjust/append`，由引擎按当前类型和已加载根自动开放，作者不配置更新命令。Tool Call 优先但依赖真实 Provider 验证，内联 `<StateUpdate>{"changes":[...]}</StateUpdate>` 是回退格式，详见[状态](state.md)。**JSON Patch / MVU 命令不再是模型输入契约。**
 
 `load.when`、世界书条件和文本引用可用当前分支全量状态快照只读；在世界书正文/Prompt 中写 `{{state:/清月/灵力}}`，条件写 `get("/清月/灵力") < 20`。状态值和描述不能直接在卡片中执行 JS。
 
@@ -175,7 +173,7 @@ Agent 的六类受限操作为 `set/adjust/upsert/set_record_field/remove/append
 
 角色的 `load` 不接受 `anchor/position/role`，其资料进入 `characterInfo` 基础节点，先按 `order` 升序、同序再按角色原数组位置稳定排列；当前选为玩家的角色固定由 `personaInfo` 读取，不在 `characterInfo` 重复出现。世界书按 `(anchor,position,order,原始列表位置)` 稳定编排；同一条目在同一次构建中去重。`mode=always` 仍需要可选 `when` 为 true（若配置），但即便节点本体被关闭，该节点锚点仍能生成合并后的消息；具体见[Preset](preset.md)。
 
-AgentContext 只扫描本轮**实际送给模型的 Narrative Context（仅 user/assistant 叙事）加当前 User**，不额外限制扫描深度。window 时是最后 N 条，summary 时是最新 Summary + 未覆盖的保留消息。`on_mention` 用关键词匹配；若同时配置 `when`，必须 **关键词命中 AND when(fullState)=true**，排除关键词优先否决。世界书条件中的 `when` 由共享 [TextRenderer](text-rendering.md) 表达式引擎读取**完整状态**；索引按 anchor/position/order 稳定排序，节点由独立 NodeBuilder 执行 before/body/after，MVP 不支持递归、概率、Sticky/Cooldown、历史内部深度插入或跨分支关键词触发。
+AgentContext 只扫描本轮**实际送给模型的 Narrative Context（仅 user/assistant 叙事）加当前 User**，不额外限制扫描深度。window 时是最近 N 条再按 Token 预算进一步缩窗，summary 时是最新 Summary + 未覆盖的保留消息；预算超限也会提前触发摘要。`on_mention` 用关键词匹配；若同时配置 `when`，必须 **关键词命中 AND when(fullState)=true**，排除关键词优先否决。世界书条件中的 `when` 由共享 [TextRenderer](text-rendering.md) 表达式引擎读取**完整状态**；索引按 anchor/position/order 稳定排序，节点由独立 NodeBuilder 执行 before/body/after，MVP 不支持递归、概率、Sticky/Cooldown、历史内部深度插入或跨分支关键词触发。
 
 ### 禁止隐式 Prompt 注入
 

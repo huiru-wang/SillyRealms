@@ -12,15 +12,15 @@
 
 | 对象 | 基本能力 |
 | --- | --- |
-| WorldCard | 唯一当前版本，世界、角色、Opening、WorldBook、状态定义、三种 Context 策略；Session 通过 world_id 每轮读取最新值 |
+| WorldCard | 唯一当前版本，世界、角色、Opening、lorebook、状态定义、window/summary 两种 Context 策略；Session 通过 world_id 每轮读取最新值 |
 | Preset | 选择模型和参数，配置 `off/inline/tool` 状态模式、摘要 Prompt、七系统节点/自定义节点及顺序 |
 | Provider | 查询 Pi 内置模型；用户配置、测试、删除 API Key，模型可用性校验 |
 | Tags | `id/type/name/sort_order`，同一 type 内排序，世界卡引用标签 ID |
 | Session | `world_id/preset_id/user_character_id/tip_entry_id`，不存 World 快照、Opening ID 或模型/Options 冗余 |
-| Entry | **一条 Pi Agent 消息**或 Summary；`parent_id` 构成世界分叉，ToolCall（Assistant 内容）与 ToolResult（独立消息）都完整入库 |
+| Entry | 一条 Pi Agent 消息或技术记录，`run_id` 分组按 Run 分页、`parent_id` 构成世界分叉；`type` 是 message/compaction/branch_summary/custom，Summary 是 custom 类型 |
 | Narrative Context | 将 Raw Entries 统一投影成仅 user/assistant **叙事文本**；供 UI、模型历史和关键词扫描 |
 | State | 独立沿当前原始父链恢复最近有效全量状态；StateChange 必须提供非空 reason |
-| AgentContext | 单轮构建器：当前 WorldCard/Preset、叙事策略、全量 State、WorldBook/状态筛选、NodeBuilder → ModelMessage[] |
+| AgentContext | 单轮构建器：当前 WorldCard/Preset、叙事策略、全量 State、lorebook/状态筛选、NodeBuilder → ModelMessage[] |
 | Shared TextRenderer | 变量、条件、状态引用、受限文本变换，供 Agent/摘要 Prompt/世界卡预览/未来状态栏复用 |
 
 ## 3. 世界卡和玩家身份
@@ -31,17 +31,16 @@ Opening 不设置 `player_characters`。可选角色就是世界卡中 `player_s
 
 世界书/角色/状态加载只支持 `always` 和 `on_mention`。当关键词和 `when` 同时配置时，**关键词命中 AND when(fullState) 为 true** 才激活；排除词命中则不激活。角色支持 `order`，世界书按 `anchor/position/order` 排序。不存在 manual 激活模式。
 
-## 4. 三种上下文策略
+## 4. 两种上下文策略与 Token 上限
 
-WorldCard `data.context` 决定每轮进入模型的叙事历史：
+WorldCard `data.context` 只支持 `window`（默认）和 `summary`，**不允许 none**。Preset 配置 Token 上限，Provider 提供模型最大 contextWindow：
 
 | 策略 | 基本流程 |
 | --- | --- |
-| `none` | 加载当前分支全部 user/assistant 叙事，不压缩也不裁剪；超过模型上下文上限报错 |
-| `window` | 只加载最近 N 条 user/assistant 叙事作为模型历史；旧消息仍保存在 SQLite，不生成摘要 |
-| `summary` | 当尚未摘要的叙事消息达到 N 条时，调用 Preset 的摘要 Prompt，总结较老历史，保留最新 K 条；后续 Context = 最新 Summary + 保留消息 + 当前 User |
+| `window`（默认） | 先最多保留最近 N 条 user/assistant 叙事，再检查**完整 Prompt** 的 Token；超预算就从最早历史消息逐条裁剪并重新匹配 lorebook，直到能发送或明确报错 |
+| `summary` | 未覆盖消息达到 N 条**或**完整 Prompt 提前超预算时先摘要旧内容，优先保留最近 K 条原文；生成后重新校验 Token，不允许丢弃未摘要的消息 |
 
-摘要 Prompt 可通过共享文本引擎**读取当前全量状态**。摘要是独立 Entry，保存历史覆盖边界；历史原始消息仍完整保留。
+有效输入预算 = `min(预设 max_context_tokens（若有）, Provider.contextWindow) - max_output_tokens - safety_margin_tokens`。系统 Prompt、角色、世界书、状态、当前 User 和工具定义都要计入，当前 User 不能裁掉。摘要 Prompt 可读取**完整状态**；摘要作为 `custom/sillyrealms.summary` 技术 Entry 保存覆盖边界与完整摘要请求/回复，原始消息不删除。
 
 **三个概念不能混淆**：Raw History 是全部消息和分支；Narrative Context 是当前真正输入模型的 user/assistant 叙事；State 是独立的当前分支完整快照。关键词只扫描 Narrative Context + 当前 User；when 始终读取完整 State。
 
@@ -55,7 +54,7 @@ WorldCard `data.context` 决定每轮进入模型的叙事历史：
 
 ## 6. 最小可行技术范围
 
-SQLite 只保留六张业务表：`worlds/presets/provider_credentials/tags/sessions/entries`。Raw Entry 包含全 Pi Message payload，不需要额外 Run、Message、ToolCall、WorldTag 或 AppSettings 表。
+SQLite 只保留六张业务表：`worlds/presets/provider_credentials/tags/sessions/entries`。Entry 每条消息一行，但必须有 `run_id` 以便按 Run 分页；无需独立 Run、Message、ToolCall、WorldTag 或 AppSettings 表。
 
 Monorepo 首期完成 H5、Server、六表数据库、Provider API Key、世界卡、预设、状态、三策略 Context、消息级分叉、Root/Fork 世界线与状态栏。暂不做 Android、Desktop、云端同步、多用户协作、来源任意 JS/EJS 执行和复杂分布式并发。
 

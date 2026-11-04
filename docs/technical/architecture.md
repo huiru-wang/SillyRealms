@@ -1,39 +1,39 @@
-# 技术架构：Monorepo + 消息级 Agent Entries + 单 AgentContext
+# 技术架构：Monorepo + Run 分页 + 完整 Agent Entries
 
-> 2026-11-04 MVP 目标设计，尚未实现。本地个人客户端优先，首期实现 H5 Web + Server；Android、Desktop 暂不开发。技术栈建议 React/Vite/TypeScript、Hono/TypeScript、SQLite、Pi Agent/Pi AI。
+> 2026-11-04 MVP 目标设计，尚未实现。个人本地客户端，首期 H5 Web + Server；建议 React/Vite/TypeScript、Hono/TypeScript、SQLite、Pi Agent / Pi AI。详细契约：[Session](../design/session.md)、[Context Strategy](../design/context-strategy.md)、[Storage](storage.md)。
 
 ## 1. Monorepo 结构
 
 ~~~text
 SillyRealms/
 ├── apps/
-│   ├── web/                       # 当前：H5 前端，React + Vite
-│   ├── server/                    # 当前：Hono API + Pi Agent + SQLite
-│   ├── android/                   # 以后：Android 客户端
-│   └── desktop/                   # 以后：PC/Mac 客户端
+│   ├── web/                    # React/Vite H5
+│   ├── server/                 # Hono API + Pi Agent + SQLite
+│   ├── android/                # 后续
+│   └── desktop/                # 后续
 ├── packages/
-│   ├── core/                      # WorldCard/State/Preset 的纯类型、只读表达式、共享 TextRenderer
-│   └── shared/                    # 前后端 API DTO/错误/事件结构
-├── docs/
-├── package.json
-└── pnpm-workspace.yaml
+│   ├── core/                   # WorldCard/State/Preset/共享 TextRenderer
+│   └── shared/                 # 前后端 DTO、错误、事件
+└── docs/
 ~~~
 
-首期仅创建 `apps/web`、`apps/server` 以及实际需要的共享 package；未来平台目录可后续创建。不需要预先引入 Turborepo、跨平台 UI 框架或移动端原生基础设施。Server 是 SQLite/Provider Key/Pi 模型执行的唯一持有者，Web 不直接访问数据库。
+首期只创建实际需要的 Web/Server/core/shared，不提前引入跨端 UI 或分布式基础设施。Server 持有 SQLite、CredentialStore、Pi 执行；Web 不直连数据库。
 
-## 2. 业务边界
+## 2. 领域边界
 
 | 模块 | 职责 | 不负责 |
 | --- | --- | --- |
-| WorldService | 世界卡唯一当前版本、角色/Opening、世界书、Context 策略、编辑/导入 | 世界快照和旧版本 |
-| PresetService | 模型 ID/参数、状态模式、七系统节点与摘要 Prompt | API Key、模板执行 |
-| ProviderService | Pi 内置模型列表/能力、API Key 安全管理、显式连接测试 | 重写每个 Provider Adapter |
-| TagService | type/name/sort_order、按 type 排序；世界卡标签 ID 引用 | world_tags 关联表 |
-| SessionService | Session/Raw Entry 读写、父树、分叉、UI 叙事分页、Summary Entry | 生成独立 Run 表或持久 Context |
-| StateService | 完整 State Schema、根加载、带 reason 的 ChangeSet、校验结算/失效重置 | 把摘要当真实状态 |
-| 共享 TextRenderer | 变量、条件、状态引用、只读变换，Web/Server 复用 | 任意来源 JS/EJS |
-| AgentContext | 完整消息父链加载、叙事投影、WorldCard 上下文策略、条目筛选、NodeBuilder → ModelMessage[] | 工具消息删除、Pi SSE、重复存 Session 快照 |
-| AgentRuntime/PiExecutor | 模型调用、SSE、取消、主轮**所有 Pi Message 按 Entry 持久化**、结果结算 | 旧 ToolResult 混入下一轮历史 |
+| WorldService | 当前唯一 WorldCard、角色/Opening/lorebook/Context 策略、导入导出 | 世界快照和旧版本 |
+| PresetService | 模型 ID/参数、预算、状态模式、七个系统节点和摘要 Prompt | API Key/模板执行 |
+| ProviderService | Pi 模型目录和 contextWindow、API Key、安全能力与连接验证 | 重写每个 Provider 的协议 |
+| TagService | 标签字典和 type 内排序 | world_tags 关联表 |
+| SessionService | Session、完整 Entry、**run_id 分组分页**、parent_id 分支、UI 叙事查询 | 独立 runs 表或重复持久化 Prompt |
+| StateService | 当前全量状态、带 reason 的变更和新 Schema 不兼容重置 | 通过摘要推断真实状态 |
+| AgentContext | 真实父链→叙事→window/summary→**完整 Prompt Token 校验**→lorebook 匹配→NodeBuilder | Pi SSE、擅自丢旧 ToolCall |
+| AgentRuntime/PiExecutor | 一次 Run 的实际生成、全部 Pi Message 按 Entry 持久化、SSE、取消、State 结算 | 将旧 ToolResult 混进新模型历史 |
+| 共享 TextRenderer | 只读变量、when、状态引用、可控转换 | 任意来源 JS/EJS 执行 |
+
+所有公开领域接口及用途见 [领域 API](../design/domain-interfaces.md)；Session 的完整分页契约见 [Session](../design/session.md)。
 
 ## 3. Server 建议目录
 
@@ -53,8 +53,8 @@ apps/server/src/
       agent-context.ts
       narrative-projection.ts
       context-strategy.ts
-      world-book.ts
-      node-builders/          # 7 个系统节点 + 自定义文本节点
+      lorebook.ts
+      node-builders/          # 七个系统节点 + 自定义文本节点
     pi/
       executor.ts
       events.ts
@@ -69,71 +69,70 @@ apps/server/src/
   infrastructure/database/
 
 packages/core/src/
-  world/                      # WorldCard/State/Preset 类型和纯函数
-  text/                       # 变量/when/状态引用/受控文本转换
+  world/
+  text/
 packages/shared/src/
   api/
   events/
 ~~~
 
-不要保留 WorldInstanceContext、WorldInstanceContextService 或旧 `agent/context/template.ts`。Prompt/WorldCard/UI 文本处理都使用独立的 core/text。
+不保留 WorldInstanceContext 或另外一套 AgentContext/模板执行器。Prompt、预设与状态栏的共享文本规则归 core/text。
 
-## 4. 一轮交互的真实数据流
+## 4. 运行与读取两层结构
 
 ~~~mermaid
 flowchart TD
-  UI[H5] --> Runtime[AgentRuntime]
+  UI[H5] --> Runtime[AgentRuntime: 生成逻辑 run_id]
   Runtime --> Sess[SessionService: Session + Raw Entries]
-  Sess --> DB[(SQLite 六张表)]
+  Sess --> DB[(SQLite 六张表; entries.run_id)]
   Runtime --> Ctx[AgentContext]
-  Ctx --> World[WorldService: 当前 WorldCard]
-  Ctx --> Preset[PresetService: model + prompt + summary]
-  Ctx --> Raw[读取 parent_id 祖先原始 Agent 消息]
-  Raw --> Projection[叙事投影: user/assistant text]
-  Projection --> Window[WorldCard none/window/summary 策略]
-  Ctx --> State[独立读取本分支最新完整 State]
-  Window --> Match[世界书/状态条件命中]
-  State --> Match
-  Match --> Nodes[世界书索引 + 七 NodeBuilder]
-  Nodes --> Renderer[共享 TextRenderer]
-  Renderer --> Messages[ModelMessage array]
+  Ctx --> Raw[沿 tip.parent_id 加载完整 Raw Ancestors]
+  Raw --> Projection[NarrativeProjection: user/assistant 叙事]
+  Ctx --> State[独立完整 State]
+  Ctx --> Config[WorldCard 策略 + Preset 预算 + Provider 上限]
+  Projection --> Budget[Window / Summary + 完整 Prompt Token 预检查]
+  Config --> Budget
+  State --> Match[lorebook / 状态根关键词 + when]
+  Budget --> Match
+  Match --> Nodes[七 NodeBuilder + TextRenderer]
+  Nodes --> Messages[ModelMessage[]]
   Messages --> Pi[Pi Executor]
-  Preset --> Pi
-  Pi --> EntryWrites[依次存 user/assistant/toolResult Raw Entry]
+  Pi --> EntryWrites[Message / ToolResult / 技术 Entry 全量入库]
   EntryWrites --> Sess
-  Pi --> StateEngine[验证 reason + 状态变更]
+  Pi --> StateEngine[StateEngine 校验 reason 和完整快照]
   StateEngine --> Sess
   Pi --> UI
 ~~~
 
-**读取和写入必须区分两种视图**：
+**三份视图不可混淆**：
 
-- `getRawAncestorEntries`：全量原始 Agent Message，包含 Assistant ToolCall 内容和独立 ToolResult 消息，严格按真实 parent_id 读取。
-- `narrativeProjection`：**只取 user/assistant 叙事文本**，供 Chat UI、下一轮模型历史与关键词匹配三处复用；StateUpdate XML、旧 ToolCall、ToolResult 不进入这三个消费者。
+- Raw History：当前世界线完整 Pi Entry 父链，可用于 State、分页、世界线、诊断。
+- Narrative Context：只将 user/assistant 叙事放入模型历史，并应用窗口/摘要与 Token 预算；用户可见聊天投影相同但 UI **不按 Token 裁剪历史**。
+- Current State：当前原始父链最新完整有效状态，按世界卡最新 Schema 校验/重置；不受 Context 策略影响。
 
-### 发送和生成
+### 一次 Run 的严格时序
 
-1. 取得 Session 的 world_id/preset_id/user_character_id/tip_entry_id，加载当前唯一最新世界卡和 Preset（其中关联模型）。
-2. 以**原 tip（本轮 User 尚未入库）**读取完整 Raw 父链、叙事历史和最新全量 State。State 与当前 WorldCard Schema 不兼容时允许重置。
-3. 按 WorldCard context.strategy 处理当前历史。若 summary 达阈值，先用 Preset.summary_prompt 和步骤 2 的全量 State 生成 Summary，**在原 tip 后追加 Summary Entry**，更新 tip 并记录 coveredThroughEntryId。Summary 逻辑上在保留消息之前，物理上追加在历史末尾。
-4. **摘要完成后才写本轮 User Entry**，其 parent_id 指向原 tip 或刚生成的 Summary。模型历史中只追加本轮 User 一次；以本轮固定的叙事窗口 + 当前 User 匹配 WorldBook/状态根，when 读取步骤 2 的完整 State。角色支持 order，世界书按 anchor/position/order。
-5. 执行预设节点的七个独立 NodeBuilder、统一共享模板渲染，得到 ModelMessage[]；由 Preset.model 通过 ProviderService 解析模型。
-6. Pi 正常调用工具：将每个成型的 Assistant Message（含 ToolCall 块）、ToolResult Message、后续 Assistant Message **全部按 Entry 顺序持久化**，不存在“只存可见消息”的例外。SSE token delta 不是 Message，不用逐 token 落库。
-7. 模型变更集每项必须带 reason，经 StateService 校验后把完整 S' 附在最终 Assistant Entry 中。若终止型 submit_turn 只在工具参数中提供 narrative 而没有独立的可见 Assistant 正文，适配层在验证成功后将 narrative **额外保存为来源明确的规范化 Assistant Entry**，原始 ToolCall/ToolResult 仍完整留存；已有最终 Assistant 正文时不得重复写。模型失败/中断保留既有工具历史，不把失败工具结果作为有效世界状态。
-8. 下一轮重新构建 Pi 请求时，只使用**叙事投影后的 user/assistant 历史**，不恢复历史 ToolCall/ToolResult；本轮真正执行工具的消息交换仍正常。
+1. 取得 Session 的 world_id/preset_id/user_character_id/tip_entry_id，加载最新世界卡、预设、Provider Model；取原 tip 的完整真实父链与 State。此时**尚未写本轮 User**。
+2. 计算有效预算 `B = min(Preset.max_context_tokens（若设置）, Model.contextWindow) - max_output_tokens - safety_margin_tokens`。窗口由 WorldCard 选择：默认 window、可选 summary，不支持 none。
+3. Window 先选最近 N 条叙事；在最终完整 Prompt（含角色、世界书、状态、当前 User 和工具定义）超 B 时逐条删除最老历史并**重做关键词匹配**。Summary 在未覆盖消息达到 N 或 Token 预算提前溢出时生成，优先保留 K 条原文，生成后再做完整预算校验。任何策略都不能裁掉当前 User 或重要固定 Prompt；仍超限时显式失败。
+4. 确认本轮最终叙事集合、世界书命中与有序 NodeBuilder 后，若生成摘要则先得到完整摘要请求/回复，**在写入本轮 User 之前**将摘要 Custom Entry 与 User 依次写入父链，两者共用新 run_id；无摘要直接写 User。
+5. 调用 Pi；Assistant 可能含 ToolCall，ToolResult 作为独立 Message Entry；Pi 其它技术 Entry 也原样保存。已成型消息全部按真实顺序归属本轮 run_id，SSE delta 本身不作为完成 Entry。
+6. StateService 验证带 reason 的 ChangeSet，完成 Assistant 上记录全量 S'。终止工具 `submit_turn` 若只返回 narrative，在保留原始 ToolCall/ToolResult 的基础上新增 `origin=derived_tool_narrative` 的可见 Assistant Entry，防止叙事丢失和重复。
+7. 下次 Pi 请求只恢复 NarrativeProjection 后的历史，旧 ToolCall/ToolResult 只存在 Raw History；状态从全量父链独立恢复。
 
-## 5. 模型 Context 预算和 Pi SDK 约束
+## 5. Run 分页与分叉
 
-- none：全量叙事历史；超模型窗口给错误，不静默裁剪。
-- window：最近 N 条叙事消息；原始消息照常持久化。
-- summary：未被最近 Summary 覆盖的可见历史条数达到 N 时生成摘要，保留最新 K 条，将摘要作为逻辑历史前缀。摘要 Prompt 在 Preset 中，允许读取全量 State。
-- 模型真实聊天历史、世界书关键词扫描的上下文**必须一致**；条件表达式 `when` 始终读完整 State，不从聊天历史推断。
-- Mock PoC 提醒：Pi 对 OpenAI-compatible 的后置 system 可能重排，prompt(text) 可能额外追加 User。实际 HTTP 顺序与当前 User 去重必须实测，不假设 `piExecutor.prompt({messages})` 就是 Pi SDK 原生签名。
+- `entries.run_id NOT NULL`，一个玩家逻辑互动对应多条 Entry；初始化 Opening 也是独立 Run。重生成 Assistant 复用历史 User 的逻辑 run_id，重选 User 产生新 run_id。
+- `getRunPage` **先沿选中 tip 的 parent_id 得到祖先集合**，再按 run_id 分组、以每组最小 seq 作为游标锚点；limit 是 Run 数，结果含选中 Run 的**全部** Entry。**不能只按 run_id 扫全 Session**，否则可能混入其他分支。
+- `getChatPage` 对同一批 Run 再做叙事投影，ToolCall、ToolResult、Summary 不直接显示；世界线 Root/Fork-only 折叠技术记录。
+- 切换分支只改 Session.tip_entry_id，重置分页 cursor；旧分支数据、全量状态与摘要不删除。
 
-## 6. 数据量、并发与 API
+## 6. MVP 范围和约束
 
-SQLite 六表权威数据：`worlds / presets / provider_credentials / tags / sessions / entries`，不建独立 runs/messages/run_tool_calls 等表。用户本地应用只保留每个 Session 一个在途推理、必要的小事务和异常恢复；不提前设计分布式一致性或缓存修订矩阵。
+SQLite **六表**为唯一权威存储：`worlds / presets / provider_credentials / tags / sessions / entries`。不建 runs、messages、run_tool_calls、world_tags、context_checkpoints 等表；单 Session 同时最多一个在途模型执行，不提前设计分布式事务矩阵。
 
-MVP API：WorldCard/角色/Opening/标签/Context 配置，Preset/Provider 模型和 API Key、Session 创建与 Entry 分支/历史分页、世界线图、当前 State、Context Preview 和 Pi SSE。聊天读取为叙事投影，开发者调试可读取 Raw Entries（需注意隐私与 Key 脱敏）。
+WorldCard/Opening/角色/lorebook、Preset/Provider 模型与 API Key、Session/Run 查询/分叉、Current State/Context Preview、Pi SSE 是 MVP API。调试 Raw Entries 时注意 Key 和私人内容脱敏。
 
-具体协议：[Session](../design/session.md)、[Context Strategy](../design/context-strategy.md)、[AgentContext](../design/agent-context.md)、[Preset](../design/preset.md)、[State](../design/state.md)、[Storage](storage.md)、[Implementation Plan](implementation-plan.md)。
+**Pi 接口实测**：OpenAI-compatible 模型可能将后置 system 重排，`session.prompt(text)` 可能多追加一个 User。正式实现必须核对实际 HTTP role/order，当前 User 只能出现一次；不能把示意方法名误认成 SDK 原生接口。
+
+相关：[Session](../design/session.md)、[Context Strategy](../design/context-strategy.md)、[AgentContext](../design/agent-context.md)、[Preset](../design/preset.md)、[State](../design/state.md)、[Storage](storage.md)、[Implementation Plan](implementation-plan.md)。

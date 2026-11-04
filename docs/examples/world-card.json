@@ -302,13 +302,9 @@
               "description": "仅当剧情确实推进时间时更新"
             },
             "已知线索": {
-              "type": "record",
-              "value": {
-                "type": "string",
-                "description": "线索的已知内容"
-              },
+              "type": "json",
               "initial": {},
-              "description": "键为线索 ID，仅记录剧情中真实发现的信息"
+              "description": "键为线索 ID，仅记录剧情中真实发现的信息；变化时整体更新"
             }
           }
         },
@@ -346,23 +342,9 @@
               }
             },
             "随身物品": {
-              "type": "record",
-              "value": {
-                "type": "object",
-                "properties": {
-                  "数量": {
-                    "type": "integer",
-                    "min": 0,
-                    "description": "剩余数量"
-                  },
-                  "说明": {
-                    "type": "string",
-                    "description": "物品来源或状态"
-                  }
-                }
-              },
+              "type": "json",
               "initial": {},
-              "description": "键为稳定物品 ID，可增减项目或单独更新数量"
+              "description": "键为物品 ID，物品变化时整体更新"
             }
           }
         }
@@ -485,7 +467,7 @@
     ],
     "extensions": {},
     "context": {
-      "strategy": "none",
+      "strategy": "window",
       "max_messages": 40,
       "keep_recent_messages": 12
     }

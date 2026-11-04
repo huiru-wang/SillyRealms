@@ -1,91 +1,108 @@
-# Context Strategy：完整历史、模型上下文、状态严格分离
+# Context Strategy：Token 预算驱动的 Window / Summary
 
-> 2026-11-04 目标方案，尚未实现。策略由当前世界卡 data.context 配置；模型和摘要提示词由当前 Preset 配置。
+> 2026-11-04 目标方案，尚未实现。WorldCard 决定策略和消息数上限，Preset 决定本次 Token 预算，Provider 给出模型硬上限。**只支持 `window` 与 `summary`，默认 `window`，不提供 `none`。**
 
-## 1. 三种数据
+## 1. 三份数据严格分离
 
-1. **Raw History**：Session 的全部 Entry 消息和所有分支。包括 user、assistant（其中 toolCall 内容块）、toolResult 与 summary。所有真实 Pi Agent 消息都写入 entries，无论是否对用户可见。
-2. **Narrative Context**：沿 tip_entry_id 的真实 parent_id 祖先链，将 Raw Entry 统一投影为仅 user 和 assistant 的**叙事 text**。Assistant 的 toolCall、thinking、状态更新内联块不在其中；toolResult、纯工具 Assistant 消息也不在其中。再按世界卡策略截取，产生本轮送给模型的聊天历史。
-3. **Current State**：沿同一原始分支查最近完成的 Assistant Entry 所附全量状态快照。和当前世界卡 Schema 校验；不兼容则允许舍弃旧状态，按新 Schema initial 重置。不受上下文摘要/滑窗影响。
+1. **Raw History**：沿选定 Session 世界线保存的全部原始 Entry。包含 User、Assistant（含 ToolCall）、ToolResult、Pi 技术 Entry、SillyRealms 摘要，不因上下文裁剪或换分支删除。
+2. **Narrative Context**：从当前真实 Entry 父链投影出的可见 user/assistant **叙事文本**，不含 ToolCall、thinking、ToolResult、状态内联指令。Window/Summary 和 Token 预算只影响这份模型历史。
+3. **Current State**：沿真实 Entry 父链寻找最近有效的完整状态快照，按当前世界卡 Schema 校验或重置。**绝不受历史滑窗或摘要影响**。
 
-聊天 UI 可见内容与 NarrativeProjection 相同（user/assistant 的叙事）。世界书和状态根的**关键词匹配范围**恰好是本轮 Narrative Context 的叙事文本加当前 User 输入；不能把已经截断/压缩的旧文本拿回来匹配。Preset 的系统节点文本不参加关键词扫描，避免循环激活。
+聊天 UI 展示完整可见历史（可以按 Run 分页），模型历史与世界书/状态根的关键词扫描只看**预算处理后的最终 Narrative Context + 当前 User**。摘要前的原文、被裁掉的旧消息不参与关键词匹配；`when` 总是读取完整 State。
 
-## 2. 世界卡配置
+## 2. 配置归属与默认值
+
+WorldCard `data.context`：
 
 ~~~json
 {
-  "context": {
-    "strategy": "summary",
-    "max_messages": 40,
-    "keep_recent_messages": 12
-  }
+  "strategy": "window",
+  "max_messages": 40,
+  "keep_recent_messages": 12
 }
 ~~~
 
-- strategy：none | window | summary，默认 none。
-- max_messages：window 保留的最近 N 条可见 user/assistant 消息；summary 策略触发新摘要的**未覆盖叙事消息数阈值**，推荐 40。
-- keep_recent_messages：只用于 summary，摘要后保留的最近 K 条叙事消息，要求 0 < K < max_messages，推荐 12。
-- 只统计有实际文本的可见 user/assistant 消息：不包括 toolResult、Assistant 中的 toolCall、纯工具 Assistant、Summary、当前尚未纳入历史的 User。
-- 已保存消息与摘要全部不删除；切换 WorldCard 策略只影响新请求的上下文。
+| 字段 | 规则 |
+| --- | --- |
+| `strategy` | `window`（默认）或 `summary`；禁止 `none`，缺失 context 视作默认 window，显式 none 校验失败 |
+| `max_messages` | 正整数，默认 40；window 最多保留最近 N 条叙事消息；summary 为生成新摘要的未覆盖叙事消息数阈值 |
+| `keep_recent_messages` | 仅 summary 使用，默认 12；满足 `0 < K < N`，表示优先以原文保留的最近 K 条 |
 
-## 3. 三种策略基本逻辑
+`max_messages` 统计**消息条数**，不是 Run 数，也不是 Token 数；只有非空 user/assistant 叙事计数。Opening 是 Assistant 消息，也计数；ToolResult、纯 ToolCall、摘要和本轮新 User 不计数。本轮新 User **必须**放入 Prompt，不能被裁剪。
 
-| 策略 | 何时触发 | 实际送给模型的聊天历史 | 数据库 |
-| --- | --- | --- | --- |
-| none | 每次交互 | 当前分支全部 user/assistant 叙事 + 当前 User | 全量保存，不生成摘要 |
-| window | 每次交互 | 当前分支最近 N 条 user/assistant 叙事 + 当前 User | 旧消息依旧保留，永不调用摘要 |
-| summary | 未被最新摘要覆盖的可见叙事消息条数达到/超过 N | 最近 Summary + 摘要覆盖边界后留下的叙事消息 + 当前 User | 保留全量消息和全部 Summary，超阈值时调用摘要模型 |
+Preset `budget`：
 
-### none
-
-从真实分支恢复所有 user/assistant 文本，按时间顺序传给模型；以前产生的 Summary 不替代原历史。超过 Pi 模型实际上下文窗口时**明确报错**，不在后台偷偷更改策略或裁剪。
-
-### window
-
-从完整原始历史中过滤出 user/assistant 叙事，再只取最后 max_messages=N 条，追加当前 User 一次；不要求窗口中 user/assistant 两两成对。被排除的旧消息仍能在 UI 查看、从旧节点创建分支，不会消失。
-
-### summary
-
-1. 取得当前分支最新 Summary（如果有）及其中的 coveredThroughEntryId，标记之前已被压缩的叙事范围；如果没有，则从 Opening 开始。
-2. 计算 coveredThroughEntryId **之后**的未覆盖可见 user/assistant 消息数。工具消息、旧 Summary 以及本轮当前 User 不计数。
-3. 若未覆盖条数 **小于** max_messages=N，不生成摘要，使用「最新 Summary（如有）+ 未覆盖的全部叙事 + 当前 User」。
-4. 若未覆盖条数 **达到/超过** N，保留最近 keep_recent_messages=K 条消息为原文，其余较旧叙事连同旧 Summary（如有）作为摘要输入。**摘要前独立读取真实分支最新全量 State。** 摘要 prompt 在 Preset 中配置，可以读取当前完整状态，例如状态引用表达式；通过共享 TextRenderer 渲染，只用叙事文本做实际摘要来源，不把 ToolCall/ToolResult 当内容摘要。
-5. 摘要成功后，在**本轮 User 消息尚未入库前**，在原 tip 后**追加** type=summary 的 Entry，parent_id 指向原 tip；本轮 User 随后接到新的 Summary 节点上。payload 至少保存 text、coveredThroughEntryId（本次最后一条被覆盖的实际叙事 Entry ID）和摘要请求/回复消息，作为可恢复的内部执行记录。**不删除或重挂 K 条消息**。
-6. 之后构建上下文时**逻辑重排**为：「最新 Summary 文本（作为 assistant 前缀）+ coveredThroughEntryId 之后的真实可见叙事 + 当前 User」。即使物理 Summary Entry 追加在最新消息的末尾，也不能错误地把其之前的保留消息全部丢弃；父链不改写，Summary 仅记录覆盖边界。
-7. 下一次再次超阈值时，以旧 Summary 和新近叙事生成新的单一 Summary，避免累积多个摘要正文。每条分叉使用自己祖先链上的最新 Summary。
-
-~~~text
-原始 Entries：
-Opening → U1 → A1 → U2 → A2 → U3 → A3 → Summary(coveredThrough=A2)
-
-下一轮模型历史和关键词扫描：
-Summary(Opening..A2) → U3 → A3 → 当前 User
+~~~json
+{
+  "max_context_tokens": 32768,
+  "max_output_tokens": 4096,
+  "safety_margin_tokens": 1024
+}
 ~~~
 
-摘要生成失败时不写已完成 Summary，不继续依赖压缩结果的主请求；明确报错允许重试。Summary 不参与状态结算。
+- `max_context_tokens` 可选，指**一次请求输入 + 预留输出的总 Context 上限**；省略时使用 Provider 模型 `contextWindow`。有效上限 `C = min(预设上限（若设置）, Provider 模型 contextWindow)`，不得绕过模型硬上限。
+- `max_output_tokens` 为本次生成预留的输出 Token，必须同时满足 Provider 的输出上限；`safety_margin_tokens` 为 Token 估算误差、协议开销和工具开销预留。
+- **有效输入预算** `B = C - max_output_tokens - safety_margin_tokens`，必须大于 0。例如 C=32768、输出=4096、余量=1024，则全部请求 Prompt 可用 **27648 Token**，不是 32768 Token。
+- 统计范围是**最终完整 ModelMessage[]**，包含系统指令、预设节点、角色、世界书、状态、叙事历史、当前 User 和协议/工具定义；不能只给聊天记录算 Token。优先使用 Provider/tokenizer 可提供的计数或估算方式，未知时保守估算并保留 safety margin；Provider 最终拒绝超长请求时给出明确错误，不能当作已成功运行。
+- Provider 解析失败、上下文上限未知或预算非法时要阻止请求并提示修正配置，**不得假定一个无限窗口**。
 
-## 4. Prompt 与条件匹配时序
+## 3. Window：默认策略，先限制条数，再按 Token 裁剪
+
+每次运行（本轮 User 落库前）执行：
+
+1. 从选中分支真实父链得到**全部**叙事消息；先截取最后 `max_messages=N` 条作为候选，按原始先后顺序保留。历史上已有摘要 Entry 也不当原始消息加入 Window。
+2. 将候选历史和本轮 User 交给 AgentContext，加载最新全量 State，计算角色/世界书/状态根命中、预设节点和最终 ModelMessage[]。
+3. 对**整个 Prompt**计算输入 Token。如果 `tokens <= B`，可直接发送；**无需等到 Token 用满才裁剪**，N 条是先行硬上限。
+4. 若 `tokens > B`，**移除候选历史最早的一条叙事消息**，重新做关键词匹配、条目选择、Prompt 构建和 Token 计算；如此迭代，直到完整 Prompt 能放入 B。不要在已经匹配世界书后简单截取 ModelMessage 数组。
+5. 可以裁到历史为 0 条，但**不能裁当前 User**，也不能默默移除必要的系统 Prompt、世界卡或状态。连无历史时仍超 B，则返回明确的 `CONTEXT_BUDGET_EXCEEDED`，提示用户缩短输入/预设/世界书或调大有效预算，不执行模型。
+6. 选定的叙事集合在这一轮固定，用同一集合构建模型历史与关键词扫描范围。数据库的全部原始消息、分支与 State 完全不变。
+
+所以 Window **同时**受「最多 N 条」和「完整 Prompt 的 Token 预算 B」限制；不是简单地“Token 到上限就截断整段消息”，而是**从最老的可裁叙事 Entry 开始逐条缩窗，并重建 Prompt**。
+
+## 4. Summary：条数阈值与 Token 压力双触发
+
+Summary 只归档**较老的叙事**，保留近期原文，摘要生成行为由 Preset `summary_prompt` 控制。
+
+1. 从当前分支寻找最近的 `Entry(type=custom, custom_type=sillyrealms.summary)`，读取它的 `coveredThroughEntryId`。没有摘要则从 Opening 开始。取覆盖边界之后的可见叙事列表 H；最新 Summary 文本作为摘要前缀（如果存在）。
+2. **触发条件是二选一**：
+   - H 的条数 **达到/超过** `max_messages=N`；
+   - 虽不足 N，但「最新 Summary + 全部 H + 当前 User」构建出的**完整 Prompt 已超过 B**。
+3. 不触发时沿用「已有 Summary 前缀 + H + 当前 User」，也要通过最终 Token 校验。
+4. 触发时优先保留 H 最后 `K=keep_recent_messages` 条原文；更老的 H 与旧 Summary 一同交给摘要模型。**先独立读取完整 State**，供摘要 Prompt 模板只读引用；实际摘要来源仅为叙事文本，工具调用/结果不可混入。
+5. 摘要请求也必须符合 Provider 的 Context / 输出预算；较老材料一次放不下时按时间顺序**分批滚动摘要**，不静默丢掉未处理来源。所有摘要请求与结果存到技术 Entry 的 `generation` 元数据。
+6. 生成新摘要后，必须重新构建「新 Summary + 原文尾部 K 条 + 当前 User」和世界书命中、完整 Prompt 并校验 B。若仍超限，**缩小保留尾部 K 并重新生成覆盖这些原文的新摘要**，或在允许的摘要长度预算内重试；不能直接丢掉尚未摘要的尾部消息。仍放不下时明确报 `CONTEXT_BUDGET_EXCEEDED`，不可写入不完整摘要。
+7. 摘要成功且预算通过后，在**当前 User 入库前**把一条 `custom/sillyrealms.summary` Entry 追加到原 tip 之后，其 `coveredThroughEntryId` 指向最后一条**被摘要覆盖**的原始叙事 Entry；随后将本轮 User 接在它后面。两条 Entry 使用**本轮同一个 run_id**，建议一个短事务提交；不删除或重挂已存在的消息和分支。
+8. 下一轮**逻辑**模型历史始终是「最新 Summary 作为 assistant 前缀 + coveredThroughEntryId 之后的原文叙事 + 当前 User」，**不是**从 Summary Entry 的物理位置往后切。再次触发时用旧 Summary + 新原文生成一个新 Summary，模型历史只带最新一个摘要。
 
 ~~~text
-从本分支 tip 读取 Raw Entries（含工具消息）
-  → NarrativeProjection（只保留 user/assistant 叙事）
-  → 世界卡 none/window/summary 策略（必要时生成 Summary）
-  → 得到本轮最终 Narrative Context + 当前 User
-  → 独立读取最近有效全量 State（不受窗口影响）
-  → WorldBook/状态根 keywords 与 when 判定
-  → 按 anchor/position/order 建世界书索引
-  → Preset 七系统 NodeBuilder 和自定义节点
-  → TextRenderer 统一模板渲染
-  → ModelMessage[]
+真实父链：Opening → U1 → A1 → U2 → A2 → U3 → A3 → Summary(覆盖至 A2) → 本轮 U4
+逻辑模型历史：Summary(Opening..A2) → U3 → A3 → U4
 ~~~
 
-激活条件：mode=always 无需关键词；mode=on_mention 按关键词 logic any/all。exclude_keywords 命中优先否决；若有 when，则基础命中 **AND** when(fullState) 为 true。**删除 manual 模式**，不单独配置关键字扫描深度。角色额外支持 order，按值升序排列。
+摘要生成失败/Token 校验失败时不写已完成 Summary，不发送依赖缺失上下文的主请求；原始历史仍完整。Run 归属、Entry 类型见 [Session](session.md)。
 
-Pi 在**本次模型执行过程中**仍可正常交换 toolCall/toolResult，并把每条产生的 Agent 消息正常持久化；**下一轮重建模型历史时**，只从原始 Entry 投影出 user/assistant 叙事消息，不回放这些工具消息。
+## 5. 本轮构建时序与一致性
 
-## 5. 验收
+~~~text
+读取当前 Session tip 的完整 Raw 父链
+  → NarrativeProjection（user/assistant 叙事）
+  → 独立读取当前完整 State
+  → 读取 Preset Token 预算 + Provider 实际模型上限
+  → window: 最近 N 条；或 summary: 原文/摘要逻辑链
+  → 通过 Token 预检查，必要时缩窗或生成摘要
+  → 对最终叙事集合重新做 lorebook/角色/状态关键词匹配 + when(fullState)
+  → 预设七节点 NodeBuilder + TextRenderer
+  → 校验最终 ModelMessage[] 输入 Token ≤ B
+  → 同一 run_id 写摘要（若有）和本轮 User，执行 Pi
+~~~
 
-- Raw Entries 含 user/assistant/toolResult 和 assistant 内 toolCall；UI、模型历史、关键词扫描中都不出现工具内容。
-- none 不裁剪；window 精确最近 N 条可见消息；summary 达阈值摘要、保留 K 条，且 Summary 虽物理追加在最后，逻辑正确前置。
-- 压缩只影响模型上下文；跨分支历史/摘要互不污染，旧消息保持可查。
-- Current State 由原始父链独立读取，Schema 不兼容时可重置；when 使用全量状态。
+- **关键词文本范围必须和最终模型历史一致**；每次裁剪/重摘要导致文本变化，都重新匹配和构建，不保留过期命中条目。
+- Pi 在**本轮执行期间**正常交换并持久化 ToolCall/ToolResult；下一轮重新构建历史时只回放叙事投影。
+- **Run / Entry 分页与 Context 是不同的轴**：分页按当前世界线 run_id 成组返回 Raw Entries；模型使用选中世界线经策略和 Token 预算裁剪后的 Narrative Context。状态始终独立读取。
+
+## 6. 最小验收
+
+- 未指定 strategy 时默认 window；显式 none 拒绝；window 先最多 N 条，Prompt 超 B 时从旧到新裁剪并重匹配；固定 Prompt + User 超 B 时明确失败。
+- summary 分别在 N 阈值、Token 压力下触发；逻辑前置最新摘要、保留 K 原文且不丢旧分支；大材料分批摘要不漏输入；摘要与 User 同 run_id。
+- Provider contextWindow 与 Preset max_context_tokens 正确取小值；输出和安全余量正确扣除；实际 Token 统计覆盖完整 Prompt，不只数聊天文本。
+- UI Run 分页、Raw Entry 恢复、完整 State 不因 Window/Summary 丢失。

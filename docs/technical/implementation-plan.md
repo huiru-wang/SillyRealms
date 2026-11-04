@@ -1,64 +1,68 @@
-# SillyRealms 实施计划：Monorepo / 消息级 Entry / 三种上下文策略
+# SillyRealms 实施计划：Run 分页 / 双策略 Token 预算
 
-> 2026-11-04 更新，仍为设计阶段；本次只修改文档和示例。遵循 [产品总纲](../PRODUCT.md)、[Session](../design/session.md)、[Context Strategy](../design/context-strategy.md)、[AgentContext](../design/agent-context.md)、[Storage](storage.md)。
+> 2026-11-04 更新；仍为设计阶段，仅修改文档和示例。遵循 [产品总纲](../PRODUCT.md)、[Session](../design/session.md)、[Context Strategy](../design/context-strategy.md)、[AgentContext](../design/agent-context.md)、[Storage](storage.md)。
 
-## 0. 冻结的 MVP 决策
+## 0. MVP 决策
 
-| 领域 | 最小方案 |
+| 领域 | 决策 |
 | --- | --- |
-| 项目结构 | pnpm Monorepo：当前 apps/web、apps/server、packages/core/shared（按需）；Android/Desktop 延后 |
-| WorldCard | worlds.data_json 一份当前世界卡，Session 只存 world_id；无 draft/世界快照/Opening ID |
-| Session | world_id、preset_id、user_character_id、tip_entry_id；角色当前读取最新世界卡，若无 player_selectable 先创建并保存 |
-| Preset | 关联 Provider/Model/模型参数、状态模式、summary_prompt、有序七系统 NodeBuilder/自定义节点；无独立 scan_depth |
-| Entry | 一条 Pi Agent Message：id/session_id/parent_id/seq/type/timestamp/payload，原始 User/Assistant（含 ToolCall）/ToolResult **全部持久化** |
-| 三份数据 | Raw History（完整）/Narrative Context（只含 user/assistant 叙事）/Current State（独立完整快照），不同读取用途不可混淆 |
-| Context | WorldCard none=全部叙事；window=最近 N；summary=超阈值摘要+保留最近 K；Prompt 在 Preset 支持状态模板 |
-| 条件触发 | only always/on_mention；关键词与 when(fullState) 是 AND；角色支持 order，世界书 anchor/position/order |
-| State | 每条变更必须非空 reason；最终 Assistant 记录全量状态；最新世界卡 Schema 不兼容时可舍弃旧快照重置 |
-| SQLite | 仅 worlds、presets、provider_credentials、tags（type 内 sort_order）、sessions、entries 六表 |
+| Monorepo | pnpm；首期 H5 Web + Server，core/shared 按需；Android/Desktop 延后 |
+| WorldCard | worlds.data_json 一份当前卡；角色/Opening/lorebook/状态；Session 不存快照或 Opening ID |
+| Session | world_id/preset_id/user_character_id/tip_entry_id；按 parent_id 决定选中世界线 |
+| Entry/Run | 每条消息/技术记录一行，`run_id NOT NULL`；按 **Run** 游标分页，limit 为 Run 数；不建 runs 表 |
+| Entry.type | **message/compaction/branch_summary/custom**；message.role 为 user/assistant/toolResult；产品摘要是 custom/sillyrealms.summary |
+| Preset/Provider | 预设模型/参数、Token 预算、摘要模板和七系统 NodeBuilder；Provider 提供模型 contextWindow 与 API Key |
+| Context | **window（默认）/summary；无 none**。window 先最近 N 条，超 Token 预算再删最老历史；summary 由 N 或超 Token 提前触发 |
+| 三份视图 | Raw History 全量、Narrative Context 仅 user/assistant 叙事、Current State 独立完整快照 |
+| lorebook/状态 | 仅 always/on_mention，可选 when(fullState)；关键词只匹配最终 Narrative Context + 当前 User |
+| State | 带 reason 的变更；最终 Assistant 附全量状态；最新世界卡 Schema 不兼容时允许重置 |
+| SQLite | 六表 worlds/presets/provider_credentials/tags/sessions/entries，无其它 Run/ToolCall 表 |
 
-## 1. 阶段 A：仓库与 SDK PoC
+## 1. 阶段 A：基础与 SDK PoC
 
-- [ ] A1. 采用 pnpm-workspace，构建 apps/web（React/Vite）和 apps/server（Hono），仅抽出实际需要复用的 packages/core/text、packages/shared 类型；Android/Desktop 先不创建平台工程。
-- [ ] A2. 锁定 Pi Agent/Pi AI 版本，查明真实 Message 类型：Assistant 内 toolCall 内容、独立 ToolResult、User/Assistant 文本；保证原始消息按顺序可完整持久化和恢复。
-- [ ] A3. 验证新的模型历史**只投影叙事文本**，Pi SDK 真实 HTTP 请求不附加旧 ToolCall/ToolResult，当前 User 恰好一次；真实 Provider 的 SSE/后置 system 顺序/Tool Calling 必须实测。
-- [ ] A4. ProviderService 使用 Pi 内置模型目录与安全 CredentialStore；Preset 中选择模型/参数，连接测试显式发起，不存密钥到预设或世界卡。
+- [ ] A1. pnpm workspace、React/Vite H5、Hono Server、core/text 和 shared API。
+- [ ] A2. 固定 Pi SDK 版本并核对 Entry 四类 type：message/compaction/branch_summary/custom，原始 ToolCall/ToolResult 的完整序列化与恢复。
+- [ ] A3. 真实 Provider 检查 role/order、SSE、取消、tool calling；下一次构建 Prompt 只回放 user/assistant 叙事，当前 User 不重复。
+- [ ] A4. ProviderService 直接使用 Pi 内置模型目录，支持 API Key / CredentialStore；核对 contextWindow、maxTokens 和 Token 计数/估算可行性。
 
-## 2. 阶段 B：六表领域和 Session
+## 2. 阶段 B：六表和 Run/Session
 
-- [ ] B1. 实现 [Storage](storage.md) 六表 DDL、`PRAGMA foreign_keys`、`PRAGMA user_version` 迁移和最小索引；不建 runs/messages/run_tool_calls/app_settings/world_tags/context_checkpoints 等表。
-- [ ] B2. `worlds` 保存一份当前卡，不建 draft/发布版本；`sessions` 只关联 World/Preset/角色/Tip。创建时选 Opening 直接变成根 Assistant Entry + S0。
-- [ ] B3. 若 WorldCard 缺少可扮演角色，Web 提示用户创建角色并直接写入 worlds.data_json；已开局 Session 的 user_character_id 在新卡中失效时也要求重新选或创建角色，不注入不存在的身份。
-- [ ] B4. `tags(id,type,name,sort_order)` 同类型内稳定排序；WorldCard.data.tags 为标签 ID 数组，不建 world_tags。
-- [ ] B5. `entries` 按消息级 payload 持久化所有 Pi User/Assistant/ToolResult 和 Summary，Assistant ToolCall 不能漏；parent_id/seq 分叉、User 重选与 Assistant 重生成、Root/Fork-only 压缩视图。
-- [ ] B6. 提供唯一 `narrativeProjection`：UI/模型历史/关键词扫描只保留 user/assistant 叙事，工具消息留库但不回灌。
+- [ ] B1. 六表 SQLite DDL、`entries.run_id NOT NULL`、`custom_type` 规则和索引；不建 runs/messages/run_tool_calls 等表。
+- [ ] B2. Session 通过当前 WorldCard + Opening 创建初始化 Run/根 Assistant/S0；可扮演角色不存在时必须先保存新角色。
+- [ ] B3. Session 创建和模型/用户角色校验；世界卡/预设修改只影响之后的新 Run；不兼容状态可重置。
+- [ ] B4. tags(id,type,name,sort_order) 同类型稳定排序；世界卡保存 tag ID。
+- [ ] B5. **消息级持久化**所有 Pi User/Assistant/ToolResult、Assistant 内 ToolCall 和技术 Entry，归属逻辑 run_id；失败部分也保留。
+- [ ] B6. **Run 级分页**：先按 tip.parent_id 收窄祖先链，后按 run_id 聚合，以当前链每组 MIN(seq) 为倒序游标，返回完整 Run；重生成 Assistant 与原 User 同 Run、不同 parent 分支；编辑 User 新 Run。
+- [ ] B7. `narrativeProjection` 为聊天/UI/模型历史/关键词扫描共用的唯一投影，不把 ToolResult 和 thinking 误显示。
 
-## 3. 阶段 C：Context 三种策略与 Agent
+## 3. 阶段 C：Token Context、摘要和 Agent
 
-- [ ] C1. WorldCard context.strategy 支持 none/window/summary，参数 max_messages 与 keep_recent_messages 只针对策略生效：none 无压缩，window 最近 N，summary 阈值 N 时摘要较老消息并保留最近 K。
-- [ ] C2. Summary Entry 物理追加在原 tip 之后并记录 coveredThroughEntryId；逻辑模型 Context 为「最新摘要前缀 + 覆盖边界后的原始可见消息」，**不能误丢保留的最近 K 条**；分支专用，旧记录不删除。
-- [ ] C3. Preset.summary_prompt 支持完整 State 只读变量；摘要输入只含叙事，不含工具。**摘要在当前 User Entry 入库前完成，新 User 接新 Summary 后面**，保证自身输入不被摘要或重复发送。
-- [ ] C4. AgentContext 独立读取全量 Raw Entry 父链、同分支最近有效 State、当前 Narrative Context；世界卡 Schema 不兼容时允许重置旧状态，不做复杂版本迁移。
-- [ ] C5. 世界书/角色/状态根激活规则只支持 always/on_mention + 可选 when（AND），统一在**当前最终 Narrative Context + 当前 User** 上关键词匹配；角色 order、世界书 anchor/position/order。
-- [ ] C6. 七个系统 NodeBuilder + CustomTextNodeBuilder 有序执行，统一使用 packages/core/text 的 TextRenderer 渲染模板，历史/用户原话只做 literal；最终只返回 ModelMessage[]。
-- [ ] C7. AgentRuntime 在主轮 Pi 期间正常保存所有完成的 Assistant ToolCall Message / ToolResult Message / User/Assistant；下一轮不恢复旧工具消息到模型聊天历史。
-- [ ] C8. StateEngine 的所有 StateChange 必须有 reason，生成结束校验并在已完成 Assistant Entry 存全量 State；off 模式继承、invalid 不能假装成功。终止 submit_turn 只有 narrative 时须规范化追加可见 Assistant Entry（标记来源），原始 ToolCall/ToolResult 不动、不得重复正文。
+- [ ] C1. WorldCard 只有 window/summary，默认 window；max_messages=N，keep_recent_messages=K（summary 使用），禁止 none。
+- [ ] C2. Preset budget: max_context_tokens? / max_output_tokens / safety_margin_tokens。有效 B = min(预设最大值（可选）, Provider.contextWindow) - 输出 - 余量；计算包含整个 Prompt 与工具定义，预算非法/未知明确失败。
+- [ ] C3. Window：先最近 N 条 user/assistant 叙事，若最终 Prompt 超 B，从最早消息逐条移除、**重新匹配 lorebook/重建 Prompt**，直到能发送；固定 Prompt+User 仍超限则明确错误。
+- [ ] C4. Summary：**N 阈值或超 B 双触发**，优先保留 K 条近期原文；无法一次总结时按顺序分批滚动，生成完重新预算检查；不可漏总结而静默丢尾部。
+- [ ] C5. Summary 作为 custom/sillyrealms.summary Entry，记录 coveredThroughEntryId、生成调用记录；**摘要在 User 入库前完成**，两者使用本轮同一 run_id，逻辑历史为「最新 Summary + 未覆盖叙事 + 当前 User」。
+- [ ] C6. AgentContext 独立读取全量 Raw 父链与最新有效 State，使用最终固定的叙事集合匹配 lorebook/角色/状态根；关键词与 when(fullState) AND。
+- [ ] C7. 七系统 NodeBuilder 和自定义文本节点有序执行，TextRenderer 只渲染模板片段，历史/用户原话不二次执行；完成 ModelMessage[] Token 校验。
+- [ ] C8. AgentRuntime 正常持久化所有 Pi 完整消息及技术 Entry；下一次模型历史不重放旧工具消息。
+- [ ] C9. StateEngine 对带 reason 的变更做校验，在成功 Assistant 上附完整状态；终止 submit_turn 只有 narrative 时补规范化 Assistant Entry，不丢原始工具调用结果。
 
-## 4. 阶段 D：Web/Server API 与 UI
+## 4. 阶段 D：页面与 API
 
-- [ ] D1. WorldCard 编辑、Opening 选择、玩家角色创建、世界书/角色排序/when；Context 策略配置在 WorldCard。
-- [ ] D2. Preset 编辑：模型选择/参数、summary_prompt、状态更新模式、系统 NodeBuilder 排序、文本节点、导入导出；Provider API Key 与能力展示单独设置。
-- [ ] D3. Chat UI 只显示 user/assistant 叙事，分页以可见消息为单位；开发诊断才能查看 Raw Entry 的 ToolCall/ToolResult。世界线 Root/Fork-only，内部工具节点不计回合数。
-- [ ] D4. 状态栏复用 core TextRenderer 展示最新完整状态和每项变更 reason，状态失效重置应允许当前会话继续。
-- [ ] D5. Context Preview 输出**实际模型历史叙事**、Summary/窗口边界、触发世界书/状态根、NodeBuilder 后的 ModelMessage[]；明确标注工具消息不再回灌。
+- [ ] D1. WorldCard 编辑、开局/角色选择、lorebook 条目和状态加载；只露出 window/summary 参数。
+- [ ] D2. Preset 模型与 Token 预算 UI、状态模式、摘要 Prompt、七节点/自定义节点编排；Provider API Key 独立设置。
+- [ ] D3. Session 历史请求使用 **Run 游标**，UI 消息投影只展示 user/assistant 叙事，原始 ToolCall/ToolResult 仅开发者调试可查；Root/Fork-only 按用户 Run 计数。
+- [ ] D4. State 展示完整状态与 reason；当前 Schema 不兼容时允许重置。
+- [ ] D5. Context Preview 必须展示策略、最终叙事条数、Token 预算 B、实际估算、被裁历史条数、Summary 覆盖范围和最终 lorebook 命中；防止预览与真实模型 Prompt 不一致。
+- [ ] D6. [领域 API](../design/domain-interfaces.md) 的每项职责均有文档定义，Session 详细方法见 [Session](../design/session.md)。
 
 ## 5. 验收
 
-- [ ] E1. Raw Agent Entries：user、assistant toolCall、toolResult、final assistant 的 payload 和 parent_id 顺序正确；生成失败后既有消息不丢。
-- [ ] E2. 三种 Context 策略实际行为：Summary 在 User 前写入、coveredThroughEntryId 和保留 K 消息一致；关键词匹配与模型真实聊天历史一致，当前 User 仅一次。
-- [ ] E3. State 不受 window/summary 影响；最新 WorldCard Schema 不兼容时允许重置；StateChange 缺 reason 被拒绝、合法更改写全状态。
-- [ ] E4. WorldCard 无 draft/Opening 角色列表/Session 世界快照，Preset 存模型和摘要 Prompt，Tags type 内排序，角色 order 生效。
-- [ ] E5. 数据库只有六张业务表；完整分叉可恢复，Pi SDK 实际请求严格不含旧 ToolCall/ToolResult，Web UI 只显示 user/assistant 叙事。
-- [ ] E6. Monorepo Web/Server 构建测试通过，JSON 示例/Markdown 内部链接/SQLite DDL 验证通过。
+- [ ] E1. SQLite 六表可建；四类 Entry type、run_id、custom_type 约束和索引正确；所有 Pi Message 原始内容可还原。
+- [ ] E2. 连续多次运行含 ToolCall/ToolResult 时，limit=10 精确计 10 个 Run、不拆 Run；跨分支相同 run_id 只查当前祖先。
+- [ ] E3. Summary 物理附在本轮 User 之前，逻辑前置到历史，coveredThroughEntryId 准确；失败不写未验证的摘要。
+- [ ] E4. Window 超 Token 时裁历史并重匹配；Summary N/Token 双触发；系统 + User 超限明确失败，不静默更改策略或截断用户输入。
+- [ ] E5. Current State 独立、Schema 可重置；关键词扫描与真实历史同源、when 读全量 State；role/order、Pi 请求中当前 User 仅一份。
+- [ ] E6. 世界卡和预设 JSON 示例、Markdown 内部链接、SQLite DDL、端到端分支/分页测试通过。
 
-**首期不做**：Android/Desktop、内容平台、多用户/分布式锁、通用 Agent 插件执行沙盒、任意 JS/EJS、世界卡历史版本、跨会话状态迁移、Run/ToolCall 独立业务表和复杂缓存。
+**暂不做**：Android/Desktop、云端内容平台、多用户分布式锁、任意 JS/EJS、世界卡历史版本、自定义 Provider、独立 runs 表或旧消息删除。

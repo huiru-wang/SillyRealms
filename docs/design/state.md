@@ -25,14 +25,13 @@
 | `boolean` | 布尔 | `initial`, `description?`, `nullable?` | `set` |
 | `enum` | 枚举字符串 | `values` 至少一个、无重复；`initial`, `description?`, `nullable?` | `set` |
 | `object` | 固定字段结构 | `properties` 字段映射、`description?` | 递归更新已声明字段；不增删固定子字段 |
-| `record` | 动态键映射 | `value` 子节点 Schema、`initial` 对象、`description?` | `upsert/remove/set_record_field` |
 | `array` | 有序同类列表 | `items` 子节点 Schema、`initial` 数组、`description?` | `append`；确需整体重写可按受限 `set` 校验 |
 | `json` | 自由 JSON 逃生口 | `initial` 合法 JSON、`description?` | 仅整体 `set`，不承诺内部类型 |
 
-- 所有**静态状态叶子**都必须有 `initial`；`object.properties` 递归生成初始对象，不要求作者重复提交整份初值。处于 `record.value` 或 `array.items` 的子节点用于验证新元素，其静态叶子初值**可以省略**；`upsert/append` 必须提供符合 Schema 的完整 item，不暗中补默认字段。
-- `nullable` 允许 `null`，不等于字段可以缺席。MVP 不支持 optional、union、判别联合、正则或任意用户自定义函数。所有固定 object 字段必需且禁止额外键；`record` 可以动态增加或删除键。
+- 所有**静态状态叶子**都必须有 `initial`；`object.properties` 递归生成初始对象，不要求作者重复提交整份初值。处于 `array.items` 的子节点用于验证新元素，其静态叶子初值**可以省略**；`append` 必须提供符合 Schema 的完整 item，不暗中补默认字段。
+- `nullable` 允许 `null`，不等于字段可以缺席。MVP 不支持 optional、union、判别联合、正则或任意用户自定义函数。所有固定 object 字段必需且禁止额外键。
 - 数字只接受有限数字；整数、枚举、min/max 作为**硬约束**。`description` 是唯一自然语言变化原则，不另设易混淆的 `rule`；缺少描述可为空串，不代表程序保证剧情合理。
-- `object`、`record`、`array` 可以嵌套，嵌套深度、字段个数、JSON 字节和 Tool Schema 字节有实现侧上限，编辑验证时报错而非截断。标识符为非空字符串，允许中文和点号；指针路径中 `~` 转义 `~0`、`/` 转义 `~1`。
+- `object`、`array` 可以嵌套，嵌套深度、字段个数、JSON 字节和 Tool Schema 字节有实现侧上限，编辑验证时报错而非截断。标识符为非空字符串，允许中文和点号；指针路径中 `~` 转义 `~0`、`/` 转义 `~1`。
 - `json` 刻意弱类型。编辑器显著提示该字段不享有内部强类型更新能力，不应为方便而把整棵复杂状态全部放进自由 JSON。
 
 ### 2.2 完整示例
@@ -58,12 +57,8 @@
           "伤势": {"type": "string", "nullable": true, "initial": null, "description": "无伤时为 null"}
         }},
         "背包": {
-          "type": "record",
-          "description": "键是稳定物品 ID",
-          "value": {"type": "object", "properties": {
-            "数量": {"type": "integer", "min": 0, "description": "持有数量"},
-            "说明": {"type": "string", "description": "来源及状态"}
-          }},
+          "type": "json",
+          "description": "键是物品 ID，物品变化时整体更新背包",
           "initial": {"灵石": {"数量": 3, "说明": "随身携带"}}
         }
       }
@@ -82,12 +77,12 @@
 
 - 世界卡**只在 `data.state` 声明一棵统一状态树**；不再运行时拼接 `world/user`，不隐式生成虚拟 `全局` 或选中角色的 `user` 状态。
 - `characters[]` 仍负责角色设定、角色 ID 和可扮演许可。原有 `characters[].state` 属于**旧格式导入数据**；迁移时由导入器/作者显式映射到 `data.state.modules[目标根名称]`，处理重名与类型冲突，不能悄悄合并或只加载玩家角色的状态。选中的 `user` 只是 Session 的角色身份，并非状态根的特殊命名空间。
-- Opening 的 `initial_state` 是与运行值同形的**部分对象覆盖**：沿固定 `object` 递归到已定义叶子；`record/array/json` 叶子只能整体替换，不能把对象初值误当成深合并。所有覆盖值由 Zod 完整验证；未知键、额外固定字段、类型错误阻止开局初始化。
+- Opening 的 `initial_state` 是与运行值同形的**部分对象覆盖**：沿固定 `object` 递归到已定义叶子；`array/json` 叶子只能整体替换，不能把对象初值误当成深合并。所有覆盖值由 Zod 完整验证；未知键、额外固定字段、类型错误阻止开局初始化。
 - 创建 Session 时直接读取世界卡当前 `data_json` 的 State Schema，根据 `initial` 构建完整 S0，应用 Opening 初始覆盖后写入根 Assistant Entry 的 `payload.stateSnapshot`；**Session 不复制 Schema 或世界快照**。下一轮世界卡变更若使旧快照不兼容，允许舍弃旧值并以最新 Schema 的初值重建；既有故事消息仍保留。
 
 ## 3. 创作者 UI 与导入
 
-默认编辑视图是一棵可展开的状态树；作者添加「字段/对象/字典/列表」，只需看**字段名、类型、默认值、描述**。数字范围、枚举项、可为空等在高级设置。对象内新增固定字段；字典配置 item 结构与初值映射；列表配置 item 结构与有序初值；预览区实时给出实际运行 JSON、完整路径及类型错误。
+默认编辑视图是一棵可展开的状态树；作者添加「字段/对象/列表」，只需看**字段名、类型、默认值、描述**。数字范围、枚举项、可为空等在高级设置。对象内新增固定字段；列表配置 item 结构与有序初值；预览区实时给出实际运行 JSON、完整路径及类型错误。
 
 可从示例 JSON 生成建议定义，但空数组、空字典、null、数组混合类型均需作者确认；不能以猜测结果直接保存为可用定义。创建 Session/编辑状态时必须验证定义、所有初值、Opening 覆盖及编译后的 Schema；作者不用手写工具调用、路径枚举或更新操作。
 
@@ -104,16 +99,13 @@
 
 | op | 参数 | 语义 |
 | --- | --- | --- |
-| `set` | `target, value` | 设置已声明的标量/可空/枚举或有容量限制的整块 `json/array` 叶子；不替换固定 object 根/分组或整个 record |
+| `set` | `target, value` | 设置已声明的标量/可空/枚举或有容量限制的整块 `json/array` 叶子；不替换固定 object 根/分组 |
 | `adjust` | `target, delta` | 对已声明 number/integer 做加减，计算后的值必须通过 min/max、整数校验；原值为 null 时拒绝 |
-| `upsert` | `target, key, value` | 在已声明 record 中新增或替换一个稳定键；value 必须完整符合 record.value Schema |
-| `set_record_field` | `target, key, field, value` | 更新已存在 record 成员的一个已声明固定子字段；field 是相对 JSON Pointer（如 `/数量`），不得跨 item |
-| `remove` | `target, key` | 只删除 record 中已存在的动态键；不能删除固定字段 |
 | `append` | `target, item` | 只向已声明数组末尾追加一个符合 items Schema 的完整元素 |
 
-所有操作（set/adjust/upsert/set_record_field/remove/append）都必须带 `reason: string`，说明对应变化在叙事中的原因。`reason` 是模型的说明而不是程序可证明的事实；程序校验类型、非空字符串和目标状态约束。没有变化时使用 `changes: []`，不需要凭空编造说明。
+所有操作（set/adjust/append）都必须带 `reason: string`，说明对应变化在叙事中的原因。`reason` 是模型的说明而不是程序可证明的事实；程序校验类型、非空字符串和目标状态约束。没有变化时使用 `changes: []`，不需要凭空编造说明。
 
-`target` 为 RFC 6901 JSON Pointer，例如 `/清月/灵力`、`/清月/背包`。动态 `key` 单独传递，避免模型拼接大量未知下标路径；`field` 的候选字段从 record.value 定义生成，允许固定嵌套路径，不接受模型猜测新结构。`json` 逃生口仅支持整体 set。动态记录建议 `record`，会发生索引变动的背包或角色关系不建议用 array；首期不提供数组按索引删除/移动。
+`target` 为 RFC 6901 JSON Pointer，例如 `/清月/灵力`、`/清月/背包`。`json` 仅支持整体 `set`；动态键数据可存入 `json`，增删成员时提交完整新值，内部结构不做强类型校验。首期不提供数组按索引删除或移动。
 
 示例（假设回春丹事先在背包中且灵力不会超限）：
 
@@ -122,16 +114,16 @@
   "narrative": "清月服下回春丹，灵力恢复十点。",
   "changes": [
     {"op": "adjust", "target": "/清月/灵力", "delta": 10, "reason": "服用回春丹，灵力恢复"},
-    {"op": "remove", "target": "/清月/背包", "key": "回春丹", "reason": "回春丹已经服用"}
+    {"op": "set", "target": "/清月/背包", "value": {"灵石": {"数量": 3, "说明": "随身携带"}}, "reason": "回春丹已经服用"}
   ]
 }
 ```
 
-`[]` 表示模型**明确无变化**，不等于未返回状态更新。引擎须校验当前 record key 确实存在、最终数值仍满足类型和范围；任何一个操作失败，整个 ChangeSet 不提交部分结果。没有 `set/add/insert/delete/move` 的 MVU 兼容执行通道。
+`[]` 表示模型**明确无变化**，不等于未返回状态更新。引擎须校验最终数值仍满足类型和范围；任何一个操作失败，整个 ChangeSet 不提交部分结果。没有 `set/add/insert/delete/move` 的 MVU 兼容执行通道。
 
 ### 5.1 Tool Call 优先，但能力门槛必须实测
 
-目标工具 `submit_turn` 接收 `{narrative: string, changes: StateChange[]}`，以**一次模型生成输出**承载叙事与增量状态。工具描述由 StateService 从**本轮已激活、允许写入的状态 Module（StateScope）** 动态编译，尽量为每个 op/target 生成类型受限的 JSON Schema 分支：例如 `/清月/灵力` 的 delta 必须是数字，`/清月/背包` upsert value 必须是具体 item object；`target` 优先固定枚举而非裸字符串。模型没有看到/未激活的 Module 默认不可写，仍始终存在于完整快照中。
+目标工具 `submit_turn` 接收 `{narrative: string, changes: StateChange[]}`，以**一次模型生成输出**承载叙事与增量状态。工具描述由 StateService 从**本轮已激活、允许写入的状态 Module（StateScope）** 动态编译，尽量为每个 op/target 生成类型受限的 JSON Schema 分支：例如 `/清月/灵力` 的 delta 必须是数字，`/清月/背包` 的 set value 必须是合法 JSON；`target` 优先固定枚举而非裸字符串。模型没有看到/未激活的 Module 默认不可写，仍始终存在于完整快照中。
 
 动态 Schema 需要限制枚举目标数量、嵌套深度和总输入 Token。不同模型/Provider 对 `anyOf`、严格工具、复杂嵌套、工具参数流式支持不同，不能假设任何模型都能一次请求完成且无损逐字流式展示长叙事。底层调用尽量使用 Pi 内置实现，ProviderService 负责查询/校验模型能力而不是为各供应商重复写 Adapter。**只对实际模型 PoC 验证过的模型开启工具模式**；未验证时使用明确选定的内联模式或报不支持，不在生成中途静默切换协议。无论生成侧是否声称 strict，服务端始终执行完整验证。
 
@@ -190,8 +182,8 @@ SQLite `entries.payload` 记录 Pi Message 和完成 Assistant 的完整状态�
 
 ## 8. 验收与未解决问题
 
-- 类型：初始化所有基础类型、null、嵌套对象、record/array、JSON 逃生口、错误初值、Opening 部分覆盖、min/max/enum、额外键拒绝。
-- 更新：六种操作的路径白名单、record 新增/修改/删除、数组追加、数值区间、顺序、任何错误整组回滚，生成中断不部分提交。
+- 类型：初始化所有基础类型、null、嵌套对象、array、JSON 逃生口、错误初值、Opening 部分覆盖、min/max/enum、额外键拒绝。
+- 更新：三种操作的路径白名单、自由 JSON 整体替换、数组追加、数值区间、顺序、任何错误整组回滚，生成中断不部分提交。
 - 一致性：消息级 Entry 的真实 parent_id 分叉、Assistant 重新生成/工具消息顺序、无变化也保存完整状态；本地 MVP 不引入复杂 revision 矩阵。
 - TextRenderer：`{{state:/...}}`、`get/exists/if`、世界书 when、状态根 load、动态目标、世界卡预览和未来状态栏行为一致；模板绝不写状态。
 - **Provider PoC 必须优先完成**：至少两类 Provider 的 strict Tool 支持、复杂 Schema 通过率、长篇 narrative 流式表现、内联失败率、输出正确率及输入/输出 Token、延迟和语义更新召回率。选择正式默认通道前必须量化，不能只看 JSON 合法率。

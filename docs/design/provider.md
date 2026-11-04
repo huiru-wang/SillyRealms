@@ -13,7 +13,7 @@
 
 `ModelSelection` 仅保存 `{ provider: string, modelId: string }`，按需另存普通生成参数；`provider` 和 `modelId` 必须以运行时选定的 Pi 模型目录实际值为准。Preset 的 config_json.model 持久化该选择及生成参数；Session 只引用 preset_id，每轮读取当前 Preset 模型。不建 app_settings 表。
 
-模型展示信息直接从 Pi `Model` 映射：`provider`、`id`、`name`、`contextWindow`、`maxTokens`、`reasoning`、`input`、`api` 等（以锁定依赖版本的字段为准）。模型在目录中存在**不代表**已配置 API Key、远端仍可调用或支持当前的状态工具 Schema；因此要区分：
+模型展示信息直接从 Pi `Model` 映射，尤其将 `contextWindow` 提供给 [Token 预算](context-strategy.md) 作为模型硬上限：`provider`、`id`、`name`、`contextWindow`、`maxTokens`、`reasoning`、`input`、`api` 等（以锁定依赖版本的字段为准）。模型在目录中存在**不代表**已配置 API Key、远端仍可调用或支持当前的状态工具 Schema；因此要区分：
 
 1. **支持的模型**：`models.getModels(provider?)` 可发现，且符合本产品允许列表。
 2. **已配置的模型**：`models.getAvailable(provider?)` 根据当前 CredentialStore / 授权上下文筛选；这只是本地认证完整性检查，不等于云端请求成功。
@@ -39,7 +39,7 @@ interface ProviderService {
 }
 ~~~
 
-`getModel/resolveModel` 验证模型是否在本产品支持目录内，不返回密钥；`testConnection` 才真实发起最小模型调用，可能产生成本，返回脱敏错误。`hasApiKey` 表示本地凭据存在，不宣称其有效。`saveApiKey` 校验 Provider 支持 API Key，并交给安全凭据存储；无凭据/模型不支持应显式报错，不隐式改选其它模型。
+全部领域接口的逐项用途见 [领域 API 清单](domain-interfaces.md)。`getModel/resolveModel` 验证模型是否在本产品支持目录内，不返回密钥；`testConnection` 才真实发起最小模型调用，可能产生成本，返回脱敏错误。`hasApiKey` 表示本地凭据存在，不宣称其有效。`saveApiKey` 校验 Provider 支持 API Key，并交给安全凭据存储；无凭据/模型不支持应显式报错，不隐式改选其它模型。
 
 API 建议：
 

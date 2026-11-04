@@ -35,7 +35,7 @@ function renderMessages(messages: RawMessage[], env: RenderEnvironment, transfor
 
 ## 3. 条件加载的共享解析器
 
-世界书 `load.when` 与状态根 `load.when` 调用**同一个** `evaluateCondition`，参数必须包含这一轮**完整 StateSnapshot**，不能使用筛选后的小状态片段进行判定；否则可能出现循环依赖。关键词/常驻加载的命中逻辑在 AgentContext/WorldBook 和 State Domain 负责，表达式求值则复用此模块。
+世界书 `load.when` 与状态根 `load.when` 调用**同一个** `evaluateCondition`，参数必须包含这一轮**完整 StateSnapshot**，不能使用筛选后的小状态片段进行判定；否则可能出现循环依赖。关键词/常驻加载的命中逻辑在 AgentContext/lorebook 和 State Domain 负责，表达式求值则复用此模块。
 
 条件错误由调用方定位到世界卡条目或状态 Module；不直接把无效表达式变成“命中”或任意执行代码。
 

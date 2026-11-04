@@ -6,10 +6,10 @@
 
 - `model`：`provider`、`modelId`、`parameters`，通过 ProviderService 校验当前 Pi 内置模型，**不在 Session 重复保存 model_selection_json**，Preset 导出不得包含 API Key。
 - `state_update_mode`：`off / inline / tool`，由 Provider 模型实际能力确认；StateEngine 验证变更。
-- `summary_prompt`：用户可编辑的历史摘要指令模板，仅世界卡设置 `context.strategy=summary` 且达到阈值时使用。模板允许通过共享 TextRenderer 读取 `{{state:/...}}`、`{{user}}` 等只读变量与条件，使用当前完整世界状态作为环境。
+- `summary_prompt`：用户可编辑的摘要指令模板，世界卡设置 `context.strategy=summary` 且未覆盖消息达到 N **或完整 Prompt Token 超预算**时使用。通过 TextRenderer 读取当前完整状态变量，实际摘要只包含叙事。
 - `nodes[]`：七个系统节点与任意自定义文本节点，单个有序数组决定角色、启停、先后顺序，不额外保存 order 列。
-- `budget`：`max_output_tokens`、`safety_margin_tokens`、`max_input_tokens?`；只做实际模型窗口校验，不额外改变 WorldCard 的上下文策略。
-- **不保存 `scan_depth_entries`**：所有 WorldBook、状态根和角色的关键词匹配范围就是经过世界卡 Context 策略处理的**当前实际叙事历史 + 当前 User**。
+- `budget`：`max_context_tokens?`、`max_output_tokens`、`safety_margin_tokens`；与 Provider.contextWindow 取小值，再扣除输出和安全余量，得到**完整 Prompt 输入预算 B**。由 AgentContext 按世界卡 window/summary 策略执行裁剪或摘要；详见 [Context Strategy](context-strategy.md)。
+- **不保存 `scan_depth_entries`**：所有 lorebook、状态根和角色的关键词匹配范围就是经过世界卡 Context 策略处理的**当前实际叙事历史 + 当前 User**。
 
 默认持久化 `builtin/default` 预设可编辑但不可删除；允许复制、新建、导入、导出、恢复默认。配置变更从旧 Session 下一轮开始立即生效，不回写已保存 Entry。
 
@@ -17,17 +17,17 @@
 
 | ID | 本体来源 | 角色规则 | 额外约束 |
 | --- | --- | --- | --- |
-| `main` | 预设可编辑基础 Prompt | 可选 system/user/assistant | WorldBook 不可挂钩 |
-| `personaInfo` | 当前世界卡玩家角色（当前 Session.user_character_id） | 可选 | 支持 WorldBook before/after |
+| `main` | 预设可编辑基础 Prompt | 可选 system/user/assistant | lorebook 不可挂钩 |
+| `personaInfo` | 当前世界卡玩家角色（当前 Session.user_character_id） | 可选 | 支持 lorebook before/after |
 | `characterInfo` | 其它命中的角色，按 order 升序 | 可选 | 支持 before/after；不重复玩家角色 |
 | `worldState` | 被激活的状态根的当前值/描述 | 可选 | 状态更新启用时需要；支持 before/after |
 | `chatHistory` | 当前 WorldCard 策略得到的 NarrativeProjection | 自动保留 user/assistant 角色 | 必需，无挂钩 |
 | `userInput` | 本轮 User 原文 | 固定 user | 必需且恰好出现一次；支持 before/after |
 | `postHistory` | 预设可编辑后置 Prompt | 可选 | 默认关闭 |
 
-每个系统节点有固定 `id/source/kind=system`，恰好出现一次，不能重命名 ID 或删除。自定义 `kind=text` 有独立 ID、名称、role、content、enabled，可以在系统节点之间任意拖动排序；不伪装系统 source。`chatHistory` 必须先于 `userInput`，必需节点不能关闭。系统节点本体关闭时，其 WorldBook before/after 仍可按规则注入。
+每个系统节点有固定 `id/source/kind=system`，恰好出现一次，不能重命名 ID 或删除。自定义 `kind=text` 有独立 ID、名称、role、content、enabled，可以在系统节点之间任意拖动排序；不伪装系统 source。`chatHistory` 必须先于 `userInput`，必需节点不能关闭。系统节点本体关闭时，其 lorebook before/after 仍可按规则注入。
 
-**保留七个独立系统 NodeBuilder**，每个从 WorldBook 的 `anchor/position/order` 索引取得 before 条目 → 拼自身正文 → 追加 after 条目。全部节点构建完后，统一让独立共享 TextRenderer 展开模板。历史消息和当前 User 作为 literal，不二次执行表达式。
+**保留七个独立系统 NodeBuilder**，每个从 lorebook 的 `anchor/position/order` 索引取得 before 条目 → 拼自身正文 → 追加 after 条目。全部节点构建完后，统一让独立共享 TextRenderer 展开模板。历史消息和当前 User 作为 literal，不二次执行表达式。
 
 ## 3. 预设 JSON 示例
 
@@ -53,7 +53,7 @@
     {"id":"userInput","kind":"system","name":"用户输入","source":"userInput","role":"user","enabled":true},
     {"id":"postHistory","kind":"system","name":"后置指令","source":"postHistory","role":"system","enabled":false,"content":""}
   ],
-  "budget":{"max_output_tokens":4096,"safety_margin_tokens":1024}
+  "budget":{"max_context_tokens":32768,"max_output_tokens":4096,"safety_margin_tokens":1024}
 }
 ~~~
 
@@ -63,14 +63,29 @@
 
 SQLite `presets` 表：`id TEXT PK, name, config_json, is_builtin, created_at, updated_at`。`config_json` 保存完整 ModelSelection、参数、状态更新模式、`nodes[]`、`budget`、`summary_prompt`，不存 API Key，不设置乐观 revision 矩阵。
 
-领域接口：`listPresets/getPreset/createPreset/clonePreset/updatePreset/deletePreset/importPreset/exportPreset/restoreDefault/getPresetSnapshot`。首期只需验证系统节点唯一、角色合法、必需节点启用和顺序、模型可被 ProviderService 发现、预算合法。摘要 Prompt 由创作者自己编辑，导出时跟随预设。
+领域接口职责（每个接口均保持单一用途）：
 
-Preset 不负责 WorldBook 匹配、实际摘要执行、文本模板渲染、状态结算或 Pi HTTP 调用。`getPresetSnapshot` 是 AgentContext 的配置读取口，返回当前有序节点、模型、摘要 Prompt 和预算。
+| 接口 | 作用 |
+| --- | --- |
+| `listPresets` | 枚举可选预设及基本信息 |
+| `getPreset` | 查看一份完整预设 |
+| `createPreset` | 创建并校验一份预设 |
+| `clonePreset` | 复制已有预设为可编辑副本 |
+| `updatePreset` | 修改模型、Token 预算、Prompt 和节点编排 |
+| `deletePreset` | 删除非内建预设，阻止删除仍被 Session 使用的记录 |
+| `importPreset` | 校验并导入预设 JSON，不带 API Key |
+| `exportPreset` | 导出脱敏的预设 JSON |
+| `restoreDefault` | 将内建默认预设恢复为初始内容 |
+| `getPresetSnapshot` | 给本轮 AgentContext 提供当前模型、预算、节点和摘要模板 |
+
+首期校验系统节点唯一、角色合法、必需节点启用和顺序、Provider 模型可发现、预算合法。摘要 Prompt 跟随预设导出。
+
+Preset 不负责 lorebook 匹配、实际摘要执行、文本模板渲染、状态结算或 Pi HTTP 调用。`getPresetSnapshot` 是 AgentContext 的配置读取口，返回当前有序节点、模型、摘要 Prompt 和预算。
 
 ## 5. 验收
 
 - 模型与摘要 Prompt 在 Preset 中可编辑，当前 Session 下一轮读取最新配置；Session 不存模型/参数。
-- WorldCard 的 none/window/summary 策略不归 Preset，但 summary_prompt 在 Preset，并支持只读状态引用。
+- WorldCard 仅支持 window（默认）/summary；Prompt 构建需要同时遵守 Preset Token 预算，summary_prompt 支持只读状态引用。
 - 七个系统 NodeBuilder 保留，before/body/after 和自定义节点顺序生效，最终统一模板展开。
 - 聊天历史节点只展开 user/assistant 叙事，不插入旧工具消息。
 - 导入导出不包含密钥，不存在手动条目激活或独立 scan_depth。
