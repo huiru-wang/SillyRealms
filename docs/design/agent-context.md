@@ -22,19 +22,22 @@ class AgentContext {
 
 AgentRuntime 负责 Pi 真实执行、每条 Agent Message（含 toolCall 和 toolResult）正常持久化及 SSE；AgentContext 不把这些工具消息重新注入下一轮的模型历史。
 
-## 2. 构建步骤（有序）
+## 2. 构建步骤（严格单次 Prompt 构建）
 
-1. **加载 Session**：只有 world_id、preset_id、user_character_id、tip_entry_id；通过 `WorldService.getWorld` 读取**当前最新世界卡**，通过 `PresetService.getPreset` 读取有序 Preset（其中包含模型选择、生成参数及摘要 Prompt）。不使用世界卡快照、session opening_id、session model_selection/options。
-2. **读取完整 Raw Entry 父链**：从本轮实际 parentEntryId 向上沿 entries.parent_id 取得真实历史。原始记录包括 user、assistant（可能含 toolCall）、toolResult、summary。不能直接按 seq 拼接历史，也不能因为工具消息不进入模型而删除它们。
-3. **获取当前 Narrative Context**：从**本轮 User 尚未写入前的父链**统一投影 user/assistant 叙事文本，排除工具结果、Assistant 内 toolCall/thinking、状态内联标记；按当前 WorldCard 的 window/summary 算法先处理消息数约束、再依 Preset/Provider 的 Token 预算执行缩窗或摘要（阈值或 Token 压力均可触发）。summary 需要执行时**先读取当前完整 State** 供 Preset 摘要 Prompt 渲染，再把 Summary 写在原 tip 之后，才追加当前 User Entry。逻辑消息顺序为 Summary + 未覆盖真实历史 + 当前 User，当前 User 在模型输入里只能出现**一次**。
-4. **独立加载最新全量 State**：沿真实父链寻找最近完成的 Assistant 的 stateSnapshot；不受第 3 步历史窗口限制。对照当前世界卡 State Schema，若旧状态不兼容**直接允许舍弃并初始化最新 Schema 初值**，无需阻止旧 Session 继续；本轮结束状态元数据可标记 stateReset。
-5. **激活 lorebook、State Module 与角色**：以**根据完整 Prompt Token 预算最终确认的 user/assistant 叙事历史 + 当前 User** 为唯一关键词文本范围；没有额外 scan_depth。条目只支持 always/on_mention。on_mention 的关键词命中和可选 when(fullState) 通过逻辑 AND 共同判定；排除词优先。角色同样支持 order，按升序排列；当前玩家角色不能在 characterInfo 重复。
-6. **建立 lorebook 位置索引**：按 anchor/position(before|after) 分组，再以 order 升序、同序原始位置稳定排序。本轮索引无需入库。
-7. **执行 Preset Nodes**：按预设的 nodes[] 顺序执行七个系统 NodeBuilder 和自定义节点。系统 Builder 从索引取 before 内容，构建本体，再取 after；chatHistory 展开本轮 Narrative Context（Summary 为 assistant 前缀），userInput 仅一条真实用户输入。
-8. **统一模板处理**：所有 Builder 输出 RawMessage 后，交给独立共享 TextRenderer，对可渲染的预设/角色/世界书模板片段执行变量、条件、状态引用和受控转换。历史叙事和当前 User 为 literal，绝不二次执行。
-9. **输出 ModelMessage[]**：根据 Provider.contextWindow、Preset.budget.max_context_tokens（若配）、输出 Token 和**内部固定估算余量（不向用户开放配置）**计算有效输入预算 B。按 window 先留最近 N 条、超 B 再逐条裁最旧叙事；summary 按 N 或超 B 摘要，最后校验包含所有系统节点/状态/世界书/工具定义的完整 Prompt。每次内容变化必须重新匹配关键词并构建。固定 Prompt+User 仍超 B 则抛 CONTEXT_BUDGET_EXCEEDED，**不得在匹配后静默裁剪**。
+**每次调用只构建一遍非历史 Prompt。压缩只修改历史 messages，绝不因为关键词消失重新筛选 lorebook/角色/状态根，也不重新运行 NodeBuilder/TextRenderer。** 允许已命中的条目在压缩后的消息里找不到原关键词，这是明确接受的近似行为。
 
-在内部可先独立加载 State 再压缩摘要（摘要 Prompt 需要 State）；但最终 Context 和世界书命中必须使用同一份固定的叙事消息集合，状态读取不受压缩影响。
+1. **加载 Session 元数据**：取得 `world_id`、`preset_id`、`user_character_id`、`tip_entry_id`，确定本次父链与用户输入。
+2. **查询历史消息**：先沿选定 tip 的 `parent_id` 限制当前世界线，再查询 `entries.type=message AND role IN ('user','assistant')` 的历史候选。通过统一 NarrativeProjection 剔除 Assistant content 内的 toolCall、thinking/reasoning、内联状态指令；`toolResult` 不读入叙事。Window 先只选最近 N 条；Summary 使用最近 Summary + 未覆盖的原文候选。历史 Raw Entries 不受裁剪影响。
+3. **加载配置并构建一次 Prompt**：用 `WorldService.getWorld`、`PresetService.getPreset`、`ProviderService.resolveModel` 和独立读取的最新完整 State。按预设 nodes[] 顺序，只执行**一次**条目筛选、keyword/when 判断、before/body/after 编排和 TextRenderer 展开。关键词扫描范围固定为**第 2 步所选候选叙事消息 + 当前 UserInput**；`when` 固定读取完整 State。得到冻结的非历史节点内容及 chatHistory/userInput 的位置。
+4. **组装候选 Context 并检查预算**：把第 3 步冻结的节点、候选历史和 UserInput 按 nodes[] 实际顺序合成 ModelMessage[]（不是简单强制把所有 Prompt 放最前），连同工具定义统计 Token。预算 `B = min(Preset 上限（若配置）, Model.contextWindow) - max_output_tokens - 内部固定估算余量`。
+5. **按策略只压缩历史消息**：Window 的 N 条先行限制已在第 2 步生效，仅当候选 Context 超 B 时从最旧历史开始裁剪；Summary 在未覆盖历史条数达到 N **或**候选 Context 超 B 时摘要较老历史并保留最近 K 条。可继续缩短/摘要 messages 直到满足预算，但**不能重新匹配关键词、重新选择节点、重新渲染变量或压缩当前 UserInput、State、固定 Prompt**。摘要 Prompt 只引用全量 State，其输入仅为历史叙事；摘要结果只先暂存。
+6. **组装最终 Context 并校验**：在已冻结的 Prompt 节点序列的 chatHistory 位置替换为裁剪后的消息，或「最新 Summary + 最近原文」，不动其余节点和 UserInput，再核验完整输入 Token `<=B`。若历史清空/摘要仍无法容纳固定 Prompt、当前 User 和工具定义，则返回 `CONTEXT_BUDGET_EXCEEDED`，不调用模型。预算通过后由 Runtime 先持久化有效 Summary（如有），再写本轮 User，执行 Pi。
+
+**单轮结果**：`frozenPrompt + trimmedMessages + userInput` 或 `frozenPrompt + summary + recentMessages + userInput`，这里是逻辑组成，并非改变 Preset 节点顺序。下一轮重新从当前历史/状态加载并正常匹配条目；仅**当前这一轮**允许压缩后的关键词命中与最终消息不完全一致。
+
+## 2.1. 为什么允许一次匹配后的过期命中
+
+假设候选历史中有“魔王”，触发了 lorebook 的魔王设定。压缩后最早的“魔王”消息被裁掉，**本轮仍保留已加载的魔王条目**。无需再次构建 Prompt，代价是少量无关 Prompt Token。只要完整 Context 最终不超预算，就认为合法；如果固定 Prompt 本身超预算，直接失败而不是删除世界书条目。这是产品明确选定的简化规则。
 
 ## 3. NodeBuilder 保持可扩展
 
@@ -91,4 +94,4 @@ packages/core/src/
 
 此前 Mock PoC 已证实某些 OpenAI-compatible 模型协议可能重排后置 system；Pi prompt(text) 也可能自动追加 User。执行层必须核查最终 HTTP role/order 和消息去重，不能把示例函数签名当 Pi 原生 API。
 
-验收：所有 Agent Message（含 ToolCall/ToolResult）都写 Entry 并归属 run_id；三个读取场景复用 NarrativeProjection；window/summary 与 Token 裁剪后的关键词扫描和真实历史一致；完整 State 独立；when 与 keyword AND；角色/世界书 order 正确；每轮输出有序 ModelMessage[]，不二次插入当前 User。
+验收：所有 Agent Message（含 ToolCall/ToolResult）都写 Entry 并归属 run_id；NarrativeProjection 统一清理工具和思维块；每轮 Prompt 节点构建恰好一次，压缩 messages 不重新匹配关键词/状态条件或重渲染模板；最终完整 Context Token 校验通过；完整 State 独立；角色/世界书 order 正确，当前 User 恰好一次。

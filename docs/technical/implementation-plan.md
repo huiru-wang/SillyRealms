@@ -14,7 +14,7 @@
 | Preset/Provider | 预设模型/参数、Token 预算、摘要模板和七系统 NodeBuilder；Provider 提供模型 contextWindow 与 API Key |
 | Context | **window（默认）/summary；无 none**。window 先最近 N 条，超 Token 预算再删最老历史；summary 由 N 或超 Token 提前触发 |
 | 三份视图 | Raw History 全量、Narrative Context 仅 user/assistant 叙事、Current State 独立完整快照 |
-| lorebook/状态 | 仅 always/on_mention，可选 when(fullState)；关键词只匹配最终 Narrative Context + 当前 User |
+| lorebook/状态 | 仅 always/on_mention，可选 when(fullState)；关键词只匹配压缩前候选 Narrative Context + 当前 User，压缩后不重匹配 |
 | State | 带 reason 的变更；最终 Assistant 附全量状态；最新世界卡 Schema 不兼容时允许重置 |
 | SQLite | 六表 worlds/presets/provider_credentials/tags/sessions/entries，无其它 Run/ToolCall 表 |
 
@@ -39,10 +39,10 @@
 
 - [ ] C1. WorldCard 只有 window/summary，默认 window；max_messages=N，keep_recent_messages=K（summary 使用），禁止 none。
 - [ ] C2. Preset budget 仅 max_context_tokens? / max_output_tokens。有效 B = min(预设最大值（可选）, Provider.contextWindow) - 输出 - 内部固定 Token 估算余量（首期 1024，不暴露用户）；计算包含整个 Prompt 与工具定义，预算非法/未知明确失败。
-- [ ] C3. Window：先最近 N 条 user/assistant 叙事，若最终 Prompt 超 B，从最早消息逐条移除、**重新匹配 lorebook/重建 Prompt**，直到能发送；固定 Prompt+User 仍超限则明确错误。
+- [ ] C3. Window：先最近 N 条 user/assistant 叙事，若完整候选 Context 超 B，从最早消息逐条移除，**仅替换历史消息，不重匹配 lorebook/重建 Prompt**，直到能发送；固定 Prompt+User 仍超限则明确错误。
 - [ ] C4. Summary：**N 阈值或超 B 双触发**，优先保留 K 条近期原文；无法一次总结时按顺序分批滚动，生成完重新预算检查；不可漏总结而静默丢尾部。
 - [ ] C5. Summary 作为 custom/sillyrealms.summary Entry，记录 coveredThroughEntryId、生成调用记录；**摘要在 User 入库前完成**，两者使用本轮同一 run_id，逻辑历史为「最新 Summary + 未覆盖叙事 + 当前 User」。
-- [ ] C6. AgentContext 独立读取全量 Raw 父链与最新有效 State，使用最终固定的叙事集合匹配 lorebook/角色/状态根；关键词与 when(fullState) AND。
+- [ ] C6. AgentContext 独立读取全量 Raw 父链与最新有效 State，使用压缩前候选叙事集合一次性匹配 lorebook/角色/状态根；关键词与 when(fullState) AND。
 - [ ] C7. 七系统 NodeBuilder 和自定义文本节点有序执行，TextRenderer 只渲染模板片段，历史/用户原话不二次执行；完成 ModelMessage[] Token 校验。
 - [ ] C8. AgentRuntime 正常持久化所有 Pi 完整消息及技术 Entry；下一次模型历史不重放旧工具消息。
 - [ ] C9. StateEngine 对带 reason 的变更做校验，在成功 Assistant 上附完整状态；终止 submit_turn 只有 narrative 时补规范化 Assistant Entry，不丢原始工具调用结果。
@@ -53,7 +53,7 @@
 - [ ] D2. Preset 模型与**仅两个字段**的 Token 预算 UI、状态模式、摘要 Prompt、七节点/自定义节点编排；Provider API Key 独立设置。
 - [ ] D3. Session 历史请求使用 **Run 游标**，UI 消息投影只展示 user/assistant 叙事，原始 ToolCall/ToolResult 仅开发者调试可查；Root/Fork-only 按用户 Run 计数。
 - [ ] D4. State 展示完整状态与 reason；当前 Schema 不兼容时允许重置。
-- [ ] D5. Context Preview 必须展示策略、最终叙事条数、Token 预算 B、实际估算、被裁历史条数、Summary 覆盖范围和最终 lorebook 命中；防止预览与真实模型 Prompt 不一致。
+- [ ] D5. Context Preview 必须展示策略、最终叙事条数、Token 预算 B、实际估算、被裁历史条数、Summary 覆盖范围和最终 lorebook 命中；预览展示冻结 Prompt、压缩前候选命中和压缩后最终历史，保持与真实请求一致。
 - [ ] D6. [领域 API](../design/domain-interfaces.md) 按真实用户操作定义：World 详情一接口包含开局/角色、Session 公开接口按业务收敛、Provider 列表包含配置状态、Preset 只用 getPreset、不暴露 snapshot/restoreDefault。
 
 ## 5. 验收
@@ -61,7 +61,7 @@
 - [ ] E1. SQLite 六表可建；四类 Entry type、run_id、role、sub_type 约束和索引正确，世界删除级联关联 Session/Entries；所有 Pi Message 原始内容可还原。
 - [ ] E2. 连续多次运行含 ToolCall/ToolResult 时，limit=10 精确计 10 个 Run、不拆 Run；跨分支相同 run_id 只查当前祖先。
 - [ ] E3. Summary 物理附在本轮 User 之前，逻辑前置到历史，coveredThroughEntryId 准确；失败不写未验证的摘要。
-- [ ] E4. Window 超 Token 时裁历史并重匹配；Summary N/Token 双触发；系统 + User 超限明确失败，不静默更改策略或截断用户输入。
+- [ ] E4. Window 超 Token 时只裁剪历史、不重匹配；Summary N/Token 双触发；系统 + User 超限明确失败，不静默更改策略或截断用户输入。
 - [ ] E5. Current State 独立、Schema 可重置；关键词扫描与真实历史同源、when 读全量 State；role/order、Pi 请求中当前 User 仅一份。
 - [ ] E6. 世界卡和预设 JSON 示例、Markdown 内部链接、SQLite DDL、级联世界删除与角色/子类型约束、端到端分支/分页测试通过。
 

@@ -9,7 +9,7 @@
 - `summary_prompt`：用户可编辑的摘要指令模板，世界卡设置 `context.strategy=summary` 且未覆盖消息达到 N **或完整 Prompt Token 超预算**时使用。通过 TextRenderer 读取当前完整状态变量，实际摘要只包含叙事。
 - `nodes[]`：七个系统节点与任意自定义文本节点，单个有序数组决定角色、启停、先后顺序，不额外保存 order 列。
 - `budget`：`max_context_tokens?`、`max_output_tokens`；与 Provider.contextWindow 取小值，再扣除输出和内部固定 Token 估算余量（非用户设置），得到**完整 Prompt 输入预算 B**。由 AgentContext 按世界卡 window/summary 策略执行裁剪或摘要；详见 [Context Strategy](context-strategy.md)。
-- **不保存 `scan_depth_entries`**：所有 lorebook、状态根和角色的关键词匹配范围就是经过世界卡 Context 策略处理的**当前实际叙事历史 + 当前 User**。
+- **不保存 `scan_depth_entries`**：所有 lorebook、状态根和角色只对**本轮压缩前候选历史 + 当前 User**执行一次关键词匹配（Window 已先限制最近 N 条）；后续压缩 messages 不重匹配。
 
 默认持久化 `builtin/default` 预设可编辑但不可删除；允许复制、新建、导入和导出，但**不提供独立恢复默认接口**。配置变更从旧 Session 下一轮开始立即生效，不回写已保存 Entry。
 

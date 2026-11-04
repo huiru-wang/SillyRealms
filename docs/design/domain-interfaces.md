@@ -94,7 +94,7 @@
 | --- | --- |
 | `buildInitialState(world, opening)` | 创建 Session 时合并世界卡初值与 Opening 覆盖，经 Schema 校验得到 S0 |
 | `getCurrentState(sessionId, tipEntryId, world)` | 状态栏和 AgentContext 沿当前 Raw 父链读取最近有效完整状态；与窗口/摘要无关，旧 Schema 不兼容可重置 |
-| `buildStatePrompt(world, narrative, fullState)` | 按最终叙事关键词与 when(fullState) 选中状态根，生成 worldState Prompt 和本轮工具可操作范围 |
+| `buildStatePrompt(world, narrative, fullState)` | 按压缩前候选叙事关键词与 when(fullState) **一次性**选中状态根，生成 worldState Prompt 和本轮工具可操作范围；随后压缩历史不重算 |
 | `finalizeTurnState(world, previousState, toolOrInlineChanges)` | 解析、校验并应用本轮状态变更，生成带 reason 的 ChangeSet 与完整 S'，交给最终 Assistant Entry 持久化 |
 
 `selectActiveModules`、`parseStateChanges`、`validateStateChanges`、`applyStateChanges`、`serializeStateForPrompt` 都是以上 Service 方法调用的内部纯函数，仍可分别单测，但不作为对外 API。
@@ -104,7 +104,7 @@
 | 接口 | 产品链路 / 服务职责 |
 | --- | --- |
 | `AgentContext.create({sessionId,parentEntryId,userInput})` | 每轮加载当前 Session、World、Preset、Raw 祖先和 State，确定 window/summary 与 lorebook 命中 |
-| `AgentContext.buildMessages()` | 按预设编排、叙事历史与当前 User 产生 ModelMessage[]，检查**完整 Prompt + 输出预留 + 内部误差余量**不超过模型上限 |
+| `AgentContext.buildMessages()` | 按预设一次构建 Prompt 并将候选历史、当前 User 组装成 ModelMessage[]；压缩仅替换历史位置，最后校验完整 Token 预算 |
 | `AgentRuntime.run({sessionId,userInput?,continuation?})` | 普通发送/分叉后回复/重生成/续写的统一执行入口：Run 协调、Pi Agent 调用、每条完整 Raw Entry 落库、SSE、最终状态结算 |
 | `AgentRuntime.stop(sessionId)` | 用户点击停止，取消在途生成并保留已完成 Entry，恢复可续聊状态 |
 

@@ -37,12 +37,12 @@ WorldCard `data.context` 只支持 `window`（默认）和 `summary`，**不允�
 
 | 策略 | 基本流程 |
 | --- | --- |
-| `window`（默认） | 先最多保留最近 N 条 user/assistant 叙事，再检查**完整 Prompt** 的 Token；超预算就从最早历史消息逐条裁剪并重新匹配 lorebook，直到能发送或明确报错 |
+| `window`（默认） | 先最多保留最近 N 条 user/assistant 叙事，构建一次 Prompt 并检查完整 Context Token；超预算只裁剪旧 messages，不重新匹配 lorebook，直到满足预算或明确报错 |
 | `summary` | 未覆盖消息达到 N 条**或**完整 Prompt 提前超预算时先摘要旧内容，优先保留最近 K 条原文；生成后重新校验 Token，不允许丢弃未摘要的消息 |
 
 有效输入预算 = `min(预设 max_context_tokens（若有）, Provider.contextWindow) - max_output_tokens - 内部固定 Token 估算余量`；**用户只配置 max_context_tokens / max_output_tokens**。系统 Prompt、角色、世界书、状态、当前 User 和工具定义都要计入，当前 User 不能裁掉。摘要 Prompt 可读取**完整状态**；摘要作为 `custom + sub_type=sillyrealms.summary` 技术 Entry 保存覆盖边界与完整摘要请求/回复，原始消息不删除。
 
-**三个概念不能混淆**：Raw History 是全部消息和分支；Narrative Context 是当前真正输入模型的 user/assistant 叙事；State 是独立的当前分支完整快照。关键词只扫描 Narrative Context + 当前 User；when 始终读取完整 State。
+**三个概念不能混淆**：Raw History 是全部消息和分支；Narrative Context 是叙事消息候选及其压缩结果；State 是独立的当前分支完整快照。**关键词扫描压缩前的候选叙事 + 当前 User，Prompt 只构建一次；压缩导致关键词消失也不重匹配。**when 始终读取完整 State。
 
 ## 5. 工具消息与显示
 

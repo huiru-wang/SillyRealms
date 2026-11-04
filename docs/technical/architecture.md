@@ -93,12 +93,16 @@ flowchart TD
   Raw --> Projection[NarrativeProjection: user/assistant 叙事]
   Ctx --> State[独立完整 State]
   Ctx --> Config[WorldCard 策略 + Preset 预算 + Provider 上限]
-  Projection --> Budget[Window / Summary + 完整 Prompt Token 预检查]
+  Projection --> Match[lorebook / 状态根候选关键词 + when]
+  State --> Match
+  Config --> Match
+  Match --> Nodes[仅一次：七 NodeBuilder + TextRenderer]
+  Nodes --> Frozen[冻结 Prompt 节点 + 历史消息槽位]
+  Frozen --> Budget[组装候选 Context + 完整 Token 判断]
+  Projection --> Budget
   Config --> Budget
-  State --> Match[lorebook / 状态根关键词 + when]
-  Budget --> Match
-  Match --> Nodes[七 NodeBuilder + TextRenderer]
-  Nodes --> Messages[ModelMessage[]]
+  Budget --> Compress[按需仅裁剪或摘要历史 messages，保留冻结 Prompt]
+  Compress --> Messages[最终 ModelMessage + Token 复查]
   Messages --> Pi[Pi Executor]
   Pi --> EntryWrites[Message / ToolResult / 技术 Entry 全量入库]
   EntryWrites --> Sess
@@ -117,8 +121,8 @@ flowchart TD
 
 1. 取得 Session 的 world_id/preset_id/user_character_id/tip_entry_id，加载最新世界卡、预设、Provider Model；取原 tip 的完整真实父链与 State。此时**尚未写本轮 User**。
 2. 计算有效预算 `B = min(Preset.max_context_tokens（若设置）, Model.contextWindow) - max_output_tokens - TOKEN_ESTIMATION_GUARD`；内部 Guard 首期固定 1024 Token，**用户只设置 max_context_tokens / max_output_tokens**。窗口由 WorldCard 选择：默认 window、可选 summary，不支持 none。
-3. Window 先选最近 N 条叙事；在最终完整 Prompt（含角色、世界书、状态、当前 User 和工具定义）超 B 时逐条删除最老历史并**重做关键词匹配**。Summary 在未覆盖消息达到 N 或 Token 预算提前溢出时生成，优先保留 K 条原文，生成后再做完整预算校验。任何策略都不能裁掉当前 User 或重要固定 Prompt；仍超限时显式失败。
-4. 确认本轮最终叙事集合、世界书命中与有序 NodeBuilder 后，若生成摘要则先得到完整摘要请求/回复，**在写入本轮 User 之前**将摘要 Custom Entry 与 User 依次写入父链，两者共用新 run_id；无摘要直接写 User。
+3. Window 先限制最近 N 条候选叙事，再根据候选消息 + 当前 User + 完整 State **仅一次**匹配 lorebook/角色/状态、执行 NodeBuilder 和模板展开，冻结 Prompt。组装候选完整 Context 检查 Token。若超 B，Window 只裁最旧 messages；Summary 在未覆盖消息达到 N 或超 B 时摘要旧 messages、保留 K 条原文。**不重做关键词匹配或构建 Prompt**，只替换历史 messages 并复核最终 Token；仍超限时显式失败，不裁当前 User 或固定 Prompt。
+4. 确认本轮最终消息集合并沿用冻结的世界书命中与 NodeBuilder 结果后，若生成摘要则先得到完整摘要请求/回复，**在写入本轮 User 之前**将摘要 Custom Entry 与 User 依次写入父链，两者共用新 run_id；无摘要直接写 User。
 5. 调用 Pi；Assistant 可能含 ToolCall，ToolResult 作为独立 Message Entry；Pi 其它技术 Entry 也原样保存。已成型消息全部按真实顺序归属本轮 run_id，SSE delta 本身不作为完成 Entry。
 6. StateService 验证带 reason 的 ChangeSet，完成 Assistant 上记录全量 S'。终止工具 `submit_turn` 若只返回 narrative，在保留原始 ToolCall/ToolResult 的基础上新增 `origin=derived_tool_narrative` 的可见 Assistant Entry，防止叙事丢失和重复。
 7. 下次 Pi 请求只恢复 NarrativeProjection 后的历史，旧 ToolCall/ToolResult 只存在 Raw History；状态从全量父链独立恢复。
