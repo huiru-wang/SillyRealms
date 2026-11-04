@@ -17,9 +17,9 @@
 | Provider | 查询 Pi 内置模型；用户配置、测试、删除 API Key，模型可用性校验 |
 | Tags | `id/type/name/sort_order`，同一 type 内排序，世界卡引用标签 ID |
 | Session | `world_id/preset_id/user_character_id/tip_entry_id`，不存 World 快照、Opening ID 或模型/Options 冗余；`sessions` 无 role 字段 |
-| Entry | 一条 Pi Agent 消息或技术记录，`run_id` 分组按 Run 分页、`parent_id` 构成世界分叉；`role` 方便 user/assistant/toolResult SQL 查询，`sub_type` 区分 custom，`type` 保留 Pi 四类 |
+| Entry | 一条 Pi Agent 消息或技术记录，`run_id` 分组按 Run 分页、`parent_id` 构成世界分叉；`role` 方便 user/assistant/toolResult SQL 查询，`type` 为 message/compaction/branch_summary，state 和 ext_data 独立存储 |
 | Narrative Context | 将 Raw Entries 统一投影成仅 user/assistant **叙事文本**；供 UI、模型历史和关键词扫描 |
-| State | 独立沿当前原始父链恢复最近有效全量状态；StateChange 必须提供非空 reason |
+| State | Global 归属世界卡跨会话、Session 归属会话、Message 沿当前父链；状态持久化，脚本局部/Run 变量临时 |
 | AgentContext | 单轮构建器：当前 WorldCard/Preset、叙事策略、全量 State、lorebook/状态筛选、NodeBuilder → ModelMessage[] |
 | Shared TextRenderer | 变量、条件、状态引用、受限文本变换，供 Agent/摘要 Prompt/世界卡预览/未来状态栏复用 |
 
@@ -40,9 +40,9 @@ WorldCard `data.context` 只支持 `window`（默认）和 `summary`，**不允�
 | `window`（默认） | 先最多保留最近 N 条 user/assistant 叙事，构建一次 Prompt 并检查完整 Context Token；超预算只裁剪旧 messages，不重新匹配 lorebook，直到满足预算或明确报错 |
 | `summary` | 未覆盖消息达到 N 条**或**完整 Prompt 提前超预算时先摘要旧内容，优先保留最近 K 条原文；生成后重新校验 Token，不允许丢弃未摘要的消息 |
 
-有效输入预算 = `min(预设 max_context_tokens（若有）, Provider.contextWindow) - max_output_tokens - 内部固定 Token 估算余量`；**用户只配置 max_context_tokens / max_output_tokens**。系统 Prompt、角色、世界书、状态、当前 User 和工具定义都要计入，当前 User 不能裁掉。摘要 Prompt 可读取**完整状态**；摘要作为 `custom + sub_type=sillyrealms.summary` 技术 Entry 保存覆盖边界与完整摘要请求/回复，原始消息不删除。
+有效输入预算 = `min(预设 max_context_tokens（若有）, Provider.contextWindow) - max_output_tokens - 内部固定 Token 估算余量`；**用户只配置 max_context_tokens / max_output_tokens**。系统 Prompt、角色、世界书、状态、当前 User 和工具定义都要计入，当前 User 不能裁掉。摘要 Prompt 可读取**完整状态**；摘要作为 `compaction` 技术 Entry（通过 `ext_data.summary` 标记） 保存覆盖边界与完整摘要请求/回复，原始消息不删除。
 
-**三个概念不能混淆**：Raw History 是全部消息和分支；Narrative Context 是叙事消息候选及其压缩结果；State 是独立的当前分支完整快照。**关键词扫描压缩前的候选叙事 + 当前 User，Prompt 只构建一次；压缩导致关键词消失也不重匹配。**when 始终读取完整 State。
+**三个概念不能混淆**：Raw History 是全部消息和分支；Narrative Context 是叙事消息候选及其压缩结果；State 是独立的 Global、Session 和当前分支 Message 状态。**关键词扫描压缩前的候选叙事 + 当前 User，Prompt 只构建一次；压缩导致关键词消失也不重匹配。**所有 when 在 Prompt 脚本前读取初始完整 State；worldState 本体在全部 Prompt 脚本完成后读取工作状态并填回原位置。
 
 ## 5. 工具消息与显示
 
@@ -56,6 +56,6 @@ WorldCard `data.context` 只支持 `window`（默认）和 `summary`，**不允�
 
 SQLite 只保留六张业务表：`worlds/presets/provider_credentials/tags/sessions/entries`。Entry 每条消息一行，但必须有 `run_id` 以便按 Run 分页；无需独立 Run、Message、ToolCall、WorldTag 或 AppSettings 表。
 
-Monorepo 首期完成 H5、Server、六表数据库、Provider API Key、世界卡、预设、状态、两策略 Context、消息级分叉、Root/Fork 世界线与状态栏。暂不做 Android、Desktop、云端同步、多用户协作、来源任意 JS/EJS 执行和复杂分布式并发。
+Monorepo 首期完成 H5、Server、六表数据库、Provider API Key、世界卡、预设、状态、两策略 Context、消息级分叉、Root/Fork 世界线与状态栏。暂不做 Android、Desktop、云端同步、多用户协作、无隔离直接执行来源 JS/EJS和复杂分布式并发。
 
 详见 [WorldCard](design/world-card.md)、[Preset](design/preset.md)、[Session](design/session.md)、[Context Strategy](design/context-strategy.md)、[AgentContext](design/agent-context.md)、[State](design/state.md)、[Storage](technical/storage.md)、[架构](technical/architecture.md)、[实施计划](technical/implementation-plan.md)。

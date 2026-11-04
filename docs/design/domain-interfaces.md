@@ -93,9 +93,9 @@
 | 接口 | 产品链路 / 服务职责 |
 | --- | --- |
 | `buildInitialState(world, opening)` | 创建 Session 时合并世界卡初值与 Opening 覆盖，经 Schema 校验得到 S0 |
-| `getCurrentState(sessionId, tipEntryId, world)` | 状态栏和 AgentContext 沿当前 Raw 父链读取最近有效完整状态；与窗口/摘要无关，旧 Schema 不兼容可重置 |
-| `buildStatePrompt(world, narrative, fullState)` | 按压缩前候选叙事关键词与 when(fullState) **一次性**选中状态根，生成 worldState Prompt 和本轮工具可操作范围；随后压缩历史不重算 |
-| `finalizeTurnState(world, previousState, toolOrInlineChanges)` | 解析、校验并应用本轮状态变更，生成带 reason 的 ChangeSet 与完整 S'，交给最终 Assistant Entry 持久化 |
+| `getCurrentState(sessionId, tipEntryId, world)` | 状态栏和 AgentContext 读取世界卡 Global、会话 Session、沿当前 Raw 父链读取 Message 状态；与窗口/摘要无关，旧 Schema 不兼容可重置 |
+| `buildStatePrompt(world, narrative, fullState)` | 按压缩前候选叙事和初始状态上的 when 一次选中状态根；全部普通 Prompt 脚本后读取工作状态生成 worldState，模型工具仅允许已激活 Message 状态根；压缩历史不重算 |
+| `finalizeTurnState(world, previousState, toolOrInlineChanges)` | 解析、校验并应用本轮状态变更，按作用域校验带 reason 的 ChangeSet，原子提交 Global/Session 状态及最终 Assistant Entry 的完整 Message 状态 |
 
 `selectActiveModules`、`parseStateChanges`、`validateStateChanges`、`applyStateChanges`、`serializeStateForPrompt` 都是以上 Service 方法调用的内部纯函数，仍可分别单测，但不作为对外 API。
 
@@ -114,7 +114,7 @@
 
 - 世界卡和预设**没有持久 Session Snapshot**。每轮开始读取最新值并在本轮内固定使用；编辑仅影响之后的运行。
 - `sessions` 不需要 `role`；`entries.role` 仅当 `type=message` 时记录 `user/assistant/toolResult`，技术 Entry 为 NULL。可直接按角色筛选后，再限制到**当前 tip 祖先链**。NarrativeProjection 仍过滤 Assistant 内 toolCall/thinking。
-- Pi Entry 的 `type` 保持 `message/compaction/branch_summary/custom`，产品特有的 Custom 子类型写 `entries.sub_type`，适配 SDK 时映射为 `customType`。Window 不写摘要；Summary 是应用控制的 `custom + sub_type=sillyrealms.summary`，与 Fanto 使用 Pi 原生 Compaction 不混淆。
+- Entry 的 `type` 限定为 `message/compaction/branch_summary`，不保存 custom 或 sub_type；应用 Summary 使用 compaction 原生 payload，并通过 `ext_data.summary` 保存标记与覆盖范围，不等同调用 Pi 原生压缩。
 - 世界卡删除会级联其全部 Session 和 Raw Entries（包含所有 Run、分支、技术摘要、嵌入的 State）。仅清理该世界/会话**独占**文件，不删除全局 Provider 密钥、Preset、标签或被其它世界使用的共享文件；必须有故障恢复的资源清理机制。
 - UI 只需配置 `max_context_tokens` 与 `max_output_tokens`。Provider 的 `contextWindow/maxTokens` 为硬上限；Token 估算安全余量属于内部固定策略，不进入 JSON、API 或前端表单。
 

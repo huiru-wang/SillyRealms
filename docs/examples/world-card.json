@@ -284,67 +284,71 @@
     },
     "state": {
       "schema_version": 1,
-      "modules": {
-        "世界": {
-          "type": "object",
-          "load": {
-            "mode": "always"
-          },
-          "properties": {
-            "当前时段": {
-              "type": "enum",
-              "values": [
-                "未明确",
-                "白天",
-                "夜晚"
-              ],
-              "initial": "未明确",
-              "description": "仅当剧情确实推进时间时更新"
-            },
-            "已知线索": {
-              "type": "json",
-              "initial": {},
-              "description": "键为线索 ID，仅记录剧情中真实发现的信息；变化时整体更新"
-            }
-          }
-        },
-        "清月": {
-          "type": "object",
-          "load": {
-            "mode": "on_mention",
-            "keywords": [
-              "清月",
-              "师尊"
-            ]
-          },
-          "properties": {
-            "心情": {
-              "type": "string",
-              "initial": "平静",
-              "description": "根据已经发生的互动判断"
-            },
-            "灵力": {
-              "type": "integer",
-              "min": 0,
-              "max": 100,
-              "initial": 100,
-              "description": "实际施法消耗、休息恢复"
-            },
-            "身体": {
+      "scopes": {
+        "message": {
+          "modules": {
+            "世界": {
               "type": "object",
+              "load": {
+                "mode": "always"
+              },
               "properties": {
-                "伤势": {
-                  "type": "string",
-                  "nullable": true,
-                  "initial": null,
-                  "description": "无伤时为 null"
+                "当前时段": {
+                  "type": "enum",
+                  "values": [
+                    "未明确",
+                    "白天",
+                    "夜晚"
+                  ],
+                  "initial": "未明确",
+                  "description": "仅当剧情确实推进时间时更新"
+                },
+                "已知线索": {
+                  "type": "json",
+                  "initial": {},
+                  "description": "键为线索 ID，仅记录剧情中真实发现的信息；变化时整体更新"
                 }
               }
             },
-            "随身物品": {
-              "type": "json",
-              "initial": {},
-              "description": "键为物品 ID，物品变化时整体更新"
+            "清月": {
+              "type": "object",
+              "load": {
+                "mode": "on_mention",
+                "keywords": [
+                  "清月",
+                  "师尊"
+                ]
+              },
+              "properties": {
+                "心情": {
+                  "type": "string",
+                  "initial": "平静",
+                  "description": "根据已经发生的互动判断"
+                },
+                "灵力": {
+                  "type": "integer",
+                  "min": 0,
+                  "max": 100,
+                  "initial": 100,
+                  "description": "实际施法消耗、休息恢复"
+                },
+                "身体": {
+                  "type": "object",
+                  "properties": {
+                    "伤势": {
+                      "type": "string",
+                      "nullable": true,
+                      "initial": null,
+                      "description": "无伤时为 null"
+                    }
+                  }
+                },
+                "随身物品": {
+                  "type": "json",
+                  "initial": {},
+                  "description": "键为物品 ID，物品变化时整体更新"
+                }
+              }
             }
           }
         }

@@ -12,11 +12,12 @@ type Session = {
   userCharacterId: string;
   tipEntryId: string | null;          // 当前选中的真实分支末尾
   title?: string;
+  state: Record<string, unknown>;     // Session 级持久状态，所有分支共享
   createdAt: number;
   updatedAt: number;
 };
 
-type EntryType = "message" | "compaction" | "branch_summary" | "custom";
+type EntryType = "message" | "compaction" | "branch_summary";
 
 type Entry = {
   id: string;
@@ -26,34 +27,29 @@ type Entry = {
   seq: number;                         // Session 内全局写入顺序，不代表祖先关系
   type: EntryType;
   role?: "user" | "assistant" | "toolResult"; // 仅 type=message；同步 payload.message.role
-  subType?: string;                    // 仅 type=custom；映射 Pi CustomEntry.customType
   timestamp: number;
-  payload: unknown;                    // 按 type 校验的 Pi Entry/本地扩展 payload
+  payload: unknown;                    // Fanto 风格的 Pi 原生内容字段
+  state: Array<{key: string; value: unknown}> | null; // 单份完整状态；null 沿父链读取
+  extData: Record<string, unknown>;    // 对应 ext_data，应用扩展元数据
 };
 
 type AgentMessagePayload = {
-  message: PiMessage;                  // role=user/assistant/toolResult，原样保存
-  stateSnapshot?: StateSnapshot;       // 仅有效最终 Assistant
-  stateChanges?: StateChange[];        // 每项必须有 reason
-  stateReset?: boolean;
-  origin?: "pi" | "derived_tool_narrative";
+  message: PiMessage;                  // 原样保存
+  terminate?: unknown;                 // 仅 SDK 提供时保存
 };
 
-type SillyRealmsSummaryPayload = {
-  summary: string;                     // 自定义 type=custom/subType=sillyrealms.summary
-  coveredThroughEntryId: string;       // 最后被摘要覆盖的原始叙事 Entry
-  generation: Array<{
-    requestMessages: PiMessage[];
-    responseMessages: PiMessage[];
-  }>;                                  // 支持大文本分批滚动摘要
+type SummaryExtension = {              // type=compaction，位于 extData.summary
+  kind: "sillyrealms.summary";
+  coveredThroughEntryId: string;
+  generation: Array<{requestMessages: PiMessage[]; responseMessages: PiMessage[]}>;
 };
 ~~~
 
-- **Entry.type 的合法值明确只有四种**：`message`、`compaction`、`branch_summary`、`custom`。这是对齐 Fanto 所用 Pi Session Entry 的四类，不把消息 role 误写成 Entry type。
-- `message` 的 `role` 同步冗余 `payload.message.role`，合法值为 `user`、`assistant`、`toolResult`；非 message 必须为 NULL。如此 SQL 可按 `type=message AND role IN ('user','assistant')` 快速找到叙事候选。**必须先限制当前世界线的祖先链**，不能把其它分支的消息混进来。Assistant 的 ToolCall 是其 `content[]` 块，不是新的 Entry type，也不额外建 ToolCall 表。
-- `compaction`：Pi 原生上下文压缩技术 Entry；`branch_summary`：Pi 原生分叉摘要技术 Entry；MVP 不主动调用 Pi 自带的压缩流程，但若 SDK 产生须完整保存，不作为聊天正文。
-- `custom`：必须带 `sub_type`，用来保存本产品内部事件。该数据库字段在 Pi SDK 编解码边界映射为 SDK 的 `customType`，不能直接改动 SDK 的 Entry 结构。**WorldCard Summary 策略生成的摘要是 `type=custom, sub_type=sillyrealms.summary`**，payload 记录摘要、覆盖边界和全部摘要调用记录；不新增名为 summary 的 Entry type，也不冒充 Pi 原生 compaction。
-- Session 不持久化世界卡快照、opening_id、模型配置、options 或 runs[]。模型和摘要 Prompt 每轮从 Preset 读取；角色/状态定义读取当前 WorldCard。所有 Raw Entry 与模型叙事历史、完整 State 分离。
+- **Entry.type 仅三种**：`message`、`compaction`、`branch_summary`；无 `custom` 和 `sub_type`。SDK 若产生 custom，显式报不支持，不能悄悄丢弃。
+- `message` 的 `role` 冗余 `payload.message.role`，取 `user`、`assistant`、`toolResult`；非 message 为 NULL。先按当前父链查询，再按 role 过滤。
+- `compaction` 与 `branch_summary` 的 payload 保持 Fanto 的 Pi 原生字段。产品 Summary 以 compaction 表示，应用摘要标记、覆盖边界和生成记录写入 `ext_data.summary`；是否能被 SDK 恢复须 PoC，不等同已经调用 Pi 原生压缩流程。
+- `state` 是独立列，保存一份完整状态数组或 NULL，按当前父链找最近非 NULL 值；状态变更顺序应用到该父状态后写入成功 Assistant Entry。`ext_data` 保存应用扩展元数据，详见[存储](../technical/storage.md)。
+- Session 的 state 独立持久化，Global 在世界卡上；Session 不持久化世界卡快照、opening_id、模型配置、options 或 runs[]。模型和摘要 Prompt 每轮从 Preset 读取；角色/状态定义读取当前 WorldCard。所有 Raw Entry 与模型叙事历史、完整 State 分离。
 
 ## 2. Run 是逻辑互动单元，不是另一张表
 
@@ -90,9 +86,9 @@ run_opening: A0（Opening，S0）
 
 **普通发送**：从原 tip 读取 Raw 祖先、完整状态；运行 [Context Strategy](context-strategy.md) 并完成 Token 预检查；若须摘要，先在内存生成摘要并验证预算，然后在短事务中将 Summary（若有）与 User 以同一新 run_id 依次插入。Pi 形成的后续 Assistant/ToolResult Entry 按真实顺序落库，逐条更新 tip。
 
-**状态结算**：状态工具的候选变更不等于已提交状态。最终成功后在完成的 Assistant Entry 存完整 S' 和带 reason 的变更。如果 `submit_turn` 仅提供工具参数 narrative，须保留原 ToolCall/ToolResult，再添加来源标识 `derived_tool_narrative` 的规范化 Assistant Entry，避免正文丢失或重复。未结算变更不得标为有效快照。
+**状态结算**：状态工具的候选变更不等于已提交状态。Prompt 脚本先更新本轮三作用域工作状态，模型仅对 Message 工作状态应用部分变更；最终成功后原子提交 Global、Session 和最终 Assistant Entry 的完整 Message 状态，带 reason 的模型变更存 ext_data。如果 `submit_turn` 仅提供工具参数 narrative，须保留原 ToolCall/ToolResult，再添加来源标识 `derived_tool_narrative` 的规范化 Assistant Entry，避免正文丢失或重复。未结算变更不得标为有效状态。
 
-若世界卡更新导致历史快照不兼容，允许按当前 Schema 初值重置状态而不删除旧消息。若用户角色变成不可扮演，应先重新选择或在世界卡中新建角色。
+若世界卡更新导致历史状态不兼容，允许按当前 Schema 初值重置状态而不删除旧消息。若用户角色变成不可扮演，应先重新选择或在世界卡中新建角色。
 
 ## 4. 叙事投影和 UI
 
@@ -145,9 +141,9 @@ ORDER BY run_start_seq DESC LIMIT :limitPlusOne;
 ## 6. 世界线分叉
 
 - 普通继续：当前 tip 后新增下一个 Run 的 User；重新编辑历史 User：兄弟 User 新 Run；重新生成 Assistant：同 User 下新的 Assistant 子分支、共享逻辑 Run ID。
-- ToolResult/Custom/Pi Compaction 不算玩家决策节点；Root/Fork-only 图只显示根与可见分叉，折叠中间消息。
+- ToolResult/Pi Compaction 不算玩家决策节点；Root/Fork-only 图只显示根与可见分叉，折叠中间消息。
 - 世界线隐藏回合数量以**用户交互 Run** 计；Opening 可以作为根展示，但不算玩家回合。最多三条分叉等约束统计用户可见的决策分支，而不是物理 Entry 的子节点数。
-- 真实父链、State Snapshot 和摘要边界都随分支切换，不复制整个世界状态或历史。
+- 真实父链、State 和摘要边界都随分支切换，不复制整个世界状态或历史。
 
 ## 7. SessionService 只保留业务接口
 
@@ -173,7 +169,7 @@ ORDER BY run_start_seq DESC LIMIT :limitPlusOne;
 
 ## 8. 验收
 
-- Entry.type 四种合法值与 Pi 原生记录对应，Summary 用 sub_type 区分；message 的 role 与 payload 保持一致；所有 Pi 原始消息、ToolCall/ToolResult、技术 Entry 正常持久化。
+- Entry.type 三种合法值与 Pi 原生记录对应，Summary 用 ext_data 标记；message 的 role 与 payload 保持一致；所有 Pi 原始消息、ToolCall/ToolResult、技术 Entry 正常持久化。
 - 同 Run 的多条 Entry 在一页内一次性返回；limit=10 表示最多 10 个 Run，而非 10 条消息；游标不拆 Run，分支互不串读。
 - Summary 和当前 User 同 run_id；Opening 有自己的初始化 Run；Assistant 重生成保持同一逻辑 Run，历史 User 重选新开 Run。
 - UI/下轮模型/关键词一致采用叙事投影，完整 State 与历史存储不受 Token 压缩影响；Window 默认、Summary 可选，细节见 [Context Strategy](context-strategy.md)。

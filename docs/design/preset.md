@@ -20,14 +20,14 @@
 | `main` | 预设可编辑基础 Prompt | 可选 system/user/assistant | lorebook 不可挂钩 |
 | `personaInfo` | 当前世界卡玩家角色（当前 Session.user_character_id） | 可选 | 支持 lorebook before/after |
 | `characterInfo` | 其它命中的角色，按 order 升序 | 可选 | 支持 before/after；不重复玩家角色 |
-| `worldState` | 被激活的状态根的当前值/描述 | 可选 | 状态更新启用时需要；支持 before/after |
+| `worldState` | 被激活状态根的最新工作状态值/描述 | 可选 | 状态更新启用时需要；本体延迟生成并支持 before/after |
 | `chatHistory` | 当前 WorldCard 策略得到的 NarrativeProjection | 自动保留 user/assistant 角色 | 必需，无挂钩 |
 | `userInput` | 本轮 User 原文 | 固定 user | 必需且恰好出现一次；支持 before/after |
 | `postHistory` | 预设可编辑后置 Prompt | 可选 | 默认关闭 |
 
 每个系统节点有固定 `id/source/kind=system`，恰好出现一次，不能重命名 ID 或删除。自定义 `kind=text` 有独立 ID、名称、role、content、enabled，可以在系统节点之间任意拖动排序；不伪装系统 source。`chatHistory` 必须先于 `userInput`，必需节点不能关闭。系统节点本体关闭时，其 lorebook before/after 仍可按规则注入。
 
-**保留七个独立系统 NodeBuilder**，每个从 lorebook 的 `anchor/position/order` 索引取得 before 条目 → 拼自身正文 → 追加 after 条目。全部节点构建完后，统一让独立共享 TextRenderer 展开模板。历史消息和当前 User 作为 literal，不二次执行表达式。
+**保留七个独立系统 NodeBuilder**，每个从 lorebook 的 `anchor/position/order` 索引取得 before 条目 → 拼自身正文 → 追加 after 条目。条目激活使用独立 ContentActivation；按节点、before/body/after 和条目 order 依次执行模板。worldState 本体先占位，待所有普通 Prompt 脚本执行结束后只读最新工作状态生成并填回，before/after 按其原位置正常执行；TextTransform 按场景调用。历史消息和当前 User 作为 literal，不二次执行表达式。
 
 ## 3. 预设 JSON 示例
 
@@ -42,7 +42,7 @@
     "parameters": {"temperature": 0.8}
   },
   "state_update_mode": "inline",
-  "summary_prompt": "总结已有剧情、人物关系、重要事件、承诺和未解决线索。当前世界时间：{{state:/世界/当前时段}}。",
+  "summary_prompt": "总结已有剧情、人物关系、重要事件、承诺和未解决线索。当前世界时间：<%- getState('世界.当前时段', {scope:'message'}) %>。",
   "nodes": [
     {"id":"main","kind":"system","name":"主指令","source":"main","role":"system","enabled":true,"content":"遵循世界设定，连贯推进叙事。"},
     {"id":"personaInfo","kind":"system","name":"玩家角色","source":"personaInfo","role":"system","enabled":true},

@@ -12,7 +12,7 @@ SillyRealms/
 │   ├── android/                # 后续
 │   └── desktop/                # 后续
 ├── packages/
-│   ├── core/                   # WorldCard/State/Preset/共享 TextRenderer
+│   ├── core/                   # WorldCard/State/Preset/共享表达式、加载判断和文本处理
 │   └── shared/                 # 前后端 DTO、错误、事件
 └── docs/
 ~~~
@@ -29,9 +29,11 @@ SillyRealms/
 | TagService | 标签字典和 type 内排序 | world_tags 关联表 |
 | SessionService | 会话管理、按 run_id 的可见聊天分页、世界线查看/切换/重生/续写；Raw Entry 写入由内部 Repository 承担 | 独立 runs 表、外部 appendEntry API 或重复持久化 Prompt |
 | StateService | 当前全量状态、带 reason 的变更和新 Schema 不兼容重置 | 通过摘要推断真实状态 |
-| AgentContext | 真实父链→叙事→window/summary→**完整 Prompt Token 校验**→lorebook 匹配→NodeBuilder | Pi SSE、擅自丢旧 ToolCall |
+| AgentContext | 真实父链→候选叙事→内容激活→NodeBuilder/渲染→完整 Prompt Token 校验→按需压缩历史 | Pi SSE、擅自丢旧 ToolCall |
 | AgentRuntime/PiExecutor | 一次 Run 的实际生成、全部 Pi Message 按 Entry 持久化、SSE、取消、State 结算 | 将旧 ToolResult 混进新模型历史 |
-| 共享 TextRenderer | 只读变量、when、状态引用、可控转换 | 任意来源 JS/EJS 执行 |
+| StateReader / Script Runtime | 只读状态访问、隔离的 JavaScript 表达式求值 | 直接数据库访问、未授权持久化写入 |
+| ContentActivation | 常驻、关键词、排除词和 when 的统一加载判断 | Prompt 组装、模板渲染 |
+| TextRenderer / TextTransform | 隔离的 EJS 渲染；按场景执行受控文本转换 | 内容激活、直接持久化状态 |
 
 所有公开领域接口及用途见 [领域 API](../design/domain-interfaces.md)；Session 的完整分页契约见 [Session](../design/session.md)。
 
@@ -93,11 +95,12 @@ flowchart TD
   Raw --> Projection[NarrativeProjection: user/assistant 叙事]
   Ctx --> State[独立完整 State]
   Ctx --> Config[WorldCard 策略 + Preset 预算 + Provider 上限]
-  Projection --> Match[lorebook / 状态根候选关键词 + when]
+  Projection --> Match[ContentActivation：角色 / 世界书 / 状态根]
   State --> Match
   Config --> Match
-  Match --> Nodes[仅一次：七 NodeBuilder + TextRenderer]
-  Nodes --> Frozen[冻结 Prompt 节点 + 历史消息槽位]
+  Match --> Nodes[按序执行普通 Prompt 脚本，worldState 本体占位]
+  Nodes --> LateState[只读最新工作状态，延迟填回 worldState]
+  LateState --> Frozen[冻结 Prompt 节点 + 历史消息槽位]
   Frozen --> Budget[组装候选 Context + 完整 Token 判断]
   Projection --> Budget
   Config --> Budget
@@ -106,7 +109,7 @@ flowchart TD
   Messages --> Pi[Pi Executor]
   Pi --> EntryWrites[Message / ToolResult / 技术 Entry 全量入库]
   EntryWrites --> Sess
-  Pi --> StateEngine[StateEngine 校验 reason 和完整快照]
+  Pi --> StateEngine[StateEngine 校验 reason 和完整状态]
   StateEngine --> Sess
   Pi --> UI
 ~~~
@@ -121,8 +124,8 @@ flowchart TD
 
 1. 取得 Session 的 world_id/preset_id/user_character_id/tip_entry_id，加载最新世界卡、预设、Provider Model；取原 tip 的完整真实父链与 State。此时**尚未写本轮 User**。
 2. 计算有效预算 `B = min(Preset.max_context_tokens（若设置）, Model.contextWindow) - max_output_tokens - TOKEN_ESTIMATION_GUARD`；内部 Guard 首期固定 1024 Token，**用户只设置 max_context_tokens / max_output_tokens**。窗口由 WorldCard 选择：默认 window、可选 summary，不支持 none。
-3. Window 先限制最近 N 条候选叙事，再根据候选消息 + 当前 User + 完整 State **仅一次**匹配 lorebook/角色/状态、执行 NodeBuilder 和模板展开，冻结 Prompt。组装候选完整 Context 检查 Token。若超 B，Window 只裁最旧 messages；Summary 在未覆盖消息达到 N 或超 B 时摘要旧 messages、保留 K 条原文。**不重做关键词匹配或构建 Prompt**，只替换历史 messages 并复核最终 Token；仍超限时显式失败，不裁当前 User 或固定 Prompt。
-4. 确认本轮最终消息集合并沿用冻结的世界书命中与 NodeBuilder 结果后，若生成摘要则先得到完整摘要请求/回复，**在写入本轮 User 之前**将摘要 Custom Entry 与 User 依次写入父链，两者共用新 run_id；无摘要直接写 User。
+3. Window 先限制最近 N 条候选叙事，再根据候选消息 + 当前 User + 完整 State **仅一次**匹配 lorebook/角色/状态、按序执行 NodeBuilder 和模板脚本，最后读取工作状态生成 worldState 并填回位置，冻结 Prompt。组装候选完整 Context 检查 Token。若超 B，Window 只裁最旧 messages；Summary 在未覆盖消息达到 N 或超 B 时摘要旧 messages、保留 K 条原文。**不重做关键词匹配或构建 Prompt**，只替换历史 messages 并复核最终 Token；仍超限时显式失败，不裁当前 User 或固定 Prompt。
+4. 确认本轮最终消息集合并沿用冻结的世界书命中与 NodeBuilder 结果后，若生成摘要则先得到完整摘要请求/回复，**在写入本轮 User 之前**将摘要 compaction Entry 与 User 依次写入父链，两者共用新 run_id；无摘要直接写 User。
 5. 调用 Pi；Assistant 可能含 ToolCall，ToolResult 作为独立 Message Entry；Pi 其它技术 Entry 也原样保存。已成型消息全部按真实顺序归属本轮 run_id，SSE delta 本身不作为完成 Entry。
 6. StateService 验证带 reason 的 ChangeSet，完成 Assistant 上记录全量 S'。终止工具 `submit_turn` 若只返回 narrative，在保留原始 ToolCall/ToolResult 的基础上新增 `origin=derived_tool_narrative` 的可见 Assistant Entry，防止叙事丢失和重复。
 7. 下次 Pi 请求只恢复 NarrativeProjection 后的历史，旧 ToolCall/ToolResult 只存在 Raw History；状态从全量父链独立恢复。
@@ -136,7 +139,7 @@ flowchart TD
 
 ## 6. MVP 范围和约束
 
-SQLite **六表**为唯一权威存储：`worlds / presets / provider_credentials / tags / sessions / entries`。不建 runs、messages、run_tool_calls、world_tags、context_checkpoints 等表；`entries.role` 是叙事角色索引（仅 message 非空），`entries.sub_type` 记录自定义技术子类型；世界卡删除按 FK CASCADE 完整清理其会话 Entries；单 Session 同时最多一个在途模型执行，不提前设计分布式事务矩阵。
+SQLite **六表**为唯一权威存储：`worlds / presets / provider_credentials / tags / sessions / entries`。不建 runs、messages、run_tool_calls、world_tags、context_checkpoints 等表；`entries.role` 是叙事角色索引（仅 message 非空），`entries.state` 保存单份完整状态数组，`entries.ext_data` 保存扩展元数据；世界卡删除按 FK CASCADE 完整清理其会话 Entries；单 Session 同时最多一个在途模型执行，不提前设计分布式事务矩阵。
 
 WorldCard/Opening/角色/lorebook、Preset/Provider 模型与 API Key、Session/Run 查询/分叉、Current State/Context Preview、Pi SSE 是 MVP API。调试 Raw Entries 时注意 Key 和私人内容脱敏。
 

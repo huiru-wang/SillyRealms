@@ -6,9 +6,9 @@
 
 1. **Raw History**：沿选定 Session 世界线保存的全部原始 Entry。包含 User、Assistant（含 ToolCall）、ToolResult、Pi 技术 Entry、SillyRealms 摘要，不因上下文裁剪或换分支删除。
 2. **Narrative Context**：从当前真实 Entry 父链投影出的可见 user/assistant **叙事文本**，不含 ToolCall、thinking、ToolResult、状态内联指令。Window/Summary 和 Token 预算只影响这份模型历史。
-3. **Current State**：沿真实 Entry 父链寻找最近有效的完整状态快照，按当前世界卡 Schema 校验或重置。**绝不受历史滑窗或摘要影响**。
+3. **Current State**：读取所属世界卡 Global、Session 级状态和沿真实 Entry 父链的最新有效 Message 状态，按对应 Schema 校验。**绝不受历史滑窗或摘要影响**。
 
-聊天 UI 展示完整可见历史（按 Run 分页）。**关键词只扫描本轮压缩前的候选 Narrative Context + 当前 User**：Window 为先行限制到最近 N 条后的候选；Summary 为最新摘要和未覆盖原文的候选。`when` 始终读取全量 State。压缩后若触发词消失，本轮仍保留已经选中的条目，允许这种近似误差；不重新匹配或重建 Prompt。
+聊天 UI 展示完整可见历史（按 Run 分页）。**关键词只扫描本轮压缩前的候选 Narrative Context + 当前 User**：Window 为先行限制到最近 N 条后的候选；Summary 为已有最新摘要和未覆盖原文的候选；本轮新生成的摘要不参与本轮匹配。所有 `when` 在 Prompt 脚本前读取初始三作用域 State，随后冻结。压缩后若触发词消失，本轮仍保留已经选中的条目，允许这种近似误差；不重新匹配或重建 Prompt。
 
 ## 2. 配置归属与默认值
 
@@ -48,7 +48,7 @@ Preset `budget`：
 ## 3. Window：默认策略，先限制 N 条，再仅裁剪历史
 
 1. 在读取叙事消息时，先只取最新 `max_messages=N` 条非空 user/assistant 叙事（本轮 User 不计入 N）；这是先行硬上限，不是 Token 超限判断。
-2. AgentContext 基于这些**候选消息 + 当前 UserInput + 全量 State**，按 Preset 顺序**只构建一次非历史 Prompt 节点**，同时完成 lorebook/角色/状态匹配和模板展开。
+2. AgentContext 基于这些**候选消息 + 当前 UserInput + 全量 State**，按 Preset 顺序**只构建一次非历史 Prompt 节点**，通过 ContentActivation 完成 lorebook/角色/状态匹配，再按节点顺序执行模板脚本、更新工作状态；全部普通 Prompt 脚本完成后只读生成 worldState 并填回占位，按场景执行独立 TextTransform。
 3. 把固定 Prompt + 候选 messages + 当前 UserInput（保持 Preset 实际节点顺序，包含工具定义开销）拼成候选 Context，计算输入 Token；`tokens <= B` 则无需再裁剪。
 4. 若 `tokens > B`，从候选历史最旧消息开始逐条裁剪，只替换 `chatHistory` 节点中的 messages，并重新**计算 Token**。**不重新匹配关键词、不重新执行 NodeBuilder、不重新渲染固定 Prompt**。
 5. 最终若固定 Prompt + 本轮 User + 工具定义本身仍超 B，返回 `CONTEXT_BUDGET_EXCEEDED`，绝不裁当前 User 或必要 Prompt；Raw Entries、当前 State 均不修改。
@@ -57,17 +57,17 @@ Preset `budget`：
 
 ## 4. Summary：条数阈值与 Token 压力双触发
 
-Summary 只归档**较老的叙事**，保留近期原文，摘要生成行为由 Preset `summary_prompt` 控制。**与 Fanto 的区别**：Fanto 配置 Pi AgentHarness 原生 Compaction，由 SDK 生成/恢复摘要；SillyRealms 为严格满足「只使用 user/assistant 叙事、按当前世界线、可读取完整状态变量和用户自定义摘要 Prompt」的要求，首期由 AgentContext 管理摘要，并持久化为 `custom + sub_type=sillyrealms.summary`。Pi 原生 `compaction` 仍可完整存储/恢复但不主动触发，不能未经真实 PoC 验证就将其当作产品 Summary 的等价实现。
+Summary 只归档**较老的叙事**，保留近期原文，摘要生成行为由 Preset `summary_prompt` 控制。**与 Fanto 的区别**：Fanto 配置 Pi AgentHarness 原生 Compaction，由 SDK 生成/恢复摘要；SillyRealms 为严格满足「只使用 user/assistant 叙事、按当前世界线、可读取完整状态变量和用户自定义摘要 Prompt」的要求，首期由 AgentContext 管理摘要，以 `compaction` 原生 payload 保存摘要，在 `ext_data.summary` 保存应用标记和元数据。此记录不代表调用了 Pi 原生压缩流程，SDK 恢复兼容性仍须 PoC。
 
-1. 从当前分支寻找最近的 `Entry(type=custom, sub_type=sillyrealms.summary)`，读取它的 `coveredThroughEntryId`。没有摘要则从 Opening 开始。取覆盖边界之后的可见叙事列表 H；最新 Summary 文本作为摘要前缀（如果存在）。
+1. 从当前分支寻找最近的 `Entry(type=compaction)` 且 `ext_data.summary.kind=sillyrealms.summary`，读取它的 `coveredThroughEntryId`。没有摘要则从 Opening 开始。取覆盖边界之后的可见叙事列表 H；最新 Summary 文本作为摘要前缀（如果存在）。
 2. **触发条件是二选一**：
    - H 的条数 **达到/超过** `max_messages=N`；
    - 虽不足 N，但「最新 Summary + 全部 H + 当前 User」构建出的**完整 Prompt 已超过 B**。
 3. 不触发时沿用「已有 Summary 前缀 + H + 当前 User」，也要通过最终 Token 校验。
 4. 触发时优先保留 H 最后 `K=keep_recent_messages` 条原文；更老的 H 与旧 Summary 一同交给摘要模型。**先独立读取完整 State**，供摘要 Prompt 模板只读引用；实际摘要来源仅为叙事文本，工具调用/结果不可混入。
-5. 摘要请求也必须符合 Provider 的 Context / 输出预算；较老材料一次放不下时按时间顺序**分批滚动摘要**，不静默丢掉未处理来源。所有摘要请求与结果存到技术 Entry 的 `generation` 元数据。
+5. 摘要请求也必须符合 Provider 的 Context / 输出预算；较老材料一次放不下时按时间顺序**分批滚动摘要**，不静默丢掉未处理来源。所有摘要请求与结果存到技术 Entry 的 `ext_data.summary.generation`。
 6. 生成新摘要后，**只替换 chatHistory 历史消息**为「新 Summary + 原文尾部 K 条」，保留先前单次构建的所有固定 Prompt 节点和匹配结果；重新统计完整 Context Token，但不重新筛选 lorebook/角色/状态根，也不重新渲染模板。若仍超限，可扩大摘要覆盖范围或在摘要长度预算内有限次数重试，只调整 messages；不能直接丢掉未摘要的尾部消息。仍不满足预算则报 `CONTEXT_BUDGET_EXCEEDED`，不持久化不完整摘要。
-7. 摘要成功且预算通过后，在**当前 User 入库前**把一条 `custom/sillyrealms.summary` Entry 追加到原 tip 之后，其 `coveredThroughEntryId` 指向最后一条**被摘要覆盖**的原始叙事 Entry；随后将本轮 User 接在它后面。两条 Entry 使用**本轮同一个 run_id**，建议一个短事务提交；不删除或重挂已存在的消息和分支。
+7. 摘要成功且预算通过后，在**当前 User 入库前**把一条 带 `ext_data.summary` 的 `compaction` Entry 追加到原 tip 之后，其 `coveredThroughEntryId` 指向最后一条**被摘要覆盖**的原始叙事 Entry；随后将本轮 User 接在它后面。两条 Entry 使用**本轮同一个 run_id**，建议一个短事务提交；不删除或重挂已存在的消息和分支。
 8. 下一轮**逻辑**模型历史始终是「最新 Summary 作为 assistant 前缀 + coveredThroughEntryId 之后的原文叙事 + 当前 User」，**不是**从 Summary Entry 的物理位置往后切。再次触发时用旧 Summary + 新原文生成一个新 Summary，模型历史只带最新一个摘要。
 
 ~~~text
@@ -83,7 +83,7 @@ Summary 只归档**较老的叙事**，保留近期原文，摘要生成行为�
 Session → 当前世界线候选 NarrativeProjection（Window 先取 N 条）
   → 加载 World/Preset/Model/完整 State
   → 用候选消息 + UserInput，按 nodes[] 顺序筛选条目、匹配 keyword/when、渲染模板
-  → 冻结本轮 Prompt（仅构建一次）
+  → 最后生成 worldState 填回原位置，冻结本轮 Prompt（仅构建一次）
   → 候选 Prompt + messages + UserInput（遵守节点实际顺序）→ Token 判断
   → 不超限且 Summary 未达 N：直接使用
   → 需要压缩：仅裁剪/摘要 messages，Prompt 和条目命中保持不变

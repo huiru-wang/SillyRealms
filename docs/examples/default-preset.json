@@ -76,5 +76,5 @@
     }
   },
   "state_update_mode": "inline",
-  "summary_prompt": "请总结已发生的主要剧情、人物关系、关键承诺和未解决事件。当前时间：{{state:/世界/时间}}。"
+  "summary_prompt": "请总结已发生的主要剧情、人物关系、关键承诺和未解决事件。当前时间：<%- getState('世界.时间', {scope:'message'}) %>。"
 }
