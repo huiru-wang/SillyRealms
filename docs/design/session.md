@@ -25,7 +25,8 @@ type Entry = {
   runId: string;                       // 非空；同一次逻辑交互的所有 Entry 共用
   seq: number;                         // Session 内全局写入顺序，不代表祖先关系
   type: EntryType;
-  customType?: string;                 // 仅 type=custom 时存在
+  role?: "user" | "assistant" | "toolResult"; // 仅 type=message；同步 payload.message.role
+  subType?: string;                    // 仅 type=custom；映射 Pi CustomEntry.customType
   timestamp: number;
   payload: unknown;                    // 按 type 校验的 Pi Entry/本地扩展 payload
 };
@@ -39,7 +40,7 @@ type AgentMessagePayload = {
 };
 
 type SillyRealmsSummaryPayload = {
-  summary: string;                     // 自定义 type=custom/customType=sillyrealms.summary
+  summary: string;                     // 自定义 type=custom/subType=sillyrealms.summary
   coveredThroughEntryId: string;       // 最后被摘要覆盖的原始叙事 Entry
   generation: Array<{
     requestMessages: PiMessage[];
@@ -49,9 +50,9 @@ type SillyRealmsSummaryPayload = {
 ~~~
 
 - **Entry.type 的合法值明确只有四种**：`message`、`compaction`、`branch_summary`、`custom`。这是对齐 Fanto 所用 Pi Session Entry 的四类，不把消息 role 误写成 Entry type。
-- `message` 内 `payload.message.role` 具体是 `user`、`assistant`、`toolResult`；Assistant 的 ToolCall 是其 `content[]` 块，不是新的 Entry type，也不额外建 ToolCall 表。
+- `message` 的 `role` 同步冗余 `payload.message.role`，合法值为 `user`、`assistant`、`toolResult`；非 message 必须为 NULL。如此 SQL 可按 `type=message AND role IN ('user','assistant')` 快速找到叙事候选。**必须先限制当前世界线的祖先链**，不能把其它分支的消息混进来。Assistant 的 ToolCall 是其 `content[]` 块，不是新的 Entry type，也不额外建 ToolCall 表。
 - `compaction`：Pi 原生上下文压缩技术 Entry；`branch_summary`：Pi 原生分叉摘要技术 Entry；MVP 不主动调用 Pi 自带的压缩流程，但若 SDK 产生须完整保存，不作为聊天正文。
-- `custom`：必须带 `custom_type`，用来保存本产品内部事件。**WorldCard Summary 策略生成的摘要是 `type=custom, custom_type=sillyrealms.summary`**，payload 记录摘要、覆盖边界和全部摘要调用记录；不新增名为 summary 的 Entry type，也不冒充 Pi 原生 compaction。
+- `custom`：必须带 `sub_type`，用来保存本产品内部事件。该数据库字段在 Pi SDK 编解码边界映射为 SDK 的 `customType`，不能直接改动 SDK 的 Entry 结构。**WorldCard Summary 策略生成的摘要是 `type=custom, sub_type=sillyrealms.summary`**，payload 记录摘要、覆盖边界和全部摘要调用记录；不新增名为 summary 的 Entry type，也不冒充 Pi 原生 compaction。
 - Session 不持久化世界卡快照、opening_id、模型配置、options 或 runs[]。模型和摘要 Prompt 每轮从 Preset 读取；角色/状态定义读取当前 WorldCard。所有 Raw Entry 与模型叙事历史、完整 State 分离。
 
 ## 2. Run 是逻辑互动单元，不是另一张表
@@ -100,14 +101,15 @@ function narrativeProjection(entry: Entry):
   | { role: "user" | "assistant"; text: string }
   | null {
   if (entry.type !== "message") return null;
+  if (entry.role !== "user" && entry.role !== "assistant") return null;
   const m = (entry.payload as AgentMessagePayload).message;
-  if (m.role !== "user" && m.role !== "assistant") return null;
+  if (entry.role !== m.role) throw new Error("ENTRY_ROLE_MISMATCH");
   const text = extractNarrativeText(m); // 只要 text，剔除 toolCall/thinking/状态指令
   return text.trim() ? { role: m.role, text } : null;
 }
 ~~~
 
-这个**唯一投影**供聊天 UI、下轮模型历史和 lorebook/状态关键词匹配共享。UI 隐藏工具消息和技术 Entry，模型历史根据最终窗口/摘要再收缩；完整 Raw History 从未被压缩改写。纯 ToolCall Assistant 保留 Entry，但投影为空。
+这里 `entry.role` 用来**数据库预筛选**，`narrativeProjection` 继续剔除思维、ToolCall、内联状态标签。这个**唯一投影**供聊天 UI、下轮模型历史和 lorebook/状态关键词匹配共享。UI 隐藏工具消息和技术 Entry，模型历史根据最终窗口/摘要再收缩；完整 Raw History 从未被压缩改写。纯 ToolCall Assistant 保留 Entry，但投影为空。
 
 ## 5. 按 Run 游标分页（核心语义）
 
@@ -147,34 +149,31 @@ ORDER BY run_start_seq DESC LIMIT :limitPlusOne;
 - 世界线隐藏回合数量以**用户交互 Run** 计；Opening 可以作为根展示，但不算玩家回合。最多三条分叉等约束统计用户可见的决策分支，而不是物理 Entry 的子节点数。
 - 真实父链、State Snapshot 和摘要边界都随分支切换，不复制整个世界状态或历史。
 
-## 7. 领域接口（逐项职责）
+## 7. SessionService 只保留业务接口
 
-| 接口 | 作用 |
+下面是供首页、会话页面与用户动作调用的服务能力。**原始写入、父链读取、摘要技术 Entry、Run 原始查询都保留在内部 Repository/投影器中**，不是独立对外 Service；完整领域列表见 [领域 Service](domain-interfaces.md)。
+
+| 接口 | 页面动作及业务含义 |
 | --- | --- |
-| `createSession(worldId, openingId, userCharacterId, presetId)` | 校验世界卡/角色/预设，创建 Session + Opening 根 Entry + 初始 State |
-| `listSessions(cursor?, limit?)` | 按最近更新时间分页列出世界实例会话 |
-| `getSession(sessionId)` | 获取会话元信息、当前 tip 和关联 ID |
-| `updateSession(sessionId, patch)` | 只更新标题、所选有效玩家角色/预设等允许的元信息 |
-| `deleteSession(sessionId)` | 删除会话及其所有 Entries，属于明确的用户删除操作 |
-| `getEntry(sessionId, entryId)` | 读取指定 Raw Entry，校验归属 |
-| `getRawAncestorEntries(sessionId, tipEntryId)` | 按 parent_id 读取当前分支全量原始消息/技术记录，供 State/Context 恢复 |
-| `appendMessage(sessionId, parentId, runId, piMessage, metadata?)` | 追加一条原始 user/assistant/toolResult Message Entry，保留 ToolCall 内容块 |
-| `appendTechnicalEntry(sessionId, parentId, runId, entry)` | 保存 Pi compaction/branch_summary/custom 技术 Entry，不参与普通叙事投影 |
-| `appendSummary(sessionId, parentId, runId, summaryPayload)` | 追加 custom/sillyrealms.summary，并校验摘要覆盖边界 |
-| `getRunPage(sessionId, tipEntryId, beforeRunCursor?, limit?)` | **按 Run 数分页**返回该分支所选 Run 的全部 Entries 和下一页游标 |
-| `getChatPage(sessionId, tipEntryId, beforeRunCursor?, limit?)` | 在同一 Run 分页基础上返回 UI 可见 user/assistant 叙事 |
-| `getCurrentState(sessionId, tipEntryId, currentWorld)` | 沿原始父链恢复最新有效全量状态、必要时按新 Schema 重置 |
-| `forkUserMessage(sessionId, historicalUserEntryId, newText)` | 从历史 User 的父节点创建兄弟 User，开启新 run_id 与分支 |
-| `regenerateAssistant(sessionId, userEntryId)` | 在指定历史 User 下重生成 Assistant 分支，沿用其 run_id |
-| `switchTipEntry(sessionId, targetTipEntryId)` | 切换当前选中世界线 tip，不删除其他分支 |
-| `getCompressedWorldlines(sessionId)` | 生成 Root/Fork-only 世界线视图和按交互 Run 计数的折叠边 |
-| `getNarrativeContext(sessionId, tipEntryId, strategy)` | 通过统一 NarrativeProjection 提供模型历史候选；Token 缩窗/摘要最终决策属于 AgentContext |
+| `createSession(worldId, openingId, userCharacterId, presetId)` | 从当前 WorldCard + Preset 建会话，合法 Opening 根 Assistant Entry + 初始 S0 同事务写入 |
+| `listSessions(cursor?, limit?)` | 首页最近会话列表，按最近活动游标分页 |
+| `getSession(sessionId)` | 读取会话的世界卡/预设/角色 ID、title 和 tip |
+| `updateSession(sessionId, patch)` | 改标题、有效玩家角色或 Preset 引用，旧 Entry 不变 |
+| `deleteSession(sessionId)` | 删除这个 Session 的**所有**分支消息与独占会话资源，不删除世界卡 |
+| `getChatPage(sessionId, cursor?, limit=10)` | 按当前 tip 选中的祖先链以 Run 为单位分页，返回叙事投影及游标 |
+| `getWorldlines(sessionId)` | Root、分叉点、各分支首/末节点和折叠回合数 |
+| `switchWorldline(sessionId, leafEntryId)` | 进入指定叶子节点代表的世界线，只更新 tip |
+| `forkFromUserMessage(sessionId, historicalUserEntryId, newText)` | 在历史 User 的父节点下另写兄弟 User，生成新 run_id，并进入新分支 |
+| `regenerateLastAssistant(sessionId)` | 仅最后一条 AI 回复可重生，当前 User 不复制；新 AI 分支沿用该 User 的 run_id |
+| `continueLastAssistant(sessionId)` | 仅当前最后一条 AI 回复可续写，保留原 Entry，Runtime 追加后续内容 |
 
-`appendMessage`/`appendTechnicalEntry` 由运行时调用，UI 不能直接写任意 Pi Entry。对外路由首期围绕 `/sessions`、`/sessions/:id/runs`、`/sessions/:id/chat`、`/sessions/:id/worldlines`、`/sessions/:id/forks`。不建 `runs` 表，不在 User payload 放 runs[]。
+**内部依赖分工**：`EntryRepository` 负责 `findAncestors/findEntry/appendEntries`，写入时将 `role` 与 `payload.message.role` 校验同步；`RunProjector` 按当前父链执行 Run 分组与叙事投影；`AgentRuntime` 在运行中调用这些存储能力，把 Summary（若有）、User、Assistant、ToolResult 逐条写入同一逻辑 Run；`StateService` 读取完整状态。外部不允许通过“appendMessage”等方法伪造任意 Pi Entry。
+
+**操作原子性**：分叉/重生成/续写这些用户动作只负责确定逻辑起点和父链，之后由 Runtime 使用对应的现有 User/Run 发起生成，**不得重复创建 User Entry**。停止或失败保留已经持久化的完整消息，不把正在生成的碎片当成新 Entry。世界卡删除时 Service 统一级联清理其全部 Session / Entry，含非当前世界线。
 
 ## 8. 验收
 
-- Entry.type 四种合法值与 Pi 原生记录对应，Summary 用 custom_type 区分；所有 Pi 原始消息、ToolCall/ToolResult、技术 Entry 正常持久化。
+- Entry.type 四种合法值与 Pi 原生记录对应，Summary 用 sub_type 区分；message 的 role 与 payload 保持一致；所有 Pi 原始消息、ToolCall/ToolResult、技术 Entry 正常持久化。
 - 同 Run 的多条 Entry 在一页内一次性返回；limit=10 表示最多 10 个 Run，而非 10 条消息；游标不拆 Run，分支互不串读。
 - Summary 和当前 User 同 run_id；Opening 有自己的初始化 Run；Assistant 重生成保持同一逻辑 Run，历史 User 重选新开 Run。
 - UI/下轮模型/关键词一致采用叙事投影，完整 State 与历史存储不受 Token 压缩影响；Window 默认、Summary 可选，细节见 [Context Strategy](context-strategy.md)。

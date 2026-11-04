@@ -187,6 +187,8 @@ AgentContext 只扫描本轮**实际送给模型的 Narrative Context（仅 user
 
 `assets[]` 是可选资源清单；可使用资源 ID 引用封面和角色头像。资源清单、资源路径和实际文件应区分：外链不等于已打包。PNG 角色卡可能以图片本身作为卡面；仅有 JSON 时不能恢复未提供的 PNG 头像。
 
+**世界卡详情/删除链路**：`WorldService.getWorld(worldId)` 一次返回完整最新世界卡（含 `characters[]`、`openings[]`、`lorebook` 和资源引用），详情页本地筛选允许玩家选择的角色、切换开局，无须单独 `getPlayableCharacters/getOpening/getWorldSnapshot`。创建 Session 时后端依旧校验提交的角色/开局。删除按钮由前端二次确认，再调用 `WorldService.deleteWorld`：**直接删除世界卡及其全部关联 Session、各分支消息、摘要、状态快照、世界与会话独占资源**；保留全局 Preset、Provider Key、Tag 和其它世界使用的共享资源。SQLite 级联与物理资产回收详见 [Storage](../technical/storage.md)。
+
 ## 来源迁移与保留
 
 角色卡 V2/V3 仅作为内容来源，不要求世界卡继承其字段或结构。整理时：

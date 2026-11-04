@@ -23,11 +23,11 @@ SillyRealms/
 
 | 模块 | 职责 | 不负责 |
 | --- | --- | --- |
-| WorldService | 当前唯一 WorldCard、角色/Opening/lorebook/Context 策略、导入导出 | 世界快照和旧版本 |
-| PresetService | 模型 ID/参数、预算、状态模式、七个系统节点和摘要 Prompt | API Key/模板执行 |
-| ProviderService | Pi 模型目录和 contextWindow、API Key、安全能力与连接验证 | 重写每个 Provider 的协议 |
+| WorldService | `getWorld` 返回含开局/角色的完整当前卡；增删改查/导入导出；删除世界时级联全部 Session/Entries/独占资产 | 世界快照和旧版本 |
+| PresetService | `getPreset` 同时供编辑与本轮 Context 读取；管理模型 ID/两个 Token 上限、状态模式、七系统节点和摘要 Prompt | API Key/模板执行/独立快照 |
+| ProviderService | 供应商/模型列表（含凭据配置状态）、保存或删除 Key、显式连接测试、Runtime 解析模型 | 重复的 hasApiKey/getModel/getAvailableModels 与 Provider 协议重写 |
 | TagService | 标签字典和 type 内排序 | world_tags 关联表 |
-| SessionService | Session、完整 Entry、**run_id 分组分页**、parent_id 分支、UI 叙事查询 | 独立 runs 表或重复持久化 Prompt |
+| SessionService | 会话管理、按 run_id 的可见聊天分页、世界线查看/切换/重生/续写；Raw Entry 写入由内部 Repository 承担 | 独立 runs 表、外部 appendEntry API 或重复持久化 Prompt |
 | StateService | 当前全量状态、带 reason 的变更和新 Schema 不兼容重置 | 通过摘要推断真实状态 |
 | AgentContext | 真实父链→叙事→window/summary→**完整 Prompt Token 校验**→lorebook 匹配→NodeBuilder | Pi SSE、擅自丢旧 ToolCall |
 | AgentRuntime/PiExecutor | 一次 Run 的实际生成、全部 Pi Message 按 Entry 持久化、SSE、取消、State 结算 | 将旧 ToolResult 混进新模型历史 |
@@ -83,9 +83,12 @@ packages/shared/src/
 ~~~mermaid
 flowchart TD
   UI[H5] --> Runtime[AgentRuntime: 生成逻辑 run_id]
-  Runtime --> Sess[SessionService: Session + Raw Entries]
+  Runtime --> Sess[SessionService: 会话与世界线业务]
+  Runtime --> Repo[EntryRepository: 原始消息持久化]
   Sess --> DB[(SQLite 六张表; entries.run_id)]
+  Repo --> DB
   Runtime --> Ctx[AgentContext]
+  Ctx --> Repo
   Ctx --> Raw[沿 tip.parent_id 加载完整 Raw Ancestors]
   Raw --> Projection[NarrativeProjection: user/assistant 叙事]
   Ctx --> State[独立完整 State]
@@ -113,7 +116,7 @@ flowchart TD
 ### 一次 Run 的严格时序
 
 1. 取得 Session 的 world_id/preset_id/user_character_id/tip_entry_id，加载最新世界卡、预设、Provider Model；取原 tip 的完整真实父链与 State。此时**尚未写本轮 User**。
-2. 计算有效预算 `B = min(Preset.max_context_tokens（若设置）, Model.contextWindow) - max_output_tokens - safety_margin_tokens`。窗口由 WorldCard 选择：默认 window、可选 summary，不支持 none。
+2. 计算有效预算 `B = min(Preset.max_context_tokens（若设置）, Model.contextWindow) - max_output_tokens - TOKEN_ESTIMATION_GUARD`；内部 Guard 首期固定 1024 Token，**用户只设置 max_context_tokens / max_output_tokens**。窗口由 WorldCard 选择：默认 window、可选 summary，不支持 none。
 3. Window 先选最近 N 条叙事；在最终完整 Prompt（含角色、世界书、状态、当前 User 和工具定义）超 B 时逐条删除最老历史并**重做关键词匹配**。Summary 在未覆盖消息达到 N 或 Token 预算提前溢出时生成，优先保留 K 条原文，生成后再做完整预算校验。任何策略都不能裁掉当前 User 或重要固定 Prompt；仍超限时显式失败。
 4. 确认本轮最终叙事集合、世界书命中与有序 NodeBuilder 后，若生成摘要则先得到完整摘要请求/回复，**在写入本轮 User 之前**将摘要 Custom Entry 与 User 依次写入父链，两者共用新 run_id；无摘要直接写 User。
 5. 调用 Pi；Assistant 可能含 ToolCall，ToolResult 作为独立 Message Entry；Pi 其它技术 Entry 也原样保存。已成型消息全部按真实顺序归属本轮 run_id，SSE delta 本身不作为完成 Entry。
@@ -129,7 +132,7 @@ flowchart TD
 
 ## 6. MVP 范围和约束
 
-SQLite **六表**为唯一权威存储：`worlds / presets / provider_credentials / tags / sessions / entries`。不建 runs、messages、run_tool_calls、world_tags、context_checkpoints 等表；单 Session 同时最多一个在途模型执行，不提前设计分布式事务矩阵。
+SQLite **六表**为唯一权威存储：`worlds / presets / provider_credentials / tags / sessions / entries`。不建 runs、messages、run_tool_calls、world_tags、context_checkpoints 等表；`entries.role` 是叙事角色索引（仅 message 非空），`entries.sub_type` 记录自定义技术子类型；世界卡删除按 FK CASCADE 完整清理其会话 Entries；单 Session 同时最多一个在途模型执行，不提前设计分布式事务矩阵。
 
 WorldCard/Opening/角色/lorebook、Preset/Provider 模型与 API Key、Session/Run 查询/分叉、Current State/Context Preview、Pi SSE 是 MVP API。调试 Raw Entries 时注意 Key 和私人内容脱敏。
 

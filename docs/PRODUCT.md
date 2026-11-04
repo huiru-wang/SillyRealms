@@ -6,7 +6,7 @@
 
 首期 Monorepo 只开发 **H5 Web + Server**，未来支持 Android、PC/Mac 桌面客户端；Web/Server 共用 WorldCard、模板、状态等纯逻辑。技术设计见 [Monorepo 架构](technical/architecture.md)。
 
-主路径：**世界卡库 → 选择 Opening、玩家角色和 Preset → Session → 聊天/状态栏 → 分叉世界线**。
+主路径：**世界卡库 → 世界详情（开局、角色）→ 选择 Preset → Session → 聊天/状态栏 → 分叉世界线**。首页可直接按最近 Session 继续；世界卡删除须前端二次确认，随后级联删除全部关联会话、消息、状态和独占资源。
 
 ## 2. 产品对象
 
@@ -16,8 +16,8 @@
 | Preset | 选择模型和参数，配置 `off/inline/tool` 状态模式、摘要 Prompt、七系统节点/自定义节点及顺序 |
 | Provider | 查询 Pi 内置模型；用户配置、测试、删除 API Key，模型可用性校验 |
 | Tags | `id/type/name/sort_order`，同一 type 内排序，世界卡引用标签 ID |
-| Session | `world_id/preset_id/user_character_id/tip_entry_id`，不存 World 快照、Opening ID 或模型/Options 冗余 |
-| Entry | 一条 Pi Agent 消息或技术记录，`run_id` 分组按 Run 分页、`parent_id` 构成世界分叉；`type` 是 message/compaction/branch_summary/custom，Summary 是 custom 类型 |
+| Session | `world_id/preset_id/user_character_id/tip_entry_id`，不存 World 快照、Opening ID 或模型/Options 冗余；`sessions` 无 role 字段 |
+| Entry | 一条 Pi Agent 消息或技术记录，`run_id` 分组按 Run 分页、`parent_id` 构成世界分叉；`role` 方便 user/assistant/toolResult SQL 查询，`sub_type` 区分 custom，`type` 保留 Pi 四类 |
 | Narrative Context | 将 Raw Entries 统一投影成仅 user/assistant **叙事文本**；供 UI、模型历史和关键词扫描 |
 | State | 独立沿当前原始父链恢复最近有效全量状态；StateChange 必须提供非空 reason |
 | AgentContext | 单轮构建器：当前 WorldCard/Preset、叙事策略、全量 State、lorebook/状态筛选、NodeBuilder → ModelMessage[] |
@@ -40,7 +40,7 @@ WorldCard `data.context` 只支持 `window`（默认）和 `summary`，**不允�
 | `window`（默认） | 先最多保留最近 N 条 user/assistant 叙事，再检查**完整 Prompt** 的 Token；超预算就从最早历史消息逐条裁剪并重新匹配 lorebook，直到能发送或明确报错 |
 | `summary` | 未覆盖消息达到 N 条**或**完整 Prompt 提前超预算时先摘要旧内容，优先保留最近 K 条原文；生成后重新校验 Token，不允许丢弃未摘要的消息 |
 
-有效输入预算 = `min(预设 max_context_tokens（若有）, Provider.contextWindow) - max_output_tokens - safety_margin_tokens`。系统 Prompt、角色、世界书、状态、当前 User 和工具定义都要计入，当前 User 不能裁掉。摘要 Prompt 可读取**完整状态**；摘要作为 `custom/sillyrealms.summary` 技术 Entry 保存覆盖边界与完整摘要请求/回复，原始消息不删除。
+有效输入预算 = `min(预设 max_context_tokens（若有）, Provider.contextWindow) - max_output_tokens - 内部固定 Token 估算余量`；**用户只配置 max_context_tokens / max_output_tokens**。系统 Prompt、角色、世界书、状态、当前 User 和工具定义都要计入，当前 User 不能裁掉。摘要 Prompt 可读取**完整状态**；摘要作为 `custom + sub_type=sillyrealms.summary` 技术 Entry 保存覆盖边界与完整摘要请求/回复，原始消息不删除。
 
 **三个概念不能混淆**：Raw History 是全部消息和分支；Narrative Context 是当前真正输入模型的 user/assistant 叙事；State 是独立的当前分支完整快照。关键词只扫描 Narrative Context + 当前 User；when 始终读取完整 State。
 
@@ -56,6 +56,6 @@ WorldCard `data.context` 只支持 `window`（默认）和 `summary`，**不允�
 
 SQLite 只保留六张业务表：`worlds/presets/provider_credentials/tags/sessions/entries`。Entry 每条消息一行，但必须有 `run_id` 以便按 Run 分页；无需独立 Run、Message、ToolCall、WorldTag 或 AppSettings 表。
 
-Monorepo 首期完成 H5、Server、六表数据库、Provider API Key、世界卡、预设、状态、三策略 Context、消息级分叉、Root/Fork 世界线与状态栏。暂不做 Android、Desktop、云端同步、多用户协作、来源任意 JS/EJS 执行和复杂分布式并发。
+Monorepo 首期完成 H5、Server、六表数据库、Provider API Key、世界卡、预设、状态、两策略 Context、消息级分叉、Root/Fork 世界线与状态栏。暂不做 Android、Desktop、云端同步、多用户协作、来源任意 JS/EJS 执行和复杂分布式并发。
 
 详见 [WorldCard](design/world-card.md)、[Preset](design/preset.md)、[Session](design/session.md)、[Context Strategy](design/context-strategy.md)、[AgentContext](design/agent-context.md)、[State](design/state.md)、[Storage](technical/storage.md)、[架构](technical/architecture.md)、[实施计划](technical/implementation-plan.md)。

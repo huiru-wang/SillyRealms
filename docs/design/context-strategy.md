@@ -35,15 +35,14 @@ Preset `budget`：
 ~~~json
 {
   "max_context_tokens": 32768,
-  "max_output_tokens": 4096,
-  "safety_margin_tokens": 1024
+  "max_output_tokens": 4096
 }
 ~~~
 
 - `max_context_tokens` 可选，指**一次请求输入 + 预留输出的总 Context 上限**；省略时使用 Provider 模型 `contextWindow`。有效上限 `C = min(预设上限（若设置）, Provider 模型 contextWindow)`，不得绕过模型硬上限。
-- `max_output_tokens` 为本次生成预留的输出 Token，必须同时满足 Provider 的输出上限；`safety_margin_tokens` 为 Token 估算误差、协议开销和工具开销预留。
-- **有效输入预算** `B = C - max_output_tokens - safety_margin_tokens`，必须大于 0。例如 C=32768、输出=4096、余量=1024，则全部请求 Prompt 可用 **27648 Token**，不是 32768 Token。
-- 统计范围是**最终完整 ModelMessage[]**，包含系统指令、预设节点、角色、世界书、状态、叙事历史、当前 User 和协议/工具定义；不能只给聊天记录算 Token。优先使用 Provider/tokenizer 可提供的计数或估算方式，未知时保守估算并保留 safety margin；Provider 最终拒绝超长请求时给出明确错误，不能当作已成功运行。
+- `max_output_tokens` 为本次生成预留的输出 Token，必须同时满足 Provider 的输出上限。**用户界面、Preset JSON 和公开 API 只出现以上两个字段**；Token 估算误差、协议额外开销等由应用内部固定的 `TOKEN_ESTIMATION_GUARD` 处理，不可由用户配置。
+- **有效输入预算** `B = C - max_output_tokens - TOKEN_ESTIMATION_GUARD`，必须大于 0。`TOKEN_ESTIMATION_GUARD` 是 AgentContext 的**内部固定值**（首期固定 1024 Token，版本变更允许调整），不属于用户可见设置。例如 C=32768、输出=4096、内部余量=1024，则请求 Prompt 可用 **27648 Token**。
+- 统计范围是**最终完整 ModelMessage[]**，包含系统指令、预设节点、角色、世界书、状态、叙事历史、当前 User 和协议/工具定义；不能只给聊天记录算 Token。优先使用 Provider/tokenizer 可提供的计数或估算方式，未知时保守估算并保留内部固定余量；Provider 最终拒绝超长请求时给出明确错误，不能当作已成功运行。
 - Provider 解析失败、上下文上限未知或预算非法时要阻止请求并提示修正配置，**不得假定一个无限窗口**。
 
 ## 3. Window：默认策略，先限制条数，再按 Token 裁剪
@@ -61,9 +60,9 @@ Preset `budget`：
 
 ## 4. Summary：条数阈值与 Token 压力双触发
 
-Summary 只归档**较老的叙事**，保留近期原文，摘要生成行为由 Preset `summary_prompt` 控制。
+Summary 只归档**较老的叙事**，保留近期原文，摘要生成行为由 Preset `summary_prompt` 控制。**与 Fanto 的区别**：Fanto 配置 Pi AgentHarness 原生 Compaction，由 SDK 生成/恢复摘要；SillyRealms 为严格满足「只使用 user/assistant 叙事、按当前世界线、可读取完整状态变量和用户自定义摘要 Prompt」的要求，首期由 AgentContext 管理摘要，并持久化为 `custom + sub_type=sillyrealms.summary`。Pi 原生 `compaction` 仍可完整存储/恢复但不主动触发，不能未经真实 PoC 验证就将其当作产品 Summary 的等价实现。
 
-1. 从当前分支寻找最近的 `Entry(type=custom, custom_type=sillyrealms.summary)`，读取它的 `coveredThroughEntryId`。没有摘要则从 Opening 开始。取覆盖边界之后的可见叙事列表 H；最新 Summary 文本作为摘要前缀（如果存在）。
+1. 从当前分支寻找最近的 `Entry(type=custom, sub_type=sillyrealms.summary)`，读取它的 `coveredThroughEntryId`。没有摘要则从 Opening 开始。取覆盖边界之后的可见叙事列表 H；最新 Summary 文本作为摘要前缀（如果存在）。
 2. **触发条件是二选一**：
    - H 的条数 **达到/超过** `max_messages=N`；
    - 虽不足 N，但「最新 Summary + 全部 H + 当前 User」构建出的**完整 Prompt 已超过 B**。
@@ -104,5 +103,5 @@ Summary 只归档**较老的叙事**，保留近期原文，摘要生成行为�
 
 - 未指定 strategy 时默认 window；显式 none 拒绝；window 先最多 N 条，Prompt 超 B 时从旧到新裁剪并重匹配；固定 Prompt + User 超 B 时明确失败。
 - summary 分别在 N 阈值、Token 压力下触发；逻辑前置最新摘要、保留 K 原文且不丢旧分支；大材料分批摘要不漏输入；摘要与 User 同 run_id。
-- Provider contextWindow 与 Preset max_context_tokens 正确取小值；输出和安全余量正确扣除；实际 Token 统计覆盖完整 Prompt，不只数聊天文本。
+- Provider contextWindow 与 Preset max_context_tokens 正确取小值；输出预留和内部固定余量正确扣除；用户/JSON 只配置 max_context_tokens 与 max_output_tokens；Token 统计覆盖完整 Prompt。
 - UI Run 分页、Raw Entry 恢复、完整 State 不因 Window/Summary 丢失。

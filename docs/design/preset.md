@@ -8,10 +8,10 @@
 - `state_update_mode`：`off / inline / tool`，由 Provider 模型实际能力确认；StateEngine 验证变更。
 - `summary_prompt`：用户可编辑的摘要指令模板，世界卡设置 `context.strategy=summary` 且未覆盖消息达到 N **或完整 Prompt Token 超预算**时使用。通过 TextRenderer 读取当前完整状态变量，实际摘要只包含叙事。
 - `nodes[]`：七个系统节点与任意自定义文本节点，单个有序数组决定角色、启停、先后顺序，不额外保存 order 列。
-- `budget`：`max_context_tokens?`、`max_output_tokens`、`safety_margin_tokens`；与 Provider.contextWindow 取小值，再扣除输出和安全余量，得到**完整 Prompt 输入预算 B**。由 AgentContext 按世界卡 window/summary 策略执行裁剪或摘要；详见 [Context Strategy](context-strategy.md)。
+- `budget`：`max_context_tokens?`、`max_output_tokens`；与 Provider.contextWindow 取小值，再扣除输出和内部固定 Token 估算余量（非用户设置），得到**完整 Prompt 输入预算 B**。由 AgentContext 按世界卡 window/summary 策略执行裁剪或摘要；详见 [Context Strategy](context-strategy.md)。
 - **不保存 `scan_depth_entries`**：所有 lorebook、状态根和角色的关键词匹配范围就是经过世界卡 Context 策略处理的**当前实际叙事历史 + 当前 User**。
 
-默认持久化 `builtin/default` 预设可编辑但不可删除；允许复制、新建、导入、导出、恢复默认。配置变更从旧 Session 下一轮开始立即生效，不回写已保存 Entry。
+默认持久化 `builtin/default` 预设可编辑但不可删除；允许复制、新建、导入和导出，但**不提供独立恢复默认接口**。配置变更从旧 Session 下一轮开始立即生效，不回写已保存 Entry。
 
 ## 2. 七个系统节点
 
@@ -53,7 +53,7 @@
     {"id":"userInput","kind":"system","name":"用户输入","source":"userInput","role":"user","enabled":true},
     {"id":"postHistory","kind":"system","name":"后置指令","source":"postHistory","role":"system","enabled":false,"content":""}
   ],
-  "budget":{"max_context_tokens":32768,"max_output_tokens":4096,"safety_margin_tokens":1024}
+  "budget":{"max_context_tokens":32768,"max_output_tokens":4096}
 }
 ~~~
 
@@ -68,19 +68,16 @@ SQLite `presets` 表：`id TEXT PK, name, config_json, is_builtin, created_at, u
 | 接口 | 作用 |
 | --- | --- |
 | `listPresets` | 枚举可选预设及基本信息 |
-| `getPreset` | 查看一份完整预设 |
-| `createPreset` | 创建并校验一份预设 |
-| `clonePreset` | 复制已有预设为可编辑副本 |
+| `getPreset` | 预设编辑页、Session 创建与本轮 AgentContext 读取**同一份完整最新配置**（模型、预算、摘要指令和有序节点） |
+| `createPreset` | 创建/复制一份预设并校验；复制从 `getPreset` 读取内容后创建新记录，不需独立 clone API |
 | `updatePreset` | 修改模型、Token 预算、Prompt 和节点编排 |
 | `deletePreset` | 删除非内建预设，阻止删除仍被 Session 使用的记录 |
 | `importPreset` | 校验并导入预设 JSON，不带 API Key |
 | `exportPreset` | 导出脱敏的预设 JSON |
-| `restoreDefault` | 将内建默认预设恢复为初始内容 |
-| `getPresetSnapshot` | 给本轮 AgentContext 提供当前模型、预算、节点和摘要模板 |
 
 首期校验系统节点唯一、角色合法、必需节点启用和顺序、Provider 模型可发现、预算合法。摘要 Prompt 跟随预设导出。
 
-Preset 不负责 lorebook 匹配、实际摘要执行、文本模板渲染、状态结算或 Pi HTTP 调用。`getPresetSnapshot` 是 AgentContext 的配置读取口，返回当前有序节点、模型、摘要 Prompt 和预算。
+Preset 不负责 lorebook 匹配、实际摘要执行、文本模板渲染、状态结算或 Pi HTTP 调用。**不提供 `getPresetSnapshot`**；AgentContext 仅调用 `getPreset`，每轮读取一次并在内存中固定使用，避免同轮配置不一致。不持久化会话预设快照。
 
 ## 5. 验收
 
