@@ -1,5 +1,7 @@
 # Provider：模型目录、API Key 与连接测试
 
+> **职责与权威范围**：模型目录、凭据与 Provider 接口约定的权威来源；未经 PoC 验证的行为不视为已支持。
+
 > 2026-11-04 目标方案，未实现。ProviderService 面向**设置页配置 Provider、预设页选择模型、AgentRuntime 解析模型**这三条链路；只统一产品操作，不复制 Pi SDK 已存在的模型定义和 API 协议。
 
 ## 1. 用户在产品里怎么使用
@@ -52,7 +54,7 @@ const model = models.getModel("deepseek", "deepseek-v4-flash");
 
 上面展示的是**Pi 的内部复用方法，不是 ProviderService 需要照搬的全部外部接口**。正式依赖锁定时核实函数签名，不要与不同版本 pi-agent-core / pi-coding-agent 混用。只有真实协议差异在 Pi 无法解决时才考虑单个小型适配，不预建 `openai.ts/deepseek.ts/anthropic.ts` 等一系列重复文件。
 
-已知的 SDK PoC 风险：OpenAI-compatible 模型可能把后置 system 重排；`session.prompt(text)` 也可能自动添加 User。正式实现需在 HTTP 层验证最终请求的 role/order、tool calling、SSE 与取消，确保本轮 User 恰好出现一次，不能误把 SDK 方法名当成可任意输入 ModelMessage[] 的签名。[实验记录](../../experiments/pi-sdk-feasibility/REPORT.md)。
+已知的 SDK PoC 风险：OpenAI-compatible 模型可能把后置 system 重排；`session.prompt(text)` 也可能自动添加 User。正式实现需在 HTTP 层验证最终请求的 role/order、tool calling、SSE 与取消，确保本轮 User 恰好出现一次，不能误把 SDK 方法名当成可任意输入 ModelMessage[] 的签名；原本地实验记录当前不可用，相关行为应重新通过 PoC 验证。
 
 ## 4. 与 Token 预算的关系
 

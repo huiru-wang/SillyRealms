@@ -1,5 +1,7 @@
 # 技术架构：Monorepo + Run 分页 + 完整 Agent Entries
 
+> **职责与权威范围**：系统模块、依赖方向及执行流程概览；各领域细节以对应权威规范为准。
+
 > 2026-11-04 MVP 目标设计，尚未实现。个人本地客户端，首期 H5 Web + Server；建议 React/Vite/TypeScript、Hono/TypeScript、SQLite、Pi Agent / Pi AI。详细契约：[Session](../design/session.md)、[Context Strategy](../design/context-strategy.md)、[Storage](storage.md)。
 
 ## 1. Monorepo 结构
@@ -28,7 +30,7 @@ SillyRealms/
 | ProviderService | 供应商/模型列表（含凭据配置状态）、保存或删除 Key、显式连接测试、Runtime 解析模型 | 重复的 hasApiKey/getModel/getAvailableModels 与 Provider 协议重写 |
 | TagService | 标签字典和 type 内排序 | world_tags 关联表 |
 | SessionService | 会话管理、按 run_id 的可见聊天分页、世界线查看/切换/重生/续写；Raw Entry 写入由内部 Repository 承担 | 独立 runs 表、外部 appendEntry API 或重复持久化 Prompt |
-| StateService | 当前全量状态、带 reason 的变更和新 Schema 不兼容重置 | 通过摘要推断真实状态 |
+| StateService | 当前全量状态、带 reason 的变更和新 Schema 不兼容诊断 | 通过摘要推断真实状态 |
 | AgentContext | 真实父链→候选叙事→内容激活→NodeBuilder/渲染→完整 Prompt Token 校验→按需压缩历史 | Pi SSE、擅自丢旧 ToolCall |
 | AgentRuntime/PiExecutor | 一次 Run 的实际生成、全部 Pi Message 按 Entry 持久化、SSE、取消、State 结算 | 将旧 ToolResult 混进新模型历史 |
 | StateReader / Script Runtime | 只读状态访问、隔离的 JavaScript 表达式求值 | 直接数据库访问、未授权持久化写入 |
@@ -118,7 +120,7 @@ flowchart TD
 
 - Raw History：当前世界线完整 Pi Entry 父链，可用于 State、分页、世界线、诊断。
 - Narrative Context：只将 user/assistant 叙事放入模型历史，并应用窗口/摘要与 Token 预算；用户可见聊天投影相同但 UI **不按 Token 裁剪历史**。
-- Current State：当前原始父链最新完整有效状态，按世界卡最新 Schema 校验/重置；不受 Context 策略影响。
+- Current State：世界卡 Global、Session 与当前原始父链 Message 完整状态，按最新 Schema 校验；不兼容时保留并提示处理；不受 Context 策略影响。
 
 ### 一次 Run 的严格时序
 

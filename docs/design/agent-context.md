@@ -1,5 +1,7 @@
 # AgentContext：真实消息持久化与叙事 Context 的唯一构建入口
 
+> **职责与权威范围**：单轮 Prompt 构建时序、节点排序、worldState 延迟生成的权威来源；状态合并和持久化以状态及存储规范为准。
+
 > 2026-11-04 设计稿。只有一个 AgentContext，无 WorldInstanceContext。Session、WorldCard、Preset/模型、完整 Entry、叙事 Context、状态均由本轮直接读取；构建完成仅输出 ModelMessage[]。Window/Summary 与 Token 预算算法见 [Context Strategy](context-strategy.md)。
 
 ## 1. 对外接口

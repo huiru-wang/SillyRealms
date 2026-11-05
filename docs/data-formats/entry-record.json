@@ -1,0 +1,13 @@
+{
+  "id": "entry-user-001",
+  "session_id": "session-001",
+  "parent_id": "entry-opening-001",
+  "run_id": "run-001",
+  "seq": 2,
+  "type": "message",
+  "role": "user",
+  "timestamp": 1760000000000,
+  "payload": "{\"message\":{\"role\":\"user\",\"content\":\"清月，你还好吗？\",\"timestamp\":1760000000000}}",
+  "state": null,
+  "ext_data": "{}"
+}

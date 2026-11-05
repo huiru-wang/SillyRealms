@@ -1,5 +1,7 @@
 # 状态管理：强类型状态树、语义变更与完整状态
 
+> **职责与权威范围**：状态定义、作用域、工作状态、模型与脚本变更语义的权威来源；持久化结构以存储规范为准。
+
 > 2026-11-04 目标设计，**尚未实现**。本文为 SillyRealms 状态唯一权威规范，替代旧的基于 `initial` 推断类型、`world/user` 运行值、MVU `<UpdateVariable>` 和模型直接提交 RFC 6902 JSON Patch 的方案。背景决策与测试计划见工作区 `plan/realms-typed-state-redesign-design.md` / `-tasks.md`。其中动态工具 Schema、长叙事 Tool Call 流式及 Provider 兼容性仍须 PoC，不能标称已验证。
 
 ## 1. 目标、取舍及术语
@@ -82,7 +84,7 @@ Message 初始运行值（逻辑对象视图，Entry 的 state 列仍保存根 k
 - 世界卡在 `data.state.scopes` 分别声明三个作用域的状态树；不再运行时拼接 `world/user`，不隐式生成虚拟 `全局` 或选中角色的 `user` 状态。
 - `characters[]` 仍负责角色设定、角色 ID 和可扮演许可。原有 `characters[].state` 属于**旧格式导入数据**；迁移时由导入器/作者显式映射到 `data.state.scopes.message.modules[目标根名称]`，处理重名与类型冲突，不能悄悄合并或只加载玩家角色的状态。选中的 `user` 只是 Session 的角色身份，并非状态根的特殊命名空间。
 - Opening 的 `initial_state` 只覆盖 Message 初值，是与消息运行值同形的**部分对象覆盖**：沿固定 `object` 递归到已定义叶子；`array/json` 叶子只能整体替换，不能把对象初值误当成深合并。所有覆盖值由 Zod 完整验证；未知键、额外固定字段、类型错误阻止开局初始化。
-- 创建世界卡时以 global 定义初始化 `worlds.state`；创建 Session 时以 session 定义初始化 `sessions.state`，并以 message 定义及 Opening 覆盖构建 S0 写入根 Assistant Entry 的 `state` 列；**Session 不复制 Schema 或世界快照**。下一轮世界卡变更若使旧状态不兼容，允许舍弃旧值并以最新 Schema 的初值重建；既有故事消息仍保留。
+- 创建世界卡时以 global 定义初始化 `worlds.state`；创建 Session 时以 session 定义初始化 `sessions.state`，并以 message 定义及 Opening 覆盖构建 S0 写入根 Assistant Entry 的 `state` 列；**Session 不复制 Schema 或世界快照**。世界卡定义变更若使现有状态不兼容，应提示并阻止使用该状态，保留原值；经用户明确选择并备份后，才可按方案迁移或重建。
 
 ## 3. 创作者 UI 与导入
 
@@ -151,7 +153,7 @@ Message 初始运行值（逻辑对象视图，Entry 的 state 列仍保存根 k
 
 状态根 `load` 默认 `{"mode":"always"}`，仅支持 `always` 与 `on_mention`；**不支持 manual**。关键词检测使用压缩前候选叙事及当前 User：Window 先取最近 N 条；Summary 使用已有最新摘要与未覆盖原文。本轮新摘要不参与扫描，预算裁剪后不重匹配。`on_mention` 使用 `keywords`、`keyword_logic:any|all`、`exclude_keywords`，基础条件未命中则不加载。
 
-若存在 `when`，它是附加的 **AND 条件**：`active = modeMatched && evaluateWhen(fullState)`。`always + when` 必须满足 when；`on_mention + when` 必须同时命中关键词且 when=true；排除词命中一票否决。`when` 对当前世界线最新**完整状态**求值，不能用筛选出来的局部状态代替全量 State。统一加载判断由 [ContentActivation](content-activation.md) 执行，条件由独立 [ExpressionEngine](expression-engine.md) 求值。
+若存在 `when`，它是附加的 **AND 条件**：`active = modeMatched && evaluateWhen(fullState)`。`always + when` 必须满足 when；`on_mention + when` 必须同时命中关键词且 when=true；排除词命中一票否决。`when` 对当前世界线最新**完整状态**求值，不能用筛选出来的局部状态代替全量 State。统一加载判断由 [ContentActivation](content-activation.md) 执行，条件由独立 [ExpressionEngine](script-runtime.md) 求值。
 
 各作用域的状态根以 `(scope, 根名称)` 唯一标识；激活后，其描述与当前值进入 `worldState` NodeBuilder，也用于构造受限状态更新 Tool Schema；未激活的根仍留在全量状态中，但不默认暴露给模型或允许更新。候选历史选择及工具消息过滤决定关键词来源，**不改变完整状态的读取**。
 
@@ -169,7 +171,7 @@ Message 初始运行值（逻辑对象视图，Entry 的 state 列仍保存根 k
 
 `const/let` 等局部变量限定在一条世界书条目或一条角色描述的单次执行中，执行结束即销毁；不跨条目共享。`setvar(name, value)` / `getvar(name)` 只读写同一 Run 的临时变量表，可跨世界书条目、角色描述和预设模板共享；按照节点与条目确定顺序读到先前的成功写入，未设置时返回空字符串 `""`，0、false 和 null 原样返回；Run 成功、失败、取消后销毁，重试或重生成创建新的表，不进入任何 state 列。预览使用独立临时表并在结束销毁。加载判断先于正文渲染，不能读取后续条目才写入的临时变量；`when` 仅读状态，不允许 `setvar` 或 `setState`。EJS 普通渲染可按 scope 通过 `setState` 更新本轮工作状态，后续脚本立即可见；不直接写数据库。worldState 本体最后只读生成，Run 成功后才统一提交。
 
-JavaScript 引擎与 EJS 的版本及系统 API 要明确固定；`getState/setState` 是宿主提供的 SR API，语言能力不等于开放文件、网络、数据库或进程。脚本在受资源限制的独立隔离环境中执行，超时、错误或资源超限返回可定位诊断，不提交状态；Node `vm` 本身不是安全边界。详情见[表达式与脚本](expression-engine.md)和[文本渲染](text-rendering.md)。
+JavaScript 引擎与 EJS 的版本及系统 API 要明确固定；`getState/setState` 是宿主提供的 SR API，语言能力不等于开放文件、网络、数据库或进程。脚本在受资源限制的独立隔离环境中执行，超时、错误或资源超限返回可定位诊断，不提交状态；Node `vm` 本身不是安全边界。详情见[表达式与脚本](script-runtime.md)和[文本渲染](text-rendering.md)。
 
 ### 6.3 本轮工作状态与最终持久化
 
@@ -183,11 +185,11 @@ Run 整体成功后在一个事务提交最终 Global、Session、Message 工作
 2. 玩家输入是新的 User Message Entry；Assistant 生成可能有多个包含 `toolCall` 块的完整消息，并可能产生独立 `toolResult` Message Entry。**每条真实 Pi 消息都按原样持久化**，不可把工具消息仅留在内存或作为可选日志。
 3. AgentContext 在 Run 开始读取世界卡 Global、Session 状态及当前 parent_id 父链最近有效 Message 状态，固定本轮读取视图；Prompt 历史裁剪不影响读取。
 4. 模型输出叙事和 `StateChange[]`，每项 Change 强制 `reason`。StateEngine 在脚本更新后的完整 Message 工作状态上顺序应用并验证模型部分变更和最终新状态；跨作用域候选变更使用同一事务、版本检查和状态验证；工具返回不是已结算状态，失败时不将非法更改标记为成功。
-5. 生成成功后，将完整 S' 编码为 state 数组写入最终 Assistant Message Entry，含 reason 的变更元数据写入 ext_data（必要时为由终止型 ToolCall.narrative 规范化生成的 Assistant Entry）。`off` 模式继承 S；明确 `changes: []` 也保留完整状态。Chat UI/新模型历史只提取 user/assistant **叙事文本**，剔除 ToolCall/ToolResult、思维块及内联状态标记；但 Raw Entries 保留原始 ToolCall/ToolResult。
-6. **世界卡只有最新一份，允许旧状态失效**：下一次使用新的 `worlds.data_json` 状态 Schema 读取历史 S。若结构不兼容，允许舍弃旧值并按最新 Schema 的 initial 重建一个完整初态，标记 `stateReset` 以便诊断。不要把旧 Schema 状态强行转换、导致旧 Session 无法继续；旧历史消息和它们当时保存的状态 JSON 仍保留。
+5. 生成成功后，将完整 S' 编码为 state 数组写入最终 Assistant Message Entry，含 reason 的变更元数据写入 ext_data（必要时为由终止型 ToolCall.narrative 规范化生成的 Assistant Entry）。`off` 仅关闭模型状态更新，不丢弃 Prompt 脚本对工作状态的变更；`changes: []` 同样保留脚本更新后的完整状态。Chat UI/新模型历史只提取 user/assistant **叙事文本**，剔除 ToolCall/ToolResult、思维块及内联状态标记；但 Raw Entries 保留原始 ToolCall/ToolResult。
+6. **世界卡定义使用最新版本**：若新的 `worlds.data_json` Schema 与既有 Global、Session 或 Message 状态不兼容，保留所有旧数据，提示冲突并暂停依赖该状态的执行；只有用户明确选择且已备份后才进行迁移或重建。重建记录 `stateReset`；不得覆盖历史消息状态。
 7. 多分支从当前 tip 的真实父链取状态，不能从数据库全局最近 Entry 或另一个分支取值。对有后代的历史编辑/重新生成，不静默重写后代状态；可通过新分支保存新的输出。
 
-SQLite `worlds.state` 与 `sessions.state` 持久化对应状态，`entries.payload` 保存 Pi 原生内容，`entries.state` 保存完成 Assistant 的完整状态数组，`entries.ext_data` 保存变更元数据；`sessions` 只通过 `world_id/preset_id/user_character_id/tip_entry_id` 关联事实。**不建 run_tool_calls/runs/messages 独立表，不用 Session 世界快照或 selected_run_id。**
+SQLite `worlds.state` 与 `sessions.state` 持久化对应状态，`entries.payload` 保存 Pi 原生内容，`entries.state` 保存完成 Assistant 的完整状态数组，`entries.ext_data` 保存变更元数据；`sessions` 通过 `world_id/preset_id/user_character_id/tip_entry_id` 建立关联，并保存自身 state。**不建 run_tool_calls/runs/messages 独立表，不用 Session 世界快照或 selected_run_id。**
 
 ## 8. 验收与未解决问题
 
@@ -196,6 +198,6 @@ SQLite `worlds.state` 与 `sessions.state` 持久化对应状态，`entries.payl
 - 一致性：消息级 Entry 的真实 parent_id 分叉、Assistant 重新生成/工具消息顺序、无变化也保存完整状态；本地 MVP 不引入复杂 revision 矩阵。
 - StateReader/ExpressionEngine：状态引用、`getState/setState`、EJS 条件和 Run 临时变量、世界书 when、状态根 load 与预览一致；ContentActivation 统一匹配；Prompt 脚本只更新工作状态，不在构建时持久化；worldState 本体只读。
 - **Provider PoC 必须优先完成**：至少两类 Provider 的 strict Tool 支持、复杂 Schema 通过率、长篇 narrative 流式表现、内联失败率、输出正确率及输入/输出 Token、延迟和语义更新召回率。选择正式默认通道前必须量化，不能只看 JSON 合法率。
-- **迁移清单**：旧 `characters[].state` 显式并入统一 `data.state`，旧 `world/user` 快照须明确转换，旧 MVU / RFC6902 更新协议不自动兼容；升级旧格式前检查当前世界卡、Opening、`entries.payload`，先备份再迁移；新 WorldCard Schema 可以使历史状态失效，而非强制全局迁移。
+- **迁移清单**：旧 `characters[].state` 显式并入统一 `data.state`，旧 `world/user` 快照须明确转换，旧 MVU / RFC6902 更新协议不自动兼容；升级旧格式前检查当前世界卡、Opening、`entries.payload`，先备份再迁移；新 WorldCard Schema 不兼容时提示用户明确选择迁移或重建，保留旧数据。
 
 外部参考：[Zod JSON Schema](https://zod.dev/json-schema)、[JSON Schema](https://json-schema.org/)、[RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)、[RFC 6902](https://www.rfc-editor.org/rfc/rfc6902)、[OpenAI Structured Outputs](https://platform.openai.com/docs/guides/structured-outputs)、[Anthropic Tool Use](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview)。

@@ -1,5 +1,7 @@
 # Context Strategy：Token 预算驱动的 Window / Summary
 
+> **职责与权威范围**：Window、Summary 和 Token 预算规则的权威来源；脚本与节点执行时序以 AgentContext 为准。
+
 > 2026-11-04 目标方案，尚未实现。WorldCard 决定策略和消息数上限，Preset 决定本次 Token 预算，Provider 给出模型硬上限。**只支持 `window` 与 `summary`，默认 `window`，不提供 `none`。**
 
 ## 1. 三份数据严格分离

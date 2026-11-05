@@ -1,5 +1,7 @@
 # Session / Entry：Run 分组分页、消息级持久化与分叉
 
+> **职责与权威范围**：Session、Entry 父链、Run 分组、世界线和分页语义的权威来源；表结构以存储规范为准。
+
 > 2026-11-04 设计稿。**Session 是世界实例会话，Run 是一次玩家交互的逻辑分组，Entry 是一次实际消息或技术事件。** 不新增 runs 表；用 entries.run_id 完成按 Run 分页。参考 Fanto 的 run_id 分组机制，并扩展为**只查询当前世界线祖先链**。
 
 ## 1. 模型与归属
@@ -88,7 +90,7 @@ run_opening: A0（Opening，S0）
 
 **状态结算**：状态工具的候选变更不等于已提交状态。Prompt 脚本先更新本轮三作用域工作状态，模型仅对 Message 工作状态应用部分变更；最终成功后原子提交 Global、Session 和最终 Assistant Entry 的完整 Message 状态，带 reason 的模型变更存 ext_data。如果 `submit_turn` 仅提供工具参数 narrative，须保留原 ToolCall/ToolResult，再添加来源标识 `derived_tool_narrative` 的规范化 Assistant Entry，避免正文丢失或重复。未结算变更不得标为有效状态。
 
-若世界卡更新导致历史状态不兼容，允许按当前 Schema 初值重置状态而不删除旧消息。若用户角色变成不可扮演，应先重新选择或在世界卡中新建角色。
+若世界卡更新导致历史状态不兼容，提示并保留旧状态，用户明确选择且备份后方可迁移或重建。若用户角色变成不可扮演，应先重新选择或在世界卡中新建角色。
 
 ## 4. 叙事投影和 UI
 

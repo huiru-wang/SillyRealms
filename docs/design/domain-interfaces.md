@@ -1,5 +1,7 @@
 # 领域 Service：围绕产品链路的能力与接口
 
+> **职责与权威范围**：对外领域服务的能力目录；字段结构与执行算法分别以对应领域规范为准。
+
 > 2026-11-04 目标设计，尚未实现。本文件只列**具有业务含义、需要由产品或运行时调用的 Service 方法**。数据库 Repository、纯函数校验器、Pi SDK 原生方法不等于领域接口。具体返回 DTO 在实现时统一定义。
 
 ## 1. 用户操作主链路
@@ -93,7 +95,7 @@
 | 接口 | 产品链路 / 服务职责 |
 | --- | --- |
 | `buildInitialState(world, opening)` | 创建 Session 时合并世界卡初值与 Opening 覆盖，经 Schema 校验得到 S0 |
-| `getCurrentState(sessionId, tipEntryId, world)` | 状态栏和 AgentContext 读取世界卡 Global、会话 Session、沿当前 Raw 父链读取 Message 状态；与窗口/摘要无关，旧 Schema 不兼容可重置 |
+| `getCurrentState(sessionId, tipEntryId, world)` | 状态栏和 AgentContext 读取世界卡 Global、会话 Session、沿当前 Raw 父链读取 Message 状态；与窗口/摘要无关，旧 Schema 不兼容时保留并提示处理 |
 | `buildStatePrompt(world, narrative, fullState)` | 按压缩前候选叙事和初始状态上的 when 一次选中状态根；全部普通 Prompt 脚本后读取工作状态生成 worldState，模型工具仅允许已激活 Message 状态根；压缩历史不重算 |
 | `finalizeTurnState(world, previousState, toolOrInlineChanges)` | 解析、校验并应用本轮状态变更，按作用域校验带 reason 的 ChangeSet，原子提交 Global/Session 状态及最终 Assistant Entry 的完整 Message 状态 |
 

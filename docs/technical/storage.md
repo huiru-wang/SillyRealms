@@ -1,5 +1,7 @@
 # Storage：六表、Run 游标与完整 Pi Entries
 
+> **职责与权威范围**：数据库表、字段、状态事务及持久化恢复的权威来源；运行语义以状态与 Session 规范为准。
+
 > 2026-11-04 目标方案，尚未实现。以六张业务表支撑世界卡、预设、Session 和真实 Agent 历史。**entries 一行一条消息/技术记录；run_id 把一次逻辑交互的多条 Entry 分组供游标分页；parent_id 确定分叉。** 参见 [Session](../design/session.md)、[Context Strategy](../design/context-strategy.md)。
 
 ## 1. 六表职责
@@ -13,7 +15,7 @@
 | sessions | id/world_id/preset_id/user_character_id/tip_entry_id/title/state/created_at/updated_at | 会话关系和当前分支真实末尾 |
 | entries | id/session_id/parent_id/**run_id**/seq/type/role/timestamp/payload/state/ext_data | Raw Pi Message 和技术 Entry；Run 分页、Entry 分叉 |
 
-不建独立的 `runs`、`messages`、`tool_calls`、`world_tags`、`app_settings`、`context_checkpoints` 表。Session 不保存 `world_snapshot_json`、`opening_id`、`model_selection_json`、`options_json`、`runs_json` 或 `selected_run_id`。世界卡直接引用当前版本；Schema 不兼容时允许状态重置。
+不建独立的 `runs`、`messages`、`tool_calls`、`world_tags`、`app_settings`、`context_checkpoints` 表。Session 不保存 `world_snapshot_json`、`opening_id`、`model_selection_json`、`options_json`、`runs_json` 或 `selected_run_id`。世界卡直接引用当前版本；Schema 不兼容时保留数据并提示处理，迁移或重建须经明确选择及备份。
 
 ## 2. SQLite DDL
 
@@ -112,7 +114,7 @@ CREATE INDEX idx_tags_type_sort ON tags(type, sort_order, name);
 
 Global 状态存在 `worlds.state`，按 world ID 隔离，所有关联 Session 共享；Session 状态存在 `sessions.state`，仅所属 Session 的分支共享。两列均为完整 JSON 对象，不与世界卡 `data_json` 定义混存。世界卡创建时初始化 Global，会话创建时初始化 Session；创建会话和重新生成不得重置 Global。世界卡首页读取对应 Global 最新已提交值，不依赖 Session。Session/Message 引用在无会话的首页不可用并返回诊断。
 
-Run 开始从三个作用域已提交值复制完整工作状态；when 只读初始值，Prompt 脚本 setState 按顺序校验并更新工作状态，模型仅对 Message 工作状态应用部分变更。跨 scope 同一批变更在同一 SQLite 事务中核对读取版本并一起提交，冲突时整批失败并提示重试；预览、条件判断和 Prompt 渲染不得直接持久化，预览工作状态最终丢弃。失败、取消不写部分结果。Global/Session 版本可用各行独立状态 revision 列或等价可靠的比较机制；不得依赖无条件整行覆盖。Message 的工作状态由正确父链最近有效 state 解码后的完整对象复制而来，模型变更应用于 Prompt 脚本更新之后；按已声明字段路径依序应用 `set/adjust/append`，对象其他字段保留，`json/array` 的 `set` 整值替换，数组 `append` 追加；不使用不加区分的深合并。所有操作与最终状态校验成功后编码为一个完整数组，随最终 Assistant 在同一事务提交；失败或中断不写已结算状态，不修改父 Entry，重生成重新读取原父链。状态不可跨分支查询，且与模型上下文裁剪无关。
+Run 开始从三个作用域已提交值复制完整工作状态；when 只读初始值，Prompt 脚本 setState 按顺序校验并更新工作状态，模型仅对 Message 工作状态应用部分变更。跨 scope 同一批变更在同一 SQLite 事务中核对读取版本并一起提交，冲突时整批失败并提示重试；预览、条件判断和 Prompt 渲染不得直接持久化，预览工作状态最终丢弃。失败、取消不写部分结果。Global/Session 版本可用各行独立状态 revision 列或等价可靠的比较机制；不得依赖无条件整行覆盖。Message 的工作状态由正确父链最近有效 state 解码后的完整对象复制而来，模型变更应用于 Prompt 脚本更新之后；按已声明字段路径依序应用 `set/adjust/append`，对象其他字段保留，`json/array` 的 `set` 整值替换，数组 `append` 追加；不使用不加区分的深合并。所有操作与最终状态校验成功后编码为一个完整数组，随最终 Assistant 在同一事务提交；失败或中断不写已结算状态，不修改父 Entry，重生成重新读取原父链。Message 状态不可跨分支查询；Global 与 Session 按各自共享范围读取。三者均与模型上下文裁剪无关。
 
 `ext_data` 为应用自有 JSON 对象，默认 `{}`，保存可选 `stateChanges`、`stateReset`、`origin` 及摘要覆盖边界和生成记录；禁止覆盖 Pi payload 或作为状态本体。应用 Summary 使用 `type=compaction` 和 Fanto 格式的 compaction payload，`ext_data.summary = {kind: "sillyrealms.summary", coveredThroughEntryId, generation}` 标识应用摘要；它由应用生成，不声称 Pi 原生 compaction 流程已运行。SDK 是否能正确恢复这种生成记录须 PoC；无法满足时不得伪装兼容。
 
@@ -143,7 +145,7 @@ Run 开始从三个作用域已提交值复制完整工作状态；when 只读�
 - 普通运行 = 读取分支/状态 → [Context Strategy](../design/context-strategy.md) 预检查 Token（必要时先摘要）→ 短事务写同一 run_id 的 Summary（如果生成）和 User → Pi 产生的消息依序写 Entry → 最终成功 Assistant 附完整新 State。
 - 当只收到 `submit_turn.narrative` 而没有最终叙事正文时，将其规范化为独立 Assistant Message Entry，`origin=derived_tool_narrative`；原始 ToolCall 与 ToolResult 保留。
 - `presets.config_json.budget` **仅**保存 `max_context_tokens?` 与 `max_output_tokens`；内部固定 Token 估算余量不向前端或持久化配置开放。实际输入上限 `min(预设上限, 模型 contextWindow) - 输出预留 - 内部估算余量`。WorldCard `data.context.strategy` 只有 window/summary，默认 window；`max_messages` 是条数阈值，不是 Token 阈值。
-- 旧状态 Schema 与当前 WorldCard 不兼容，允许重新初始化 State；以前的消息和状态不删除。Key 不进入 WorldCard/Session/Preset 导出。
+- 旧状态 Schema 不兼容时保留数据并提示处理；明确选择并备份后才可迁移或重建。Key 不进入 WorldCard/Session/Preset 导出。
 - `tags` 的类型内稳定排序通过 `ORDER BY sort_order, name, id` 实现；WorldCard.data.tags 仅存 type=world 标签 ID 数组。
 
 ## 6. 验收
@@ -151,4 +153,4 @@ Run 开始从三个作用域已提交值复制完整工作状态；when 只读�
 - DDL 在 SQLite 内存环境执行，只有六张业务表；Entry 三类 enum、role 条件以及 state/ext_data JSON 形状、run_id NOT NULL 与索引正确。
 - run_id 成组分页不丢同轮 Entry，也不混入另一个分支同 run_id 的回复；Opening、摘要都有 run_id。
 - 消息原样入库、UI/下轮 Prompt/关键字用统一叙事投影；Token 窗口和摘要不修改 Raw History。
-- 状态不依赖上下文裁剪，所有合法变更含 reason 和有效完整状态；模型/世界卡/角色关联与更新规则一致。
+- 状态不依赖上下文裁剪，模型变更均含 reason，脚本变更按 API 校验，提交时均有有效完整状态；模型/世界卡/角色关联与更新规则一致。

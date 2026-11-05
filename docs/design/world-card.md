@@ -1,5 +1,7 @@
 # 世界卡：唯一当前版本、角色、lorebook 与上下文策略
 
+> **职责与权威范围**：世界卡配置、角色、开局和世界书数据格式的权威来源；状态语义与加载算法分别以状态和内容加载规范为准。
+
 > 状态：领域设计，2026-11-04；强类型状态协议已同步，**尚未实现**。返回[文档索引](../README.md)，相关领域见[AgentContext](agent-context.md)、[会话](session.md)。
 
 ## 定位和内容归属
@@ -14,7 +16,7 @@
 
 - `worlds.data_json` 只保存**一份当前世界卡**，不支持 draft、published 或历史内容版本；可以编辑、保存，创建 Session 时进行最基础的内容合法性校验。`spec_version` 仍表示文件**格式规范版本**，不是世界卡多版本机制。
 - `sessions.world_id` 直接引用此世界卡，**每次交互重新读取最新 data_json**；Session 不复制世界快照，也不保存 opening_id。所选开局的正文在创建 Session 时就是第一条 Assistant Entry。
-- 世界卡内容编辑立即影响旧 Session 的后续 Prompt。**允许旧状态失效**：若当前 Schema 与历史完整快照不兼容，下次状态读取可丢弃不兼容值并按最新状态定义的初值重建，不要求 Schema 迁移、不阻止继续旧剧情。原历史 Entry 仍然完整留存。
+- 世界卡内容编辑立即影响旧 Session 的后续 Prompt。若当前 Schema 与已保存状态不兼容，保留原数据并提示冲突，暂停依赖该状态的执行；仅在用户明确选择且已备份后执行迁移或重建，历史 Entry 不覆盖。
 - `data.context` 是 WorldCard 专属的上下文策略配置，仅支持 `window`（默认）/`summary`，和模型参数、摘要 Prompt（属 Preset）相互独立。详见 [Context Strategy](context-strategy.md)。
 - 若编辑世界卡时删除了某个 Session 所选的玩家角色，或将其 `player_selectable` 改为 false，下次进入该 Session 应要求重新选一个当前可选角色；没有可选角色时先创建并写回世界卡，再更新 Session.user_character_id。不得继续注入不存在的身份信息。
 
@@ -79,7 +81,7 @@ WorldCard
 | `content` | string，必填 | 初始故事内容或特殊入口标记 |
 | `initial_state` | object，可选 | 与运行快照同形的部分覆盖，根键对应 `data.state.scopes.message.modules`；固定 object 递归覆盖，array/json 叶子整值替换并接受强类型校验 |
 
-**可选角色 = 世界卡中所有 `player_selectable=true` 的角色。** Opening 不设置 `player_characters`。如果当前可选角色为空，创建 Session 的流程必须提示用户新建一个完整角色，直接保存到当前 `worlds.data_json.characters[]` 并标记 `player_selectable=true`；然后选择该角色，Session 仅保存其 ID。
+**可选角色 = 世界卡中所有 `player_selectable=true` 的角色。** Opening 不设置 `player_characters`。如果当前可选角色为空，创建 Session 的流程必须提示用户新建一个完整角色，直接保存到当前 `worlds.data_json.data.characters[]` 并标记 `player_selectable=true`；然后选择该角色，Session 仅保存其 ID。
 
 选择开局后将 `opening.content` 作为**第一条 Assistant Entry** 保存，首条消息附带基于当前 `data.state.scopes.message.modules` 的初始完整状态 S0，并允许 `opening.initial_state` 做受限覆盖，经过 Zod 校验。Session 不需要 opening_id，后续模型历史只通过 Entry 父链恢复，不重复注入 Opening。详见 [Session](session.md)。
 
@@ -118,7 +120,7 @@ WorldCard
 
 Agent 的三类受限操作为 `set/adjust/append`，由引擎按当前类型和已加载根自动开放，作者不配置更新命令。Tool Call 优先但依赖真实 Provider 验证，内联 `<StateUpdate>{"changes":[...]}</StateUpdate>` 是回退格式，详见[状态](state.md)。**JSON Patch / MVU 命令不再是模型输入契约。**
 
-`load.when` 使用 JavaScript 表达式，例如 `getState("清月.灵力", {scope:"message"}) < 20`；世界书正文与角色描述使用 EJS，例如 `<%- getState("清月.灵力", {scope:"message"}) %>`。读取 Global、Session、Message 三份状态，执行隔离、写入限制和临时变量见[脚本与状态 API](expression-engine.md)。
+`load.when` 使用 JavaScript 表达式，例如 `getState("清月.灵力", {scope:"message"}) < 20`；世界书正文与角色描述使用 EJS，例如 `<%- getState("清月.灵力", {scope:"message"}) %>`。读取 Global、Session、Message 三份状态，执行隔离、写入限制和临时变量见[脚本与状态 API](script-runtime.md)。
 
 ## 世界书与角色加载条件
 
@@ -173,7 +175,7 @@ Agent 的三类受限操作为 `set/adjust/append`，由引擎按当前类型和
 
 角色的 `load` 不接受 `anchor/position/role`，其资料进入 `characterInfo` 基础节点，先按 `order` 升序、同序再按角色原数组位置稳定排列；当前选为玩家的角色固定由 `personaInfo` 读取，不在 `characterInfo` 重复出现。世界书按 `(anchor,position,order,原始列表位置)` 稳定编排；同一条目在同一次构建中去重。`mode=always` 仍需要可选 `when` 为 true（若配置），但即便节点本体被关闭，该节点锚点仍能生成合并后的消息；具体见[Preset](preset.md)。
 
-AgentContext 将压缩前候选叙事与当前 User 提供给共享 [ContentActivation](content-activation.md)：window 先取最近 N 条，summary 使用已有最新摘要和未覆盖原文；本轮新生成的摘要不参与本轮扫描。预算裁剪或摘要后不重新匹配。`when` 委托 [ExpressionEngine](expression-engine.md) 读取完整状态；索引按 anchor/position/order 稳定排序，NodeBuilder 负责 before/body/after。匹配细则及不支持项见内容加载判断。
+AgentContext 将压缩前候选叙事与当前 User 提供给共享 [ContentActivation](content-activation.md)：window 先取最近 N 条，summary 使用已有最新摘要和未覆盖原文；本轮新生成的摘要不参与本轮扫描。预算裁剪或摘要后不重新匹配。`when` 委托 [ExpressionEngine](script-runtime.md) 读取完整状态；索引按 anchor/position/order 稳定排序，NodeBuilder 负责 before/body/after。匹配细则及不支持项见内容加载判断。
 
 ### 禁止隐式 Prompt 注入
 
@@ -201,6 +203,6 @@ AgentContext 将压缩前候选叙事与当前 User 提供给共享 [ContentActi
 
 ## 示例与待讨论事项
 
-世界卡整理示例见 [world-card.json](../examples/world-card.json)，其中状态树已改为强类型结构；原始角色卡及旧状态定义不做运行时自动兼容。示例中的角色许可与加载方式属于人工整理，不是源角色卡既有权限。
+世界卡整理示例见 [world-card.json](../data-formats/world-card.json)，其中状态树已改为强类型结构；原始角色卡及旧状态定义不做运行时自动兼容。示例中的角色许可与加载方式属于人工整理，不是源角色卡既有权限。
 
 后续再讨论高级世界书触发、导入的正则和扩展兼容。Prompt 构建的确定性加载与合并规则见 [AgentContext](agent-context.md)。

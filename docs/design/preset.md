@@ -1,11 +1,13 @@
 # Preset：模型、摘要 Prompt、系统节点和自定义编排
 
+> **职责与权威范围**：预设配置、系统节点及其角色、顺序和启停约束的权威来源；构建时序以 AgentContext 为准。
+
 > 2026-11-04 目标设计，未实现。Preset 管理**本局使用的模型、生成参数、状态更新模式、摘要 Prompt 和所有提示词节点**。Session 只保存 preset_id，ProviderService 负责模型目录/API Key，AgentContext 负责实际拼装与筛选。
 
 ## 1. 配置归属
 
 - `model`：`provider`、`modelId`、`parameters`，通过 ProviderService 校验当前 Pi 内置模型，**不在 Session 重复保存 model_selection_json**，Preset 导出不得包含 API Key。
-- `state_update_mode`：`off / inline / tool`，由 Provider 模型实际能力确认；StateEngine 验证变更。
+- `state_update_mode`：`off / inline / tool` 控制模型更新；`off` 不关闭脚本对工作状态的修改，成功后仍按状态规范提交；其他模式由 Provider 能力确认并经 StateEngine 验证。
 - `summary_prompt`：用户可编辑的摘要指令模板，世界卡设置 `context.strategy=summary` 且未覆盖消息达到 N **或完整 Prompt Token 超预算**时使用。通过 TextRenderer 读取当前完整状态变量，实际摘要只包含叙事。
 - `nodes[]`：七个系统节点与任意自定义文本节点，单个有序数组决定角色、启停、先后顺序，不额外保存 order 列。
 - `budget`：`max_context_tokens?`、`max_output_tokens`；与 Provider.contextWindow 取小值，再扣除输出和内部固定 Token 估算余量（非用户设置），得到**完整 Prompt 输入预算 B**。由 AgentContext 按世界卡 window/summary 策略执行裁剪或摘要；详见 [Context Strategy](context-strategy.md)。

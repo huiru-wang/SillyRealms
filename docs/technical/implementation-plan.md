@@ -1,5 +1,7 @@
 # SillyRealms 实施计划：Run 分页 / 双策略 Token 预算
 
+> **职责与权威范围**：实施任务和验收进度；目标协议以对应权威规范为准，任务勾选不代替验收证据。
+
 > 2026-11-04 更新；仍为设计阶段，仅修改文档和示例。遵循 [产品总纲](../PRODUCT.md)、[Session](../design/session.md)、[Context Strategy](../design/context-strategy.md)、[AgentContext](../design/agent-context.md)、[Storage](storage.md)。
 
 ## 0. MVP 决策
@@ -15,7 +17,7 @@
 | Context | **window（默认）/summary；无 none**。window 先最近 N 条，超 Token 预算再删最老历史；summary 由 N 或超 Token 提前触发 |
 | 三份视图 | Raw History 全量、Narrative Context 仅 user/assistant 叙事、Current State 独立完整状态 |
 | lorebook/状态 | 仅 always/on_mention，可选 when(fullState)；关键词只匹配压缩前候选 Narrative Context + 当前 User，压缩后不重匹配 |
-| State | 三作用域持久化、Run 临时变量；带 reason 的模型变更，最终 Assistant 附 Message 完整状态；最新世界卡 Schema 不兼容时允许重置 |
+| State | 三作用域持久化、Run 临时变量；带 reason 的模型变更，最终 Assistant 附 Message 完整状态；最新世界卡 Schema 不兼容时保留状态，明确选择及备份后处理 |
 | SQLite | 六表 worlds/presets/provider_credentials/tags/sessions/entries，无其它 Run/ToolCall 表 |
 
 ## 1. 阶段 A：基础与 SDK PoC
@@ -29,7 +31,7 @@
 
 - [ ] B1. 六表 SQLite DDL、`entries.run_id NOT NULL`、`role` 约束与索引、worlds/sessions 状态 JSON 对象、entries state JSON 数组和 ext_data JSON 对象、world→sessions→entries 级联删除；不建 runs/messages/run_tool_calls 等表。
 - [ ] B2. Session 通过当前 WorldCard + Opening 创建初始化 Run/根 Assistant/S0；可扮演角色不存在时必须先保存新角色。
-- [ ] B3. Session 创建和模型/用户角色校验，`getWorld/getPreset` 单轮只读一次；世界卡/预设修改只影响之后的新 Run；不兼容状态可重置。
+- [ ] B3. Session 创建和模型/用户角色校验，`getWorld/getPreset` 单轮只读一次；世界卡/预设修改只影响之后的新 Run；不兼容状态须保留、提示，明确选择且备份后才可迁移或重建。
 - [ ] B4. tags(id,type,name,sort_order) 同类型稳定排序；世界卡保存 tag ID。
 - [ ] B5. **消息级持久化**所有 Pi User/Assistant/ToolResult、Assistant 内 ToolCall 和技术 Entry，归属逻辑 run_id；失败部分也保留。
 - [ ] B6. **Run 级分页**：先按 tip.parent_id 收窄祖先链，后按 run_id 聚合，以当前链每组 MIN(seq) 为倒序游标，返回完整 Run；重生成 Assistant 与原 User 同 Run、不同 parent 分支；编辑 User 新 Run。
@@ -54,7 +56,7 @@
 - [ ] D1. WorldCard 编辑、开局/角色选择、lorebook 条目和状态加载；只露出 window/summary 参数。
 - [ ] D2. Preset 模型与**仅两个字段**的 Token 预算 UI、状态模式、摘要 Prompt、七节点/自定义节点编排；Provider API Key 独立设置。
 - [ ] D3. Session 历史请求使用 **Run 游标**，UI 消息投影只展示 user/assistant 叙事，原始 ToolCall/ToolResult 仅开发者调试可查；Root/Fork-only 按用户 Run 计数。
-- [ ] D4. State 展示完整状态与 reason；当前 Schema 不兼容时允许重置。
+- [ ] D4. State 展示完整状态与 reason；当前 Schema 不兼容时保留状态，提示明确选择及备份后处理。
 - [ ] D5. Context Preview 必须展示策略、最终叙事条数、Token 预算 B、实际估算、被裁历史条数、Summary 覆盖范围和最终 lorebook 命中；预览展示冻结 Prompt、压缩前候选命中和压缩后最终历史，保持与真实请求一致。
 - [ ] D6. [领域 API](../design/domain-interfaces.md) 按真实用户操作定义：World 详情一接口包含开局/角色、Session 公开接口按业务收敛、Provider 列表包含配置状态、Preset 只用 getPreset、不暴露 snapshot/restoreDefault。
 
@@ -64,7 +66,7 @@
 - [ ] E2. 连续多次运行含 ToolCall/ToolResult 时，limit=10 精确计 10 个 Run、不拆 Run；跨分支相同 run_id 只查当前祖先。
 - [ ] E3. Summary 物理附在本轮 User 之前，逻辑前置到历史，coveredThroughEntryId 准确；失败不写未验证的摘要。
 - [ ] E4. Window 超 Token 时只裁剪历史、不重匹配；Summary N/Token 双触发；系统 + User 超限明确失败，不静默更改策略或截断用户输入。
-- [ ] E5. Current State 独立、Schema 可重置；关键词扫描与真实历史同源、when 读全量 State；role/order、Pi 请求中当前 User 仅一份。
+- [ ] E5. Current State 独立、Schema 不兼容时保留并提示处理；关键词扫描与真实历史同源、when 读全量 State；role/order、Pi 请求中当前 User 仅一份。
 - [ ] E6. 世界卡和预设 JSON 示例、Markdown 内部链接、SQLite DDL、级联世界删除与角色与 Entry 类型约束、端到端分支/分页测试通过。
 
 **暂不做**：Android/Desktop、云端内容平台、多用户分布式锁、无隔离执行 JS/EJS、世界卡历史版本、自定义 Provider、独立 runs 表或旧消息删除。

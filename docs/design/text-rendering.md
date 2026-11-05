@@ -1,6 +1,8 @@
 # 文本渲染与转换
 
-> 2026-11-05 目标设计，尚未实现。SR 采用 JavaScript + EJS；状态与变量 API、生命周期和执行隔离见[脚本与状态 API](expression-engine.md)，条目选择见[内容加载判断](content-activation.md)。
+> **职责与权威范围**：文本模板、literal 边界、输出转义及场景文本转换的权威来源；脚本 API 与加载选择以各自规范为准。
+
+> 2026-11-05 目标设计，尚未实现。SR 采用 JavaScript + EJS；状态与变量 API、生命周期和执行隔离见[脚本与状态 API](script-runtime.md)，条目选择见[内容加载判断](content-activation.md)。
 
 TextRenderer 负责解析并执行已激活内容的 EJS，支持标准 `<% ... %>`、`<%= ... %>` 和 `<%- ... %>`；其中 `<%=` 按 EJS HTML 转义，`<%-` 原样输出。Prompt 纯文本中不需要 HTML 转义时明确使用 `<%-`；UI 显示必须根据输出目标安全渲染。EJS 版本、输出规则和可用 JavaScript 特性须固定并验证。`{{user}}` 等原有普通宏是否保留由宏规范处理；旧 `{{state:/...}}`、自定义 `{{#if ...}}` 不再作为状态语法。
 
