@@ -1,5 +1,7 @@
 # Storage：六表、Run 游标与完整 Pi Entries
 
+> **MVP 状态说明**：本文保留原有目标设计；若与本次 Server MVP 的已调整范围或实际行为冲突，以 [Server MVP 实施进度](../technical/server-mvp-progress.md)及其中链接的方案为准。文中的未来功能不代表已实现。
+
 > **职责与权威范围**：数据库表、字段、状态事务及持久化恢复的权威来源；运行语义以状态与 Session 规范为准。
 
 > 2026-11-04 目标方案，尚未实现。以六张业务表支撑世界卡、预设、Session 和真实 Agent 历史。**entries 一行一条消息/技术记录；run_id 把一次逻辑交互的多条 Entry 分组供游标分页；parent_id 确定分叉。** 参见 [Session](../design/session.md)、[Context Strategy](../design/context-strategy.md)。
@@ -13,7 +15,7 @@
 | provider_credentials | provider_id/credential_ref/updated_at | 密钥安全存储引用，Key 本体在 CredentialStore |
 | tags | id/type/name/sort_order/created_at | 按 type 排序的标签字典 |
 | sessions | id/world_id/preset_id/user_character_id/tip_entry_id/title/state/created_at/updated_at | 会话关系和当前分支真实末尾 |
-| entries | id/session_id/parent_id/**run_id**/seq/type/role/timestamp/payload/state/ext_data | Raw Pi Message 和技术 Entry；Run 分页、Entry 分叉 |
+| entries | id/session_id/parent_id/**run_id**/seq/type/role/branch_count/timestamp/payload/state/ext_data | Raw Pi Message 和技术 Entry；Run 分页、Entry 分叉 |
 
 不建独立的 `runs`、`messages`、`tool_calls`、`world_tags`、`app_settings`、`context_checkpoints` 表。Session 不保存 `world_snapshot_json`、`opening_id`、`model_selection_json`、`options_json`、`runs_json` 或 `selected_run_id`。世界卡直接引用当前版本；Schema 不兼容时保留数据并提示处理，迁移或重建须经明确选择及备份。
 
@@ -75,6 +77,7 @@ CREATE TABLE entries (
     type IN ('message', 'compaction', 'branch_summary')
   ),
   role TEXT,                            -- 仅 message 有值，供 SQL 直接按角色查询
+  branch_count INTEGER NOT NULL DEFAULT 0 CHECK (branch_count >= 0), -- 可见后续路径数
   timestamp INTEGER NOT NULL,
   payload TEXT NOT NULL CHECK (json_valid(payload) AND json_type(payload) = 'object'),
   state TEXT CHECK (state IS NULL OR (json_valid(state) AND json_type(state) = 'array')),
@@ -122,6 +125,12 @@ Run 开始从三个作用域已提交值复制完整工作状态；when 只读�
 
 `role` 是 `payload.message.role` 的索引冗余列；仅 message 有值，写入和恢复时校验一致。叙事查询先限制当前父链，再按 role 过滤并做 NarrativeProjection。
 
+### 可见分支计数
+
+`branch_count` 是可重建的用户可见后续路径数缓存，默认 0：0 表示无可见后续，1 表示只有一条后续、没有分叉，2 及以上表示可切换的分叉数。仅用户可见消息的计数用于 UI；技术 Entry 的计数固定为 0。投影应跨过 ToolCall、ToolResult、摘要等技术节点，以第一个可见后续消息作为分支入口；同一路径上的多个技术节点不重复计数。
+
+新增可见消息、重生成、分叉或删除时，从受影响的最近可见祖先批量重算可见后续路径数，与 Entry 树及 tip 修改在同一事务提交；失败/中断仅在实际持久化可见路径时更新，导入或修复时可从父链重建。`getSessionHistory` 按 Run 分页时直接返回每条可见消息的 branch_count，不对每条消息做一次独立查询。计数不包含当前选中序号或分支列表；按需批量查询分支详情，并以当前 tip 父链确定选中路径。切换到含嵌套分叉的分支时，路径末端如何选择尚需指定或由调用方提供明确目标 tip，不猜测。`parent_id` 及 tip 必须同属 Session、无环；重算遵循相同可见投影规则。
+
 ## 4. Run 关系、游标查询和分叉
 
 - 每次玩家发送生成新的 `run_id`；同轮 Summary compaction Entry、User、Assistant/ToolResult/后续 Assistant 共用这个 ID。创建 Session 时 Opening 也有一个独立初始化 run_id。
@@ -129,7 +138,7 @@ Run 开始从三个作用域已提交值复制完整工作状态；when 只读�
 - `getRunPage` 先沿 `sessions.tip_entry_id` 的 parent_id 得到**当前分支祖先链**，再按 run_id 分组，按每个 Run 在当前分支最早 `MIN(seq)` 倒序选 `limit` 个 Run；再读取这些 Run 的**全部祖先 Entry**（`seq ASC`）。
 - 游标 `nextCursor` 是该页最老 Run 的 `run_start_seq`；下一页只选 `run_start_seq < cursor`。limit 计 **Run 而非消息/Entry**，例如一次用户交互输出了 1 条 User、3 条 Assistant、2 条 ToolResult，也是一页额度中的**一个 Run**。
 - **不能先按 run_id 全 Session 查再筛世界线**。相同逻辑 Run 可能有多个 Assistant 备选分支；必须先筛父链，只读取当前选择的那一条路径。切换 tip 后客户端清空旧游标。
-- `getChatPage` 使用同一批 Run 结果再做 NarrativeProjection，仅展示 user/assistant 叙事。Raw Run 页面则可返回 ToolCall/ToolResult/技术 Entry 供内部调试。
+- `getSessionHistory` 使用同一批 Run 结果再做 NarrativeProjection，仅展示 user/assistant 叙事。Raw Run 页面则可返回 ToolCall/ToolResult/技术 Entry 供内部调试。
 - 最近有效 State 和摘要覆盖边界都沿真实祖先读取，与按 Run 分页及按 Token 缩短 Prompt 无关。
 
 ### 世界卡的级联删除与资产边界
@@ -150,7 +159,7 @@ Run 开始从三个作用域已提交值复制完整工作状态；when 只读�
 
 ## 6. 验收
 
-- DDL 在 SQLite 内存环境执行，只有六张业务表；Entry 三类 enum、role 条件以及 state/ext_data JSON 形状、run_id NOT NULL 与索引正确。
+- DDL 在 SQLite 内存环境执行，只有六张业务表；Entry 三类 enum、role 条件、branch_count 非负约束以及 state/ext_data JSON 形状、run_id NOT NULL 与索引正确。
 - run_id 成组分页不丢同轮 Entry，也不混入另一个分支同 run_id 的回复；Opening、摘要都有 run_id。
 - 消息原样入库、UI/下轮 Prompt/关键字用统一叙事投影；Token 窗口和摘要不修改 Raw History。
 - 状态不依赖上下文裁剪，模型变更均含 reason，脚本变更按 API 校验，提交时均有有效完整状态；模型/世界卡/角色关联与更新规则一致。

@@ -1,5 +1,7 @@
 # Session / Entry：Run 分组分页、消息级持久化与分叉
 
+> **MVP 状态说明**：本文保留原有目标设计；若与本次 Server MVP 的已调整范围或实际行为冲突，以 [Server MVP 实施进度](../technical/server-mvp-progress.md)及其中链接的方案为准。文中的未来功能不代表已实现。
+
 > **职责与权威范围**：Session、Entry 父链、Run 分组、世界线和分页语义的权威来源；表结构以存储规范为准。
 
 > 2026-11-04 设计稿。**Session 是世界实例会话，Run 是一次玩家交互的逻辑分组，Entry 是一次实际消息或技术事件。** 不新增 runs 表；用 entries.run_id 完成按 Run 分页。参考 Fanto 的 run_id 分组机制，并扩展为**只查询当前世界线祖先链**。
@@ -29,6 +31,7 @@ type Entry = {
   seq: number;                         // Session 内全局写入顺序，不代表祖先关系
   type: EntryType;
   role?: "user" | "assistant" | "toolResult"; // 仅 type=message；同步 payload.message.role
+  branchCount: number;                 // 对应 branch_count，可见后续路径数
   timestamp: number;
   payload: unknown;                    // Fanto 风格的 Pi 原生内容字段
   state: Array<{key: string; value: unknown}> | null; // 单份完整状态；null 沿父链读取
@@ -117,7 +120,7 @@ function narrativeProjection(entry: Entry):
 2. 在该分支内按 `run_id` 分组，取每组最早的 `seq` 作为 `run_start_seq`，按 `run_start_seq DESC` 倒序排列（新 Run 在前）。
 3. `beforeRunCursor` 是上一页最后一个 Run 的 `run_start_seq`，下页只选 `run_start_seq < cursor` 的 Run。选择最多 `limit+1` 个 Run 判定 `hasMore`，实际返回最多 `limit` 个。
 4. 返回**所选 Run 中当前祖先链的所有 Entry**，每个 Run 内按 `seq ASC`，而非仅取最后 limit 条消息；响应包括 `runs[]`、`hasMore`、`nextCursor`。若 UI 需要扁平数据，可额外同时返回 `entries[]`。
-5. `getChatPage` 对同一批 Run 的 Entries 做叙事投影；单 Run 内可能包含 1 个 User、多个 Assistant/ToolResult、摘要等，不会因为一页的末尾恰好落在 ToolResult 中间而拆断一个 Run。
+5. `getSessionHistory` 对同一批 Run 的 Entries 做叙事投影；单 Run 内可能包含 1 个 User、多个 Assistant/ToolResult、摘要等，不会因为一页的末尾恰好落在 ToolResult 中间而拆断一个 Run。
 6. 切换 `tipEntryId` 时应**重置页面游标**；分页标识须绑定所选分支，防止跨分支复用旧 cursor。Opening 的初始化 Run 可以自然出现在最老一页。
 
 ~~~sql
@@ -142,6 +145,11 @@ ORDER BY run_start_seq DESC LIMIT :limitPlusOne;
 
 ## 6. 世界线分叉
 
+每条 Entry 有可重建的 `branch_count` 缓存：0 无可见后续，1 一条后续、没有分叉，2 及以上为可见分支数。技术 Entry 固定为 0；投影跨过 ToolCall、ToolResult 和摘要等不可见节点，按不同的首个可见后续路径计数。创建、重生成、删除或修复分支时，受影响可见祖先的计数和父链修改须在同一事务更新，具体规则见[存储](../technical/storage.md)。
+
+`getSessionHistory` 按 Run 批量分页直接返回当前页可见消息的 `branch_count`；数量至少为 2 时前端显示切换控件。计数不包含分支详情及选中序号，需要时以分叉点批量查询可见分支列表，并通过当前 tip 的祖先链识别已选分支。切换时明确目标 tip；如果同一分支还有嵌套分叉，不凭计数推断目标或虚构“上次选择”。
+
+
 - 普通继续：当前 tip 后新增下一个 Run 的 User；重新编辑历史 User：兄弟 User 新 Run；重新生成 Assistant：同 User 下新的 Assistant 子分支、共享逻辑 Run ID。
 - ToolResult/Pi Compaction 不算玩家决策节点；Root/Fork-only 图只显示根与可见分叉，折叠中间消息。
 - 世界线隐藏回合数量以**用户交互 Run** 计；Opening 可以作为根展示，但不算玩家回合。最多三条分叉等约束统计用户可见的决策分支，而不是物理 Entry 的子节点数。
@@ -158,7 +166,7 @@ ORDER BY run_start_seq DESC LIMIT :limitPlusOne;
 | `getSession(sessionId)` | 读取会话的世界卡/预设/角色 ID、title 和 tip |
 | `updateSession(sessionId, patch)` | 改标题、有效玩家角色或 Preset 引用，旧 Entry 不变 |
 | `deleteSession(sessionId)` | 删除这个 Session 的**所有**分支消息与独占会话资源，不删除世界卡 |
-| `getChatPage(sessionId, cursor?, limit=10)` | 按当前 tip 选中的祖先链以 Run 为单位分页，返回叙事投影及游标 |
+| `getSessionHistory(sessionId, cursor?, limit=10)` | 按当前 tip 选中的祖先链以 Run 为单位分页，返回叙事投影、每条可见消息的 branch_count 及游标 |
 | `getWorldlines(sessionId)` | Root、分叉点、各分支首/末节点和折叠回合数 |
 | `switchWorldline(sessionId, leafEntryId)` | 进入指定叶子节点代表的世界线，只更新 tip |
 | `forkFromUserMessage(sessionId, historicalUserEntryId, newText)` | 在历史 User 的父节点下另写兄弟 User，生成新 run_id，并进入新分支 |
@@ -172,6 +180,7 @@ ORDER BY run_start_seq DESC LIMIT :limitPlusOne;
 ## 8. 验收
 
 - Entry.type 三种合法值与 Pi 原生记录对应，Summary 用 ext_data 标记；message 的 role 与 payload 保持一致；所有 Pi 原始消息、ToolCall/ToolResult、技术 Entry 正常持久化。
+- 分叉数量 0/1/2/3、技术节点跨越、并发提交、删除及计数重建一致；分页不逐条额外查询分叉数量。
 - 同 Run 的多条 Entry 在一页内一次性返回；limit=10 表示最多 10 个 Run，而非 10 条消息；游标不拆 Run，分支互不串读。
 - Summary 和当前 User 同 run_id；Opening 有自己的初始化 Run；Assistant 重生成保持同一逻辑 Run，历史 User 重选新开 Run。
 - UI/下轮模型/关键词一致采用叙事投影，完整 State 与历史存储不受 Token 压缩影响；Window 默认、Summary 可选，细节见 [Context Strategy](context-strategy.md)。

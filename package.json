@@ -1,0 +1,11 @@
+{
+  "name": "sillyrealms",
+  "private": true,
+  "packageManager": "pnpm@10.12.1",
+  "scripts": {
+    "dev": "pnpm --filter @sillyrealms/server dev",
+    "test": "pnpm --filter @sillyrealms/server test",
+    "typecheck": "pnpm --filter @sillyrealms/server typecheck",
+    "lint": "pnpm --filter @sillyrealms/server lint"
+  }
+}

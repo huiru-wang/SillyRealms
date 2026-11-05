@@ -1,5 +1,7 @@
 # 领域 Service：围绕产品链路的能力与接口
 
+> **MVP 状态说明**：本文保留原有目标设计；若与本次 Server MVP 的已调整范围或实际行为冲突，以 [Server MVP 实施进度](../technical/server-mvp-progress.md)及其中链接的方案为准。文中的未来功能不代表已实现。
+
 > **职责与权威范围**：对外领域服务的能力目录；字段结构与执行算法分别以对应领域规范为准。
 
 > 2026-11-04 目标设计，尚未实现。本文件只列**具有业务含义、需要由产品或运行时调用的 Service 方法**。数据库 Repository、纯函数校验器、Pi SDK 原生方法不等于领域接口。具体返回 DTO 在实现时统一定义。
@@ -8,13 +10,13 @@
 
 | 用户场景 | 产品操作 | 服务调用与实际作用 |
 | --- | --- | --- |
-| 首页继续游玩 | 查看近期世界会话、点进某个会话 | `SessionService.listSessions` → `getSession` → `getChatPage`，直接恢复上次选中的世界线 |
+| 首页继续游玩 | 查看近期世界会话、点进某个会话 | `SessionService.listSessions` → `getSession` → `getSessionHistory`，直接恢复上次选中的世界线 |
 | 发现世界 | 世界卡列表、查看详情与开局/角色 | `WorldService.listWorlds` → `getWorld`；完整世界卡已含 `openings[]` / `characters[]` / `lorebook`，无需单独拉取 |
 | 创建故事 | 选开局、可扮演角色、预设并进入 | `SessionService.createSession` 校验当前 World/Preset 和角色，写入 Session 与 Opening 根 Assistant Entry（含 S0） |
 | 继续叙事 | 输入并发送 | `AgentRuntime.run` 读取本轮 Context、创建新 Run、落库所有 User/Assistant/ToolResult/技术 Entry，推送 SSE；下次仅用叙事投影作为模型历史 |
-| 查看旧消息 | 上滑加载、切换世界线 | `getChatPage` 按**Run**分页当前分支；`getWorldlines` 查看分叉概要；`switchWorldline` 只切选中 tip |
+| 查看旧消息 | 上滑加载、切换世界线 | `getSessionHistory` 按**Run**分页当前分支；`getWorldlines` 查看分叉概要；`switchWorldline` 只切选中 tip |
 | 修改历史 | 从旧 User 重走不同剧情、重生成/续写最后 AI | `forkFromUserMessage` / `regenerateLastAssistant` / `continueLastAssistant`，由 Runtime 执行后续生成；旧世界线完整保留 |
-| 调整模型 | 设置页选 Provider、配置密钥、测试；预设页选模型与 Token 上限 | `ProviderService.listProviders/listModels/saveApiKey/testConnection` → `PresetService.updatePreset`；每轮使用最新 Preset 配置 |
+| 调整模型 | 设置页选 Provider、配置密钥、测试；预设页选模型与 Token 上限 | `ProviderService.listProviders/saveApiKey/testConnection` → `PresetService.updatePreset`；每轮使用最新 Preset 配置 |
 | 删除世界 | 世界卡详情页二次确认后删除 | `WorldService.deleteWorld` **级联清除世界卡、全部会话及所有分支 Entries、摘要、状态与独占资源**；不要求先手动删除会话 |
 
 以下是**Service 层**的最小公开能力；例如 `appendMessage` / `getRawAncestorEntries` / `getModel` / `validateTagRefs` 都是 Service 内部使用的存储或辅助操作，不作为另一套业务 API 对外提供。
@@ -51,14 +53,13 @@
 
 | 接口 | 产品链路 / 服务职责 |
 | --- | --- |
-| `listProviders()` | 设置页显示受支持 Provider 与**已配置凭据**状态（布尔值），不回显 Key |
-| `listModels(provider)` | 模型选择器展示此 Provider 的支持模型、上下文/输出硬上限、模型能力与是否具备本地认证条件 |
+| `listProviders()` | 一次返回各 Provider、凭据是否配置及对应 models（模型标识、上下文/输出上限和能力）；不回显 Key |
 | `saveApiKey(provider, key)` | 用户添加/替换凭据，安全写入 CredentialStore，不写预设或 Session |
 | `deleteApiKey(provider)` | 从 CredentialStore 删除凭据；已有 Preset 保留模型 ID，下次调用提示重新配置 |
 | `testConnection(selection)` | 用户明确点击“测试连接”，才发送一次最小真实请求，返回成功或脱敏错误，可能消耗 Token |
 | `resolveModel(selection)` | **内部运行时口**：校验受支持模型和凭据，返回 Pi 可使用的 Model/认证上下文，失败直接报错，绝不替换成其它模型 |
 
-**不提供** `hasApiKey`、`getModel`、`getAvailableModels`。配置状态已包含在列表 DTO 中；`listModels` 统一用于模型选择，`resolveModel` 统一用于运行校验。**“已配置”不等于“连接成功”**，测试才是实时校验。目录与协议复用 Pi，不为每个 Provider 新造一套 Adapter。详见 [Provider](provider.md)。
+**不提供** `listModels`、`hasApiKey`、`getModel`、`getAvailableModels`。配置状态已包含在列表 DTO 中；`listProviders` 的 models 统一用于模型选择，`resolveModel` 统一用于运行校验。**“已配置”不等于“连接成功”**，测试才是实时校验。目录与协议复用 Pi，不为每个 Provider 新造一套 Adapter。详见 [Provider](provider.md)。
 
 ## 5. TagService：世界卡分类标签
 
@@ -81,7 +82,7 @@
 | `getSession(sessionId)` | 进入会话：读取关联 world/preset/玩家角色、当前 tip 和基本信息 |
 | `updateSession(sessionId, patch)` | 会话详情修改标题或有效角色/预设；不重写旧消息或状态 |
 | `deleteSession(sessionId)` | 单独删除这条会话、**所有分支** Entries 和会话独占资源；不删除世界卡 |
-| `getChatPage(sessionId, cursor?, limit=10)` | 聊天上滑分页：限定当前 tip 的祖先链，按 **Run** 游标分页，只投影 user/assistant 的可见叙事，绝不拆 Run |
+| `getSessionHistory(sessionId, cursor?, limit=10)` | 聊天上滑分页：限定当前 tip 的祖先链，按 **Run** 游标分页，只投影 user/assistant 的可见叙事，逐消息返回 branch_count，绝不拆 Run |
 | `getWorldlines(sessionId)` | 世界线概览：仅返回 Root、分叉点、每支首条/叶子及折叠 Run 数 |
 | `switchWorldline(sessionId, leafEntryId)` | 选中世界线叶子，将 Session.tip 指向该叶子，旧分支不删除，UI 清除原分页游标 |
 | `forkFromUserMessage(sessionId, historicalUserEntryId, newText)` | 在历史 User 的父 Entry 后建立新的兄弟 User 和新 Run，再由 Runtime 对该 User 生成；默认进入新线 |

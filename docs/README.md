@@ -1,6 +1,8 @@
 # SillyRealms · 设计文档索引
 
-> 2026-11-04 目标规范，尚未实现。**Monorepo + 6 张业务表 + Entry.run_id 按 Run 分页 + 原始工具消息全量持久化 + 叙事 Context/State 分离**。
+> Server MVP 已开始实现；实际进度和未完成项见 [Server MVP 实施进度](technical/server-mvp-progress.md)，新 MVP 范围以 `../plan/` 为准。
+
+> 下列领域文档保留 2026-11-04 的原目标设计；当前 Server MVP 的调整及实现状态以实施进度和方案为准。
 
 建议阅读顺序：[产品总纲](PRODUCT.md) → [Session/Entry](design/session.md) → [Context Strategy](design/context-strategy.md) → [AgentContext](design/agent-context.md) → [Storage](technical/storage.md) → [架构](technical/architecture.md)。
 
@@ -18,7 +20,7 @@
 | [script-runtime.md](design/script-runtime.md) | 三作用域状态 API、JavaScript/EJS 与临时变量 |
 | [content-activation.md](design/content-activation.md) | 角色、世界书条目与状态根的统一加载判断 |
 | [text-rendering.md](design/text-rendering.md) | 文本模板渲染与按场景独立配置的受控转换 |
-| [ui-runtime.md](design/ui-runtime.md) | 讨论草案：可替换会话视图、内置模板、自定义 HTML、Session UI Bridge 与隔离安全边界 |
+| [ui-runtime.md](design/ui-runtime.md) | V3 草案：SessionEventHub 通用事件协议、SSE + Commands、三个 Hook、React 状态读写与安全隔离 |
 | [state.md](design/state.md) | 类型 Schema、状态根加载、ChangeSet(reason 必填)、完整状态和不兼容处理 |
 | [architecture.md](technical/architecture.md) | Monorepo 分层、Pi 执行/SSE 和消息全量持久化 |
 | [storage.md](technical/storage.md) | 六表 SQLite DDL、tags type 内排序、Entry payload、世界线 |

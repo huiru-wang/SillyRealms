@@ -1,13 +1,15 @@
 # Provider：模型目录、API Key 与连接测试
 
+> **MVP 状态说明**：本文保留原有目标设计；若与本次 Server MVP 的已调整范围或实际行为冲突，以 [Server MVP 实施进度](../technical/server-mvp-progress.md)及其中链接的方案为准。文中的未来功能不代表已实现。
+
 > **职责与权威范围**：模型目录、凭据与 Provider 接口约定的权威来源；未经 PoC 验证的行为不视为已支持。
 
 > 2026-11-04 目标方案，未实现。ProviderService 面向**设置页配置 Provider、预设页选择模型、AgentRuntime 解析模型**这三条链路；只统一产品操作，不复制 Pi SDK 已存在的模型定义和 API 协议。
 
 ## 1. 用户在产品里怎么使用
 
-1. **设置页**调用 `listProviders()`：展示内置可选供应商，以及每个供应商的 `credentialConfigured: boolean`。仅展示本地已配置与否，不展示 Key 原文、不承诺网络连通。
-2. 用户选择供应商，调用 `listModels(provider)`：展示名称、上下文窗口 `contextWindow`、输出上限 `maxTokens`、模型能力、是否已配置本地凭据。用户可以浏览模型，不要求先保存 Key。
+1. **设置页**调用 `listProviders()`：一次返回内置供应商及其 models 列表、`credentialConfigured: boolean`；每个模型含名称、contextWindow、maxTokens 和可用能力。仅展示本地已配置与否，不展示 Key 原文、不承诺网络连通。
+2. 预设页直接从 `listProviders()` 结果选择对应供应商和模型，不再发起独立模型列表请求；浏览不要求先保存 Key。
 3. 用户保存或清除 Key，分别调用 `saveApiKey` 和 `deleteApiKey`；只有点击“测试连接”时，`testConnection` 才会真实访问模型服务，可能产生费用。
 4. **预设页**把 `{provider, modelId, parameters}` 写入 Preset，不重复保存 Key。模型在列表里可发现但缺 Key 时可保存配置，实际调用时明确提示。
 5. **运行时**调用内部 `resolveModel(selection)` 校验 Pi 目录、当前凭据和模型参数，不允许静默改选其他模型；调用/stream/SSE 交给 PiExecutor。
@@ -16,10 +18,11 @@
 
 ~~~ts
 type ModelSelection = { provider: string; modelId: string };
+type ModelSummary = { id: string; name: string; contextWindow: number; maxTokens: number; reasoning: boolean; input: string[] };
+type ProviderSummary = { id: string; credentialConfigured: boolean; models: ModelSummary[] };
 
 interface ProviderService {
-  listProviders(): Promise<ProviderSummary[]>; // Provider + credentialConfigured
-  listModels(provider: string): Promise<ModelSummary[]>; // Pi 目录、上下文/输出硬上限及当前可用认证标记
+  listProviders(): Promise<ProviderSummary[]>; // 供应商、凭据状态和模型一并返回
   saveApiKey(provider: string, key: string): Promise<void>; // 安全保存/覆盖
   deleteApiKey(provider: string): Promise<void>; // 删除凭据，不修改 Preset
   testConnection(selection: ModelSelection): Promise<ConnectionTestResult>; // 用户明确触发真实最小请求
@@ -29,7 +32,7 @@ interface ProviderService {
 }
 ~~~
 
-**删除独立的 `hasApiKey`、`getModel`、`getAvailableModels`**：配置状态已经通过 `listProviders/listModels` 返回；目录元数据不需要第二个 `getModel` 包装，`resolveModel` 是运行时唯一校验入口。不能把“已配置 Key”或“目录存在”冒充“模型在线且能力已验证”。详细调用关系见 [领域 Service](domain-interfaces.md)。
+**不提供独立的 `listModels`、`hasApiKey`、`getModel`、`getAvailableModels`**：配置状态和模型目录均通过 `listProviders` 返回；目录元数据不需要第二个 `getModel` 包装，`resolveModel` 是运行时唯一校验入口。不能把“已配置 Key”或“目录存在”冒充“模型在线且能力已验证”。详细调用关系见 [领域 Service](domain-interfaces.md)。
 
 ## 2. 依赖和数据归属
 

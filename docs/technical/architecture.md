@@ -1,5 +1,7 @@
 # 技术架构：Monorepo + Run 分页 + 完整 Agent Entries
 
+> **MVP 状态说明**：本文保留原有目标设计；若与本次 Server MVP 的已调整范围或实际行为冲突，以 [Server MVP 实施进度](../technical/server-mvp-progress.md)及其中链接的方案为准。文中的未来功能不代表已实现。
+
 > **职责与权威范围**：系统模块、依赖方向及执行流程概览；各领域细节以对应权威规范为准。
 
 > 2026-11-04 MVP 目标设计，尚未实现。个人本地客户端，首期 H5 Web + Server；建议 React/Vite/TypeScript、Hono/TypeScript、SQLite、Pi Agent / Pi AI。详细契约：[Session](../design/session.md)、[Context Strategy](../design/context-strategy.md)、[Storage](storage.md)。
@@ -36,6 +38,7 @@ SillyRealms/
 | StateReader / Script Runtime | 只读状态访问、隔离的 JavaScript 表达式求值 | 直接数据库访问、未授权持久化写入 |
 | ContentActivation | 常驻、关键词、排除词和 when 的统一加载判断 | Prompt 组装、模板渲染 |
 | TextRenderer / TextTransform | 隔离的 EJS 渲染；按场景执行受控文本转换 | 内容激活、直接持久化状态 |
+| SessionEventHub / UI Gateway / UI Runtime | 领域事件统一发布与路由；SSE Adapter + HTTP Commands；宿主快照/Bridge；iframe React Root 的三个 Hook 与组件；状态写入需单独设计分支持久化后开放 | Prompt 干预、把不可信组件挂载宿主 React Root、绕过服务端修改状态 |
 
 所有公开领域接口及用途见 [领域 API](../design/domain-interfaces.md)；Session 的完整分页契约见 [Session](../design/session.md)。
 
@@ -136,7 +139,7 @@ flowchart TD
 
 - `entries.run_id NOT NULL`，一个玩家逻辑互动对应多条 Entry；初始化 Opening 也是独立 Run。重生成 Assistant 复用历史 User 的逻辑 run_id，重选 User 产生新 run_id。
 - `getRunPage` **先沿选中 tip 的 parent_id 得到祖先集合**，再按 run_id 分组、以每组最小 seq 作为游标锚点；limit 是 Run 数，结果含选中 Run 的**全部** Entry。**不能只按 run_id 扫全 Session**，否则可能混入其他分支。
-- `getChatPage` 对同一批 Run 再做叙事投影，ToolCall、ToolResult、Summary 不直接显示；世界线 Root/Fork-only 折叠技术记录。
+- `getSessionHistory` 对同一批 Run 再做叙事投影，ToolCall、ToolResult、Summary 不直接显示；世界线 Root/Fork-only 折叠技术记录。
 - 切换分支只改 Session.tip_entry_id，重置分页 cursor；旧分支数据、全量状态与摘要不删除。
 
 ## 6. MVP 范围和约束

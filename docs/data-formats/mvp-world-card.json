@@ -1,0 +1,12 @@
+{
+  "spec": "world_card",
+  "spec_version": "0.1",
+  "data": {
+    "name": "示例世界",
+    "tags": ["示例"],
+    "characters": [{"id":"player","name":"旅人","player_selectable":true,"description":"一位来到陌生世界的旅人。"}],
+    "openings": [{"id":"start","name":"启程","content":"你来到一座安静的城镇。"}],
+    "lorebook": {"entries": []},
+    "state": {"schema_version":1,"scopes":{"message":{"modules":{"世界":{"type":"object","properties":{"时间":{"type":"string","initial":"白天"}}}}}}}
+  }
+}

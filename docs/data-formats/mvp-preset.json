@@ -1,0 +1,17 @@
+{
+  "name": "示例纯文本预设",
+  "description": "创建前将 api_model_config_id 替换为已有配置 ID。",
+  "api_model_config_id": null,
+  "model_parameters": {"temperature":0.8},
+  "budget": {"max_output_tokens":1024},
+  "summary_prompt": "总结剧情、人物关系、重要承诺和未解决线索。",
+  "nodes": [
+    {"id":"main","kind":"system","name":"主指令","source":"main","role":"system","enabled":true,"content":"依据世界设定和已发生的剧情连贯叙事。"},
+    {"id":"personaInfo","kind":"system","name":"玩家角色","source":"personaInfo","role":"system","enabled":true},
+    {"id":"characterInfo","kind":"system","name":"其他角色","source":"characterInfo","role":"system","enabled":true},
+    {"id":"worldState","kind":"system","name":"世界状态","source":"worldState","role":"system","enabled":true},
+    {"id":"chatHistory","kind":"system","name":"历史消息","source":"chatHistory","role":"auto","enabled":true},
+    {"id":"userInput","kind":"system","name":"用户输入","source":"userInput","role":"user","enabled":true},
+    {"id":"postHistory","kind":"system","name":"后置指令","source":"postHistory","role":"system","enabled":false,"content":""}
+  ]
+}

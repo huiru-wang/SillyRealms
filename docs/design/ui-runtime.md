@@ -1,165 +1,160 @@
-# Session UI Runtime：可替换会话视图与自定义 HTML
+# SR Session UI Runtime：声明式组件与 SessionEventHub（V3 草案）
 
-> **状态**：2026-11-05 讨论草案，尚未实现。这里仅设计会话展示与玩家交互，不开放 UI 对 Prompt、Preset、AgentContext、世界书激活、模型工具或状态结算的干预。会话/Run/世界线及状态的权威规则分别见 [Session](session.md)、[State](state.md)、[领域接口](domain-interfaces.md)。
+> **MVP 状态说明**：本文保留原有目标设计；若与本次 Server MVP 的已调整范围或实际行为冲突，以 [Server MVP 实施进度](../technical/server-mvp-progress.md)及其中链接的方案为准。文中的未来功能不代表已实现。
 
-## 1. 定位和原则
+> **2026-11-05 设计稿，尚未实现。** V3 取代旧的“作者自行调用 get/subscribe”与“只读 useSRState + 单独 Mutation Hook”约定。仅设计 Session UI；Prompt 干预、任意 Agent Tool、直接数据库操作不开放。Session / State / Storage 的权威领域规范仍见 [session](session.md)、[state](state.md)、[storage](../technical/storage.md)，UI 状态写入的分支语义须先与它们协调，不可只改前端代码。
 
-会话页面是可替换的 View，不等于聊天消息列表。聊天、聊天+状态栏是 SR 内置视图；世界卡也可提供完整自定义 HTML/CSS/JavaScript 页面，支持互动小说、图文叙事、地图、背包、RPG 面板与交互选项。所有视图消费同一 Session，切换视图不生成新的历史、状态或世界线。
+## 1. 原则与运行边界
 
-必须保持三个职责边界：
+世界卡创作者写 React/TSX 组件，允许嵌套与复用 SR 官方组件。SR 管状态订阅、实时输出、Run 游标历史、命令和 UI 生命周期。作者无需手动请求状态、处理 SSE 或刷新组件。
 
-- **Session / AgentRuntime / StateService 是权威业务端**：决定本轮输入、生成、分支、持久化、状态结算及权限校验。
-- **SessionViewHost 是受信任的 UI 宿主**：加载视图、提供稳定数据与事件桥、转发经过允许列表校验的玩家命令、处理失败/恢复。
-- **SessionView 是可替换的呈现层**：可拥有自己的页面布局、局部 UI 状态、动画和输入方式，但不能直接写持久状态或伪造原始 Entry，也不能执行或改写 Prompt。
-
-「SR API」在本设计中专指 **Session UI Bridge API**；它与 [script-runtime.md](script-runtime.md) 中运行于 EJS/Prompt 阶段的 getState/setState 不是同一 API、进程或权限集。UI 只读权威状态，不能调用脚本环境的 setState。
-
-## 2. 组件边界
+- **可信宿主** SR App Shell / SessionViewHost：负责当前 Session、状态快照、SSE、命令转发、授权、回退。
+- **SessionEventHub（Server）**：统一发布/订阅领域事件；不是 SSE 工具。AgentRuntime、StateService、SessionService 是发布者，SSE Adapter、内部订阅者等是消费者。
+- **隔离组件运行时**：世界卡的 JS 在受限 iframe 中运行，独立 React Root + SRProvider；作者组件、官方组件、SR Hooks 在同一个 iframe React 环境内自由组合。
+- **Reactive Store**：接收 Host 授权的快照/事件，为 Hook 维护不可变、稳定的响应式快照。
+- **唯一事实源**：SQLite + Session/StateService/AgentRuntime。React `useState` 管局部组件状态，`useSRState` 管 SR 持久状态。
 
 ~~~text
-SR App Shell（导航、世界线、用户设置、错误恢复）
-  └── SessionViewHost（当前 session + view 的受信任控制器）
-        ├── builtin/chat          → SR UI SDK
-        ├── builtin/chat-state    → SR UI SDK
-        └── custom/html           → 沙箱 iframe + Message Bridge → SR UI SDK
-                       │
-           SessionView API / 事件分发器
-                       │
-          SessionService / StateService / AgentRuntime
-                       │
-             Entries / State / Pi SSE
+AgentRuntime / SessionService / StateService
+               ↓ publish
+         SessionEventHub
+          ↙           ↘
+     内部订阅       SSE Adapter
+                      ↓
+             SessionViewHost (可信)
+                      ↓ MessageChannel
+             sandbox iframe (不可信)
+              └─ React Root + SR Store
+                 ├─ 作者组件
+                 ├─ SR.Chat / SR.Composer
+                 └─ 三个声明式 Hooks
 ~~~
 
-- 首期 H5 Web + Server。内置视图可使用 React 实现；自定义页面不要求 React/Vue，允许作者打包静态 HTML/CSS/JS。
-- UI Host 在同一个 Session 中统一建立实时连接；**自定义页不自行直连后端的身份认证 API 或 Pi SSE**。自定义页只能通过 Bridge 获取必要数据和提交命令。
-- App Shell 仍掌管退出/返回、会话切换、权限提示、加载失败时退回内置聊天、基础诊断和用户主动的视图切换。作者页面可以完全自定义会话内容区域，但不能覆盖宿主的安全与恢复控制。
-- UI 局部状态（选中标签、面板展开、动画进度）由页面维护，不能被误认为持久世界状态。
+**不要把世界卡 JS/React 直接 import 到可信宿主 React Root**。React 组件树不是安全沙盒，iframe/隔离来源才是边界。内置 chat/chat-state 可使用同一 SDK 语义而直接运行于可信宿主。
 
-## 3. 视图声明和世界卡资源
+## 2. SessionEventHub：统一事件协议
 
-建议在世界卡 data 下新增可选声明。它仅是**视图选择及资源入口**，不承载运行态状态：
+### 2.1 通用 Event Envelope
 
-~~~json
-{
-  "ui": {
-    "default_view": "custom",
-    "custom": {
-      "entry": "ui/index.html",
-      "api_version": "1"
-    }
-  }
+~~~ts
+interface SessionEvent<T = unknown> {
+  version: 1;
+  id: string;                 // 事件 ID：去重，不是持久版本
+  type: string;               // 业务事件名称
+  scope: {
+    kind: "session" | "world";
+    id: string;
+  };
+  timestamp: string;          // ISO 8601
+  runId?: string;
+  requestId?: string;         // 对应某条前端命令
+  revision?: string;          // 已提交快照版本（可选）
+  data: T;                    // 事件专有数据
 }
 ~~~
 
-- default_view 可为 builtin/chat、builtin/chat-state、custom；缺省使用 builtin/chat。custom 配置必须有打包入口、存在的本地资源与可解析的 API 版本。具体字段名以定稿 Schema 为准。
-- 世界卡 assets / 资源包携带 ui/index.html、JS、CSS、图片与字体等静态资产。导入时做路径归一化、防目录穿越、类型/体积/数量校验；不凭远程 URL 自动拉取依赖或执行代码。
-- 自定义视图随世界卡当前数据更新，**没有会话级 UI 快照**；更新后可能影响已有会话的显示，必须保留用户可切回内置聊天的恢复通道。
-- 用户应能临时覆盖作者默认视图，避免坏页面锁死会话。首版可不持久化用户覆盖选择，不增加表。
-- 无自定义页、资源丢失、不兼容 API 或加载异常时退回 builtin/chat，Session 和历史不受影响。
+- `scope=session` 只路由到当前 Session；`scope=world` 用于同一世界卡的 Global 变更等通知，Host 仍需验证会话是否有权访问。
+- `type` 用可扩展的命名空间；服务端按 discriminated union/schema 校验 `data`，客户端安全忽略未知事件并提示不兼容。运行时绝不把 data 当代码执行。
+- `id` 代表事件唯一身份，`revision` 代表可验证的持久状态版本。`message.delta` 是瞬时事件，不要求 revision。不要把 SSE 的事件 ID 当成已持久的消息序号。
+- 发布事件不等于数据库事务或可靠消息队列。**事务成功后发布提交事件**；进程崩溃可漏通知，重连/进入必须按 snapshot revision/tip 重新对账。以后需要严格重放时才考虑 outbox。
+- Hub 是内部领域总线，外发至 iframe 前必须通过可信 UI Gateway 做权限和字段投影，不暴露 Prompt、Pi ToolCall、thinking、Provider Key 或未提交工作状态。
 
-## 4. Session UI Bridge API v1
+### 2.2 初版事件类型
 
-SDK 以宿主注入的受控通信桥为实现基础，面向自定义页暴露只读查询、事件订阅、用户动作三类能力。以下是**概念性 TypeScript 契约**，不等于直接开放后端领域 Service 或网络 URL。
+| type | data（核心） | 说明 |
+| --- | --- | --- |
+| `run.started` | runId | 一轮生成开始 |
+| `run.completed` / `run.failed` / `run.stopped` | runId、错误码可选 | 本轮终态 |
+| `message.delta` | runId、text、临时片段序号 | 安全叙事流；不持久 |
+| `message.committed` | runId、entryId、tipEntryId | 正式消息入库，对账临时文本 |
+| `state.changed` | changedScopes、tipEntryId? | 状态已成功提交，客户端失效刷新 |
+| `session.tip_changed` | tipEntryId、reason | 世界线选择或分叉 |
+| `command.rejected` | code、message | 命令拒绝，按 requestId 关联 |
+| `error.message` | code、message、severity | 给 UI 展示的错误/通知 |
 
-~~~ts
-type SessionViewAPI = {
-  getSession(): Promise<SessionViewSnapshot>;
-  getMessages(args?: { beforeRunCursor?: string; limit?: number }):
-    Promise<{ runs: NarrativeRun[]; nextCursor?: string; hasMore: boolean; tipEntryId: string }>;
-  getState(): Promise<{
-    global: unknown; session: unknown; message: unknown;
-    tipEntryId: string; revision: string;
-  }>;
-  getWorldlines(): Promise<WorldlineSummary>;
-  subscribe(handler: (event: SessionUIEvent) => void): () => void;
-  dispatch(command: SessionUICommand): Promise<{ accepted: boolean; operationId?: string }>;
-};
+**`sse` 是传输协议，不是事件类型**。`error.message` 可作为用户期望的 error_message 通知标准化形式。`command.rejected` 是机器可处理的结果；两者同 requestId 时 Host 去重，不弹两个错误。
+
+### 2.3 领域事件实际时序
+
+- AgentRuntime 产生候选变更 → StateService 校验并将 Global/Session/Message 及 Entry 状态按现有设计原子提交 → 发布 `state.changed`（成功时）。
+- 消息落库成功 → 发布 `message.committed`；中间的 `message.delta` 仅展示草稿。
+- Session 切换世界线 → 更新 tip 后发布 `session.tip_changed`；UI 清除旧历史游标/草稿并重取新 tip。
+- Global 变更用 `scope=world` 广播给授权同世界卡 Session 的 Host，不依赖当前是否有 Agent Run。
+- 每个数据消费者以数据库快照为权威，不以 EventHub 事件本身恢复消息历史。
+
+## 3. 网络：SSE + HTTP Commands（暂不引入 WebSocket）
+
+- SSE 本身就是**单向 HTTP 长连接**。宿主为当前活跃 Session 管理一条 SSE，订阅当前 Session 加同 World 的授权事件；Hook/组件不得各建连接。用户提交文本、停止、切换分支、状态写入使用 HTTP POST，经 iframe 的受限 MessageChannel 由宿主转发。
+- SSE 可以统一发送 `event: session.event`，`data` 为完整 SessionEvent JSON；`id` 可以传事件 ID，但在未实现持久日志前不能宣称 Last-Event-ID 跨重启可重放。必要时使用 SSE 注释心跳；检查代理缓冲/超时。
+- 建立订阅与拿快照必须有版本对账/订阅屏障，避免初始化时漏掉提交。断线和服务重启后重新拉取权威 Snapshot 与当前分支 Run 历史；不要求重放临时 token。
+- 只有未来需要高频客户端双向帧、多人协作或其他明显 WebSocket 用例时，才替换传输适配器。Event Envelope/Hook/Store 不因此改变。HTTP/1.1 多 SSE 连接数限制提醒宿主不要按组件开连接。
+
+## 4. 首版三个 Hook
+
+### 4.1 useSRState：统一读写
+
+~~~tsx
+const [count, setCount] = useSRState<number>(
+  "玩家.计数",       // 稳定持久字段路径，必填
+  0,                 // 默认展示值，可省略
+  { scope: "message" } // 可省略
+);
+
+await setCount(10);
 ~~~
 
-**查询边界**
+约定：
+- `useSRState(0,{scope:"message"})` **不能作为持久状态 API**：没有稳定路径。无 key 的 React `useState(0)` 只属于单个组件实例，组件重排/多实例/重载后不能映射到同一数据库字段。
+- 第二个参数只是**显示默认值**，不因 React 组件挂载就修改 WorldCard/Session State。真实字段/初始值仍在世界卡 `data.state` 中声明；未知字段写入由服务器拒绝。
+- `scope` 可省略。沿现有 StateReader 查找顺序 **global → session → message** 首次命中完整路径停止，命中 null 也不向下匹配。同名路径按第一命中决定，作者负责命名，开发期可警告。
+- Setter 必须写入**与读取解析结果相同的路径与 scope**。内部请求含当前 tip/revision/idempotency requestId；服务端重校验解析对象、状态类型、范围和权限。缺省 scope 绝不等于可绕过 Global 写入授权。
+- `setCount(nextValue)` 是**异步**、需要 Server 确认的命令，不等于 React 本地 `useState` 的同步 setter。返回 `Promise<{ok:true,revision:string}|{ok:false,code:string}>`。首期不做乐观更新，收到成功提交的 `state.changed` 后从权威 Snapshot 更新组件。
+- 创作者**不必编写 StateEngine ChangeSet**：SDK 将 setter 映射为内部受限写入，StateEngine 仍在后端完成 Schema/Zod、路径、作用域、权限和并发校验。预期业务失败不必抛异常，但必须返回 ok:false、发送 `command.rejected`，必要时再发 `error.message`；不能完全静默吞掉错误。
+- MVP 暂只支持值 setter。`setCount(prev=>prev+1)` 不能将 JS 函数直接跨 Bridge 发送；如果未来支持，须有 expectedRevision 的比较交换或后端原子 adjust 语义，避免异步 stale closure 覆写 Agent 更新。
+- UI 写入需由世界卡与用户授权的 scope/path/操作白名单约束。Global 跨 Session 默认不可写，除非显式允许。
 
-- getSession 返回当前会话必要的公开 ID、角色、世界卡展示信息、当前 tip、运行态，不包含 Provider Key、内部 Prompt 或原始 Pi 工具消息。
-- getMessages 必须使用现有的 **当前 tip → parent_id 祖先链 → Run 分组 → NarrativeProjection**，分页单位是 Run，UI 不读取模型 Token 压缩后的历史；仅返回 user/assistant 的叙事与必要 Entry/Run 引用、时间。无意义的纯 ToolCall 不在普通 UI 显示。
-- getState 返回 Global（世界卡共享）、Session（分支间共享）、Message（只沿当前分支父链）的**最新有效完整状态**，与模型的状态根加载筛选无关。当前 Schema 不兼容须以诊断呈现，不能默默生成默认值。**任何发给前端页面的状态都对玩家可检查，不具有保密性**；若未来需要「玩家不可见的 NPC 秘密状态」，须另行设计服务端状态投影/可见性协议，不可假装 iframe 能保密。
-- getWorldlines 走既有摘要投影，不让自定义 UI 枚举所有原始数据库记录。资源访问另经宿主映射为只读资源 URL/受控资产接口。
-- 只读不是「读取所有配置」。服务端需按 Session + 资源权限做白名单字段投影、数据大小限制；不返回 API Key、内部调试数据或 Prompt 脚本上下文。
+**重要领域前置条件**：现有 Message State 沿 Entry.parent_id 父链查找，`entries.state` 默认归最终 Assistant，Entry.type 只有三类。UI 发起写入时，**不得修改历史 tip 的快照**，必须定义追加到当前世界线的状态操作记录及完整状态快照，且同步修订 Session/State/Storage、Run 游标/分叉语义。UI 文件只提出目标 API，不擅自改变领域存储。在解决此前不应宣称 setter 已真正可用。
 
-**命令边界（v1 白名单）**
+### 4.2 useUserPrompt：用户输入与 Run 控制
 
-~~~ts
-type SessionUICommand =
-  | { type: "submitInput"; text: string; requestId: string }
-  | { type: "stop"; requestId: string }
-  | { type: "regenerateLastAssistant"; requestId: string }
-  | { type: "continueLastAssistant"; requestId: string }
-  | { type: "forkFromUserMessage"; userEntryId: string; newText: string; requestId: string }
-  | { type: "switchWorldline"; leafEntryId: string; requestId: string };
+~~~tsx
+const { submit, stop, status, error } = useUserPrompt();
+await submit("前往森林");
 ~~~
 
-- 所有命令都进入现有 SessionService / AgentRuntime，重新执行上下文、权限、分支位置、互斥运行、输入长度和状态兼容性校验；不能通过自定义 HTML 绕过业务规则。
-- 自定义选项可映射为玩家提交文本，或仅做 UI 内部切换；UI v1 **没有**通用游戏动作执行器，也不开放 arbitrary tool call / setState / appendRawEntry / changePrompt。后续如果确需结构化选项，应作为明确的独立业务 Action 协议设计。
-- dispatch 返回 accepted 仅代表**命令已受理**，不是运行成功；最后结果由事件通知。requestId 用于去重/回执关联；同会话同一时间只允许一个生成操作。
-- 玩家在任何自定义页发出的真实提交都须符合产品的用户操作语义，不能在用户不知情时自动循环发起模型调用。对高影响/消耗 Token 的行为保留宿主侧控制与必要确认。
+- 仅代表**玩家输入文本**，不是 AgentContext/系统 Prompt 干预。命名沿用创作者约定；若未来与预设 Prompt 混淆，可再考虑更明确的 `useSessionInput`。
+- `submit` 负责发送玩家输入，Host 校验 Session/分支和生成互斥；返回是否受理，不等于生成完成。`status` 根据 `run.started/completed/failed/stopped` 变化。`stop` 由宿主调用现有 AgentRuntime.stop。
+- 官方 `<SR.Composer />` 复用同一 Hook，避免作者自己管理 SSE。
 
-## 5. 实时事件、重连与状态一致性
+### 4.3 useSessionHistory：流式消息 + Run 历史
 
-Host 消费 AgentRuntime SSE，将必要信息转换为与 Pi 无关的 UI 事件再投递给视图。事件仅为画面更新的通知，**查询结果和已提交数据库数据才是权威快照**。
-
-~~~ts
-type SessionUIEvent =
-  | { type: "run.started"; runId: string; operationId: string }
-  | { type: "narrative.delta"; runId: string; entryId?: string; text: string }
-  | { type: "entry.committed"; runId: string; entryId: string }
-  | { type: "state.committed"; tipEntryId: string; revision: string }
-  | { type: "session.tipChanged"; tipEntryId: string; reason: "append" | "switch" | "fork" }
-  | { type: "run.ended"; runId: string; outcome: "success" | "failed" | "cancelled" };
+~~~tsx
+const {
+  runs, streaming, hasMore, loadOlder, status
+} = useSessionHistory();
 ~~~
 
-- delta 是**暂态展示**，不可当作已提交 Entry 或已结算 State；完整 Entry 存储后以 entry.committed + 重新查询/同步进行对账。
-- **state.committed 只在完整 Run 成功结算并完成跨 scope 事务提交后发送**。失败/停止时不广播候选工作状态；若此前已有持久化 Entry，依现有规则恢复其投影。
-- 每次切换世界线，UI 清空旧分支分页游标、停止显示旧分支临时流，重新读取该 tip 的消息与 Message State。Global / Session 可由其他会话改变，订阅对应提交/失效通知后主动刷新完整状态。
-- 每次重载或断线恢复先获取包含 tip/revision 的快照，再衔接增量事件；Host 须有单调序号或等价同步机制，避免「先查询再订阅」漏事件。断线/序号缺口/版本不一致时重新取快照，不假设 delta 一定完整且恰好一次。
-- 单次模型输出可能跨多条 Assistant/ToolResult Entry 和同一个 Run；UI 流不能假定「一轮恰好一条 Assistant」。不要把模型的思维、ToolCall、ToolResult 或内联 StateUpdate 当成普通叙事 delta。**流式 narrative.delta 必须由增量叙事投影器产生**，对未闭合的控制标签和跨 chunk 边界做缓冲，不能直接将原始 Pi 文本 delta 透传、事后再靠最终投影删除。
-- 事件类型及 payload 后续定稿；SDK 版本与具体 Pi 事件解耦。
+- `runs` 是当前 tip 的已提交 NarrativeProjection，按既有 `getSessionHistory` 的 Run 游标分页，不能拆开单 Run；无 ToolCall、ToolResult、thinking、compaction 技术记录。
+- `streaming` 是当前 Run 的临时、已过滤 `message.delta` 缓冲。`message.committed` 到达后按 runId/entryId 读取或对账权威叙事并消除重复。**一轮可以有多条 Assistant**。
+- `loadOlder` 自动由 `<SR.Chat />` 上滑阈值/IntersectionObserver 触发，插入旧消息时保留滚动锚点；用户停留历史时不强制滚到底。作者可用 Hook 自绘消息。
+- 切换世界线/断线清掉过期流和游标，重新取新分支。SSE 只用于短期流和失效通知，不替代消息持久化。
+- 流式 NarrativeProjection 需要确保跨 chunk 的状态标签和思考内容不会泄漏。若 `submit_turn` 的叙事在 ToolCall JSON 参数中，增量解析未验证时应等待完整数据校验，不能原样转发工具参数。
 
-## 6. 自定义 HTML 运行与安全
+## 5. 世界卡与 Runtime 安全
 
-**自定义世界卡页面属于不可信代码**。不能把 HTML 注入 React DOM、应用主页面、同源动态 script，也不能只靠 Shadow DOM 或普通 DOM 清洗实现脚本隔离。
+- 世界卡 `data.ui` 可选 `{default_view:"custom",custom:{entry:"ui/main.js",api_version:1}}`，缺省内置 Chat，可选 chat-state。自定义入口是预编译 React 模块；CSS/图片随世界卡 assets。世界卡唯一当前版本，不保存 Session UI 快照；用户永远能回到内置聊天。
+- 作者代码在沙箱 iframe 的独立 React Root 运行；React/ReactDOM 版本由隔离 Runtime 统一提供，避免双 React Hook/Context 问题；MVP 不允许在 Runtime 下载 npm/CDN 依赖，也不在 Server 执行作者的构建脚本。
+- iframe 使用严格 CSP、受限资源 URL、最小 sandbox，默认禁止父 DOM、Cookie、Provider Key、原生 IPC、任意网络、弹窗、导航、文件。不要在同源 iframe 任意同时开放 `allow-scripts` 与 `allow-same-origin`。
+- Bridge 握手绑定 iframe source、session、协议版本和 nonce/MessagePort，验证频率、大小、权限。Opaque origin 的 `origin === "null"` 并不代表可信。
+- 作者 JS 不能证明它确实收到玩家点击；即使只允许调用 `useUserPrompt` 和 setter，也可能偷偷自动提交并消耗 Token。首次授权、速率/成本限制、宿主可用停止/回退入口和关键操作宿主确认仍是必须的。
+- 传给 iframe 的任何 State 作者 JS 都可查看；如需 NPC 秘密，先有服务端可见性投影，不能靠“不显示”保护。恶意脚本耗 CPU/内存的风险须经浏览器/WebView PoC 验证，iframe 不是完整资源隔离。
 
-- 使用隔离的 iframe / 独立执行源，默认脚本仅可访问自身 DOM。最小必要 sandbox 权限；禁父页面 DOM、Cookie/LocalStorage 身份凭据、宿主 JS 全局、top navigation、弹窗、下载、剪贴板、任意网络和直连后端。
-- 以严格 CSP、资源白名单、内容寻址或隔离的资产源交付已打包内容。注意：同源 iframe 同时开启 allow-scripts 与 allow-same-origin 可能失去隔离；真正实现方式要经浏览器与未来 WebView PoC 验证。
-- 通过 postMessage / MessageChannel 实现带握手、绑定 iframe 实例和当前 session 的受限 RPC；验证消息来源（包括 source、适用时 origin）、协议版本、nonce/capability、类型/大小、每秒调用次数和超时；不可把传入消息当代码执行。
-- 若 frame 采用 opaque origin，其 origin 可能为 null，不能把 null 当作可信来源。可采用 source + 随机握手令牌 + 专属 MessagePort，限制唯一 frame 生命周期；更严格方案是独立隔离 origin。消息端点不向其他 frame 扩散令牌。
-- 所有命令在宿主/服务端二次校验；只向页面下发最小必要数据。禁止 UI 读取 Provider 密钥、底层文件、外部网络或直接操作数据库。若未来需外链、音频、摄像头、剪贴板，单独建立声明和用户授权机制。
-- 包含自定义 JS 的世界卡在导入/首次启用时明确提示其运行风险；提供禁用和回退入口。无 JS 的静态展示不因此被拒绝。
-- 浏览器不能仅凭 iframe 发出的 postMessage 证明它来自真实玩家点击。恶意作者页面可能在加载时自动 dispatch 并产生 Token 消耗；MVP 至少需要首次启用明确授权、会话级运行互斥/速率与消费上限、宿主可见的运行中/停止入口；需要强制每次人机确认时，应使用宿主控制，而不是相信作者 JS 自报 userGesture。
+## 6. MVP 落地与验收
 
-## 7. 内置模板与作者体验
+1. SessionEventHub 通用 Envelope、内存订阅/路由、SSE Adapter 和连接/快照对账。
+2. Runtime Store、`useSRState` 读取、`useUserPrompt`、`useSessionHistory`；官方 `<SR.Chat/>` / `<SR.Composer/>` / `<SR.StatePanel/>`。
+3. 独立 React Root、世界卡预编译 UI 入口、Bridge/CSP/授权、失败退回官方 Chat。
+4. **独立设计状态操作在 Message 父链中的持久化、审计、并发与权限**；完成领域改动后再打开 `useSRState` Setter（同一 Hook，无独立 Mutation Hook）。
+5. 用 RPG 页验证：Agent 变更 HP 自动重渲染；状态写入失败不改旧值但通知错误；聊天 SSE 及 Run 上滑分页正确；分叉切换不串状态；断线对账正常；恶意作者代码无宿主权限。
 
-- builtin/chat：叙事消息、输入框、历史加载、流式输出、最后回复重生/续写、世界线入口。
-- builtin/chat-state：共用聊天能力，加可折叠状态栏；状态栏展示三作用域的当前值及可读的变更 reason。状态为可选，未定义状态时不强制显示空面板。
-- custom：作者以一份前端资源包控制会话内容视图，可使用 HTML/CSS/JS 或自行打包任何前端框架；不要求学习 SR 内部 React 组件。
-- 首版提供 SDK 类型、最小 HTML 示例、事件/命令示例、状态变化与世界线切换模拟器，以及「预览」/「返回默认聊天」入口。预览是隔离页面与模拟数据，不允许误向真实 Session 发送命令。
-- 资源路径、主题、视口、安全区域、手机/桌面自适应作为 SDK/宿主环境能力暴露，不依赖隐式 DOM 操作。
-
-## 8. MVP 与验收
-
-**MVP**：内置 chat / chat-state；世界卡可选一个自定义 entry HTML；受限读接口（Session、当前分支 Run 叙事、三作用域 State、世界线）；Run 流式事件；submitInput/stop/重生/续写/分叉/切换；沙箱和回退能力。保持六业务表不变，不额外引入 runs 表、世界卡版本或会话快照。
-
-**暂不做**：UI 任意 Prompt 插入/编辑、原始 Pi ToolCall 访问、UI 直接写 State、跨世界访问、作者自定义后端/网络插件、JS 调用本地文件系统、UI 多窗口、通用 RPG 规则引擎、远端在线 UI 依赖、作者接口对外授权市场。
-
-验收至少覆盖：
-
-1. 同一 Session 在三种视图切换，当前 tip、State 与 Raw Entry 不变；页面坏掉仍可恢复聊天。
-2. 含多个 Assistant 与 ToolResult 的单 Run 正确呈现，按 Run 分页且跨分支不串读；实时 delta 与最终已提交叙事一致。
-3. 切换世界线立即丢弃旧游标、旧临时流，Message State 从新父链恢复，Global/Session 仍按共享语义展示。
-4. 停止/失败/状态校验不通过时，视图不能出现「已提交」的候选 State；正常成功仅一次权威 state.committed。
-5. 恶意 HTML/JS 不能访问宿主 DOM、Cookie、Key、Raw Entries、任意网络或伪造状态写入；非法桥消息及高频命令被拒绝。
-6. 世界卡 UI 资源不存在、API 版本不兼容、渲染异常时默认聊天可用；不影响已持久化内容。
-
-## 9. 待最终确认的设计点
-
-- 自定义视图是否需要支持 **多页面路由**（例如 RPG 战斗页、地图页），还是入口 HTML 负责页面内切换。建议 MVP 仅一个入口，内部自由路由。
-- 世界卡能否声明多个 UI 皮肤并给玩家选择。建议 MVP 一份作者默认自定义视图 + 两份内置模板。
-- UI 作者如何配置访问宿主设备/网络。建议 MVP 全部禁止，不预先承诺权限系统。
-- 是否需要将「选项点击」升级为稳定的结构化玩家 Action 领域协议。建议先用明确的玩家文本输入完成 PoC；未来有实际 RPG 规则需求再设计。
+不额外引入第二套状态引擎、第二套消息表、WebSocket、动态 UI DSL、可视化布局编辑器或 Prompt 干预。**创作者体验尽量简单，复杂的一致性与安全检查集中在 Host/Server。**

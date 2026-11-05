@@ -1,5 +1,7 @@
 # 文本渲染与转换
 
+> **MVP 状态说明**：本文保留原有目标设计；若与本次 Server MVP 的已调整范围或实际行为冲突，以 [Server MVP 实施进度](../technical/server-mvp-progress.md)及其中链接的方案为准。文中的未来功能不代表已实现。
+
 > **职责与权威范围**：文本模板、literal 边界、输出转义及场景文本转换的权威来源；脚本 API 与加载选择以各自规范为准。
 
 > 2026-11-05 目标设计，尚未实现。SR 采用 JavaScript + EJS；状态与变量 API、生命周期和执行隔离见[脚本与状态 API](script-runtime.md)，条目选择见[内容加载判断](content-activation.md)。

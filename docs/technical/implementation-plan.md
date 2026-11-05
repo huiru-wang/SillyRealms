@@ -1,5 +1,7 @@
 # SillyRealms 实施计划：Run 分页 / 双策略 Token 预算
 
+> **MVP 状态说明**：本文保留原有目标设计；若与本次 Server MVP 的已调整范围或实际行为冲突，以 [Server MVP 实施进度](../technical/server-mvp-progress.md)及其中链接的方案为准。文中的未来功能不代表已实现。
+
 > **职责与权威范围**：实施任务和验收进度；目标协议以对应权威规范为准，任务勾选不代替验收证据。
 
 > 2026-11-04 更新；仍为设计阶段，仅修改文档和示例。遵循 [产品总纲](../PRODUCT.md)、[Session](../design/session.md)、[Context Strategy](../design/context-strategy.md)、[AgentContext](../design/agent-context.md)、[Storage](storage.md)。
@@ -29,12 +31,13 @@
 
 ## 2. 阶段 B：六表和 Run/Session
 
-- [ ] B1. 六表 SQLite DDL、`entries.run_id NOT NULL`、`role` 约束与索引、worlds/sessions 状态 JSON 对象、entries state JSON 数组和 ext_data JSON 对象、world→sessions→entries 级联删除；不建 runs/messages/run_tool_calls 等表。
+- [ ] B1. 六表 SQLite DDL、`entries.run_id NOT NULL`、`role` 约束与索引、worlds/sessions 状态 JSON 对象、entries state JSON 数组、ext_data JSON 对象和非负 branch_count、world→sessions→entries 级联删除；不建 runs/messages/run_tool_calls 等表。
 - [ ] B2. Session 通过当前 WorldCard + Opening 创建初始化 Run/根 Assistant/S0；可扮演角色不存在时必须先保存新角色。
 - [ ] B3. Session 创建和模型/用户角色校验，`getWorld/getPreset` 单轮只读一次；世界卡/预设修改只影响之后的新 Run；不兼容状态须保留、提示，明确选择且备份后才可迁移或重建。
 - [ ] B4. tags(id,type,name,sort_order) 同类型稳定排序；世界卡保存 tag ID。
 - [ ] B5. **消息级持久化**所有 Pi User/Assistant/ToolResult、Assistant 内 ToolCall 和技术 Entry，归属逻辑 run_id；失败部分也保留。
 - [ ] B6. **Run 级分页**：先按 tip.parent_id 收窄祖先链，后按 run_id 聚合，以当前链每组 MIN(seq) 为倒序游标，返回完整 Run；重生成 Assistant 与原 User 同 Run、不同 parent 分支；编辑 User 新 Run。
+- [ ] B6a. 可见分支投影与 branch_count 同事务维护；历史分页批量返回，覆盖技术节点、分支删除及重建。
 - [ ] B7. `entries.role` 支持按角色快速查询，`narrativeProjection` 为聊天/UI/模型历史/关键词扫描共用的唯一投影，不把 ToolResult 和 thinking 误显示。
 
 ## 3. 阶段 C：Token Context、摘要和 Agent

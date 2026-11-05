@@ -1,0 +1,36 @@
+{
+  "name": "@sillyrealms/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.5.0",
+    "@hono/node-server": "2.1.6",
+    "acorn": "8.19.0",
+    "hono": "4.13.16",
+    "lodash": "4.18.1",
+    "proper-lockfile": "4.1.2",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/lodash": "4.17.27",
+    "@types/node": "26.6.6",
+    "@types/proper-lockfile": "4.1.4",
+    "eslint": "10.14.0",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.1.0"
+  }
+}

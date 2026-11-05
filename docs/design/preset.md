@@ -1,5 +1,7 @@
 # Preset：模型、摘要 Prompt、系统节点和自定义编排
 
+> **MVP 状态说明**：本文保留原有目标设计；若与本次 Server MVP 的已调整范围或实际行为冲突，以 [Server MVP 实施进度](../technical/server-mvp-progress.md)及其中链接的方案为准。文中的未来功能不代表已实现。
+
 > **职责与权威范围**：预设配置、系统节点及其角色、顺序和启停约束的权威来源；构建时序以 AgentContext 为准。
 
 > 2026-11-04 目标设计，未实现。Preset 管理**本局使用的模型、生成参数、状态更新模式、摘要 Prompt 和所有提示词节点**。Session 只保存 preset_id，ProviderService 负责模型目录/API Key，AgentContext 负责实际拼装与筛选。
