@@ -1,3 +1,4 @@
+import { ErrorCodes } from '../../common/error-codes.js';
 import { parseExpressionAt } from 'acorn';
 import lodash from 'lodash';
 import type { Node } from 'acorn';
@@ -7,7 +8,7 @@ type State = Record<'global' | 'session' | 'message', Record<string, unknown>>;
 const blocked = new Set(['__proto__', 'constructor', 'prototype']);
 const operators = new Set(['===', '!==', '<', '<=', '>', '>=', '+', '-', '*', '/', '%']);
 const logical = new Set(['&&', '||', '??']);
-function error(): never { throw new Error('WHEN_UNSUPPORTED'); }
+function error(): never { throw new Error(ErrorCodes.WHEN_UNSUPPORTED); }
 
 function parse(input: string): Expr {
   if (Buffer.byteLength(input) > 4096) error();
@@ -28,6 +29,8 @@ function parse(input: string): Expr {
         if (path.type === 'Literal') { if (typeof path.value !== 'string') error(); }
         else if (path.type === 'ArrayExpression') { if (!path.elements.length || !path.elements.every((item: Expr) => item?.type === 'Literal' && typeof item.value === 'string')) error(); }
         else error();
+        const parts:string[] = path.type==='ArrayExpression' ? path.elements.map((e:Expr)=>e.value) : lodash.toPath(path.value);
+        if(!parts.length || parts.length>32 || parts.some(part=>!part || blocked.has(part))) error();
         const options = n.arguments[1];
         if (options && (options.type !== 'ObjectExpression' || options.properties.length !== 1 || options.properties[0].type !== 'Property' || options.properties[0].computed || options.properties[0].key.name !== 'scope' || options.properties[0].value.type !== 'Literal' || !['global','session','message'].includes(options.properties[0].value.value))) error();
         break;

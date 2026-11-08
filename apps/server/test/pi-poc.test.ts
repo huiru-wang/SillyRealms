@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PiGateway } from '../src/agent/gateway.js';
+import { PiGateway } from '../src/agent/model/pi-gateway.js';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions';
 import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript';
@@ -17,7 +17,7 @@ describe('Pi SDK contract PoC', () => {
     let payload: Record<string, unknown> | undefined;
     const chunks = [
       { id: 'test', object: 'chat.completion.chunk', created: 1, model: 'mock', choices: [{ index: 0, delta: { role: 'assistant', content: 'hello' }, finish_reason: null }] },
-      { id: 'test', object: 'chat.completion.chunk', created: 1, model: 'mock', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'set_state', arguments: '{"path":"x","value":1}' } }] }, finish_reason: null }] },
+      { id: 'test', object: 'chat.completion.chunk', created: 1, model: 'mock', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'update_state', arguments: '{"path":"x","value":1}' } }] }, finish_reason: null }] },
       { id: 'test', object: 'chat.completion.chunk', created: 1, model: 'mock', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
     ];
     const body = chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n';
@@ -29,7 +29,7 @@ describe('Pi SDK contract PoC', () => {
       { role: 'system', content: 'first', timestamp: 1 },
       { role: 'user', content: 'input', timestamp: 2 },
       { role: 'system', content: 'last', timestamp: 3 },
-    ], tools: [{ name: 'set_state', description: 'Set a value', parameters: { type: 'object', properties: { path: { type: 'string' }, value: { type: 'number' } }, required: ['path', 'value'] } }] }), { apiKey: 'dummy', fetch: mockFetch });
+    ], tools: [{ name: 'update_state', description: 'Set a value', parameters: { type: 'object', properties: { path: { type: 'string' }, value: { type: 'number' } }, required: ['path', 'value'] } }] }), { apiKey: 'dummy', fetch: mockFetch });
     const types: string[] = [];
     for await (const event of stream) types.push(event.type);
     const messages = payload?.messages as Array<{role: string; content: string}>;
@@ -61,14 +61,19 @@ describe('Pi SDK contract PoC', () => {
   it('uses the real Pi gateway and explicitly supplied credentials with a fake transport', async () => {
     const gateway=new PiGateway(); const selected=gateway.resolve('deepseek','deepseek-flash');
     expect(selected).toBeDefined();
-    let wasCalled=false;
+    let wasCalled=false; let sentBody:unknown;
+    const oldDebug=process.env.SILLYREALMS_DEBUG; process.env.SILLYREALMS_DEBUG='1';
+    const log=vi.spyOn(console,'log').mockImplementation(()=>{});
     const chunks=[{id:'test',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{role:'assistant',content:'ok'},finish_reason:null}]},{id:'test',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{},finish_reason:'stop'}]}];
-    vi.stubGlobal('fetch',async () => { wasCalled=true; return new Response(chunks.map(c=>`data: ${JSON.stringify(c)}\n\n`).join('')+'data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}}); });
+    vi.stubGlobal('fetch',async (_input:unknown,init:RequestInit) => { wasCalled=true; sentBody=JSON.parse(String(init.body)); return new Response(chunks.map(c=>`data: ${JSON.stringify(c)}\n\n`).join('')+'data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}}); });
     try {
       const events=[];
       for await (const event of gateway.stream(selected!,{messages:[{role:'user',content:'hello',timestamp:0}]},{apiKey:'fake',signal:new AbortController().signal,maxTokens:20})) events.push(event.type);
       expect(wasCalled).toBe(true); expect(events).toContain('text_delta'); expect(events).toContain('done');
-    } finally { vi.unstubAllGlobals(); }
+      const output=String(log.mock.calls[0]?.[0]); const logged=JSON.parse(output.slice(output.indexOf('{'),output.lastIndexOf('\n└─')));
+      expect(logged).toMatchObject({provider:'deepseek',model:'deepseek-flash',payload:sentBody});
+      expect(JSON.stringify(logged)).not.toContain('fake');
+    } finally { if(oldDebug===undefined)delete process.env.SILLYREALMS_DEBUG;else process.env.SILLYREALMS_DEBUG=oldDebug;log.mockRestore(); vi.unstubAllGlobals(); }
   });
   it('replays tool calls and results in order to the provider transport', async () => {
     let payload:Record<string,unknown>|undefined;
@@ -79,9 +84,9 @@ describe('Pi SDK contract PoC', () => {
     };
     const context=normalizeContext({messages:[
       {role:'user',content:'go',timestamp:0},
-      {role:'assistant',content:[{type:'toolCall',id:'call_1',name:'set_state',arguments:{path:'x',value:1}}],api:'openai-completions',provider:'openai',model:'mock',usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'toolUse',timestamp:0},
-      {role:'toolResult',toolCallId:'call_1',toolName:'set_state',content:[{type:'text',text:'{\"ok\":true}'}],isError:false,timestamp:0},
-    ],tools:[{name:'set_state',description:'Set state',parameters:{type:'object',properties:{path:{type:'string'},value:{type:'number'}}}}]});
+      {role:'assistant',content:[{type:'toolCall',id:'call_1',name:'update_state',arguments:{path:'x',value:1}}],api:'openai-completions',provider:'openai',model:'mock',usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'toolUse',timestamp:0},
+      {role:'toolResult',toolCallId:'call_1',toolName:'update_state',content:[{type:'text',text:'{\"ok\":true}'}],isError:false,timestamp:0},
+    ],tools:[{name:'update_state',description:'Set state',parameters:{type:'object',properties:{path:{type:'string'},value:{type:'number'}}}}]});
     const stream=streamSimple(model,context,{apiKey:'fake',fetch:mockFetch});
     for await (const _event of stream) { /* drain */ }
     const messages=payload?.messages as Array<{role:string;tool_call_id?:string}>;
@@ -90,7 +95,7 @@ describe('Pi SDK contract PoC', () => {
   });
   it('records tool capability only after a successful tool probe', async () => {
     const gateway=new PiGateway();expect(gateway.toolVerified('deepseek','deepseek-flash')).toBe(false);
-    const chunks=[{id:'test',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'call_1',type:'function',function:{name:'set_state',arguments:'{\"path\":\"test.value\",\"value\":1}'}}]},finish_reason:null}]},{id:'test',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]}];
+    const chunks=[{id:'test',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'call_1',type:'function',function:{name:'update_state',arguments:'{\"path\":\"test.value\",\"value\":1}'}}]},finish_reason:null}]},{id:'test',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]}];
     vi.stubGlobal('fetch',async()=>new Response(chunks.map(c=>`data: ${JSON.stringify(c)}\n\n`).join('')+'data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}}));
     try { expect(await gateway.verify('deepseek','deepseek-flash','fake')).toBe(true); expect(gateway.toolVerified('deepseek','deepseek-flash')).toBe(true); }
     finally { vi.unstubAllGlobals(); }

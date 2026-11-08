@@ -1,0 +1,60 @@
+{
+  "spec": "world_card",
+  "spec_version": "0.1",
+  "data": {
+    "name": "测试世界",
+    "description": "用于测试的独立世界卡。",
+    "tags": [
+      "测试"
+    ],
+    "characters": [
+      {
+        "id": "player",
+        "name": "玩家",
+        "player_selectable": true,
+        "prompt": "玩家来到港口。"
+      }
+    ],
+    "openings": [
+      {
+        "id": "arrival",
+        "name": "抵达",
+        "content": "你抵达港口。",
+        "initial_state": {
+          "进度": {
+            "阶段": "抵达"
+          }
+        }
+      }
+    ],
+    "state": {
+      "schema_version": 1,
+      "scopes": {
+        "message": {
+          "进度": {
+            "type": "json",
+            "initial": {
+              "阶段": "出发"
+            },
+            "description": "旅途所处的阶段。"
+          }
+        }
+      }
+    },
+    "lorebook": {
+      "entries": [
+        {
+          "id": "harbor",
+          "title": "港口",
+          "content": "一座安静的港口。",
+          "load": {
+            "mode": "on_mention",
+            "keywords": [
+              "港口"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

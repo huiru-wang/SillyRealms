@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { compressHistory } from '../src/agent/summary.js';
+import { compressHistory } from '../src/agent/context/history-compactor.js';
 import type { Message } from '@earendil-works/pi-ai';
 
 it('summarizes the oldest messages in order without discarding the tail', async () => {

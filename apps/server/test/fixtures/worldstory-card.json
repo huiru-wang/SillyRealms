@@ -1,0 +1,91 @@
+{
+  "spec": "world_card",
+  "spec_version": "0.1",
+  "data": {
+    "name": "WorldStory 组件示例",
+    "description": "供消息渲染和状态编排测试的合成世界。",
+    "characters": [
+      {
+        "id": "player",
+        "name": "玩家",
+        "player_selectable": true,
+        "prompt": "玩家在世界中探索。"
+      }
+    ],
+    "openings": [
+      {
+        "id": "start",
+        "name": "开局",
+        "content": "<Cover/>",
+        "initial_state": {
+          "进度": {
+            "阶段": "初遇"
+          },
+          "灵力": 5
+        }
+      }
+    ],
+    "state": {
+      "schema_version": 1,
+      "scopes": {
+        "message": {
+          "进度": {
+            "type": "json",
+            "initial": {
+              "阶段": "准备"
+            },
+            "description": "当前场景阶段。"
+          },
+          "灵力": {
+            "type": "number",
+            "initial": 5,
+            "min": 0,
+            "max": 10,
+            "description": "玩家拥有的灵力。"
+          }
+        }
+      }
+    },
+    "message_render": {
+      "rules": [
+        {
+          "id": "cover",
+          "roles": [
+            "assistant"
+          ],
+          "pattern": "<Cover\\s*/>",
+          "flags": "g",
+          "replacement": {
+            "type": "component",
+            "component": "Cover"
+          }
+        },
+        {
+          "id": "choice",
+          "roles": [
+            "assistant"
+          ],
+          "pattern": "\\[选项:(?<text>[^\\]]+)\\]",
+          "flags": "g",
+          "replacement": {
+            "type": "component",
+            "component": "Choice"
+          }
+        },
+        {
+          "id": "ritual",
+          "roles": [
+            "user"
+          ],
+          "pattern": "\\[仪式:(初遇|夜晚)\\]",
+          "flags": "g",
+          "replacement": {
+            "type": "html",
+            "content": "<span style=\"color: #6258d8\">仪式开启：$1</span>"
+          }
+        }
+      ],
+      "component_source": "import React from 'react';\nimport {useSRSession, useSRStateAPI, type MessageComponentProps} from '@sr/sdk';\nfunction Cover() {\n  const session = useSRSession();\n  const state = useSRStateAPI();\n  const [busy, setBusy] = React.useState(false);\n  const [error, setError] = React.useState('');\n  async function startEncounter() {\n    if (busy) return;\n    setBusy(true); setError('');\n    try { await session.send('[仪式:初遇]'); }\n    catch { setError('发送失败，请检查会话设置。'); }\n    finally { setBusy(false); }\n  }\n  async function startNight() {\n    if (busy) return;\n    setBusy(true); setError('');\n    try {\n      const results = await state.batchUpdateState([\n        {path: '进度.阶段', value: '夜晚'},\n        {path: '灵力', value: 3}\n      ]);\n      if (results.every(result => result.success)) await session.send('[仪式:夜晚]');\n      else setError('部分状态更新失败。');\n    } catch { setError('发送失败，请检查会话设置。'); } finally { setBusy(false); }\n  }\n  return <section style={{display:\"grid\", gap:\"12px\", minWidth:\"180px\"}}><h2>测试开局</h2><p>选择故事开始的时刻。</p><div style={{display:\"flex\", gap:\"8px\"}}><button disabled={busy} onClick={startEncounter}>初遇</button><button disabled={busy} onClick={startNight}>夜晚</button></div>{error && <p role=\"alert\">{error}</p>}</section>;\n}\nfunction Choice({namedGroups}: MessageComponentProps) { return <span>{namedGroups.text}</span>; }\nChoice.srDisplay = 'inline';\nexport default {Cover, Choice};"
+    }
+  }
+}

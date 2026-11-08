@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "pnpm --filter @sillyrealms/server dev",
     "test": "pnpm --filter @sillyrealms/server test",
-    "typecheck": "pnpm --filter @sillyrealms/server typecheck",
-    "lint": "pnpm --filter @sillyrealms/server lint"
+    "typecheck": "pnpm --filter @sillyrealms/server typecheck && pnpm --filter @sillyrealms/web typecheck",
+    "lint": "pnpm --filter @sillyrealms/server lint",
+    "dev:web": "pnpm --filter @sillyrealms/web dev",
+    "build": "pnpm --filter @sillyrealms/web build"
   }
 }

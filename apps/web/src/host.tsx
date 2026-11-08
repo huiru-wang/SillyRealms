@@ -1,0 +1,153 @@
+import React,{useCallback,useEffect,useMemo,useRef,useState} from 'react';
+import {api,json} from './api';
+import {compile} from '@sillyrealms/ui-compiler';
+import {MessageMatcher} from './message-matcher';
+import type {MessageRule} from '../../../packages/sr-sdk/src/story-context';
+
+/** Trusted bridge: it forwards commands and events without holding state or history snapshots. */
+export function SessionHost({id}:{id:string}) {
+  const [notice,setNotice]=useState('');
+  const [title,setTitle]=useState('');
+  const [preset,setPreset]=useState<string|null>(null);
+  const [presets,setPresets]=useState<Array<{id:string;name:string}>>([]);
+  const [settingsOpen,setSettingsOpen]=useState(false);
+  const [settingsTitle,setSettingsTitle]=useState('');
+  const [settingsPreset,setSettingsPreset]=useState('');
+  const [settingsSaving,setSettingsSaving]=useState(false);
+  const [settingsError,setSettingsError]=useState('');
+  const [loaded,setLoaded]=useState(false);
+  const [fatal,setFatal]=useState(false);
+  const [online,setOnline]=useState(false);
+  const [mounted,setMounted]=useState(false);
+  const [draft,setDraft]=useState('');
+  const [expanded,setExpanded]=useState(true);
+  const [sending,setSending]=useState(false);
+  const [activeRun,setActiveRun]=useState<string|null>(null);
+  const [stopping,setStopping]=useState(false);
+  const frame=useRef<HTMLIFrameElement>(null);
+  const expandButton=useRef<HTMLButtonElement>(null);
+  const port=useRef<MessagePort|null>(null);
+  const ready=useRef(false),connected=useRef(false),mountedRef=useRef(false),fatalRef=useRef(false),activeRef=useRef<string|null>(null),sendingRef=useRef(false);
+  const renderRef=useRef<{code:string|null;messageCode:string|null;rules:unknown[];state:unknown}>({code:null,messageCode:null,rules:[],state:{}}),loadedRef=useRef(false);
+  const terminal=useRef(new Set<string>());
+  const nonce=useMemo(()=>crypto.randomUUID(),[id]);
+  const base=`v1/sessions/${id}`;
+  useEffect(()=>{if(!expanded)expandButton.current?.focus();},[expanded]);
+  const stop=useCallback(async(runId:string)=>{
+    setStopping(true);
+    try {await api(`${base}/runs/${encodeURIComponent(runId)}/stop`,{method:'POST'});}
+    catch(error){setNotice(error instanceof Error?error.message:'停止失败');}
+    finally {setStopping(false);}
+  },[base]);
+  const block=useCallback(()=>{
+    fatalRef.current=true;mountedRef.current=false;setFatal(true);setMounted(false);setSettingsOpen(false);setNotice('');
+    if(activeRef.current)void stop(activeRef.current);
+  },[stop]);
+  const send=useCallback(async(text:string)=>{
+    if(fatalRef.current)throw Error('世界卡数据异常');
+    if(!connected.current)throw Error('连接尚未就绪');
+    if(!mountedRef.current)throw Error('会话页面尚未就绪');
+    if(!text.trim()||text.length>100000)throw Error('请输入有效内容');
+    if(sendingRef.current||activeRef.current)throw Error('当前会话正在生成');
+    sendingRef.current=true;setSending(true);
+    try {
+      const current=await api(base);
+      if(fatalRef.current)throw Error('世界卡数据异常');
+      const result=await api(`${base}/runs`,{method:'POST',body:json({text,requestId:crypto.randomUUID(),expectedTipEntryId:current.tipEntryId})});
+      if(fatalRef.current){void stop(result.runId);throw Error('世界卡数据异常');}
+      if(!terminal.current.has(result.runId)){activeRef.current=result.runId;setActiveRun(result.runId);}
+      else terminal.current.delete(result.runId);
+      return result;
+    } finally {sendingRef.current=false;setSending(false);}
+  },[base,stop]);
+
+  useEffect(()=>{
+    ready.current=false;connected.current=false;mountedRef.current=false;fatalRef.current=false;activeRef.current=null;
+    setDraft('');setExpanded(true);setFatal(false);setMounted(false);setLoaded(false);setOnline(false);setActiveRun(null);setNotice('');setSettingsOpen(false);setSettingsError('');setPresets([]);loadedRef.current=false;renderRef.current={code:null,messageCode:null,rules:[],state:{}};terminal.current.clear();
+    const stream=new EventSource(`/api/${base}/events`);
+    const matcher=new MessageMatcher();
+    stream.onopen=()=>{connected.current=true;setOnline(true);if(ready.current)port.current?.postMessage({type:'connected'});};
+    stream.onerror=()=>{connected.current=false;setOnline(false);};
+    for(const name of ['run.created','run.delta','run.completed','run.failed','run.stopped','state.changed'])stream.addEventListener(name,(event:MessageEvent)=>{
+      try {
+        const data=JSON.parse(event.data);
+        if(name.startsWith('run.') && typeof data.runId==='string'){
+          if(['run.completed','run.failed','run.stopped'].includes(name)){
+            terminal.current.add(data.runId);if(terminal.current.size>100)terminal.current.delete(terminal.current.values().next().value!);
+            if(activeRef.current===data.runId){activeRef.current=null;setActiveRun(null);}
+            if(name==='run.failed')setNotice('生成失败：'+String(data.error??''));
+          } else if(!terminal.current.has(data.runId)){activeRef.current=data.runId;setActiveRun(data.runId);}
+        }
+        port.current?.postMessage({type:'event',event:{event:name,data}});
+      } catch {setNotice('会话事件无效');}
+    });
+    const listener=(event:MessageEvent)=>{
+      if(event.source!==frame.current?.contentWindow||event.data?.type!=='sr-ready'||event.data.nonce!==nonce||fatalRef.current)return;
+      ready.current=false;mountedRef.current=false;setMounted(false);
+      const channel=new MessageChannel();port.current?.close();port.current=channel.port1;
+      channel.port1.onmessage=async message=>{
+        const payload=message.data;
+        if(payload.type==='ready-ack'){
+          ready.current=true;if(loadedRef.current)channel.port1.postMessage({type:'render',...renderRef.current});
+          channel.port1.postMessage({type:'theme',value:document.documentElement.dataset.theme??'light'});
+          if(connected.current)channel.port1.postMessage({type:'connected'});
+        } else if(payload.type==='page-mounted'){if(!fatalRef.current){mountedRef.current=true;setMounted(true);}}
+        else if(payload.type==='set-draft'){
+          if(!fatalRef.current && typeof payload.text==='string' && payload.text.length<=100000)setDraft(payload.text);
+        } else if(payload.type==='sdk-error')setNotice('SDK 错误：'+payload.message);
+        else if(payload.type==='message-error')setNotice('消息组件加载失败，将显示原文');
+        else if(payload.type==='ui-error')block();
+        else if(payload.type==='request'){
+          try {
+            if(new TextEncoder().encode(JSON.stringify(payload)).byteLength>2*1024*1024)throw Error('消息过大');
+            if(fatalRef.current && ['state.write','session.send'].includes(payload.method))throw Error('世界卡数据异常');
+            let result:unknown;
+            if(payload.method==='state.read')result=await api(`${base}/state`);
+            else if(payload.method==='state.write')result=await api(`${base}/state`,{method:'PATCH',body:json(payload.data)});
+            else if(payload.method==='session.history'){
+              const query=new URLSearchParams();if(payload.data?.cursor)query.set('cursor',payload.data.cursor);if(payload.data?.limit!==undefined)query.set('limit',String(payload.data.limit));
+              result=await api(`${base}/runs?${query}`);
+            } else if(payload.method==='session.send')result=await send(payload.data?.text);
+            else if(payload.method==='message.match'){
+              if(typeof payload.data?.text!=='string'||!['user','assistant'].includes(payload.data?.role))throw Error('消息无效');
+              result=await matcher.match(payload.data.text,payload.data.role,renderRef.current.rules as MessageRule[]);
+            }
+            else throw Error('不支持的命令');
+            channel.port1.postMessage({type:'response',id:payload.id,data:result});
+          } catch(error){channel.port1.postMessage({type:'response',id:payload.id,error:error instanceof Error?error.message:String(error)});}
+        }
+      };
+      frame.current?.contentWindow?.postMessage({type:'sr-connect',nonce},'*',[channel.port2]);
+    };
+    window.addEventListener('message',listener);
+    const themeObserver=new MutationObserver(()=>port.current?.postMessage({type:'theme',value:document.documentElement.dataset.theme??'light'}));
+    themeObserver.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+    let gone=false;
+    void (async()=>{
+      const items:Array<{id:string;name:string}>=[];let cursor:string|null=null;
+      do {
+        const query=new URLSearchParams({limit:'100'});if(cursor)query.set('cursor',cursor);
+        const result=await api(`v1/presets?${query}`);items.push(...result.items);cursor=result.hasMore?result.nextCursor:null;
+      } while(cursor&&!gone);
+      if(!gone)setPresets(items);
+    })().catch(()=>{if(!gone)setSettingsError('预设列表加载失败');});
+    void api(base).then(current=>{if(!gone){setTitle(current.title??'');setPreset(current.presetId??null);}return api('v1/worlds/'+current.worldId);}).then(async world=>{
+      const data=world.item.data;
+      const source=data.ui?.source;
+      const compiled=source?await compile(source):null;
+      let messageCode:string|null=null;
+      if(data.message_render?.component_source){try{messageCode=await compile(data.message_render.component_source);}catch{if(!gone)setNotice('消息组件编译失败，将显示原文');}}
+      if(!gone){renderRef.current={code:compiled,messageCode,rules:data.message_render?.rules??[],state:data.state??{}};loadedRef.current=true;setLoaded(true);if(ready.current)port.current?.postMessage({type:'render',...renderRef.current});}
+    }).catch(()=>{if(!gone)block();});
+    return()=>{gone=true;themeObserver.disconnect();matcher.close();stream.close();port.current?.close();port.current=null;window.removeEventListener('message',listener);};
+  },[base,nonce,send,block]);
+
+  async function submit(){if(fatal||!online||!loaded||!mounted||sending||activeRun)return;const text=draft;try{await send(text);setDraft(current=>current===text?'':current);}catch(error){setNotice(error instanceof Error?error.message:'发送失败');}}
+  async function saveSettings(){
+    setSettingsSaving(true);setSettingsError('');
+    try{await api(base,{method:'PATCH',body:json({title:settingsTitle.trim()||null,presetId:settingsPreset||null})});setTitle(settingsTitle.trim());setPreset(settingsPreset||null);setSettingsOpen(false);}
+    catch(error){setSettingsError(error instanceof Error?error.message:'保存失败');}
+    finally{setSettingsSaving(false);}
+  }
+  return <div className="host"><div className="hostbar"><strong>{title||'未命名会话'}</strong><div className="host-actions"><span>{online?'已连接':'连接中断'}</span><span>{activeRun?'生成中':''}</span><button disabled={fatal} aria-expanded={settingsOpen} onClick={()=>{setSettingsTitle(title);setSettingsPreset(preset??'');setSettingsOpen(open=>!open);}}>会话设置</button></div></div>{settingsOpen&&<div className="host-settings"><label>会话标题<input value={settingsTitle} onChange={event=>setSettingsTitle(event.target.value)}/></label><label>预设<select value={settingsPreset} onChange={event=>setSettingsPreset(event.target.value)}><option value="">未选择预设</option>{presets.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>{settingsError&&<p role="alert">{settingsError}</p>}<div><button className="button" onClick={()=>setSettingsOpen(false)}>取消</button><button className="button primary" disabled={settingsSaving||!!activeRun||sending} onClick={()=>void saveSettings()}>保存</button></div></div>}{notice&&<div className="notice" role="alert">{notice}{!fatal&&<button onClick={()=>setNotice('')}>×</button>}</div>}{fatal?<div className="host-fatal" role="alert"><p>世界卡数据异常</p><a className="button" href="/sessions">返回会话列表</a><button className="button" onClick={()=>location.reload()}>重新加载</button></div>:<iframe ref={frame} title="会话页面" sandbox="allow-scripts" src={'/frame.html#'+nonce}/>}<div className="host-composer">{expanded?<><textarea aria-label="输入消息" value={draft} maxLength={100000} onChange={event=>setDraft(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();void submit();}}} disabled={fatal} placeholder="输入消息…"/><div className="host-composer-actions"><button className="button" onClick={()=>setExpanded(false)}>收起输入框</button>{activeRun?<button className="button" disabled={stopping} onClick={()=>void stop(activeRun)}>停止生成</button>:<button className="button primary" disabled={fatal||!online||!loaded||!mounted||sending||!draft.trim()} onClick={()=>void submit()}>发送</button>}</div></>:<button ref={expandButton} className="button" onClick={()=>setExpanded(true)}>展开输入框</button>}</div></div>;
+}
