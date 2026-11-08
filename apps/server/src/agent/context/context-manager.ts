@@ -1,25 +1,37 @@
 import type { Api, Message, Model } from '@earendil-works/pi-ai';
+import { parseRoleplay } from '@sillyrealms/roleplay';
 import { ErrorCodes } from '../../common/error-codes.js';
 import { debugEnabled, debugLog } from '../../common/debug.js';
 import type { CredentialStore } from '../../infrastructure/credentials/store.js';
 import { decodeMessageState, validateSnapshot, type Json } from '../../domain/state/state.js';
-import { readWorld, storedError } from '../../domain/world-card.js';
+import { storedError } from '../../domain/world-card.js';
+import { readWorld } from '../../repositories/world-repository.js';
 import { buildContext, estimateTokens } from './prompt-builder.js';
+import { SR_RP_SUMMARY_GUIDANCE } from './system-main.js';
 import { compressHistory, type HistoryItem } from './history-compactor.js';
 import { stateTool } from '../tools/state-tool.js';
 import { RuntimeError } from '../shared/errors.js';
 import type { PreparedRun } from '../runtime/types.js';
 import type { RunStore } from '../persistence/run-store.js';
 import type { ModelClient } from '../model/model-client.js';
+import type { RunContext } from '../persistence/usage-store.js';
 
 type SummaryRequest = Parameters<Parameters<typeof compressHistory>[0]['summarize']>[0];
+
+/** Remove player direction before chunking, preserving code-point offsets for trace boundaries. */
+export function summaryNarrative(text: string, role: 'user' | 'assistant'): string {
+  const ranges = parseRoleplay(text, role).ranges.filter(range => range.kind === 'instruction');
+  return ranges.reduceRight((value, range) => value.slice(0, range.start) +
+    value.slice(range.start, range.end).replace(/[^\r\n]/gu, ' ') + value.slice(range.end), text);
+}
+
 
 /** Reads the current worldline and builds an invocation-ready context; does not write run state. */
 export class ContextManager {
   constructor(private store: RunStore, private credentials: CredentialStore, private modelClient: ModelClient) {}
 
   async prepare(args: {
-    sessionId: string; input: string; runId: string; requestId: string; expectedTip: string; signal: AbortSignal;
+    sessionId: string; input: string; runId: string; requestId: string; expectedTip: string; signal: AbortSignal; runContext?: RunContext;
   }): Promise<PreparedRun> {
     const { sessionId, input, runId, requestId, expectedTip, signal } = args;
     const session = this.store.session(sessionId);
@@ -31,7 +43,7 @@ export class ContextManager {
     const presetRow = this.store.preset(session.preset_id);
     if (!presetRow) throw new RuntimeError(ErrorCodes.PRESET_NOT_FOUND);
     const preset = JSON.parse(String(presetRow.config_json));
-    if (!preset.api_model_config_id) throw new RuntimeError(ErrorCodes.API_MODEL_CONFIG_NOT_SELECTED);
+    if (!session.api_model_config_id) throw new RuntimeError(ErrorCodes.API_MODEL_CONFIG_NOT_SELECTED);
     const temperature = preset.model_parameters?.temperature;
     if (temperature !== undefined && (!Number.isFinite(temperature) || temperature < 0 || temperature > 2)) {
       throw new RuntimeError(ErrorCodes.INVALID_MODEL_PARAMETERS);
@@ -41,7 +53,7 @@ export class ContextManager {
         (!Number.isInteger(preset.budget.max_context_tokens) || preset.budget.max_context_tokens <= 0))) {
       throw new RuntimeError(ErrorCodes.INVALID_PRESET_BUDGET);
     }
-    const config = this.store.modelConfig(preset.api_model_config_id);
+    const config = this.store.modelConfig(session.api_model_config_id);
     if (!config) throw new RuntimeError(ErrorCodes.API_MODEL_CONFIG_NOT_FOUND);
     const key = await this.credentials.get(config.credential_ref);
     if (!key) throw new RuntimeError(ErrorCodes.CREDENTIAL_NOT_CONFIGURED);
@@ -95,7 +107,7 @@ export class ContextManager {
       history, oldSummary: previousSummary, budget, build: buildMessages, toolJson: JSON.stringify(tools),
       summarize: async request => {
         const result = await this.summarize(request, {
-          model, key, signal, output, temperature, budget,
+          model, key, signal, output, temperature, budget, runContext: args.runContext,
           renderPrompt: () => context.render(preset.summary_prompt),
         });
         summaryGeneration.push(...result.generations);
@@ -113,7 +125,7 @@ export class ContextManager {
     }
     return {
       model, key, messages, tools, modules, worldState: world.state,
-      active: context.activeModules.message, workspace: views.message,
+      active: context.activeModules.message, workspace: views.message, userInput: input,
       output, temperature, summary: compressed.summary, summaryGeneration,
       diagnostics: context.diagnostics,
     };
@@ -122,16 +134,16 @@ export class ContextManager {
   /** Split oversized compaction inputs without losing character ranges or history boundaries. */
   private async summarize(request: SummaryRequest, config: {
     model: Model<Api>; key: string; signal: AbortSignal; output: number; temperature?: number;
-    budget: number; renderPrompt: () => string;
+    budget: number; renderPrompt: () => string; runContext?: RunContext;
   }): Promise<{ text: string; generations: Array<{ request: unknown; response: string }> }> {
     let previous = request.previous;
-    const source = request.chunks.map(item => ({ item, chars: Array.from(item.text), offset: 0 }));
+    const source = request.chunks.map(item => ({ item, chars: Array.from(summaryNarrative(item.text, item.role)), offset: 0 }));
     let index = 0;
     const generations: Array<{ request: unknown; response: string }> = [];
     while (index < source.length) {
       const batch: Array<{ sourceEntryId: string; start: number; end: number; role: string; text: string }> = [];
       const makeMessages = (pieces: typeof batch): Message[] => [
-        { role: 'system', content: config.renderPrompt(), timestamp: Date.now() },
+        { role: 'system', content: [SR_RP_SUMMARY_GUIDANCE, config.renderPrompt()].filter(Boolean).join('\n\n'), timestamp: Date.now() },
         { role: 'user', content: JSON.stringify({ previous, messages: pieces.map(p => ({ role: p.role, text: p.text })) }), timestamp: Date.now() },
       ];
       while (index < source.length) {
@@ -154,7 +166,7 @@ export class ContextManager {
       let text = '', ended = false;
       for await (const event of this.modelClient.events(config.model, { messages }, {
         apiKey: config.key, signal: config.signal, maxTokens: config.output, temperature: config.temperature,
-      })) {
+      }, config.runContext?.request('summary'))) {
         if (event.type === 'text_delta') text += event.delta;
         if (event.type === 'done') ended = true;
         if (event.type === 'error') throw new RuntimeError(ErrorCodes.SUMMARY_FAILED);

@@ -10,10 +10,12 @@ import { ErrorCodes } from '../common/error-codes.js';
 import { initialState, applyOpening, validateSnapshot, decodeMessageState } from '../domain/state/state.js';
 
 import { transaction } from '../domain/tags.js';
-import { readWorld,storedError } from '../domain/world-card.js';
+import { storedError } from '../domain/world-card.js';
+import { readWorld } from '../repositories/world-repository.js';
+import { MacKeychainStore, type CredentialStore } from '../infrastructure/credentials/store.js';
 
 const create = z.object({ worldId: z.string().min(1), openingId: z.string().min(1), userCharacterId: z.string().min(1), title: z.string().optional() }).strict();
-export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = () => false, removeSessions: <T>(ids:string[], remove:()=>T) => Promise<T> = async (_ids, remove) => remove(), worldDeleting:(id:string)=>boolean = () => false, onUpdated:(id:string)=>void = () => {}): Hono {
+export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = () => false, removeSessions: <T>(ids:string[], remove:()=>T) => Promise<T> = async (_ids, remove) => remove(), worldDeleting:(id:string)=>boolean = () => false, onUpdated:(id:string)=>void = () => {}, credentials: CredentialStore = new MacKeychainStore()): Hono {
   const app = new Hono();
   app.get('/:id/runs', c => {
     const id=c.req.param('id');
@@ -30,13 +32,26 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
     try {
       const input = create.parse(await c.req.json());
       if (worldDeleting(input.worldId)) return c.json({error:{code:ErrorCodes.WORLD_BUSY,message:'World is being deleted'}},409);
+      const source = db.prepare('SELECT * FROM worlds WHERE id=?').get(input.worldId);
+      if (!source) return c.json({error:{code:ErrorCodes.WORLD_NOT_FOUND}},404);
+      const presetId=source.default_preset_id as string|null;
+      const modelId=source.default_api_model_config_id as string|null;
+      if (!presetId || !modelId) return c.json({
+        error:{code:ErrorCodes.WORLD_CONFIG_INCOMPLETE,missing:[...(!presetId?['presetId']:[]),...(!modelId?['apiModelConfigId']:[])]}
+      },422);
+      if (!db.prepare('SELECT 1 FROM presets WHERE id=?').get(presetId))
+        return c.json({error:{code:ErrorCodes.PRESET_NOT_FOUND}},422);
+      const modelConfig=db.prepare('SELECT credential_ref FROM api_model_configs WHERE id=?').get(modelId);
+      if (!modelConfig) return c.json({error:{code:ErrorCodes.API_MODEL_CONFIG_NOT_FOUND}},422);
+      if (!await credentials.get(String(modelConfig.credential_ref)))
+        return c.json({error:{code:ErrorCodes.CREDENTIAL_NOT_CONFIGURED}},422);
       return transaction(db,()=>{
         const row = db.prepare('SELECT * FROM worlds WHERE id=?').get(input.worldId);
-        if (!row) return c.json({ error: { code: ErrorCodes.WORLD_NOT_FOUND, message: 'World not found' } }, 404);
+        if (!row) return c.json({error:{code:ErrorCodes.WORLD_NOT_FOUND}},404);
+        if (row.default_preset_id !== presetId || row.default_api_model_config_id !== modelId)
+          return c.json({error:{code:ErrorCodes.TIP_CONFLICT,message:'World default changed'}},409);
         let world;
         try {world=readWorld(row).data;} catch(error) {return c.json({error:storedError(error)},422);}
-        const presetId=row.preset_id as string|null;
-        if(presetId!==null && !db.prepare('SELECT 1 FROM presets WHERE id=?').get(presetId)) return c.json({error:{code:ErrorCodes.PRESET_NOT_FOUND}},422);
         const character = world.characters.find((v: { id: string }) => v.id === input.userCharacterId);
         const opening = world.openings.find((v: { id: string }) => v.id === input.openingId);
         if (!character?.player_selectable || !opening) return c.json({ error: { code: ErrorCodes.INVALID_OPENING_OR_CHARACTER, message: 'Invalid opening or player character' } }, 422);
@@ -44,26 +59,42 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
         const messageState = applyOpening(world.state, initialState(world.state, 'message'), opening.initial_state);
         const id = randomUUID(), entryId = randomUUID(), runId = randomUUID(), now = Date.now();
         const message = { role: 'assistant', content: [{ type: 'text', text: opening.content }], timestamp: now };
-        db.prepare('INSERT INTO sessions(id,world_id,preset_id,user_character_id,tip_entry_id,title,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(id, input.worldId, presetId, input.userCharacterId, entryId, input.title ?? null, JSON.stringify(sessionState), now, now);
+        db.prepare('INSERT INTO sessions(id,world_id,preset_id,api_model_config_id,user_character_id,tip_entry_id,title,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+          .run(id,input.worldId,presetId,modelId,input.userCharacterId,entryId,input.title??null,JSON.stringify(sessionState),now,now);
         db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,state,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(entryId, id, null, runId, 1, 'message', 'assistant', 0, now, JSON.stringify({ message }), JSON.stringify(Object.entries(messageState).map(([key, value]) => ({ key, value }))), JSON.stringify({ run: { status: 'completed' }, origin: 'opening' }));
-        return c.json({ item: { id, worldId: input.worldId, presetId, userCharacterId: input.userCharacterId, tipEntryId: entryId, title: input.title ?? null } }, 201);
+        return c.json({item:{id,worldId:input.worldId,presetId,apiModelConfigId:modelId,userCharacterId:input.userCharacterId,tipEntryId:entryId,title:input.title??null}},201);
       });
     } catch (err) { return c.json({ error: { code: ErrorCodes.INVALID_SESSION, message: err instanceof Error ? err.message : 'Invalid session' } }, 422); }
   });
   app.patch('/:id', async c => {
     if (busy(c.req.param('id'))) return c.json({error:{code:ErrorCodes.SESSION_BUSY,message:'Session is running'}},409);
     try {
-      const patch = z.object({ title: z.string().nullable().optional(), presetId: z.string().min(1).nullable().optional(), userCharacterId: z.string().min(1).optional() }).strict().parse(await c.req.json());
-      const row = db.prepare('SELECT * FROM sessions WHERE id=?').get(c.req.param('id'));
-      if (!row) return c.json({ error: { code: ErrorCodes.SESSION_NOT_FOUND, message: 'Session not found' } }, 404);
-      if(patch.presetId && !db.prepare('SELECT 1 FROM presets WHERE id=?').get(patch.presetId)) return c.json({error:{code:ErrorCodes.PRESET_NOT_FOUND}},422);
+      const patch = z.object({
+        title:z.string().nullable().optional(),
+        presetId:z.string().min(1).optional(),
+        apiModelConfigId:z.string().min(1).optional(),
+        userCharacterId:z.string().min(1).optional(),
+      }).strict().parse(await c.req.json());
+      const row=db.prepare('SELECT * FROM sessions WHERE id=?').get(c.req.param('id'));
+      if (!row) return c.json({error:{code:ErrorCodes.SESSION_NOT_FOUND}},404);
+      const presetId=patch.presetId ?? String(row.preset_id);
+      const modelId=patch.apiModelConfigId ?? String(row.api_model_config_id);
+      if (!db.prepare('SELECT 1 FROM presets WHERE id=?').get(presetId))
+        return c.json({error:{code:ErrorCodes.PRESET_NOT_FOUND}},422);
+      const config=db.prepare('SELECT credential_ref FROM api_model_configs WHERE id=?').get(modelId);
+      if (!config) return c.json({error:{code:ErrorCodes.API_MODEL_CONFIG_NOT_FOUND}},422);
+      if (!await credentials.get(String(config.credential_ref)))
+        return c.json({error:{code:ErrorCodes.CREDENTIAL_NOT_CONFIGURED}},422);
       if (patch.userCharacterId) {
-        const world = db.prepare('SELECT * FROM worlds WHERE id=?').get(String(row.world_id));
-        if (!world || !JSON.parse(String(world.data_json)).data.characters.some((v: { id:string; player_selectable?:boolean }) => v.id === patch.userCharacterId && v.player_selectable)) throw new Error('Invalid player character');
+        const world=db.prepare('SELECT * FROM worlds WHERE id=?').get(String(row.world_id));
+        if (!world || !readWorld(world).data.characters.some(v => v.id === patch.userCharacterId && v.player_selectable))
+          return c.json({error:{code:ErrorCodes.INVALID_PLAYER_CHARACTER}},422);
       }
-      db.prepare('UPDATE sessions SET title=?, preset_id=?, user_character_id=?, updated_at=? WHERE id=?').run(patch.title !== undefined ? patch.title : row.title as string | null, patch.presetId !== undefined ? patch.presetId : row.preset_id as string | null, patch.userCharacterId ?? String(row.user_character_id), Date.now(), String(row.id));
+      // Atomic update, never partially apply a model/preset pair.
+      db.prepare('UPDATE sessions SET title=?,preset_id=?,api_model_config_id=?,user_character_id=?,updated_at=? WHERE id=?')
+        .run(patch.title!==undefined?patch.title:row.title as string|null,presetId,modelId,patch.userCharacterId??String(row.user_character_id),Date.now(),String(row.id));
       onUpdated(String(row.id));
-      return c.json({ ok: true });
+      return c.json({ok:true});
     } catch (err) { return c.json({ error: { code: ErrorCodes.INVALID_SESSION, message: err instanceof Error ? err.message : 'Invalid session' } }, 422); }
   });
   app.get('/:id/history', c => {
@@ -97,7 +128,7 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
   app.get('/:id/state', c => {
     const session = db.prepare('SELECT * FROM sessions WHERE id=?').get(c.req.param('id'));
     if (!session) return c.json({ error: { code: ErrorCodes.SESSION_NOT_FOUND, message: 'Session not found' } }, 404);
-    const world = db.prepare('SELECT state,data_json FROM worlds WHERE id=?').get(String(session.world_id));
+    const world = db.prepare('SELECT * FROM worlds WHERE id=?').get(String(session.world_id));
     if (!world) return c.json({ error: { code: ErrorCodes.WORLD_NOT_FOUND, message: 'World not found' } }, 404);
     let chain:Record<string,any>[];
     try { chain=readAncestors(db,String(session.id),String(session.tip_entry_id)); } catch { return c.json({error:{code:ErrorCodes.INVALID_PARENT_CHAIN,message:'Invalid entry chain'}},500); }
@@ -123,15 +154,15 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
     } catch { return c.json({ error: { code: ErrorCodes.SESSION_DELETE_FAILED, message: 'Could not delete session' } }, 500); }
   });
   app.get('/:id', c => {
-    const row = db.prepare('SELECT id,world_id,preset_id,user_character_id,tip_entry_id,title,created_at,updated_at FROM sessions WHERE id=?').get(c.req.param('id'));
+    const row = db.prepare('SELECT id,world_id,preset_id,api_model_config_id,user_character_id,tip_entry_id,title,created_at,updated_at FROM sessions WHERE id=?').get(c.req.param('id'));
     if (!row) return c.json({ error: { code: ErrorCodes.SESSION_NOT_FOUND, message: 'Session not found' } }, 404);
-    return c.json({id:row.id,worldId:row.world_id,presetId:row.preset_id,userCharacterId:row.user_character_id,tipEntryId:row.tip_entry_id,title:row.title,createdAt:row.created_at,updatedAt:row.updated_at});
+    return c.json({id:row.id,worldId:row.world_id,presetId:row.preset_id,apiModelConfigId:row.api_model_config_id,userCharacterId:row.user_character_id,tipEntryId:row.tip_entry_id,title:row.title,createdAt:row.created_at,updatedAt:row.updated_at});
   });
   app.get('/', c => {
     try {
-      const rows=db.prepare('SELECT s.id,s.world_id,s.preset_id,s.title,s.updated_at,w.name AS world_name,w.data_json AS world_data FROM sessions s LEFT JOIN worlds w ON w.id=s.world_id ORDER BY s.updated_at DESC,s.id DESC').all();
+      const rows=db.prepare('SELECT s.id,s.world_id,s.preset_id,s.api_model_config_id,s.title,s.updated_at,w.name AS world_name,w.cover AS world_cover FROM sessions s LEFT JOIN worlds w ON w.id=s.world_id ORDER BY s.updated_at DESC,s.id DESC').all();
       const page=pageByUpdated(rows,'sessions',c.req.query('limit'),c.req.query('cursor'));
-      return c.json({...page,items:page.items.map(r=>({id:r.id,worldId:r.world_id,presetId:r.preset_id,title:r.title,updatedAt:r.updated_at,worldName:r.world_name,cover:r.world_data?JSON.parse(String(r.world_data)).data.cover:null}))});
+      return c.json({...page,items:page.items.map(r=>({id:r.id,worldId:r.world_id,presetId:r.preset_id,apiModelConfigId:r.api_model_config_id,title:r.title,updatedAt:r.updated_at,worldName:r.world_name,cover:r.world_cover??null}))});
     } catch { return c.json({error:{code:ErrorCodes.INVALID_CURSOR,message:'Invalid cursor or limit'}},400); }
   });
   return app;

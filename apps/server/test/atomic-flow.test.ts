@@ -20,10 +20,10 @@ it('runs V1 state, message and events through a temporary database and fake prov
     const imported=await (await app.request('/api/v1/worlds/import',{method:'POST',body:form})).json() as {data:{item:{id:string}}};
     const worldId=imported.data.item.id;
     const ids=['main','personaInfo','characterInfo','worldState','chatHistory','userInput','postHistory'];
-    const preset={name:'test',api_model_config_id:'m',budget:{max_output_tokens:64},summary_prompt:'summary',nodes:ids.map(id=>({id,name:id,kind:'system',source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true}))};
+    const preset={name:'test',budget:{max_output_tokens:64},summary_prompt:'summary',nodes:ids.map(id=>({id,name:id,kind:'system',source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true}))};
     db.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)').run('m','test','fake','fake','ref',1,1);
     db.prepare('INSERT INTO presets(id,name,config_json,created_at,updated_at) VALUES(?,?,?,?,?)').run('preset','test',JSON.stringify(preset),1,1);
-    db.prepare('UPDATE worlds SET preset_id=? WHERE id=?').run('preset',worldId);
+    db.prepare("UPDATE worlds SET default_preset_id=?,default_api_model_config_id='m' WHERE id=?").run('preset',worldId);
     const created=await (await app.request('/api/v1/sessions',post({worldId,openingId:'o',userCharacterId:'p'}))).json() as {data:{item:{id:string;tipEntryId:string}}};
     const session=created.data.item;
     const events=await app.request(`/api/v1/sessions/${session.id}/events`);const reader=events.body!.getReader();

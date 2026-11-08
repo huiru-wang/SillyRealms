@@ -29,6 +29,7 @@ Some design documents describe target/future behavior, not implemented behavior.
 - Prefer small, reviewable changes. Avoid speculative abstractions, premature cross-platform packages, new dependencies, and broad rewrites without rationale.
 - Keep product decisions, architecture decisions, and implementation details separate. Record durable decisions in `docs/decisions/`.
 - Use pnpm. Do not introduce npm/yarn lockfiles.
+- LAN startup, exposed access and Origin restrictions are documented in `docs/technical/local-network-access.md`.
 - Update relevant docs and tests when behavior or contracts change.
 
 ## SR-specific invariants
@@ -96,3 +97,5 @@ Inspect package scripts before relying on a check; report exactly what ran.
 - Preset nodes other than `postHistory` must remain enabled; node order is configurable.
 
 - Atomic SDK/Host/Server V1 and `SR.WorldStory` use the creator SDK and isolated iframe boundary; legacy state schemas and V2 routes are not compatible. Message rendering rules are display-only; platform input and draft are Host-owned. See `docs/technical/worldstory-runtime-v1.md` and `docs/data-formats/worldstory-message-render-v1.md`.
+
+- World-card prose uses `WorldDocumentRenderer`: static world/character/opening/lore content stays in a scriptless isolated document; message content shares parsing and sanitization but stays inline inside the existing session iframe for Portal and streaming compatibility. Opening state preview is read-only and reflects message-scope whole-item overrides. See `docs/technical/worldstory-runtime-v1.md` and `docs/data-formats/worldstory-message-render-v1.md`.

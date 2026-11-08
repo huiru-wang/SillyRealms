@@ -5,6 +5,8 @@ import { bodyLimit } from 'hono/body-limit';
 import type { DatabaseSync } from 'node:sqlite';
 import { AgentRuntime, PiGateway, type ModelGateway } from './agent/index.js';
 import { worldRoutes } from './routes/worlds.js';
+import { appSettingsRoutes } from './routes/app-settings.js';
+import { WorldFileStore, testWorldDataDir } from './infrastructure/world-files/world-file-store.js';
 import { tagRoutes } from './routes/tags.js';
 import { providerRoutes } from './routes/providers.js';
 import { MacKeychainStore, type CredentialStore } from './infrastructure/credentials/store.js';
@@ -15,7 +17,7 @@ import { responseEnvelope } from './common/response-middleware.js';
 import { failure } from './common/http-response.js';
 import { sessionRoutes } from './routes/sessions.js';
 
-export function createApp(db: DatabaseSync, credentials: CredentialStore = new MacKeychainStore(), gateway: ModelGateway = new PiGateway()): Hono {
+export function createApp(db: DatabaseSync, credentials: CredentialStore = new MacKeychainStore(), gateway: ModelGateway = new PiGateway(), files: WorldFileStore = new WorldFileStore(testWorldDataDir()), allowedOrigins: ReadonlySet<string> = new Set()): Hono {
   const app = new Hono();
   app.use('*', responseEnvelope);
   app.onError((_error,c)=>c.json(failure(ErrorCodes.INTERNAL_ERROR,'服务器内部错误'),500));
@@ -26,7 +28,7 @@ export function createApp(db: DatabaseSync, credentials: CredentialStore = new M
     if (origin && !(origin === 'null' && c.req.method === 'GET' && !c.req.path.startsWith('/api/'))) {
       let url: URL;
       try { url = new URL(origin); } catch { return c.json({ error: { code: ErrorCodes.ORIGIN_FORBIDDEN, message: 'Invalid origin' } }, 403); }
-      if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || !['http:', 'https:'].includes(url.protocol)) {
+      if ((!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || !['http:', 'https:'].includes(url.protocol)) && !allowedOrigins.has(origin)) {
         return c.json({ error: { code: ErrorCodes.ORIGIN_FORBIDDEN, message: 'Origin is not allowed' } }, 403);
       }
     }
@@ -40,9 +42,10 @@ export function createApp(db: DatabaseSync, credentials: CredentialStore = new M
   app.route('/api/v1/providers', provider.providers);
   app.route('/api/v1/api-model-configs', provider.configs);
   app.route('/api/v1/tags', tagRoutes(db));
-  app.route('/api/v1/worlds', worldRoutes(db, (worldId, ids, remove) => runtime.deleteWorld(worldId,ids,remove)));
+  app.route('/api/v1/worlds', worldRoutes(db, (worldId, ids, remove) => runtime.deleteWorld(worldId,ids,remove), files));
+  app.route('/api/v1/app-settings', appSettingsRoutes(db));
   app.route('/api/v1/presets', presetRoutes(db));
-  const sessions=sessionRoutes(db, id => runtime.busy(id), (ids, remove) => runtime.deleteSessions(ids,remove), id => runtime.worldDeleting(id), id => runtime.emit(id,'session.updated',{}));
+  const sessions=sessionRoutes(db, id => runtime.busy(id), (ids, remove) => runtime.deleteSessions(ids,remove), id => runtime.worldDeleting(id), id => runtime.emit(id,'session.updated',{}), credentials);
   app.route('/api/v1/sessions', sessions);
   app.get('/health', (c) => {
     db.prepare('SELECT 1').get();

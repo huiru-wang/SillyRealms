@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AgentRuntime } from '../agent/index.js';
 import { readAncestors } from '../domain/session/ancestors.js';
-import { readWorld } from '../domain/world-card.js';
+import { readWorld } from '../repositories/world-repository.js';
 import { decodeMessageState, validateSnapshot } from '../domain/state/state.js';
 import { updateAtomicState, type AtomicScope, type AtomicStateDefinition } from '../domain/state/atomic-state.js';
 import { failure, ok } from '../common/http-response.js';

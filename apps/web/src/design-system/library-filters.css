@@ -1,0 +1,45 @@
+/* World library tag filter: independent selection and drag handles. */
+.sr-shell .library-layout.has-filters{display:grid;grid-template-columns:190px minmax(0,1fr);gap:26px;align-items:start}
+.sr-shell .mobile-filter-toggle{display:none}
+.sr-shell .filter-sidebar{display:flex;flex-direction:column;align-items:stretch;flex-wrap:nowrap;padding:0 16px 10px 0;gap:8px;min-width:0;border-right:1px solid var(--border-subtle);border-bottom:0}
+.sr-shell .filter-sidebar-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:3px}
+.sr-shell .filter-sidebar-heading h2{margin:0;font-size:13px;color:var(--text-secondary)}
+.sr-shell .filter-sidebar-heading small{font-size:10px;color:var(--text-muted)}
+.sr-shell .filter-sidebar .filter-all{display:flex;align-items:center;gap:9px;min-height:36px;border:0;border-radius:7px;width:100%;padding:0 10px;background:transparent;color:var(--text-secondary);font-size:12px}
+.sr-shell .filter-sidebar .filter-all.active{background:var(--accent-soft);color:var(--accent)}
+.sr-shell .filter-match-label{margin-top:11px;font-size:11px;color:var(--text-muted);font-weight:600}
+.sr-shell .filter-match-control{display:flex;gap:3px;padding:3px;background:var(--surface-sunken);border-radius:8px}
+.sr-shell .filter-sidebar .filter-match-control button{display:grid;place-items:center;flex:1;min-height:31px;height:31px;width:auto;min-width:0;padding:0 4px;color:var(--text-secondary);font-size:11px;border-radius:6px;white-space:nowrap}
+.sr-shell .filter-sidebar .filter-match-control button.active{background:var(--surface);box-shadow:var(--shadow-sm);color:var(--text-primary);font-weight:600}
+.sr-shell .filter-tag-stack{display:flex;flex-direction:column;gap:4px;margin-top:5px}
+.sr-shell .filter-tag-row{display:flex;align-items:center;gap:0;border-radius:8px;min-height:37px;border:1px solid transparent;min-width:0}
+.sr-shell .filter-tag-row:hover{background:var(--surface-hover)}
+.sr-shell .filter-tag-row.active{background:var(--accent-soft);color:var(--accent)}
+.sr-shell .filter-tag-row.dragging{border-color:var(--accent);background:var(--surface-raised);box-shadow:var(--shadow-sm)}
+.sr-shell .filter-sidebar .filter-tag-drag{flex:0 0 27px;width:27px;height:34px;min-height:34px;padding:0;display:grid;place-items:center;color:var(--text-muted);cursor:grab;touch-action:none;user-select:none}
+.sr-shell .filter-sidebar .filter-tag-drag:active{cursor:grabbing}
+.sr-shell .filter-sidebar .filter-tag-select{display:flex;align-items:center;gap:7px;flex:1;width:auto;min-width:0;height:36px;min-height:36px;padding:0 6px 0 0;color:inherit;text-align:left}
+.sr-shell .filter-tag-select svg{flex:0 0 15px;color:var(--text-muted)}
+.sr-shell .filter-tag-row.active .filter-tag-select svg{color:var(--accent)}
+.sr-shell .filter-tag-select span,.sr-shell .filter-sidebar .filter-tag-select span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:0}
+.sr-shell .filter-sidebar .filter-clear{justify-content:center;color:var(--accent);font-size:11px;min-height:32px}
+.sr-shell .library-no-match{display:flex;align-items:center;flex-direction:column;gap:0;padding:18px}
+.sr-shell .library-no-match .empty{min-height:140px}
+.sr-shell .showcase-tags:empty{display:none}
+.sr-shell .showcase-content{gap:10px}
+@media(max-width:1100px) and (min-width:801px){
+ .sr-shell .library-layout.has-filters{grid-template-columns:165px minmax(0,1fr);gap:20px}
+}
+@media(max-width:800px){
+ .sr-shell .library-layout.has-filters{display:block}
+ .sr-shell .mobile-filter-toggle{display:flex;align-items:center;gap:8px;margin-bottom:18px}
+ .sr-shell .mobile-filter-toggle span{margin-left:auto;color:var(--accent);font-weight:650}
+ .sr-shell .filter-sidebar{display:none;flex-direction:column;flex-wrap:nowrap;align-items:stretch;width:100%;padding:16px;margin:0 0 20px;border:1px solid var(--border-subtle);border-radius:11px;background:var(--surface)}
+ .sr-shell .filter-sidebar.mobile-open{display:flex}
+ .sr-shell .filter-match-control{max-width:300px}
+ .sr-shell .filter-tag-stack{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:3px 10px}
+}
+@media(max-width:530px){
+ .sr-shell .filter-tag-stack{grid-template-columns:1fr}
+ .sr-shell .filter-sidebar.mobile-open{padding:14px}
+}

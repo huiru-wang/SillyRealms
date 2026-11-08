@@ -24,6 +24,7 @@ export type PreparedRun = {
   worldState: unknown;
   active: Set<string>;
   workspace: Record<string, Json>;
+  userInput: string;
   output: number;
   temperature?: number;
   summary?: { text: string; coveredThroughEntryId: string };

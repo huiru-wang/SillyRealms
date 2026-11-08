@@ -5,6 +5,7 @@ import { AgentRuntime, RuntimeError } from '../agent/index.js';
 import { historyRuns } from '../domain/session/history-runs.js';
 import { ErrorCodes } from '../common/error-codes.js';
 import { failure, ok } from '../common/http-response.js';
+import { UsageStore } from '../agent/persistence/usage-store.js';
 
 const runRequest=z.object({text:z.string().min(1).max(100000).refine(value=>!!value.trim()),requestId:z.string().uuid(),expectedTipEntryId:z.string().min(1)}).strict();
 
@@ -12,6 +13,12 @@ const runRequest=z.object({text:z.string().min(1).max(100000).refine(value=>!!va
 export function sessionRuntimeRoutes(db:DatabaseSync,runtime:AgentRuntime):Hono {
   const app=new Hono();
   const session=(id:string)=>db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
+  const usage = new UsageStore(db);
+  app.get('/:id/usage', c => {
+    const id = c.req.param('id');
+    if (!session(id)) return c.json(failure(ErrorCodes.SESSION_NOT_FOUND,'会话不存在'),404);
+    return c.json(ok(usage.view(id)));
+  });
   app.post('/:id/runs',async c=>{
     const input=runRequest.safeParse(await c.req.json().catch(()=>null));
     if(!input.success)return c.json(failure(ErrorCodes.INVALID_REQUEST,'请求无效'),400);
@@ -45,6 +52,7 @@ export function sessionRuntimeRoutes(db:DatabaseSync,runtime:AgentRuntime):Hono 
         else if(event==='run.updated' && payload.status==='failed')send('run.failed',{runId,messages:messages(runId),error:payload.errorCode??'RUN_FAILED'});
         else if(event==='run.updated' && payload.status==='stopped')send('run.stopped',{runId,messages:messages(runId)});
         else if(event==='state.changed' && typeof payload.path==='string')send('state.changed',payload);
+        else if(event==='usage.updated')send('usage.updated',payload);
       });
       timer=setInterval(()=>{try{controller.enqueue(encoder.encode(': heartbeat\n\n'));}catch{dispose();clearInterval(timer);}},15000);
     },cancel(){dispose();clearInterval(timer);}});

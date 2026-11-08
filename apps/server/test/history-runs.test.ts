@@ -1,3 +1,4 @@
+import { seedSession } from './fixtures/db-seed.js';
 import { expect, it } from 'vitest';
 import { openDatabase } from '../src/infrastructure/database/database.js';
 import { historyRuns } from '../src/domain/session/history-runs.js';
@@ -26,7 +27,7 @@ it('serves the target V1 run history inside the common response envelope', async
   const { createApp } = await import('../src/app.js');
   const db=openDatabase(':memory:');
   try {
-    db.prepare('INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?,?)').run('s','w',null,'p','e',null,'{}',1,1);
+    seedSession(db,'s','w',null,'p','e',null,'{}',1,1);
     db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,state,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('e','s',null,'r',1,'message','assistant',0,1,JSON.stringify({message:{role:'assistant',content:'开局'}}),null,'{}');
     const app=createApp(db);
     const response=await app.request('/api/v1/sessions/s/runs?limit=20');

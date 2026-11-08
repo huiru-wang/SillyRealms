@@ -1,0 +1,30 @@
+<!doctype html><meta charset="utf-8"><title>World document regression</title><pre id="results">running</pre>
+<script type="module">
+import {renderWorldDocument} from '../src/world-document/render.ts';
+const checks=[];
+function check(name,condition){checks.push({name,pass:!!condition});}
+const render=(s,profile='document',slots)=>renderWorldDocument(s,{profile,slots});
+let r=render('# 标题\n\n文字 **粗体**\n\n<div data-sr-markdown="true">\n**档案**\n\n- 一\n- 二\n</div>\n\n> 引用');
+check('mixed Markdown and explicit HTML container',r.html.includes('<strong>粗体</strong>')&&r.html.includes('<strong>档案</strong>')&&r.html.includes('<li>一</li>')&&!r.html.includes('data-sr-markdown'));
+r=render('<div data-sr-markdown="true">**outer**<div data-sr-markdown="true">**inner**</div></div>');
+check('nested explicit containers',r.html.includes('<strong>outer</strong>')&&r.html.includes('<strong>inner</strong>'));
+r=render('<!doctype html><html><head><style>.card{color:red;background-image:url(https://evil.test/a);position:fixed}@import url(https://evil.test/a)</style><meta http-equiv="refresh" content="0;url=https://evil.test"></head><body><div class="card" onclick="evil()">内容</div><script>evil()<\/script></body></html>');
+check('full document reports filtered CSS',r.removedStyles);
+check('full document preserves safe CSS only',r.full&&r.head.includes('color:')&&!/url|position|import/i.test(r.head)&&!/<script|onclick|meta/i.test(r.html+r.head));
+r=render('<style>.a{color:red}</style><p>ok</p>');
+check('safe CSS does not cause a warning',!r.removedStyles);
+r=render('<div style="color:red;background-image:u\\72l(https://evil.test);position:fixed">x</div><style>.a{color:blue;background:url(https://evil.test)}</style>','message');
+check('message rejects stylesheets and CSS escapes',!/<style|url|position|background/i.test(r.html+r.head)&&r.html.includes('color'));
+r=render('<img src="data:image/svg+xml,evil" srcset="https://evil.test 1x" onerror="evil()"><a href="javascript:evil()">bad</a><svg><script>evil()<\/script></svg><iframe src="https://evil.test"></iframe><form><input></form>');
+check('dangerous resources and active content removed',!/(data:|srcset|onerror|javascript:|<svg|<iframe|<form|<input|<script)/i.test(r.html));
+r=render('<a href="https://example.com">ok</a><img src="https://example.com/a.png">');
+check('HTTPS links and images retained safely',r.html.includes('https://example.com')&&r.html.includes('noopener noreferrer')&&r.html.includes('target="_blank"'));
+r=render('<span data-sr-slot="fake"></span><span data-sr-slot="real"></span><span data-sr-slot="real"></span>','message',new Set(['real']));
+check('only a single registered slot survives',!r.html.includes('fake')&&(r.html.match(/data-sr-slot/g)||[]).length===1);
+r=render('```html\n<div data-sr-markdown="true">**not bold**</div>\n```\n\n`**code**`');
+check('code is not reinterpreted as Markdown',!r.html.includes('<strong>')&&r.html.includes('**not bold**'));
+r=render('<html><head><style>.x{color:red}</style></head><body><p>hello</p></body></html>','message');
+check('complete document works inline without author style',r.full&&r.html.includes('<p>hello</p>')&&!r.head&&!r.html.includes('<style'));
+document.querySelector('#results').textContent=JSON.stringify(checks,null,2);
+document.title=checks.every(c=>c.pass)?'PASS':'FAIL';
+</script>

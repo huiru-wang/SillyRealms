@@ -4,10 +4,11 @@ import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
 import { transaction, targetRoutes, importTags, tagNames, clearTags } from '../domain/tags.js';
 import { z } from 'zod';
+import { referenceCounts } from '../repositories/config-references.js';
 
 const ids = ['main', 'personaInfo', 'characterInfo', 'worldState', 'chatHistory', 'userInput', 'postHistory'];
 const node = z.object({ id: z.string().min(1), kind: z.enum(['system', 'text']), name: z.string(), source: z.string().optional(), role: z.enum(['system', 'user', 'assistant', 'auto']), enabled: z.boolean(), content: z.string().optional() }).strict();
-const preset = z.object({ name: z.string().trim().min(1), description: z.string().optional(), api_model_config_id: z.string().min(1).nullable().default(null), model_parameters: z.object({temperature:z.number().min(0).max(2).optional()}).strict().optional(), budget: z.object({ max_context_tokens: z.number().int().positive().optional(), max_output_tokens: z.number().int().positive() }), summary_prompt: z.string(), nodes: z.array(node) }).strict().superRefine((p, ctx) => {
+const preset = z.object({ name: z.string().trim().min(1), description: z.string().optional(), model_parameters: z.object({temperature:z.number().min(0).max(2).optional()}).strict().optional(), budget: z.object({ max_context_tokens: z.number().int().positive().optional(), max_output_tokens: z.number().int().positive() }), summary_prompt: z.string(), nodes: z.array(node) }).strict().superRefine((p, ctx) => {
   if ('state_update_mode' in p) ctx.addIssue({code:'custom',message:'state_update_mode is unsupported; state updates use tools only'});
   const nodeIds = p.nodes.map(n => n.id);
   if (new Set(nodeIds).size !== nodeIds.length) ctx.addIssue({ code: 'custom', message: 'Duplicate node ID' });
@@ -20,25 +21,19 @@ const preset = z.object({ name: z.string().trim().min(1), description: z.string(
 });
 const normalizeStored = (value: any) => ({...value,nodes:value.nodes.map((n: {id:string})=>n.id==='postHistory'?n:{...n,enabled:true})});
 const nodePatch = node.partial().extend({ id: z.string().min(1) }).strict();
-const patch = z.object({ name: z.string().min(1).optional(), description: z.string().nullable().optional(), api_model_config_id: z.string().min(1).nullable().optional(), model_parameters: z.object({temperature:z.number().min(0).max(2).optional()}).strict().optional(), budget: z.object({ max_context_tokens: z.number().int().positive().nullable().optional(), max_output_tokens: z.number().int().positive().optional() }).optional(), summary_prompt: z.string().optional(), nodes: z.array(nodePatch).optional(), add_nodes: z.array(node).optional(), remove_node_ids: z.array(z.string()).optional(), nodes_order: z.array(z.string()).optional() }).strict();
+const patch = z.object({ name: z.string().min(1).optional(), description: z.string().nullable().optional(), model_parameters: z.object({temperature:z.number().min(0).max(2).optional()}).strict().optional(), budget: z.object({ max_context_tokens: z.number().int().positive().nullable().optional(), max_output_tokens: z.number().int().positive().optional() }).optional(), summary_prompt: z.string().optional(), nodes: z.array(nodePatch).optional(), add_nodes: z.array(node).optional(), remove_node_ids: z.array(z.string()).optional(), nodes_order: z.array(z.string()).optional() }).strict();
 
 export function presetRoutes(db: DatabaseSync): Hono {
   const app = new Hono();
   targetRoutes(app,db,'preset');
   const read = (id: string) => db.prepare('SELECT * FROM presets WHERE id=?').get(id);
   const missing={error:{code:ErrorCodes.PRESET_NOT_FOUND,message:'Preset not found'}};
-  const create = async (c: import('hono').Context, imported: boolean) => {
+  const create = async (c: import('hono').Context) => {
     try {
       const input=z.record(z.string(),z.unknown()).parse(await c.req.json());
       const names=z.array(z.string().trim().min(1)).default([]).parse(input.tags);
       delete input.tags;
-      if (imported) {
-        for(const key of Object.keys(input)) if(!(key in preset.shape)) delete input[key];
-        input.api_model_config_id=null;
-      }
       const value=preset.parse(input);
-      if(value.api_model_config_id && !db.prepare('SELECT 1 FROM api_model_configs WHERE id=?').get(value.api_model_config_id))
-        return c.json({error:{code:ErrorCodes.API_MODEL_CONFIG_NOT_FOUND}},422);
       const id=randomUUID(), now=Date.now();
       transaction(db,()=>{
         const base=value.name;
@@ -50,8 +45,8 @@ export function presetRoutes(db: DatabaseSync): Hono {
       return c.json({item:{id,...value,tags:tagNames(db,'preset',id)},warnings:[]},201);
     } catch(err) {return c.json({error:{code:ErrorCodes.INVALID_PRESET,message:err instanceof Error?err.message:'Invalid preset'}},422);}
   };
-  app.post('/',c=>create(c,false));
-  app.post('/import',c=>create(c,true));
+  app.post('/',c=>create(c));
+  app.post('/import',c=>create(c));
   app.get('/:id/export',c=>{
     const id=c.req.param('id'), row=read(id);
     if(!row) return c.json(missing,404);
@@ -66,10 +61,9 @@ export function presetRoutes(db: DatabaseSync): Hono {
   app.delete('/:id',c=>{
     const id=c.req.param('id');
     if(!read(id)) return c.json(missing,404);
+    const refs=referenceCounts(db,'preset',id);
+    if(refs.total>0) return c.json({error:{code:ErrorCodes.CONFIG_IN_USE,counts:refs}},409);
     transaction(db,()=>{
-      const now=Date.now();
-      db.prepare('UPDATE worlds SET preset_id=NULL,updated_at=? WHERE preset_id=?').run(now,id);
-      db.prepare('UPDATE sessions SET preset_id=NULL,updated_at=? WHERE preset_id=?').run(now,id);
       clearTags(db,'preset',id);
       db.prepare('DELETE FROM presets WHERE id=?').run(id);
     });
@@ -80,7 +74,6 @@ export function presetRoutes(db: DatabaseSync): Hono {
       const changes = patch.parse(await c.req.json());
       const row = read(c.req.param('id'));
       if (!row) return c.json({ error: { code: ErrorCodes.PRESET_NOT_FOUND, message: 'Preset not found' } }, 404);
-      if (changes.api_model_config_id && !db.prepare('SELECT id FROM api_model_configs WHERE id=?').get(changes.api_model_config_id)) throw new Error('API model configuration not found');
       const current = normalizeStored(JSON.parse(String(row.config_json)));
       const { nodes, add_nodes, remove_node_ids, nodes_order, budget, ...fields } = changes;
       const next = { ...current, ...fields, budget: { ...current.budget, ...budget }, nodes: [...current.nodes] };

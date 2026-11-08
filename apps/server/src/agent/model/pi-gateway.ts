@@ -2,11 +2,24 @@ import { ErrorCodes } from '../../common/error-codes.js';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import { debugLog } from '../../common/debug.js';
 import { stateTool } from '../tools/state-tool.js';
-import type { AssistantMessageEvent, Context, Model, Api } from '@earendil-works/pi-ai';
+import type { AssistantMessageEvent, Context, Model, Api, ToolChoice } from '@earendil-works/pi-ai';
+
+/** Concrete pi-ai adapters accept mandatory tool choice despite generic typing. */
+export function requiredToolChoice(model: Model<Api>): ToolChoice | undefined {
+  if (model.api === 'openai-completions' || model.api === 'openai-responses' ||
+      model.api === 'mistral-conversations' || model.api === 'openai-codex-responses') {
+    return 'required' as ToolChoice;
+  }
+  if (model.api === 'anthropic-messages' || model.api === 'google-generative-ai' ||
+      model.api === 'google-vertex' || model.api === 'bedrock-converse-stream') {
+    return 'any' as ToolChoice;
+  }
+  return undefined;
+}
 
 export interface ModelGateway {
   resolve(provider: string, model: string): Model<Api> | undefined;
-  stream(model: Model<Api>, context: Context, options: { apiKey:string; signal:AbortSignal; maxTokens:number; temperature?:number }): AsyncIterable<AssistantMessageEvent>;
+  stream(model: Model<Api>, context: Context, options: { apiKey:string; signal:AbortSignal; maxTokens:number; temperature?:number; toolChoice?:ToolChoice }): AsyncIterable<AssistantMessageEvent>;
   toolVerified(provider: string, model: string): boolean;
   verify?(provider: string, model: string, apiKey: string): Promise<boolean>;
 }
@@ -14,7 +27,7 @@ export class PiGateway implements ModelGateway {
   private models = builtinModels();
   private verified = new Set<string>();
   resolve(provider:string, model:string) { return this.models.getModel(provider,model); }
-  stream(model:Model<Api>, context:Context, options:{apiKey:string;signal:AbortSignal;maxTokens:number;temperature?:number}) { return this.models.streamSimple(model,context,{...options,onPayload:(payload, selected) => { debugLog('模型实际请求', {provider:selected.provider,model:selected.id,payload}); }}); }
+  stream(model:Model<Api>, context:Context, options:{apiKey:string;signal:AbortSignal;maxTokens:number;temperature?:number;toolChoice?:ToolChoice}) { return this.models.streamSimple(model,context,{...options,onPayload:(payload, selected) => { debugLog('模型实际请求', {provider:selected.provider,model:selected.id,payload}); }}); }
   toolVerified(provider:string, model:string) { return this.verified.has(`${provider}\0${model}`); }
   async verify(provider:string, id:string, apiKey:string):Promise<boolean> {
     const model = this.resolve(provider,id); if (!model) throw new Error(ErrorCodes.MODEL_NOT_FOUND);

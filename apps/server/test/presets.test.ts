@@ -10,7 +10,7 @@ class MemoryCredentials implements CredentialStore {
   async delete(id: string) { this.data.delete(id); }
 }
 const ids = ['main','personaInfo','characterInfo','worldState','chatHistory','userInput','postHistory'];
-const preset = { name: 'Test', api_model_config_id: null, budget: { max_output_tokens: 100 }, summary_prompt: 'summary', nodes: ids.map(id => ({ id, name: id, kind: 'system', source: id, role: id === 'chatHistory' ? 'auto' : id === 'userInput' ? 'user' : 'system', enabled: true, ...(id === 'main' ? { content: 'old' } : {}) })) };
+const preset = { name: 'Test', budget: { max_output_tokens: 100 }, summary_prompt: 'summary', nodes: ids.map(id => ({ id, name: id, kind: 'system', source: id, role: id === 'chatHistory' ? 'auto' : id === 'userInput' ? 'user' : 'system', enabled: true, ...(id === 'main' ? { content: 'old' } : {}) })) };
 describe('preset and model configuration', () => {
   it('updates one node without changing the others and permits deletion', async () => {
     const db = openDatabase(':memory:'), store = new MemoryCredentials(), app = createApp(db, store);

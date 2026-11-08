@@ -38,7 +38,7 @@ export function protectedRanges(text:string):Span[]{
       if(token.items)walk(token.items,token.raw,start);
     }
   }
-  walk(marked.lexer(text),text,0);
+  walk(marked.lexer(text,{breaks:true}),text,0);
   const open:Array<{name:string;span:Span}>=[];
   const voidElements=new Set(['area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr']);
   for(const span of spans.filter(item=>item.type==='html').sort((a,b)=>a.start-b.start)){
@@ -72,14 +72,14 @@ export function canShowLiteralPlaceholder(match:MessageMatch,spans:Span[]):boole
 }
 
 /** Reject structurally invalid ranges before resolving overlap by rule priority. */
-export function selectMessageMatches(text:string,matches:MessageMatch[],rules:MessageRule[],components:Record<string,MessageComponent>):MessageMatch[]{
+export function selectMessageMatches(text:string,matches:MessageMatch[],rules:MessageRule[],components:Record<string,MessageComponent>,excluded:Array<{start:number;end:number}>=[]):MessageMatch[]{
   const spans=protectedRanges(text),priority=new Map(rules.map((rule,index)=>[rule.id,index]));
   const candidates=[...matches].sort((a,b)=>(priority.get(a.ruleId)??Infinity)-(priority.get(b.ruleId)??Infinity)||a.start-b.start);
   const selected:MessageMatch[]=[];
   for(const match of candidates){
     const component=match.replacement.type==='component'?components[match.replacement.component]:undefined;
     const display=component?.srDisplay==='inline'?'inline':'block';
-    if(text.slice(match.start,match.end)!==match.match||!canInsertMatch(match,spans,component?display:'inline'))continue;
+    if(text.slice(match.start,match.end)!==match.match||excluded.some(range=>match.start<range.end&&match.end>range.start)||!canInsertMatch(match,spans,component?display:'inline'))continue;
     if(!selected.some(other=>match.start<other.end&&match.end>other.start))selected.push(match);
   }
   return selected.sort((a,b)=>a.start-b.start);

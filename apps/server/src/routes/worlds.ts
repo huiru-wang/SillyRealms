@@ -1,71 +1,138 @@
-import { ErrorCodes } from '../common/error-codes.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { initialState } from '../domain/state/state.js';
-import { CardError,parseCard,readWorld,storedError } from '../domain/world-card.js';
+import { ErrorCodes } from '../common/error-codes.js';
+import { CardError,parseCard,storedError } from '../domain/world-card.js';
 import { targetRoutes,tagNames,clearTags,importTags,transaction } from '../domain/tags.js';
-export function worldRoutes(db: DatabaseSync, removeWorld: <T>(worldId:string, ids:()=>string[], remove:()=>T) => Promise<T> = async (_worldId, _ids, remove) => remove()): Hono {
+import { readWorld,WorldRepository } from '../repositories/world-repository.js';
+import { WorldFileStore,testWorldDataDir,validateWorldSourceName } from '../infrastructure/world-files/world-file-store.js';
+
+/** RFC 5987 preserves non-ASCII upload names in browser downloads. */
+function downloadDisposition(name:string): string {
+  const fallback=/^[\x20-\x7e]+$/.test(name)?name.replace(/["\\]/g,'_'):'world.json';
+  const encoded=encodeURIComponent(name).replace(/['()*]/g,char=>'%'+char.charCodeAt(0).toString(16).toUpperCase());
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+
+const patch=z.object({
+  defaultPresetId:z.string().min(1).nullable().optional(),
+  defaultApiModelConfigId:z.string().min(1).nullable().optional(),
+}).strict().refine(v=>Object.keys(v).length>0);
+
+export function worldRoutes(
+  db: DatabaseSync,
+  removeWorld: <T>(worldId:string, ids:()=>string[], remove:()=>T) => Promise<T> = async (_worldId, _ids, remove) => remove(),
+  files:WorldFileStore = new WorldFileStore(testWorldDataDir()),
+): Hono {
   const app = new Hono();
+  const worlds=new WorldRepository(db);
   targetRoutes(app,db,'world');
+
   app.post('/import',async c=>{
+    let id:string|undefined;
     try {
       const file=(await c.req.formData()).get('file');
       if(!(file instanceof File)) throw new CardError('$','Expected JSON file');
+      let originalName:string;
+      try{originalName=validateWorldSourceName(file.name);}catch{throw new CardError('$.filename','Expected a safe JSON filename');}
       if(file.size>10*1024*1024) return c.json({error:{code:ErrorCodes.FILE_TOO_LARGE,path:'$',reason:'Maximum file size is 10 MiB'}},413);
-      let raw;
-      try {raw=JSON.parse(await file.text());} catch {throw new CardError('$','Invalid JSON');}
-      const world=parseCard(raw);
-      const tags=world.data.tags??[];
-      delete world.data.tags;
-      const now=Date.now(),id=randomUUID();
-      transaction(db,()=>{
-        db.prepare('INSERT INTO worlds(id,name,data_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?)').run(id,world.data.name,JSON.stringify(world),JSON.stringify(initialState(world.data.state,'global')),now,now);
-        importTags(db,'world',id,tags);
-      });
-      world.data.tags=tagNames(db,'world',id);
-      return c.json({item:{id,...world,presetId:null},warnings:[]},201);
+      const rawBytes=new Uint8Array(await file.arrayBuffer());
+      let raw:unknown;
+      try {raw=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(rawBytes));}
+      catch {throw new CardError('$','Invalid JSON');}
+      const card=parseCard(raw);
+      const tags=card.data.tags??[];
+      delete card.data.tags;
+      id=randomUUID();
+      const saved=await files.save(id,rawBytes,originalName);
+      const currentId=id;
+      try {
+        transaction(db,()=>{
+          const defaults=db.prepare('SELECT default_preset_id,default_api_model_config_id FROM app_settings WHERE id=1').get()!;
+          worlds.insert({
+            id:currentId,card,sourcePath:saved.path,sourceHash:saved.sha256,sourceKind:'imported',
+            presetId:defaults.default_preset_id as string|null,
+            modelId:defaults.default_api_model_config_id as string|null,
+            now:Date.now(),
+          });
+          importTags(db,'world',currentId,tags);
+        });
+      } catch (error) { await files.remove(currentId).catch(()=>{}); throw error; }
+      card.data.tags=tagNames(db,'world',currentId);
+      const row=worlds.get(currentId)!;
+      return c.json({item:{id:currentId,...card,defaultPresetId:row.default_preset_id,defaultApiModelConfigId:row.default_api_model_config_id},warnings:[]},201);
     } catch(error) {
       const path=error instanceof CardError?error.path:'$',reason=error instanceof CardError?error.reason:'World import failed';
       return c.json({error:{code:ErrorCodes.INVALID_WORLD,path,reason,message:path+': '+reason}},422);
     }
   });
+
   app.patch('/:id',async c=>{
     const id=c.req.param('id');
-    if(!db.prepare('SELECT id FROM worlds WHERE id=?').get(id)) return c.json({error:{code:ErrorCodes.WORLD_NOT_FOUND}},404);
-    const parsed=z.object({presetId:z.string().min(1).nullable()}).strict().safeParse(await c.req.json().catch(()=>null));
+    const existing=worlds.get(id);
+    if(!existing) return c.json({error:{code:ErrorCodes.WORLD_NOT_FOUND}},404);
+    const parsed=patch.safeParse(await c.req.json().catch(()=>null));
     if(!parsed.success) return c.json({error:{code:ErrorCodes.INVALID_WORLD_PATCH}},422);
-    const {presetId}=parsed.data;
-    if(presetId && !db.prepare('SELECT 1 FROM presets WHERE id=?').get(presetId)) return c.json({error:{code:ErrorCodes.PRESET_NOT_FOUND}},422);
-    db.prepare('UPDATE worlds SET preset_id=?,updated_at=? WHERE id=?').run(presetId,Date.now(),id);
-    return c.json({ok:true});
+    const next={
+      preset:parsed.data.defaultPresetId===undefined ? existing.default_preset_id : parsed.data.defaultPresetId,
+      model:parsed.data.defaultApiModelConfigId===undefined ? existing.default_api_model_config_id : parsed.data.defaultApiModelConfigId,
+    };
+    if(next.preset && !db.prepare('SELECT 1 FROM presets WHERE id=?').get(next.preset))
+      return c.json({error:{code:ErrorCodes.PRESET_NOT_FOUND}},422);
+    if(next.model && !db.prepare('SELECT 1 FROM api_model_configs WHERE id=?').get(next.model))
+      return c.json({error:{code:ErrorCodes.API_MODEL_CONFIG_NOT_FOUND}},422);
+    db.prepare('UPDATE worlds SET default_preset_id=?,default_api_model_config_id=?,updated_at=? WHERE id=?')
+      .run(next.preset,next.model,Date.now(),id);
+    return c.json({ok:true,defaultPresetId:next.preset,defaultApiModelConfigId:next.model});
   });
-  app.delete('/:id', async c => {
-    const id = c.req.param('id');
-    if (!db.prepare('SELECT id FROM worlds WHERE id=?').get(id)) return c.json({ error: { code: ErrorCodes.WORLD_NOT_FOUND, message: 'World not found' } }, 404);
+
+  app.delete('/:id',async c=>{
+    const id=c.req.param('id');
+    if(!worlds.get(id)) return c.json({error:{code:ErrorCodes.WORLD_NOT_FOUND}},404);
     try {
       await removeWorld(id,()=>db.prepare('SELECT id FROM sessions WHERE world_id=?').all(id).map(row=>String(row.id)),()=>{
-        db.exec('BEGIN IMMEDIATE');
-        try {
+        transaction(db,()=>{
           db.prepare('DELETE FROM entries WHERE session_id IN (SELECT id FROM sessions WHERE world_id=?)').run(id);
           db.prepare('DELETE FROM sessions WHERE world_id=?').run(id);
           clearTags(db,'world',id);
           db.prepare('DELETE FROM worlds WHERE id=?').run(id);
-          db.exec('COMMIT');
-        } catch (err) { db.exec('ROLLBACK'); throw err; }
+        });
       });
+      await files.remove(id);
       return c.json({ok:true});
-    } catch { return c.json({ error: { code: ErrorCodes.WORLD_DELETE_FAILED, message: 'Could not delete world' } }, 500); }
+    } catch {return c.json({error:{code:ErrorCodes.WORLD_DELETE_FAILED,message:'Could not delete world'}},500);}
+  });
+
+  app.get('/:id/source',async c=>{
+    const row=worlds.get(c.req.param('id'));
+    if(!row) return c.json({error:{code:ErrorCodes.WORLD_NOT_FOUND}},404);
+    if(row.source_kind!=='imported') return c.json({error:{code:ErrorCodes.WORLD_SOURCE_NOT_FOUND}},404);
+    try {
+      const bytes=await files.read(String(row.id),String(row.source_file_path));
+      if (createHash('sha256').update(bytes).digest('hex') !== row.source_sha256)
+        return c.json({error:{code:ErrorCodes.WORLD_CORRUPT,message:'World source file checksum mismatch'}},422);
+      return c.newResponse(new Blob([Uint8Array.from(bytes)]),200,{
+        'Content-Type':'application/json; charset=utf-8',
+        'Content-Disposition':downloadDisposition(files.sourceFilename(String(row.id),String(row.source_file_path))),
+      });
+    } catch {return c.json({error:{code:ErrorCodes.WORLD_SOURCE_NOT_FOUND}},404);}
   });
   for(const exporting of [true,false]) app.get(exporting?'/:id/export':'/:id',c=>{
-    const id=c.req.param('id')!;
-    const row=db.prepare('SELECT * FROM worlds WHERE id=?').get(id);
+    const row=worlds.get(c.req.param('id'));
     if(!row) return c.json({error:{code:ErrorCodes.WORLD_NOT_FOUND}},404);
     try {
       const card=readWorld(row);
-      card.data.tags=tagNames(db,'world',id);
-      return exporting?c.json(card):c.json({item:{id,...card,presetId:row.preset_id,createdAt:row.created_at,updatedAt:row.updated_at},warnings:JSON.parse(String(row.warnings_json))});
+      card.data.tags=tagNames(db,'world',String(row.id));
+      if(exporting){
+        const filename=row.source_kind==='imported' ? files.sourceFilename(String(row.id),String(row.source_file_path)) : (()=>{try{return validateWorldSourceName(card.data.name+'.json');}catch{return 'world.json';}})();
+        c.header('Content-Disposition',downloadDisposition(filename));
+        return c.json(card);
+      }
+      return c.json({
+        item:{id:row.id,...card,defaultPresetId:row.default_preset_id,defaultApiModelConfigId:row.default_api_model_config_id,createdAt:row.created_at,updatedAt:row.updated_at},
+        warnings:JSON.parse(String(row.warnings_json)),
+      });
     } catch(error) {return c.json({error:storedError(error)},422);}
   });
   return app;

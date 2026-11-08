@@ -11,9 +11,11 @@
     "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "lint": "eslint src test"
+    "lint": "eslint src test",
+    "reset:data": "tsx scripts/reset-local-data.ts --confirm-reset-sr-data"
   },
   "dependencies": {
+    "@sillyrealms/roleplay": "workspace:*",
     "@earendil-works/pi-ai": "1.5.0",
     "@hono/node-server": "2.1.6",
     "acorn": "8.19.0",

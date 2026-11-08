@@ -1,6 +1,6 @@
 import { ErrorCodes } from '../common/error-codes.js';
 import { z } from 'zod';
-import { applyOpening, initialState, validateSnapshot } from './state/state.js';
+import { applyOpening, initialState } from './state/state.js';
 import { validateWhen } from './state/when.js';
 import { atomicStateSchema } from './state/atomic-schema.js';
 
@@ -111,9 +111,4 @@ function splitReason(error:unknown):[string,string] {
 export function storedError(error:unknown,path='$') {
   const [detail,reason]=splitReason(error);
   return {code:ErrorCodes.WORLD_CORRUPT,message:'世界卡损坏',details:{path:error instanceof CardError?error.path:detail==='$'?path:detail,reason}};
-}
-export function readWorld(row:{[key:string]:unknown}) {
-  const card=parseCard(JSON.parse(String(row.data_json)));
-  validateSnapshot(card.data.state,'global',JSON.parse(String(row.state)));
-  return card;
 }

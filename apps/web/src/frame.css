@@ -20,3 +20,11 @@
 .sr-story-backdrop{position:absolute;inset:0;z-index:1;border:0;background:rgba(10,14,24,.35)}
 .sr-story-state summary{cursor:pointer;padding:8px 0;color:var(--chat-muted);font-weight:600}
 .sr-story-state button:focus-visible,.sr-story-toolbar button:focus-visible,.sr-more:focus-visible{outline:3px solid color-mix(in srgb,var(--chat-accent) 35%,transparent);outline-offset:2px}
+/* Roleplay styling is scoped to the built-in WorldStory surface. */
+.sr-story .sr-message .sr-rp-speech{color:#8a6200;font-weight:600}
+.sr-story .sr-message .sr-rp-thought{padding:8px 12px;border-left:3px solid #7469ca;border-radius:0 6px 6px 0;background:#eeeafa;color:#50487a}
+.sr-story .sr-message .sr-rp-instruction-panel{margin-top:14px;padding:10px 12px;border-top:1px solid var(--chat-line);border-radius:0 0 6px 6px;background:var(--chat-bg);color:var(--chat-muted);white-space:pre-wrap;overflow-wrap:anywhere}
+.sr-story .sr-message .sr-rp-instruction-panel>span{font-size:11px;font-weight:600}
+.sr-story .sr-message .sr-rp-instruction-panel p{margin:5px 0 0}
+:root[data-theme="dark"] .sr-story .sr-message .sr-rp-speech{color:#f1ce77}
+:root[data-theme="dark"] .sr-story .sr-message .sr-rp-thought{background:#2e2a43;border-color:#a99ced;color:#d4ccf0}

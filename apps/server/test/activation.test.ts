@@ -30,3 +30,19 @@ describe('content activation and direct state tool', () => {
     expect(text).toContain('"path":["hp"]');expect(text).toContain('"min":0');expect(text).toContain('"max":10');expect(text).toContain('玩家 HP');expect(text).not.toContain('secret');
   });
 });
+
+it('state review accepts no-change and atomically rejects invalid batches',async()=>{
+  const {ToolExecutor}=await import('../src/agent/tools/tool-executor.js');
+  const executor=new ToolExecutor();
+  const workspace={hp:1,money:5};
+  const modules={hp:{type:'number' as const,initial:1,min:0,max:10},money:{type:'number' as const,initial:5}};
+  const active=new Set(['hp','money']);
+  const makeCall=(updates:Array<{path:string;value:string|number}>)=>({type:'toolCall' as const,id:'r',name:'review_state',arguments:{updates}});
+  expect(executor.executeReview(makeCall([]),workspace,modules,active).isError).toBe(false);
+  expect(workspace).toEqual({hp:1,money:5});
+  const failed=executor.executeReview(makeCall([{path:'hp',value:7},{path:'money',value:'invalid'}]),workspace,modules,active);
+  expect(failed.isError).toBe(true);
+  expect(workspace).toEqual({hp:1,money:5});
+  expect(executor.executeReview(makeCall([{path:'hp',value:7}]),workspace,modules,active).isError).toBe(false);
+  expect(workspace.hp).toBe(7);
+});

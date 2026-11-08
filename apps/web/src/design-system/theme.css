@@ -1,0 +1,17 @@
+/* Optional Tailwind v4 token mapping for creator-facing components. Platform uses tokens.css directly. */
+@theme {
+  --color-sr-primary-100: #f3ebff;
+  --color-sr-primary-300: #be96f7;
+  --color-sr-primary-500: #6258d8;
+  --color-sr-primary-600: #4239c6;
+  --color-sr-primary-700: #2e27a7;
+  --color-sr-neutral-50: #fafdff;
+  --color-sr-neutral-100: #f6fbfd;
+  --color-sr-neutral-300: #b1c0c8;
+  --color-sr-neutral-500: #707a8f;
+  --color-sr-neutral-700: #494e62;
+  --color-sr-neutral-900: #222435;
+  --radius-sr-sm: 6px;
+  --radius-sr-md: 10px;
+  --radius-sr-lg: 14px;
+}

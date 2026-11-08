@@ -6,6 +6,8 @@ import { z } from 'zod';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import type { ModelGateway } from '../agent/index.js';
 import type { CredentialStore } from '../infrastructure/credentials/store.js';
+import { referenceCounts } from '../repositories/config-references.js';
+import { transaction } from '../domain/tags.js';
 
 const input = z.object({ name: z.string().min(1), providerId: z.string().min(1), modelId: z.string().min(1), apiKey: z.string().min(1) }).strict();
 const patch = input.partial().strict();
@@ -24,8 +26,14 @@ export function providerRoutes(db: DatabaseSync, credentials: CredentialStore, g
       if (!validModel(body.providerId, body.modelId)) return c.json({ error: { code: ErrorCodes.MODEL_NOT_FOUND, message: 'Model not found' } }, 422);
       const id = randomUUID(), now = Date.now();
       await credentials.set(id, body.apiKey);
-      try { db.prepare('INSERT INTO api_model_configs(id,name,provider_id,model_id,credential_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run(id, body.name, body.providerId, body.modelId, id, now, now); }
-      catch { await credentials.delete(id); throw new Error(ErrorCodes.CONFIG_SAVE_FAILED); }
+      try {
+        transaction(db,()=>{
+          db.prepare('INSERT INTO api_model_configs(id,name,provider_id,model_id,credential_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+            .run(id,body.name,body.providerId,body.modelId,id,now,now);
+          db.prepare('UPDATE app_settings SET default_api_model_config_id=?,updated_at=? WHERE id=1 AND default_api_model_config_id IS NULL')
+            .run(id,now);
+        });
+      } catch { await credentials.delete(id); throw new Error(ErrorCodes.CONFIG_SAVE_FAILED); }
       return c.json({ item: await publicRow(get(id)!) }, 201);
     } catch { return c.json({ error: { code: ErrorCodes.CONFIG_SAVE_FAILED, message: 'Could not save model configuration' } }, 422); }
   });
@@ -61,6 +69,8 @@ export function providerRoutes(db: DatabaseSync, credentials: CredentialStore, g
   configs.delete('/:id', async c => {
     const row = get(c.req.param('id'));
     if (!row) return c.json({ error: { code: ErrorCodes.API_MODEL_CONFIG_NOT_FOUND, message: 'Model configuration not found' } }, 404);
+    const refs=referenceCounts(db,'model',String(row.id));
+    if(refs.total>0) return c.json({error:{code:ErrorCodes.CONFIG_IN_USE,counts:refs}},409);
     try { await credentials.delete(String(row.credential_ref)); db.prepare('DELETE FROM api_model_configs WHERE id=?').run(String(row.id)); return c.json({ ok: true }); }
     catch { return c.json({ error: { code: ErrorCodes.CREDENTIAL_DELETE_FAILED, message: 'Could not delete credentials' } }, 500); }
   });

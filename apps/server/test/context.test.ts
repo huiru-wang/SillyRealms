@@ -20,9 +20,9 @@ it('builds the worldState node in preset order with active rules and current val
   }}};
   const nodes=[{id:'main',kind:'system' as const,role:'system' as const,enabled:true,content:'起始指令'}, {id:'worldState',kind:'system' as const,role:'system' as const,enabled:true},{id:'userInput',kind:'system' as const,role:'user' as const,enabled:true}];
   const result=buildContext(world,nodes,'p',{global:{setting:{year:42}},session:{},message:{hero:{hp:7,people:{}},hidden:{secret:'hidden-value'}}},[],'继续');
-  const output=result.messages([]);expect(output.map(m=>m.role)).toEqual(['system','system','user']);
-  const text=String(output[1]?.content);expect(text).toContain('调用 update_state');expect(text).toContain('global 与 session 状态仅供读取');expect(text).toContain('伤害后调整');expect(text).toContain('角色姓名');expect(text).toContain('hero（可更新；message；json）');expect(text).toContain('"hp":7');expect(text).toContain('"year":42');expect(text).not.toContain('hidden-value');
-  const disabled=buildContext(world,nodes.map(n=>n.id==='worldState'?{...n,enabled:false}:n),'p',{global:{setting:{year:42}},session:{},message:{hero:{hp:7,people:{}},hidden:{secret:'hidden-value'}}},[],'继续');expect(disabled.messages([]).map(m=>m.role)).toEqual(['system','system','user']);
+  const output=result.messages([]);expect(output.map(m=>m.role)).toEqual(['system','system','system','user']);
+  const text=String(output[2]?.content);expect(text).toContain('调用 update_state');expect(text).toContain('global 与 session 状态仅供读取');expect(text).toContain('伤害后调整');expect(text).toContain('角色姓名');expect(text).toContain('hero（可更新；message；json）');expect(text).toContain('"hp":7');expect(text).toContain('"year":42');expect(text).not.toContain('hidden-value');
+  const disabled=buildContext(world,nodes.map(n=>n.id==='worldState'?{...n,enabled:false}:n),'p',{global:{setting:{year:42}},session:{},message:{hero:{hp:7,people:{}},hidden:{secret:'hidden-value'}}},[],'继续');expect(disabled.messages([]).map(m=>m.role)).toEqual(['system','system','system','user']);
 });
 
 

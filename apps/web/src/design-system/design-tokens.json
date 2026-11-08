@@ -1,0 +1,282 @@
+{
+  "name": "SillyRealms",
+  "version": "2.0.0",
+  "source": "refactoring-ui palette generator; existing brand #6258d8",
+  "primitives": {
+    "neutral": {
+      "50": "#fafdff",
+      "100": "#f6fbfd",
+      "200": "#d3dee4",
+      "300": "#b1c0c8",
+      "400": "#919eac",
+      "500": "#707a8f",
+      "600": "#5c6479",
+      "700": "#494e62",
+      "800": "#35394c",
+      "900": "#222435",
+      "950": "#11121f"
+    },
+    "purple": {
+      "100": "#f3ebff",
+      "200": "#d8bcff",
+      "300": "#be96f7",
+      "400": "#9776e8",
+      "500": "#6258d8",
+      "600": "#4239c6",
+      "700": "#2e27a7",
+      "800": "#1a1687",
+      "900": "#080665"
+    }
+  },
+  "semantic": {
+    "light": {
+      "canvas": "#f7f8fb",
+      "surface": "#ffffff",
+      "raised": "#ffffff",
+      "sunken": "#eff1f6",
+      "text": "#202434",
+      "secondary": "#4c5568",
+      "muted": "#626b7c",
+      "border": "#d9dde6",
+      "accent": "#4239c6",
+      "action": "#4f46bd",
+      "actionHover": "#4038a7",
+      "accentSoft": "#ecebfe",
+      "success": "#166f4d",
+      "successSoft": "#e9f5ee",
+      "warning": "#8b5d1b",
+      "warningSoft": "#fff3de",
+      "danger": "#b33648",
+      "dangerSoft": "#fff0f1"
+    },
+    "dark": {
+      "canvas": "#151820",
+      "surface": "#20242e",
+      "raised": "#292e39",
+      "sunken": "#171a21",
+      "text": "#eef0f6",
+      "secondary": "#c4cbd8",
+      "muted": "#a4aec0",
+      "border": "#414957",
+      "accent": "#b3aafa",
+      "action": "#6155c5",
+      "actionHover": "#5347b2",
+      "accentSoft": "#333052",
+      "success": "#80dab0",
+      "successSoft": "#1f3c31",
+      "warning": "#f0c782",
+      "warningSoft": "#403424",
+      "danger": "#ff9da5",
+      "dangerSoft": "#452a32"
+    }
+  },
+  "scale": {
+    "spacing": [
+      4,
+      8,
+      12,
+      16,
+      24,
+      32,
+      48,
+      64
+    ],
+    "type": [
+      12,
+      14,
+      16,
+      18,
+      20,
+      24,
+      30
+    ],
+    "radius": [
+      6,
+      10,
+      14,
+      18
+    ],
+    "weight": [
+      400,
+      500,
+      650
+    ],
+    "elevation": [
+      "0 1px 3px",
+      "0 4px 6px",
+      "0 5px 15px",
+      "0 10px 24px",
+      "0 15px 35px"
+    ]
+  },
+  "pairs": [
+    {
+      "name": "light/text/canvas",
+      "fg": "#202434",
+      "bg": "#f7f8fb",
+      "size": "normal"
+    },
+    {
+      "name": "light/secondary/canvas",
+      "fg": "#4c5568",
+      "bg": "#f7f8fb",
+      "size": "normal"
+    },
+    {
+      "name": "light/muted/canvas",
+      "fg": "#626b7c",
+      "bg": "#f7f8fb",
+      "size": "normal"
+    },
+    {
+      "name": "light/text/surface",
+      "fg": "#202434",
+      "bg": "#ffffff",
+      "size": "normal"
+    },
+    {
+      "name": "light/secondary/surface",
+      "fg": "#4c5568",
+      "bg": "#ffffff",
+      "size": "normal"
+    },
+    {
+      "name": "light/muted/surface",
+      "fg": "#626b7c",
+      "bg": "#ffffff",
+      "size": "normal"
+    },
+    {
+      "name": "light/text/sunken",
+      "fg": "#202434",
+      "bg": "#eff1f6",
+      "size": "normal"
+    },
+    {
+      "name": "light/secondary/sunken",
+      "fg": "#4c5568",
+      "bg": "#eff1f6",
+      "size": "normal"
+    },
+    {
+      "name": "light/muted/sunken",
+      "fg": "#626b7c",
+      "bg": "#eff1f6",
+      "size": "normal"
+    },
+    {
+      "name": "light/button white",
+      "fg": "#ffffff",
+      "bg": "#4f46bd",
+      "size": "normal"
+    },
+    {
+      "name": "light/accent on soft",
+      "fg": "#4239c6",
+      "bg": "#ecebfe",
+      "size": "normal"
+    },
+    {
+      "name": "light/success",
+      "fg": "#166f4d",
+      "bg": "#e9f5ee",
+      "size": "normal"
+    },
+    {
+      "name": "light/warning",
+      "fg": "#8b5d1b",
+      "bg": "#fff3de",
+      "size": "normal"
+    },
+    {
+      "name": "light/danger",
+      "fg": "#b33648",
+      "bg": "#fff0f1",
+      "size": "normal"
+    },
+    {
+      "name": "dark/text/canvas",
+      "fg": "#eef0f6",
+      "bg": "#151820",
+      "size": "normal"
+    },
+    {
+      "name": "dark/secondary/canvas",
+      "fg": "#c4cbd8",
+      "bg": "#151820",
+      "size": "normal"
+    },
+    {
+      "name": "dark/muted/canvas",
+      "fg": "#a4aec0",
+      "bg": "#151820",
+      "size": "normal"
+    },
+    {
+      "name": "dark/text/surface",
+      "fg": "#eef0f6",
+      "bg": "#20242e",
+      "size": "normal"
+    },
+    {
+      "name": "dark/secondary/surface",
+      "fg": "#c4cbd8",
+      "bg": "#20242e",
+      "size": "normal"
+    },
+    {
+      "name": "dark/muted/surface",
+      "fg": "#a4aec0",
+      "bg": "#20242e",
+      "size": "normal"
+    },
+    {
+      "name": "dark/text/sunken",
+      "fg": "#eef0f6",
+      "bg": "#171a21",
+      "size": "normal"
+    },
+    {
+      "name": "dark/secondary/sunken",
+      "fg": "#c4cbd8",
+      "bg": "#171a21",
+      "size": "normal"
+    },
+    {
+      "name": "dark/muted/sunken",
+      "fg": "#a4aec0",
+      "bg": "#171a21",
+      "size": "normal"
+    },
+    {
+      "name": "dark/button white",
+      "fg": "#ffffff",
+      "bg": "#6155c5",
+      "size": "normal"
+    },
+    {
+      "name": "dark/accent on soft",
+      "fg": "#b3aafa",
+      "bg": "#333052",
+      "size": "normal"
+    },
+    {
+      "name": "dark/success",
+      "fg": "#80dab0",
+      "bg": "#1f3c31",
+      "size": "normal"
+    },
+    {
+      "name": "dark/warning",
+      "fg": "#f0c782",
+      "bg": "#403424",
+      "size": "normal"
+    },
+    {
+      "name": "dark/danger",
+      "fg": "#ff9da5",
+      "bg": "#452a32",
+      "size": "normal"
+    }
+  ]
+}

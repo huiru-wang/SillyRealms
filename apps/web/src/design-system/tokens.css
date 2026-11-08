@@ -1,0 +1,63 @@
+/*
+ * SillyRealms design tokens — Refactoring UI §§1.5, 2.2, 3.2, 4.1, 5.6, 6.2
+ * Primitive palette generated from existing #6258d8 brand and cool neutrals.
+ * Semantic tokens are the sole input to product-level components.
+ */
+:root {
+  --sr-neutral-50:#fafdff;--sr-neutral-100:#f6fbfd;--sr-neutral-200:#d3dee4;
+  --sr-neutral-300:#b1c0c8;--sr-neutral-400:#919eac;--sr-neutral-500:#707a8f;
+  --sr-neutral-600:#5c6479;--sr-neutral-700:#494e62;--sr-neutral-800:#35394c;
+  --sr-neutral-900:#222435;--sr-neutral-950:#11121f;
+  --sr-purple-100:#f3ebff;--sr-purple-200:#d8bcff;--sr-purple-300:#be96f7;
+  --sr-purple-400:#9776e8;--sr-purple-500:#6258d8;--sr-purple-600:#4239c6;
+  --sr-purple-700:#2e27a7;--sr-purple-800:#1a1687;--sr-purple-900:#080665;
+
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;
+  --space-6:24px;--space-8:32px;--space-12:48px;--space-16:64px;
+  --type-xs:12px;--type-sm:14px;--type-base:16px;--type-lg:18px;
+  --type-xl:20px;--type-2xl:24px;--type-3xl:30px;
+  --weight-body:400;--weight-medium:500;--weight-strong:650;
+  --leading-tight:1.25;--leading-base:1.5;--leading-reading:1.8;
+  --radius-sm:6px;--radius-md:10px;--radius-lg:14px;--radius-xl:18px;
+  --border-width:1px;--border-width-strong:2px;
+  --opacity-disabled:.5;
+  --shadow-sm:0 1px 3px rgba(19,24,42,.07);
+  --shadow-md:0 5px 15px rgba(19,24,42,.1);
+  --shadow-lg:0 10px 24px rgba(19,24,42,.14);
+  --shadow-xl:0 15px 35px rgba(19,24,42,.19);
+
+  --canvas:#f7f8fb;--surface:#fff;--surface-soft:#f9fafc;--surface-hover:#f0f2f6;
+  --surface-raised:#fff;--surface-sunken:#eff1f6;
+  --text-primary:#202434;--text-secondary:#4c5568;--text-muted:#626b7c;
+  --border-subtle:#e8eaf0;--border-default:#d9dde6;--border-strong:#c7ccd8;
+  --accent:#4239c6;--accent-hover:#2e27a7;--accent-soft:#ecebfe;
+  --action-bg:#4f46bd;--action-hover:#4038a7;
+  --focus-ring:#7268d5;
+  --status-good:#166f4d;--status-good-soft:#e9f5ee;
+  --status-info:#47658c;--status-info-soft:#edf3fa;
+  --status-warn:#8b5d1b;--status-warn-soft:#fff3de;
+  --status-bad:#b33648;--status-bad-soft:#fff0f1;
+  --ink:var(--text-primary);--ink-soft:var(--text-secondary);
+  --muted:var(--text-muted);--subtle:var(--text-muted);
+  --line:var(--border-subtle);--line-strong:var(--border-default);
+  --bg:var(--canvas);--sidebar:#fbfcfe;--success:var(--status-good);
+  --success-soft:var(--status-good-soft);--warning:var(--status-warn);
+  --warning-soft:var(--status-warn-soft);--danger:var(--status-bad);
+  --danger-soft:var(--status-bad-soft);
+}
+:root[data-theme="dark"] {
+  --canvas:#151820;--surface:#20242e;--surface-soft:#242935;--surface-hover:#303643;
+  --surface-raised:#292e39;--surface-sunken:#171a21;
+  --text-primary:#eef0f6;--text-secondary:#c4cbd8;--text-muted:#a4aec0;
+  --border-subtle:#303643;--border-default:#414957;--border-strong:#596274;
+  --accent:#b3aafa;--accent-hover:#cdc7ff;--accent-soft:#333052;
+  --action-bg:#6155c5;--action-hover:#5347b2;
+  --focus-ring:#aca5fa;
+  --status-good:#80dab0;--status-good-soft:#1f3c31;
+  --status-info:#a9c8ee;--status-info-soft:#29384b;
+  --status-warn:#f0c782;--status-warn-soft:#403424;
+  --status-bad:#ff9da5;--status-bad-soft:#452a32;
+  --bg:var(--canvas);--sidebar:#1b1f28;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.2);--shadow-md:0 5px 15px rgba(0,0,0,.25);
+  --shadow-lg:0 10px 24px rgba(0,0,0,.3);--shadow-xl:0 15px 35px rgba(0,0,0,.35);
+}

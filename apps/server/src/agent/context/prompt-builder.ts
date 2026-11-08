@@ -3,6 +3,8 @@ import type { Message } from '@earendil-works/pi-ai';
 import { debugEnabled } from '../../common/debug.js';
 import { evaluateLoad } from './activation.js';
 import { stateToolInstructions } from '../tools/state-tool.js';
+import { narrativeForActivation } from '@sillyrealms/roleplay';
+import { SR_SYSTEM_MAIN } from './system-main.js';
 
 type Views = Record<'global'|'session'|'message', Record<string, unknown>>;
 type Narrative = { role:'user'|'assistant'; text:string };
@@ -12,7 +14,7 @@ type World = { characters:Source[]; lorebook?:{entries?:Source[]}; state?:{scope
 
 /** Render author text separately from runtime state, history and user input. */
 export function buildContext(world: World, nodes: PresetNode[], playerId: string, views: Views, history: Narrative[], input: string) {
-  const scan = [...history.map(m => m.text), input];
+  const scan = [...history.map(m => narrativeForActivation(m.text, m.role)), narrativeForActivation(input, 'user')];
   const diagnostics: Array<{id:string;reason:string;path:string}> = [];
   const active = (source: Source,path:string,category:'角色'|'世界书'|'状态') => {
     const rule=source.load ?? {};
@@ -69,7 +71,8 @@ export function buildContext(world: World, nodes: PresetNode[], playerId: string
     if (n.role === 'assistant') return [assistant(text)];
     return [{role:'system',content:text,timestamp:Date.now()}];
   };
-  return { messages: (hist:Narrative[]) => nodes.flatMap(node => build(node,hist)), trace:(hist:Narrative[])=>nodes.map((node,index)=>({index,nodeId:node.id,name:node.name ?? node.id,enabled:node.id !== 'postHistory' || node.enabled,role:node.role,messages:build(node,hist)})), activeModules, diagnostics, render };
+  const systemMain = (): Message => ({role:'system',content:SR_SYSTEM_MAIN,timestamp:Date.now()});
+  return { messages: (hist:Narrative[]) => [systemMain(), ...nodes.flatMap(node => build(node,hist))], trace:(hist:Narrative[])=>[{index:0,nodeId:'systemMain',name:'平台 System Main',enabled:true,role:'system',origin:'platform',editable:false,messages:[systemMain()]}, ...nodes.map((node,index)=>({index:index+1,nodeId:node.id,name:node.name ?? node.id,enabled:node.id !== 'postHistory' || node.enabled,role:node.role,origin:'preset',editable:true,messages:build(node,hist)}))], activeModules, diagnostics, render };
 }
 function assistant(text:string): Message {
   return { role:'assistant', content:[{type:'text',text}], api:'openai-completions', provider:'sillyrealms', model:'history', usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}, stopReason:'stop', timestamp:Date.now() };

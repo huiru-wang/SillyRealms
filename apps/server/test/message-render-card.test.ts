@@ -1,3 +1,4 @@
+import { fakeCredentials, configureWorldModel } from './fixtures/db-seed.js';
 import {readFileSync} from 'node:fs';
 import {expect,it} from 'vitest';
 import {createApp} from '../src/app.js';
@@ -43,11 +44,12 @@ it('accepts the documented self-contained WorldStory example',()=>{
 });
 
 it('initializes the opening state and keeps display rules out of narrative context',async()=>{
-  const db=openDatabase(':memory:'),app=createApp(db);
+  const db=openDatabase(':memory:'),app=createApp(db,fakeCredentials);
   try {
     const example=JSON.parse(readFileSync(new URL('./fixtures/worldstory-card.json',import.meta.url),'utf8'));
     const form=new FormData();form.set('file',new File([JSON.stringify(example)],'world.json'));
     const imported=await (await app.request('/api/v1/worlds/import',{method:'POST',body:form})).json() as {data:{item:{id:string}}};
+    configureWorldModel(db,imported.data.item.id);
     const created=await (await app.request('/api/v1/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({worldId:imported.data.item.id,openingId:'start',userCharacterId:'player'})})).json() as {data:{item:{id:string}}};
     const base=`/api/v1/sessions/${created.data.item.id}`;
     const snapshot=await (await app.request(`${base}/state`)).json() as {data:{global:Record<string,unknown>;session:Record<string,unknown>;message:Record<string,unknown>}};

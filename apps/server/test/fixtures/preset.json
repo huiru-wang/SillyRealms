@@ -1,7 +1,6 @@
 {
   "name": "测试预设",
   "description": "独立的测试预设",
-  "api_model_config_id": null,
   "budget": {
     "max_output_tokens": 256
   },
