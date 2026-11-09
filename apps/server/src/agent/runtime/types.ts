@@ -1,5 +1,6 @@
 import type { Api, Context, Message, Model } from '@earendil-works/pi-ai';
 import type { Json } from '../../domain/state/state.js';
+import type { ContextComposition } from '../persistence/usage-store.js';
 import type { buildContext } from '../context/prompt-builder.js';
 
 export type RunTask = {
@@ -27,6 +28,7 @@ export type PreparedRun = {
   userInput: string;
   output: number;
   temperature?: number;
+  contextComposition: ContextComposition;
   summary?: { text: string; coveredThroughEntryId: string };
   summaryGeneration: Array<{ request: unknown; response: string }>;
   diagnostics: ReturnType<typeof buildContext>['diagnostics'];

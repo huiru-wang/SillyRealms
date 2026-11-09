@@ -10,8 +10,23 @@ class MemoryCredentials implements CredentialStore {
   async delete(id: string) { this.data.delete(id); }
 }
 const ids = ['main','personaInfo','characterInfo','worldState','chatHistory','userInput','postHistory'];
-const preset = { name: 'Test', budget: { max_output_tokens: 100 }, summary_prompt: 'summary', nodes: ids.map(id => ({ id, name: id, kind: 'system', source: id, role: id === 'chatHistory' ? 'auto' : id === 'userInput' ? 'user' : 'system', enabled: true, ...(id === 'main' ? { content: 'old' } : {}) })) };
+const preset = { name: 'Test', budget: { context_strategy:'standard', max_output_tokens: 100 }, summary_prompt: 'summary', nodes: ids.map(id => ({ id, name: id, kind: 'system', source: id, role: id === 'chatHistory' ? 'auto' : id === 'userInput' ? 'user' : 'system', enabled: true, ...(id === 'main' ? { content: 'old' } : {}) })) };
 describe('preset and model configuration', () => {
+  it('accepts the three strategies and rejects old numeric budgets and invalid strategies', async () => {
+    const db=openDatabase(':memory:'),app=createApp(db,new MemoryCredentials());
+    try {
+      for (const strategy of ['compact','standard','extended']) {
+        const input={...preset,name:strategy,budget:{context_strategy:strategy,max_output_tokens:100}};
+        const response=await app.request('/api/v1/presets',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});
+        expect(response.status).toBe(201);
+        expect((await response.json() as {data:{item:{budget:unknown}}}).data.item.budget).toEqual(input.budget);
+      }
+      for (const budget of [{max_output_tokens:100,max_context_tokens:32000},{context_strategy:'large',max_output_tokens:100}]) {
+        const response=await app.request('/api/v1/presets/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...preset,budget})});
+        expect(response.status).toBe(422);
+      }
+    } finally {db.close();}
+  });
   it('updates one node without changing the others and permits deletion', async () => {
     const db = openDatabase(':memory:'), store = new MemoryCredentials(), app = createApp(db, store);
     const response = await app.request('/api/v1/presets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(preset) });

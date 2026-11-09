@@ -52,6 +52,7 @@ export function sessionRuntimeRoutes(db:DatabaseSync,runtime:AgentRuntime):Hono 
         else if(event==='run.updated' && payload.status==='failed')send('run.failed',{runId,messages:messages(runId),error:payload.errorCode??'RUN_FAILED'});
         else if(event==='run.updated' && payload.status==='stopped')send('run.stopped',{runId,messages:messages(runId)});
         else if(event==='state.changed' && typeof payload.path==='string')send('state.changed',payload);
+        else if(event==='tool.failed')send('tool.failed',payload);
         else if(event==='usage.updated')send('usage.updated',payload);
       });
       timer=setInterval(()=>{try{controller.enqueue(encoder.encode(': heartbeat\n\n'));}catch{dispose();clearInterval(timer);}},15000);

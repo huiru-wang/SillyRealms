@@ -4,9 +4,10 @@ import type { Usage } from '@earendil-works/pi-ai';
 import { readAncestors } from '../../domain/session/ancestors.js';
 
 export type ModelPhase = 'summary' | 'generation' | 'continuation' | 'state_review';
+export type ContextComposition = { systemBytes: number; summaryBytes: number; historyBytes: number };
 export type RequestMeta = {
   sessionId: string; runId: string; requestId: string;
-  phase: ModelPhase; apiModelConfigId?: string;
+  phase: ModelPhase; apiModelConfigId?: string; contextComposition?: ContextComposition;
 };
 export type TokenTotals = {
   inputTokens: number; outputTokens: number; totalTokens: number;
@@ -28,8 +29,9 @@ type PendingRun = {
 export type SessionUsage = {
   cumulative: TokenTotals & { reportedCount: number; unknownCount: number };
   latestContext: null | {
-    inputTokens: number; contextWindowTokens: number; modelId: string;
+    inputTokens: number; outputTokens?: number; contextWindowTokens: number; modelId: string;
     apiModelConfigId?: string; runId: string; requestId: string; finishedAt: number;
+    contextComposition?: ContextComposition;
   };
   pendingRun: PendingRun | null;
   // Only when a provider used tokens before a User Entry could be created.
@@ -184,19 +186,24 @@ export class UsageStore {
       const totals = emptyTotals();
       let reportedCount = 0, unknownCount = 0;
       let latest: SessionUsage['latestContext'] = null;
+      let latestNarrative: RequestMetrics | undefined;
       for (const item of requests.values()) {
+        if (item.phase === 'generation' || item.phase === 'continuation') {
+          if (!latestNarrative || item.startedAt >= latestNarrative.startedAt) latestNarrative = item;
+        }
         if (item.usageStatus === 'reported' && item.usage) {
           mergeTotals(totals, item.usage);
           reportedCount++;
-          if ((item.phase === 'generation' || item.phase === 'continuation') && item.finishedAt &&
-            (!latest || item.finishedAt >= latest.finishedAt)) {
-            latest = {
-              inputTokens: item.usage.inputTokens, contextWindowTokens: item.contextWindowTokens,
-              modelId: item.modelId, apiModelConfigId: item.apiModelConfigId,
-              runId, requestId: item.requestId, finishedAt: item.finishedAt,
-            };
-          }
         } else unknownCount++;
+      }
+      if (latestNarrative?.usageStatus === 'reported' && latestNarrative.usage && latestNarrative.finishedAt) {
+        latest = {
+          inputTokens: latestNarrative.usage.inputTokens, outputTokens: latestNarrative.usage.outputTokens,
+          contextWindowTokens: latestNarrative.contextWindowTokens, modelId: latestNarrative.modelId,
+          apiModelConfigId: latestNarrative.apiModelConfigId, runId, requestId: latestNarrative.requestId,
+          finishedAt: latestNarrative.finishedAt,
+          ...(latestNarrative.contextComposition ? { contextComposition: latestNarrative.contextComposition } : {}),
+        };
       }
       const user = entries.find(row => row.role === 'user');
       if (user) {
@@ -221,7 +228,7 @@ export class UsageStore {
       mergeTotals(session.cumulative, totals);
       session.cumulative.reportedCount += reportedCount;
       session.cumulative.unknownCount += unknownCount;
-      if (latest && (!session.latestContext || latest.finishedAt >= session.latestContext.finishedAt)) session.latestContext = latest;
+      if (latestNarrative) session.latestContext = latest;
       session.pendingRun = null;
       this.save(sessionId, session);
       this.db.exec('COMMIT');
@@ -274,10 +281,10 @@ export class RunContext {
 
   constructor(readonly sessionId: string, readonly runId: string, readonly apiModelConfigId?: string) {}
 
-  request(phase: ModelPhase): RequestMeta {
+  request(phase: ModelPhase, contextComposition?: ContextComposition): RequestMeta {
     this.nextRequestIndex++;
     return { sessionId: this.sessionId, runId: this.runId, requestId: randomUUID(),
-      phase, apiModelConfigId: this.apiModelConfigId };
+      phase, apiModelConfigId: this.apiModelConfigId, ...(contextComposition ? { contextComposition } : {}) };
   }
   firstVisible(usage: UsageStore): void {
     if (this.firstTextSeen) return;

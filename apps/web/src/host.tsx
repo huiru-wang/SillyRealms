@@ -3,6 +3,8 @@ import {Settings2} from 'lucide-react';
 import {api,json} from './api';
 import {randomId} from './random-id';
 import {RoleplayComposer} from './features/sessions/composer/RoleplayComposer';
+import {SessionTokenUsage} from './features/sessions/SessionTokenUsage';
+import {SessionSettingsDialog} from './features/sessions/SessionSettingsDialog';
 import {compile} from '@sillyrealms/ui-compiler';
 import {MessageMatcher} from './message-matcher';
 import {trimTrailingEmptyRoleplayLines} from '@sillyrealms/roleplay';
@@ -22,6 +24,12 @@ export function SessionHost({id}:{id:string}) {
   const [settingsModel,setSettingsModel]=useState('');
   const [settingsSaving,setSettingsSaving]=useState(false);
   const [settingsError,setSettingsError]=useState('');
+  const [usageRevision,setUsageRevision]=useState(0);
+  const [fontSize,setFontSize]=useState(16);
+  const fontSizeRef=useRef(16);fontSizeRef.current=fontSize;
+  const [settingsFontSize,setSettingsFontSize]=useState(16);
+  const fontSizeBeforeSettings=useRef(16);
+  const fontPreferenceKey='sr:session:'+id+':reading-font-size';
   const [loaded,setLoaded]=useState(false);
   const [fatal,setFatal]=useState(false);
   const [online,setOnline]=useState(false);
@@ -38,10 +46,18 @@ export function SessionHost({id}:{id:string}) {
   const ready=useRef(false),connected=useRef(false),mountedRef=useRef(false),fatalRef=useRef(false),activeRef=useRef<string|null>(null),sendingRef=useRef(false);
   const renderRef=useRef<{code:string|null;messageCode:string|null;rules:unknown[];state:unknown}>({code:null,messageCode:null,rules:[],state:{}}),loadedRef=useRef(false);
   const terminal=useRef(new Set<string>());
+  const eventSourceOpened=useRef(false);
   const nonce=useMemo(()=>randomId(),[id]);
   const updateDraft=useCallback((value:string)=>{draftRevision.current++;setDraft(value);},[]);
   const base=`v1/sessions/${id}`;
   useEffect(()=>{if(!expanded)expandButton.current?.focus();},[expanded]);
+  useEffect(()=>{
+    let stored=16;
+    try {const value=Number(localStorage.getItem(fontPreferenceKey));if(Number.isInteger(value)&&value>=13&&value<=21)stored=value;}
+    catch {/* Reading preference storage is optional. */}
+    setFontSize(stored);setSettingsFontSize(stored);fontSizeBeforeSettings.current=stored;
+  },[fontPreferenceKey]);
+  useEffect(()=>{port.current?.postMessage({type:'appearance',fontSize});},[fontSize]);
   const stop=useCallback(async(runId:string)=>{
     setStopping(true);
     try {await api(`${base}/runs/${encodeURIComponent(runId)}/stop`,{method:'POST'});}
@@ -49,7 +65,7 @@ export function SessionHost({id}:{id:string}) {
     finally {setStopping(false);}
   },[base]);
   const block=useCallback(()=>{
-    fatalRef.current=true;mountedRef.current=false;setFatal(true);setMounted(false);setSettingsOpen(false);setNotice('');
+    fatalRef.current=true;mountedRef.current=false;setFatal(true);setMounted(false);setFontSize(fontSizeBeforeSettings.current);setSettingsOpen(false);setNotice('');
     if(activeRef.current)void stop(activeRef.current);
   },[stop]);
   const send=useCallback(async(text:string)=>{
@@ -71,12 +87,13 @@ export function SessionHost({id}:{id:string}) {
   },[base,stop]);
 
   useEffect(()=>{
-    ready.current=false;connected.current=false;mountedRef.current=false;fatalRef.current=false;activeRef.current=null;
+    ready.current=false;connected.current=false;mountedRef.current=false;fatalRef.current=false;activeRef.current=null;eventSourceOpened.current=false;
     draftRevision.current++;setDraft('');setExpanded(true);setFatal(false);setMounted(false);setLoaded(false);setOnline(false);setActiveRun(null);setNotice('');setSettingsOpen(false);setSettingsError('');setPresets([]);setModelConfigs([]);setModelConfig(null);loadedRef.current=false;renderRef.current={code:null,messageCode:null,rules:[],state:{}};terminal.current.clear();
     const stream=new EventSource(`/api/${base}/events`);
     const matcher=new MessageMatcher();
-    stream.onopen=()=>{connected.current=true;setOnline(true);if(ready.current)port.current?.postMessage({type:'connected'});};
+    stream.onopen=()=>{connected.current=true;setOnline(true);if(eventSourceOpened.current)setUsageRevision(value=>value+1);eventSourceOpened.current=true;if(ready.current)port.current?.postMessage({type:'connected'});};
     stream.onerror=()=>{connected.current=false;setOnline(false);};
+    stream.addEventListener('usage.updated',()=>setUsageRevision(value=>value+1));
     for(const name of ['run.created','run.delta','run.completed','run.failed','run.stopped','state.changed'])stream.addEventListener(name,(event:MessageEvent)=>{
       try {
         const data=JSON.parse(event.data);
@@ -99,6 +116,7 @@ export function SessionHost({id}:{id:string}) {
         if(payload.type==='ready-ack'){
           ready.current=true;if(loadedRef.current)channel.port1.postMessage({type:'render',...renderRef.current});
           channel.port1.postMessage({type:'theme',value:document.documentElement.dataset.theme??'light'});
+          channel.port1.postMessage({type:'appearance',fontSize:fontSizeRef.current});
           if(connected.current)channel.port1.postMessage({type:'connected'});
         } else if(payload.type==='page-mounted'){if(!fatalRef.current){mountedRef.current=true;setMounted(true);}}
         else if(payload.type==='set-draft'){
@@ -161,16 +179,36 @@ export function SessionHost({id}:{id:string}) {
   async function submit(value?:string){if(fatal||!online||!loaded||!mounted||sending||activeRun)return;const text=trimTrailingEmptyRoleplayLines(value??draft);if(!text.trim())return;const revision=draftRevision.current;try{await send(text);if(draftRevision.current===revision)updateDraft('');}catch(error){setNotice(error instanceof Error?error.message:'发送失败');}}
   async function saveSettings(){
     setSettingsSaving(true);setSettingsError('');
-    if(!settingsPreset || !settingsModel){setSettingsError('必须选择预设和 API 模型');setSettingsSaving(false);return;}
+    const configChanged=settingsTitle.trim()!==title||settingsPreset!==(preset??'')||settingsModel!==(modelConfig??'');
+    if(configChanged&&(!settingsPreset||!settingsModel||activeRun||sending)){
+      setSettingsError(!settingsPreset||!settingsModel?'修改会话配置时必须选择预设和 API 模型':'生成过程中不能修改会话配置');
+      setSettingsSaving(false);return;
+    }
     try{
-      await api(base,{method:'PATCH',body:json({title:settingsTitle.trim()||null,presetId:settingsPreset,apiModelConfigId:settingsModel})});
-      setTitle(settingsTitle.trim());setPreset(settingsPreset);setModelConfig(settingsModel);setSettingsOpen(false);
+      if(configChanged){
+        await api(base,{method:'PATCH',body:json({title:settingsTitle.trim()||null,presetId:settingsPreset,apiModelConfigId:settingsModel})});
+        setTitle(settingsTitle.trim());setPreset(settingsPreset);setModelConfig(settingsModel);
+      }
+      fontSizeBeforeSettings.current=settingsFontSize;setFontSize(settingsFontSize);
+      try {localStorage.setItem(fontPreferenceKey,String(settingsFontSize));}
+      catch {setNotice('阅读字号已应用，但浏览器无法保存本地偏好');}
+      setSettingsOpen(false);
     }
     catch(error){setSettingsError(error instanceof Error?error.message:'保存失败');}
     finally{setSettingsSaving(false);}
   }
   const currentPreset=presets.find(p=>p.id===preset)?.name??'未选择预设';
   const currentModel=modelConfigs.find(m=>m.id===modelConfig)?.name??'未选择模型';
+  function openSettings(){
+    setSettingsTitle(title);setSettingsPreset(preset??'');setSettingsModel(modelConfig??'');setSettingsError('');
+    fontSizeBeforeSettings.current=fontSize;setSettingsFontSize(fontSize);setSettingsOpen(true);
+  }
+  function cancelSettings(){
+    setFontSize(fontSizeBeforeSettings.current);setSettingsFontSize(fontSizeBeforeSettings.current);
+    setSettingsOpen(false);
+  }
+  const settingsConfigChanged=settingsTitle.trim()!==title||settingsPreset!==(preset??'')||settingsModel!==(modelConfig??'');
+  const canSaveSettings=!settingsSaving&&(!settingsConfigChanged||(!activeRun&&!sending&&!!settingsPreset&&!!settingsModel));
   return <div className="host">
     <div className="hostbar">
       <div className="host-title">
@@ -184,19 +222,18 @@ export function SessionHost({id}:{id:string}) {
           aria-label={fatal?'运行异常':!online?'连接中断':activeRun?'生成中':'已就绪'}
           title={fatal?'运行异常':!online?'连接中断':activeRun?'生成中':'已就绪'}
         />
-        <button className="host-settings-button" disabled={fatal} aria-label="会话设置" title="会话设置" aria-expanded={settingsOpen} onClick={()=>{
-          setSettingsTitle(title);setSettingsPreset(preset??'');setSettingsModel(modelConfig??'');
-          setSettingsOpen(open=>!open);
-        }}><Settings2 size={17} aria-hidden="true"/><span className="host-settings-label">会话设置</span></button>
+        <button className="host-settings-button" disabled={fatal} aria-label="会话设置" title="会话设置" aria-expanded={settingsOpen} onClick={openSettings}><Settings2 size={17} aria-hidden="true"/><span className="host-settings-label">会话设置</span></button>
       </div>
     </div>
-    {settingsOpen&&<div className="host-settings">
-      <label>会话标题<input value={settingsTitle} onChange={e=>setSettingsTitle(e.target.value)}/></label>
-      <label>预设<select value={settingsPreset} onChange={e=>setSettingsPreset(e.target.value)} disabled={!!activeRun||sending}><option value="">请选择预设</option>{presets.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></label>
-      <label>API 模型<select value={settingsModel} onChange={e=>setSettingsModel(e.target.value)} disabled={!!activeRun||sending}><option value="">请选择模型</option>{modelConfigs.map(m=><option value={m.id} key={m.id}>{m.name} · {m.modelId}</option>)}</select></label>
-      {settingsError&&<p role="alert">{settingsError}</p>}
-      <div><button className="button secondary" onClick={()=>setSettingsOpen(false)}>取消</button><button className="button primary" disabled={settingsSaving||!!activeRun||sending||!settingsPreset||!settingsModel} onClick={()=>void saveSettings()}>{settingsSaving?'保存中…':'保存设置'}</button></div>
-    </div>}
+    <SessionTokenUsage sessionId={id} refreshKey={usageRevision}/>
+    {settingsOpen&&<SessionSettingsDialog
+      title={settingsTitle} preset={settingsPreset} model={settingsModel}
+      presets={presets} models={modelConfigs} fontSize={settingsFontSize}
+      saving={settingsSaving} error={settingsError} disabled={!!activeRun||sending} canSave={canSaveSettings}
+      onTitleChange={setSettingsTitle} onPresetChange={setSettingsPreset} onModelChange={setSettingsModel}
+      onFontSizeChange={value=>{setSettingsFontSize(value);setFontSize(value);}}
+      onCancel={cancelSettings} onSave={()=>void saveSettings()}
+    />}
     {notice&&<div className="notice" role="alert">{notice}{!fatal&&<button aria-label="关闭通知" onClick={()=>setNotice('')}>×</button>}</div>}
     {fatal?<div className="host-fatal" role="alert"><p>世界卡运行界面异常</p><a className="button secondary" href="/sessions">返回会话列表</a><button className="button secondary" onClick={()=>location.reload()}>重新加载</button></div>:<iframe ref={frame} title="会话页面" sandbox="allow-scripts" src={'/frame.html#'+nonce}/>}
     <div className="host-composer">

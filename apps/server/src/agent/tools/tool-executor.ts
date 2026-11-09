@@ -29,8 +29,10 @@ export class ToolExecutor {
       }
       for (const [key, value] of Object.entries(candidate)) workspace[key] = value;
       result = { ok: true, updated: args.updates.length };
-    } catch {
-      result = { ok: false, code: ErrorCodes.INVALID_STATE_UPDATE };
+    } catch (error) {
+      const code = error instanceof Error && error.message === ErrorCodes.INVALID_TOOL_CALL
+        ? ErrorCodes.INVALID_TOOL_CALL : ErrorCodes.INVALID_STATE_UPDATE;
+      result = { ok: false, code };
     }
     return {
       role: 'toolResult', toolCallId: call.id, toolName: call.name,

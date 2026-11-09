@@ -6,7 +6,7 @@ import type { CredentialStore } from '../../infrastructure/credentials/store.js'
 import { decodeMessageState, validateSnapshot, type Json } from '../../domain/state/state.js';
 import { storedError } from '../../domain/world-card.js';
 import { readWorld } from '../../repositories/world-repository.js';
-import { buildContext, estimateTokens } from './prompt-builder.js';
+import { buildContext, estimateNarrativeItemSize, estimateMessageBytes } from './prompt-builder.js';
 import { SR_RP_SUMMARY_GUIDANCE } from './system-main.js';
 import { compressHistory, type HistoryItem } from './history-compactor.js';
 import { stateTool } from '../tools/state-tool.js';
@@ -14,9 +14,29 @@ import { RuntimeError } from '../shared/errors.js';
 import type { PreparedRun } from '../runtime/types.js';
 import type { RunStore } from '../persistence/run-store.js';
 import type { ModelClient } from '../model/model-client.js';
-import type { RunContext } from '../persistence/usage-store.js';
+import type { ContextComposition, RunContext, SessionUsage } from '../persistence/usage-store.js';
 
 type SummaryRequest = Parameters<Parameters<typeof compressHistory>[0]['summarize']>[0];
+const CONTEXT_STRATEGIES = { compact:131_072, standard:262_144, extended:524_288 } as const;
+export function contextTriggerThreshold(strategy: keyof typeof CONTEXT_STRATEGIES, modelWindow: number, output: number): number {
+  return Math.min(CONTEXT_STRATEGIES[strategy], modelWindow) - output - 1024 - 2048;
+}
+
+/** Structural byte-size illustration of system, summary, and retained history. */
+export function estimateContextComposition(
+  context: ReturnType<typeof buildContext>, history: HistoryItem[], input: string,
+): ContextComposition {
+  const systemMessages = context.trace([]).filter(row => row.nodeId !== 'chatHistory' && row.nodeId !== 'userInput')
+    .flatMap(row => row.messages);
+  const summary = history.find(item => item.id === 'summary');
+  return {
+    systemBytes: estimateMessageBytes(systemMessages),
+    summaryBytes: summary ? estimateNarrativeItemSize(summary) : 0,
+    historyBytes: history.filter(item => item.id !== 'summary')
+      .reduce((total, item) => total + estimateNarrativeItemSize(item), 0)
+      + estimateNarrativeItemSize({ role:'user', text:input }),
+  };
+}
 
 /** Remove player direction before chunking, preserving code-point offsets for trace boundaries. */
 export function summaryNarrative(text: string, role: 'user' | 'assistant'): string {
@@ -48,9 +68,9 @@ export class ContextManager {
     if (temperature !== undefined && (!Number.isFinite(temperature) || temperature < 0 || temperature > 2)) {
       throw new RuntimeError(ErrorCodes.INVALID_MODEL_PARAMETERS);
     }
+    const strategy = preset.budget?.context_strategy;
     if (!Number.isInteger(preset.budget?.max_output_tokens) || preset.budget.max_output_tokens <= 0 ||
-      (preset.budget.max_context_tokens !== undefined &&
-        (!Number.isInteger(preset.budget.max_context_tokens) || preset.budget.max_context_tokens <= 0))) {
+      !Object.hasOwn(CONTEXT_STRATEGIES, strategy)) {
       throw new RuntimeError(ErrorCodes.INVALID_PRESET_BUDGET);
     }
     const config = this.store.modelConfig(session.api_model_config_id);
@@ -96,18 +116,22 @@ export class ContextManager {
     const tools = context.activeModules.message.size > 0 ? [stateTool] : [];
     const buildMessages = (records: HistoryItem[]): Message[] => context.messages(records);
     const output = preset.budget.max_output_tokens;
-    const budget = Math.min(preset.budget.max_context_tokens ?? model.contextWindow, model.contextWindow) - output - 1024;
-    if (!Number.isFinite(budget) || budget <= 0 || output > model.maxTokens ||
-      estimateTokens(buildMessages([]), JSON.stringify(tools)) > budget) {
+    const budget = contextTriggerThreshold(strategy as keyof typeof CONTEXT_STRATEGIES, model.contextWindow, output);
+    if (!Number.isFinite(budget) || budget <= 0 || output > model.maxTokens) {
       throw new RuntimeError(ErrorCodes.CONTEXT_BUDGET_EXCEEDED);
     }
 
+    const snapshot = (JSON.parse(String(session.usage_json)) as SessionUsage).latestContext;
+    const validSnapshot = snapshot && snapshot.outputTokens !== undefined &&
+      snapshot.apiModelConfigId === session.api_model_config_id && snapshot.modelId === model.id;
+    const shouldCompact = !validSnapshot || snapshot.inputTokens + snapshot.outputTokens! >= budget;
+
     const summaryGeneration: Array<{ request: unknown; response: string }> = [];
     const compressed = await compressHistory({
-      history, oldSummary: previousSummary, budget, build: buildMessages, toolJson: JSON.stringify(tools),
+      history, oldSummary: previousSummary, shouldCompact,
       summarize: async request => {
         const result = await this.summarize(request, {
-          model, key, signal, output, temperature, budget, runContext: args.runContext,
+          model, key, signal, output, temperature, runContext: args.runContext,
           renderPrompt: () => context.render(preset.summary_prompt),
         });
         summaryGeneration.push(...result.generations);
@@ -116,6 +140,10 @@ export class ContextManager {
     });
     if (signal.aborted) throw new RuntimeError(ErrorCodes.RUN_STOPPED);
     const messages = buildMessages(compressed.history);
+    // The provider reports only one aggregate input count. This separate composition
+    // is intentionally a byte-size illustration of the three visible prompt sections,
+    // not a tokenizer-derived or billable Token breakdown.
+    const contextComposition = estimateContextComposition(context, compressed.history, input);
     if (debugEnabled()) {
       const rows = context.trace(compressed.history);
       console.log(`\n┌─ 预设节点顺序 ─ run=${JSON.stringify(runId)} ─`);
@@ -126,7 +154,7 @@ export class ContextManager {
     return {
       model, key, messages, tools, modules, worldState: world.state,
       active: context.activeModules.message, workspace: views.message, userInput: input,
-      output, temperature, summary: compressed.summary, summaryGeneration,
+      output, temperature, contextComposition, summary: compressed.summary, summaryGeneration,
       diagnostics: context.diagnostics,
     };
   }
@@ -134,7 +162,7 @@ export class ContextManager {
   /** Split oversized compaction inputs without losing character ranges or history boundaries. */
   private async summarize(request: SummaryRequest, config: {
     model: Model<Api>; key: string; signal: AbortSignal; output: number; temperature?: number;
-    budget: number; renderPrompt: () => string; runContext?: RunContext;
+    renderPrompt: () => string; runContext?: RunContext;
   }): Promise<{ text: string; generations: Array<{ request: unknown; response: string }> }> {
     let previous = request.previous;
     const source = request.chunks.map(item => ({ item, chars: Array.from(summaryNarrative(item.text, item.role)), offset: 0 }));
@@ -152,7 +180,8 @@ export class ContextManager {
         while (low <= high) {
           const mid = Math.floor((low + high) / 2);
           const candidate = { sourceEntryId: part.item.id, start: part.offset, end: mid, role: part.item.role, text: part.chars.slice(part.offset, mid).join('') };
-          if (estimateTokens(makeMessages([...batch, candidate])) <= config.budget) { fit = mid; low = mid + 1; }
+          // Character limit only bounds summary batches; it is not a Token estimate.
+          if (Array.from(JSON.stringify([...batch, candidate])).length <= 12_000) { fit = mid; low = mid + 1; }
           else high = mid - 1;
         }
         if (fit === part.offset) break;

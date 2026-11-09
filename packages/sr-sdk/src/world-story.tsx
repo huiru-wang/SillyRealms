@@ -48,9 +48,34 @@ export function WorldStory({showState=true}:{showState?:boolean}={}){
   const initialPositionPending=useRef(true);
   const loadingMoreRef=useRef(false);
   const pendingScrollAnchor=useRef<ReturnType<typeof captureScrollAnchor>|null>(null);
+  const fontChangeSnapshot=useRef<{anchor:ReturnType<typeof captureScrollAnchor>;wasAtEnd:boolean}|null>(null);
   const [showLatest,setShowLatest]=useState(false);
   useEffect(()=>{const query=window.matchMedia('(max-width: 760px)');const update=()=>setMobile(query.matches);query.addEventListener('change',update);return()=>query.removeEventListener('change',update);},[]);
   const closeState=()=>{setStateOpen(false);requestAnimationFrame(()=>stateButton.current?.focus());};
+  useEffect(()=>{
+    let frame=0;
+    const before=()=>{
+      const element=view.current;if(!element)return;
+      fontChangeSnapshot.current={anchor:captureScrollAnchor(element),wasAtEnd:stickToEnd.current};
+    };
+    const after=()=>{
+      const snapshot=fontChangeSnapshot.current;fontChangeSnapshot.current=null;
+      if(!snapshot)return;
+      cancelAnimationFrame(frame);
+      frame=requestAnimationFrame(()=>{
+        const element=view.current;if(!element)return;
+        if(snapshot.wasAtEnd){element.scrollTop=element.scrollHeight;setShowLatest(false);}
+        else if(snapshot.anchor.messageId)restoreScrollAnchor(element,snapshot.anchor);
+      });
+    };
+    window.addEventListener('sr:font-size-will-change',before);
+    window.addEventListener('sr:font-size-changed',after);
+    return()=>{
+      window.removeEventListener('sr:font-size-will-change',before);
+      window.removeEventListener('sr:font-size-changed',after);
+      cancelAnimationFrame(frame);
+    };
+  },[]);
   useEffect(()=>{
     let live=true,initial=true;const pending:RunEvent[]=[];
     initialPositionPending.current=true;

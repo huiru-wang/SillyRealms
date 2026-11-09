@@ -84,6 +84,14 @@ function assistant(text:string): Message {
   return { role:'assistant', content:[{type:'text',text}], api:'openai-completions', provider:'sillyrealms', model:'history', usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}, stopReason:'stop', timestamp:Date.now() };
 }
 /** Conservative UTF-8 byte count with per-message and tool overhead. */
-export function estimateTokens(messages: Message[], toolJson = ''): number {
+export function estimateMessageBytes(messages: Message[], toolJson = ''): number {
   return messages.reduce((sum,m) => sum + Buffer.byteLength(JSON.stringify(m),'utf8') + 16, Buffer.byteLength(toolJson,'utf8'));
+}
+
+/** Structural size estimate only; not a provider tokenizer or billable Token count. */
+export function estimateNarrativeItemSize(item: Narrative): number {
+  const message: Message = item.role === 'user'
+    ? { role:'user', content:item.text, timestamp:0 }
+    : assistant(item.text);
+  return Buffer.byteLength(JSON.stringify(message), 'utf8') + 16;
 }

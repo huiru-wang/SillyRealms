@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/infrastructure/database/database.js';
+import { seedSession, seedWorld } from './fixtures/db-seed.js';
 
 describe('database initialization', () => {
   it('creates eight tables with restrictive foreign keys and can be repeated', () => {
@@ -9,7 +10,7 @@ describe('database initialization', () => {
     expect(rows).toHaveLength(8);
     expect(rows.some(row=>String(row.sql).includes('REFERENCES presets'))).toBe(true);
     expect(db.prepare('PRAGMA foreign_keys').get()?.foreign_keys).toBe(1);
-    expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(0);
+    expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(1);
     db.close();
   });
   it('allows only configured LAN origins in addition to local origins', async () => {
@@ -28,6 +29,40 @@ describe('database initialization', () => {
     expect((await app.request('/health', { headers: { Origin: 'https://example.com' } })).status).toBe(403);
     db.close();
   });
+});
+
+it('replaces legacy presets once and keeps sessions, history, worlds and model settings', async () => {
+  const {mkdtempSync,rmSync}=await import('node:fs');
+  const {join}=await import('node:path');
+  const {tmpdir}=await import('node:os');
+  const dir=mkdtempSync(join(tmpdir(),'sr-preset-migrate-')),path=join(dir,'app.sqlite');
+  try {
+    const before=openDatabase(path);
+    before.prepare('INSERT INTO presets VALUES(?,?,?,?,?)').run('custom','自定义','{"name":"自定义"}',1,1);
+    before.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)').run('model','model','fake','fake','ref',1,1);
+    seedWorld(before,'world',undefined,'custom','model');
+    seedSession(before,'session','world','custom','player','entry','保留','{}',1,1,'model');
+    before.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+      .run('entry','session',null,'r',1,'message','assistant',0,1,'{"message":{"role":"assistant","content":"保留故事"}}','{}');
+    before.prepare("UPDATE sessions SET usage_json=json_set(usage_json,'$.latestContext',json('{\"inputTokens\":5}')) WHERE id='session'").run();
+    before.prepare("UPDATE app_settings SET default_preset_id='custom',default_api_model_config_id='model'").run();
+    before.exec('PRAGMA user_version = 0');
+    before.close();
+    const after=openDatabase(path);
+    expect(after.prepare('SELECT id FROM presets').all()).toEqual([{id:'sr-default-preset'}]);
+    const preset=JSON.parse(String(after.prepare('SELECT config_json FROM presets').get()?.config_json));
+    expect(preset.budget).toEqual({context_strategy:'standard',max_output_tokens:2048});
+    expect(after.prepare("SELECT preset_id,title,api_model_config_id FROM sessions WHERE id='session'").get()).toMatchObject({preset_id:'sr-default-preset',title:'保留',api_model_config_id:'model'});
+    expect(JSON.parse(String(after.prepare("SELECT usage_json FROM sessions WHERE id='session'").get()?.usage_json)).latestContext).toBeNull();
+    expect(after.prepare("SELECT payload FROM entries WHERE id='entry'").get()?.payload).toContain('保留故事');
+    expect(after.prepare("SELECT default_preset_id,default_api_model_config_id FROM worlds WHERE id='world'").get()).toMatchObject({default_preset_id:'sr-default-preset',default_api_model_config_id:'model'});
+    expect(after.prepare('SELECT default_preset_id,default_api_model_config_id FROM app_settings').get()).toMatchObject({default_preset_id:'sr-default-preset',default_api_model_config_id:'model'});
+    after.prepare('INSERT INTO presets VALUES(?,?,?,?,?)').run('new','新预设','{}',2,2);
+    after.close();
+    const again=openDatabase(path);
+    expect(again.prepare("SELECT id FROM presets WHERE id='new'").get()).toBeDefined();
+    again.close();
+  } finally {rmSync(dir,{recursive:true,force:true});}
 });
 
 it('marks persisted in-flight data interrupted on startup recovery', async () => {

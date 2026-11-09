@@ -1,12 +1,12 @@
 # SillyRealms 会话 Token 统计实施方案
 
-> 状态：**设计已确认，待实现**（2026-11-08）。
+> 状态：**已实现**（2026-11-09）。
 >
 > **产品范围仅有两个维度：Session 累计消耗、最新上下文占用。**
 >
 > 继续采用 `entries.metrics_json` 和 `sessions.usage_json` 两个新增字段，不为统计新建 `runs` / `model_requests` 表；在 `AgentRuntime` 统一调用 `RunPostProcessor`，Run 结束后归集到 Session。仅统计 Token，**不计算费用**。首字、请求总耗时等如果保留，只作为 Entry/Run 运行诊断，不作为 Session 的第三类统计或顶栏核心指标。
 >
-> 与现有 `Session / Entry / Run` 生命周期、世界线分叉、历史压缩、取消和 Creator iframe 隔离兼容。本文件是待实施方案，**未修改业务代码或真实数据库**。
+> 与现有 `Session / Entry / Run` 生命周期、世界线分叉、历史压缩、取消和 Creator iframe 隔离兼容。本文件记录已落地的数据模型与统计口径。
 
 ## 1. 两个维度的业务定义
 
@@ -313,3 +313,39 @@ interface RunPostProcessor {
 ---
 
 **最终标准**：Session 的两个核心统计维度分别回答“整个会话累计消耗多少 Token（输入、输出、缓存读写）”以及“最近一次主生成请求的上下文有多大”；Run 结束后统一、幂等入账，同时保留 Entry 级请求明细与压缩后上下文的准确口径。
+
+
+## 5. 平台层 UI 与实现记录（2026-11-09）
+
+### 5.1 统计面板
+
+- 平台 SessionHost 直接调用已有 GET /api/v1/sessions/:id/usage，不新增统计查询接口。
+- 首次进入会话读取一次；收到 usage.updated、Run 进入终态、SSE 重连时重新读取。没有逐 delta 轮询。
+- 桌面端在平台顶栏下方紧凑展示两个并列区块：模型上下文组成、会话累计消耗。
+- 上下文组成分段固定为 **系统 → 摘要 → 历史消息**，颜色分别为 slate、purple、amber；累计消耗拆分普通输入、缓存读取、缓存写入、输出。缓存读写从输入中扣除后单独展示，不能重复累加。
+- 移动端默认收起为单行摘要；展开详情使用绝对定位浮层，不改变 iframe 的布局高度。
+- 统计读取失败只影响统计面板，不影响 Agent / Story。
+
+### 5.2 上下文结构比例的口径
+
+Provider 只返回整次请求的输入 Token，不提供系统、摘要、历史三部分的精确 Token 分项。当前 UI 不调用 Tokenizer，也不将字节估算伪装成 Token：
+
+- contextComposition.systemBytes：最终 Prompt 中 systemMain 与除 chatHistory、userInput 外的预设节点序列化文本体量。
+- contextComposition.summaryBytes：最终保留摘要的序列化文本体量；无摘要时为 0。
+- contextComposition.historyBytes：摘要以外的保留历史消息，加上本轮用户输入的序列化文本体量。
+- 三项仅用于分段比例，**不是模型实际 Token 数或计费数据**。工具定义、Provider 封装及其他运行时动态元数据不单独绘制；动态状态文本随其所在系统节点归入系统段。
+- 组成快照随 generation 请求元数据写入既有 sessions.usage_json.latestContext，与真实 Provider Usage 一起持久化。旧会话没有该字段时显示“结构快照不可用”，不回填虚构比例。
+
+### 5.3 阅读字号
+
+- 平台会话设置改用原生 modal dialog，保留标题、预设、模型配置，增加“阅读字体大小”控制；纯阅读字号偏好不要求会话必须先配置预设和模型。
+- 默认 16px，范围 13–21px，步长 1px；调整时实时预览，保存到 localStorage，按 session ID 隔离。
+- Host 通过既有 MessageChannel 发送 appearance {fontSize}；frame 校验范围后设置 --sr-story-font-size。官方 WorldStory 的 .sr-rich 使用该变量；创作者自定义 React UI 不被强制改写，可选择使用该 CSS 变量。
+- 字号变化前后通过 sr:font-size-will-change / sr:font-size-changed 事件捕获并恢复 WorldStory 滚动锚点；在底部阅读时保持底部。
+- frame 固定 text-size-adjust:100% 禁止移动端浏览器根据长文本自动调整字号。默认正文从原来的 13px 调整为 16px；移动端输入框固定 16px，避免 iOS 聚焦缩放。
+
+### 5.4 验证
+
+- 服务端：上下文结构估算、Usage 持久化回归。
+- 平台 Host：用量初次读取与 usage.updated 刷新、系统/摘要/历史消息顺序、弹窗、字号预览取消。
+- 浏览器：桌面 1280px 与移动端 375px；移动端统计展开不改变 iframe 高度；WorldStory 5/50/200 条消息字号一致；字号变化后中段阅读锚点保持、取消恢复字号、保存后按会话持久化。

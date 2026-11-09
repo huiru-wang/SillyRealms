@@ -24,9 +24,9 @@ describe('content activation and direct state tool', () => {
     expect(state.people).toEqual({Alice:{hp:70}});
     expect(()=>setState(state,fields,new Set(['people']),'people.__proto__',{})).toThrow();
   });
-  it('describes the mandatory batch decision rules',()=>{
+  it('requires a state call with empty updates when unchanged',()=>{
     const text=stateToolInstructions();
-    expect(text).toContain('【状态更新判断】');expect(text).toContain('updates');expect(text).toContain('没有任何变化');
+    expect(text).toContain('【状态更新判断】');expect(text).toContain('本轮至少调用一次 update_state');expect(text).toContain('{"updates":[]}');
   });
 });
 

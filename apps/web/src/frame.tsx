@@ -43,6 +43,13 @@ window.addEventListener('message',function receive(event){
       if(request)(payload.error?request.reject(Error(payload.error)):request.resolve(payload.data));
     } else if(payload.type==='theme') {
       document.documentElement.dataset.theme=payload.value==='dark'?'dark':'light';
+    } else if(payload.type==='appearance') {
+      const size=payload.fontSize;
+      if(Number.isInteger(size)&&size>=13&&size<=21){
+        window.dispatchEvent(new Event('sr:font-size-will-change'));
+        document.documentElement.style.setProperty('--sr-story-font-size',size+'px');
+        window.dispatchEvent(new Event('sr:font-size-changed'));
+      }
     } else if(payload.type==='connected') {
       void state.refresh().catch(error=>port.postMessage({type:'sdk-error',message:error instanceof Error?error.message:'状态读取失败'}));
     } else if(payload.type==='event') {

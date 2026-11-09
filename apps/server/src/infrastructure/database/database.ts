@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { randomUUID } from 'node:crypto';
 import { UsageStore } from '../../agent/persistence/usage-store.js';
 
 
@@ -136,11 +137,33 @@ export function openDatabase(path: string): DatabaseSync {
     .map(id=>({id,name:builtinNames[id]!,kind:'system',source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true,
       ...(['main','postHistory'].includes(id)?{content:''}:{})}));
   const defaultPreset = {
-    name:'标准叙事', budget:{max_output_tokens:2048},
+    name:'标准叙事', budget:{context_strategy:'standard',max_output_tokens:2048},
     summary_prompt:'概述故事迄今发生的关键事件、角色、状态和未解决的线索，保持准确简洁。',
     nodes:defaultNodes,
   };
   const now=Date.now();
+  // One-time, explicitly approved replacement of legacy presets and references.
+  if (Number(db.prepare('PRAGMA user_version').get()?.user_version) < 1) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const temporaryId = randomUUID();
+      const temporaryName = randomUUID();
+      db.prepare('INSERT INTO presets(id,name,config_json,created_at,updated_at) VALUES(?,?,?,?,?)')
+        .run(temporaryId,temporaryName,JSON.stringify(defaultPreset),now,now);
+      db.prepare('UPDATE sessions SET preset_id=?,usage_json=json_set(usage_json,\'$.latestContext\',NULL)').run(temporaryId);
+      db.prepare('UPDATE worlds SET default_preset_id=?').run(temporaryId);
+      db.prepare('UPDATE app_settings SET default_preset_id=?').run(temporaryId);
+      db.exec("DELETE FROM tag_assignments WHERE tag_id IN (SELECT id FROM tags WHERE type='preset')");
+      db.prepare('DELETE FROM presets WHERE id <> ?').run(temporaryId);
+      db.prepare('INSERT INTO presets(id,name,config_json,created_at,updated_at) VALUES(?,?,?,?,?)')
+        .run('sr-default-preset',defaultPreset.name,JSON.stringify(defaultPreset),now,now);
+      db.prepare('UPDATE sessions SET preset_id=? WHERE preset_id=?').run('sr-default-preset',temporaryId);
+      db.prepare('UPDATE worlds SET default_preset_id=? WHERE default_preset_id=?').run('sr-default-preset',temporaryId);
+      db.prepare('UPDATE app_settings SET default_preset_id=? WHERE default_preset_id=?').run('sr-default-preset',temporaryId);
+      db.prepare('DELETE FROM presets WHERE id=?').run(temporaryId);
+      db.exec('PRAGMA user_version = 1; COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
+  }
   db.prepare('INSERT OR IGNORE INTO presets(id,name,config_json,created_at,updated_at) VALUES(?,?,?,?,?)')
     .run('sr-default-preset',defaultPreset.name,JSON.stringify(defaultPreset),now,now);
   // Safely migrate only known previous built-in text. Never overwrite custom prompts.

@@ -12,7 +12,7 @@ function setup(gateway:ModelGateway) {
   const db = openDatabase(':memory:'), now = Date.now();
   const world = { spec:'world_card',spec_version:'0.1',data:{name:'test',characters:[{id:'player',name:'player',player_selectable:true,description:'{{user}}'}],openings:[{id:'opening',name:'start',content:'opening'}]} };
   const ids = ['main','personaInfo','characterInfo','worldState','chatHistory','userInput','postHistory'];
-  const preset = {name:'test',budget:{max_output_tokens:64},summary_prompt:'summary',nodes:ids.map(id=>({id,kind:'system',role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true,content:id==='main'?'hello':''}))};
+  const preset = {name:'test',budget:{context_strategy:'standard',max_output_tokens:64},summary_prompt:'summary',nodes:ids.map(id=>({id,kind:'system',role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true,content:id==='main'?'hello':''}))};
   seedWorld(db,'world',world);
   db.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)').run('model-config','test','fake','fake','secret-ref',now,now);
   db.prepare('INSERT INTO presets(id,name,config_json,created_at,updated_at) VALUES(?,?,?,?,?)').run('preset','test',JSON.stringify(preset),now,now);
@@ -31,4 +31,30 @@ it('V1 runs survive an event disconnect and lock all sessions in their world',as
  const write=await app.request('/api/v1/sessions/other/state',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({updates:[{scope:'message',path:'hero.hp',value:7}]})});expect(write.status).toBe(200);expect(await write.json()).toMatchObject({data:[{success:false,message:'WORLD_BUSY'}]});
  await reader.cancel();release();const runId=(await run.json() as {data:{runId:string}}).data.runId;for(let i=0;i<100;i++){if((await (await app.request(`/api/v1/sessions/session/runs/${runId}`)).json() as {data:{status:string}}).data.status==='completed')break;await new Promise(r=>setTimeout(r,5));}
  const history=await (await app.request('/api/v1/sessions/session/runs?limit=5')).json() as {data:{runs:Array<{messages:Array<{role:string;text:string}>}>}};expect(history.data.runs.at(-1)?.messages.filter(s=>s.role==='assistant').map(s=>s.text).join('')).toBe('onetwo');db.close();
+});
+
+it('stops a Run while a continuation is waiting for the model',async()=>{
+  let started!:()=>void;const ready=new Promise<void>(resolve=>{started=resolve;});
+  let calls=0;
+  const gateway:ModelGateway={resolve:()=>model,toolVerified:()=>true,stream:(_m,_context,opts)=>({async *[Symbol.asyncIterator](){
+    calls++;
+    if(calls===1){
+      yield {type:'done',reason:'toolUse',message:{role:'assistant',content:[{type:'toolCall',id:'tool',name:'unknown',arguments:{}}],api:'openai-completions',provider:'fake',model:'fake',usage:{input:5,output:1,cacheRead:0,cacheWrite:0,totalTokens:6,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'toolUse',timestamp:Date.now()}} as AssistantMessageEvent;
+    }else{
+      started();
+      await new Promise<void>(resolve=>opts.signal.addEventListener('abort',()=>resolve(),{once:true}));
+    }
+  }})};
+  const {db}=setup(gateway);
+  try {
+    const {AgentRuntime}=await import('../src/agent/runtime/agent-runtime.js');
+    const runtime=new AgentRuntime(db,new MemoryCredentials(),gateway);
+    const {runId,stream}=await runtime.prepare('session','go',crypto.randomUUID(),'opening-entry');
+    const reader=stream.getReader();const draining=(async()=>{while(!(await reader.read()).done){/* drain */}})();
+    await ready;
+    expect((await runtime.stop('session',runId))?.status).toBe('stopped');
+    await draining;
+    expect(calls).toBe(2);
+    expect(runtime.busy('session')).toBe(false);
+  } finally {db.close();}
 });

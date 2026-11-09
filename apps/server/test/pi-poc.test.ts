@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PiGateway } from '../src/agent/model/pi-gateway.js';
+import { PiGateway, requiredToolChoice } from '../src/agent/model/pi-gateway.js';
+import { stateTool } from '../src/agent/tools/state-tool.js';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions';
 import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript';
@@ -68,8 +69,9 @@ describe('Pi SDK contract PoC', () => {
     vi.stubGlobal('fetch',async (_input:unknown,init:RequestInit) => { wasCalled=true; sentBody=JSON.parse(String(init.body)); return new Response(chunks.map(c=>`data: ${JSON.stringify(c)}\n\n`).join('')+'data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}}); });
     try {
       const events=[];
-      for await (const event of gateway.stream(selected!,{messages:[{role:'user',content:'hello',timestamp:0}]},{apiKey:'fake',signal:new AbortController().signal,maxTokens:20})) events.push(event.type);
+      for await (const event of gateway.stream(selected!,{messages:[{role:'user',content:'hello',timestamp:0}],tools:[stateTool]},{apiKey:'fake',signal:new AbortController().signal,maxTokens:20,toolChoice:requiredToolChoice(selected!)})) events.push(event.type);
       expect(wasCalled).toBe(true); expect(events).toContain('text_delta'); expect(events).toContain('done');
+      expect(sentBody).toMatchObject({tool_choice:'required'});
       const output=String(log.mock.calls[0]?.[0]); const logged=JSON.parse(output.slice(output.indexOf('{'),output.lastIndexOf('\n└─')));
       expect(logged).toMatchObject({provider:'deepseek',model:'deepseek-flash',payload:sentBody});
       expect(JSON.stringify(logged)).not.toContain('fake');

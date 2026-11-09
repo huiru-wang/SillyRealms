@@ -30,7 +30,7 @@ export class AgentRunner {
     release: () => void;
   }): Promise<void> {
     const { sessionId, runId, userId, prepared, task, runContext, streamController, release } = args;
-    const { model, key, messages, tools, modules, worldState, active, workspace, output, temperature } = prepared;
+    const { model, key, messages, tools, modules, worldState, active, workspace, output, temperature, contextComposition } = prepared;
     let outcome: RunOutcome = 'completed';
     const initialWorkspace = JSON.stringify(workspace);
     let partialId: string | null = null, partialText = '', pendingHigh = '';
@@ -66,47 +66,37 @@ export class AgentRunner {
     };
 
     try {
-      // When writable message state exists, require the single state tool on the
-      // narrative request itself. There is no separate review or continuation call.
-      const toolChoice = active.size > 0 ? requiredToolChoice(model) : undefined;
-      if (active.size > 0 && !toolChoice) throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
-      const request = runContext.request('generation');
-      let final: AssistantMessage | undefined;
-      for await (const event of this.client.events(model, { messages, tools }, {
-        apiKey: key, signal: task.controller.signal, maxTokens: output, temperature, toolChoice,
-      }, request)) {
-        if (task.stopped) break;
-        if (event.type === 'text_delta' && event.delta) {
-          let chunk = pendingHigh + event.delta;
-          pendingHigh = '';
-          const last = chunk.charCodeAt(chunk.length - 1);
-          if (last >= 0xd800 && last <= 0xdbff) {
-            pendingHigh = chunk.slice(-1);
-            chunk = chunk.slice(0, -1);
+      const conversation = [...messages];
+      let firstRequest = true;
+      let stateToolCalled = false;
+      while (!task.stopped) {
+        const request = runContext.request(firstRequest ? 'generation' : 'continuation', firstRequest ? contextComposition : undefined);
+        firstRequest = false;
+        let final: AssistantMessage | undefined;
+        for await (const event of this.client.events(model, { messages: conversation, tools }, {
+          apiKey: key, signal: task.controller.signal, maxTokens: output, temperature,
+          toolChoice: active.size > 0 && !stateToolCalled ? requiredToolChoice(model) : undefined,
+        }, request)) {
+          if (task.stopped) break;
+          if (event.type === 'text_delta' && event.delta) {
+            let chunk = pendingHigh + event.delta;
+            pendingHigh = '';
+            const last = chunk.charCodeAt(chunk.length - 1);
+            if (last >= 0xd800 && last <= 0xdbff) {
+              pendingHigh = chunk.slice(-1);
+              chunk = chunk.slice(0, -1);
+            }
+            await writeText(new TextDecoder().decode(new TextEncoder().encode(chunk)));
+          } else if (event.type === 'done') {
+            if (pendingHigh) { await writeText('\uFFFD'); pendingHigh = ''; }
+            final = event.message;
+          } else if (event.type === 'error' && !task.stopped) {
+            throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
           }
-          await writeText(new TextDecoder().decode(new TextEncoder().encode(chunk)));
-        } else if (event.type === 'done') {
-          if (pendingHigh) { await writeText('\uFFFD'); pendingHigh = ''; }
-          final = event.message;
-        } else if (event.type === 'error' && !task.stopped) {
-          throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
         }
-      }
-      if (task.stopped) outcome = 'stopped';
-      else {
+        if (task.stopped) break;
         if (!final) throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
         const calls = final.content.filter(p => p.type === 'toolCall');
-        if (active.size > 0) {
-          const callIndex = final.content.findIndex(p => p.type === 'toolCall');
-          const before = final.content.slice(0, callIndex);
-          const after = final.content.slice(callIndex + 1);
-          if (calls.length !== 1 || calls[0]!.name !== 'update_state' ||
-              !before.some(p => p.type === 'text' && p.text.trim()) ||
-              after.some(p => p.type === 'text' && p.text.trim()))
-            throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
-        } else if (calls.length) {
-          throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
-        }
         const finalText = final.content.filter(p => p.type === 'text').map(p => p.text).join('');
         const savedId = this.store.completeAssistant(sessionId, runId, final, finalText, partialId, partialText);
         try { this.usage.attachEntry(sessionId, runId, request.requestId, savedId); }
@@ -115,12 +105,33 @@ export class AgentRunner {
           runId, message: { id: savedId, role: 'assistant', text: finalText, status: 'completed', createdAt: final.timestamp },
         });
         if (partialId) this.emit(sessionId, 'message.final', { runId, messageId: partialId, status: 'completed' });
-        if (calls.length) {
-          const result = this.executor.execute(calls[0]!, workspace, modules, active);
+        partialId = null;
+        partialText = '';
+        pendingHigh = '';
+        if (!calls.length) {
+          if (active.size > 0 && !stateToolCalled) throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
+          break;
+        }
+        conversation.push(final);
+        for (const call of calls) {
+          if (call.name === 'update_state') stateToolCalled = true;
+          const result = this.executor.execute(call, workspace, modules, active);
           this.store.appendToolResult(sessionId, runId, result);
-          if (result.isError) throw new RuntimeError(ErrorCodes.INVALID_STATE_UPDATE);
+          conversation.push(result);
+          if (result.isError) {
+            let code: string = ErrorCodes.INVALID_TOOL_CALL;
+            try {
+              const detail = result.content.find(part => part.type === 'text');
+              const data = detail ? JSON.parse(detail.text) as { code?: unknown } : null;
+              if (typeof data?.code === 'string') code = data.code;
+            } catch { /* Generic tool errors need not be JSON. */ }
+            const failure = { runId, toolCallId: call.id, toolName: call.name, code };
+            debugLog(call.name === 'update_state' ? '状态更新失败' : '工具执行失败', failure);
+            this.emit(sessionId, 'tool.failed', failure);
+          }
         }
       }
+      if (task.stopped) outcome = 'stopped';
     } catch (error) {
       debugLog('模型执行异常', {
         sessionId, runId,

@@ -1,5 +1,10 @@
 # SillyRealms — Codex Project Instructions
 
+- Treat a session as one continuous history for new work; do not add world-branch logic unless explicitly requested. Explain product flows before technical details.
+- Context compaction uses the previous narrative request's reported input and output usage; see `docs/technical/context-compaction.md`.
+- Preset context strategies are compact (128K), standard (256K), and extended (512K), capped by the model context window.
+- Agent runs use a general model/tool loop: return tool results to the model and continue until it stops calling tools. With active writable message state, require at least one state tool call; use empty updates if nothing changes.
+
 ## Project identity
 SR is a local-first world-card client and runtime for multi-character narrative experiences, branching conversations, creator-defined React UIs, presets, and optional state.
 - `apps/web`: React 19.2 + Vite + TypeScript + Tailwind CSS 4.

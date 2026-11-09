@@ -1,5 +1,5 @@
 import {expect, it} from 'vitest';
-import {buildContext, estimateTokens} from '../src/agent/context/prompt-builder.js';
+import {buildContext, estimateMessageBytes} from '../src/agent/context/prompt-builder.js';
 import {SR_SYSTEM_MAIN} from '../src/agent/context/system-main.js';
 import {summaryNarrative} from '../src/agent/context/context-manager.js';
 
@@ -9,14 +9,14 @@ const main = {id:'main',kind:'system' as const,role:'system' as const,enabled:tr
 const character = {id:'characterInfo',kind:'system' as const,role:'system' as const,enabled:true};
 const input = {id:'userInput',kind:'system' as const,role:'user' as const,enabled:true};
 
-it('places the platform protocol first regardless of preset order and counts its tokens', () => {
+it('places the platform protocol first regardless of preset order and counts its bytes', () => {
   for (const nodes of [[main,character,input],[character,input,main],[input,character],[input]]) {
     const ctx=buildContext(world,nodes,'p',views,[],'继续');
     const messages=ctx.messages([]);
     expect(messages[0]).toMatchObject({role:'system',content:SR_SYSTEM_MAIN});
     expect(messages.filter(m=>m.role==='system'&&m.content===SR_SYSTEM_MAIN)).toHaveLength(1);
     expect(ctx.trace([])[0]).toMatchObject({nodeId:'systemMain',origin:'platform',editable:false});
-    expect(estimateTokens(messages)).toBeGreaterThan(Buffer.byteLength(SR_SYSTEM_MAIN));
+    expect(estimateMessageBytes(messages)).toBeGreaterThan(Buffer.byteLength(SR_SYSTEM_MAIN));
   }
 });
 

@@ -14,7 +14,7 @@ function setup(gateway:ModelGateway,presetId:string|null='preset'){
   const db=openDatabase(':memory:'),now=Date.now();
   const card={spec:'world_card',spec_version:'0.1',data:{name:'测试',characters:[{id:'p',name:'玩家',player_selectable:true}],openings:[{id:'o',name:'开局',content:'开场'}]}};
   const ids=['main','personaInfo','characterInfo','worldState','chatHistory','userInput','postHistory'];
-  const preset={name:'测试',budget:{max_output_tokens:64},summary_prompt:'摘要',nodes:ids.map(id=>({id,name:id,kind:'system',source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true}))};
+  const preset={name:'测试',budget:{context_strategy:'standard',max_output_tokens:64},summary_prompt:'摘要',nodes:ids.map(id=>({id,name:id,kind:'system',source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true}))};
   seedWorld(db,'world',card);
   db.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)').run('config','测试','fake','fake','ref',now,now);
   db.prepare('INSERT INTO presets(id,name,config_json,created_at,updated_at) VALUES(?,?,?,?,?)').run('preset','测试',JSON.stringify(preset),now,now);

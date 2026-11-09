@@ -4,16 +4,12 @@ import { debugLog } from '../../common/debug.js';
 import { stateTool } from '../tools/state-tool.js';
 import type { AssistantMessageEvent, Context, Model, Api, ToolChoice } from '@earendil-works/pi-ai';
 
-/** Concrete pi-ai adapters accept mandatory tool choice despite generic typing. */
+/** Map mandatory tool choice to the provider's wire protocol when supported. */
 export function requiredToolChoice(model: Model<Api>): ToolChoice | undefined {
   if (model.api === 'openai-completions' || model.api === 'openai-responses' ||
-      model.api === 'mistral-conversations' || model.api === 'openai-codex-responses') {
-    return 'required' as ToolChoice;
-  }
+      model.api === 'mistral-conversations' || model.api === 'openai-codex-responses') return 'required' as ToolChoice;
   if (model.api === 'anthropic-messages' || model.api === 'google-generative-ai' ||
-      model.api === 'google-vertex' || model.api === 'bedrock-converse-stream') {
-    return 'any' as ToolChoice;
-  }
+      model.api === 'google-vertex' || model.api === 'bedrock-converse-stream') return 'any' as ToolChoice;
   return undefined;
 }
 

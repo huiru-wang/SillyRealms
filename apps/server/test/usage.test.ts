@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, it } from 'vitest';
-import type { Api, AssistantMessageEvent, Model, Usage, ToolChoice } from '@earendil-works/pi-ai';
+import type { Api, AssistantMessageEvent, Model, Usage } from '@earendil-works/pi-ai';
 import type { CredentialStore } from '../src/infrastructure/credentials/store.js';
 import type { ModelGateway } from '../src/agent/model/pi-gateway.js';
 import { UsageStore, RunContext } from '../src/agent/persistence/usage-store.js';
@@ -29,7 +29,7 @@ function seed() {
   db.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)').run('config', 'test', 'fake', 'fake', 'ref', now, now);
   db.prepare('INSERT INTO presets(id,name,config_json,created_at,updated_at) VALUES(?,?,?,?,?)')
     .run('preset', 'test', JSON.stringify({
-      name: 'test', budget: { max_output_tokens: 64 }, summary_prompt: 'summary',
+      name: 'test', budget: { context_strategy:'standard', max_output_tokens: 64 }, summary_prompt: 'summary',
       nodes: ['main', 'personaInfo', 'characterInfo', 'worldState', 'chatHistory', 'userInput', 'postHistory']
         .map(id => ({ id, kind: 'system', role: id === 'chatHistory' ? 'auto' : id === 'userInput' ? 'user' : 'system',
           enabled: true, content: id === 'main' ? 'hello' : '' })),
@@ -58,7 +58,7 @@ it('aggregates assistant + compaction requests into one Run, with cache read/wri
   append(db, 'user', 'run-1', 3, 'user', 'message', 'compaction');
   store.attachCompaction('session', 'run-1');
 
-  const primary = run.request('generation');
+  const primary = run.request('generation', { systemBytes:1200, summaryBytes:500, historyBytes:2300 });
   store.beginRequest(primary, 'fake', 32768);
   store.finishRequest(primary, 'completed', tokenUsage(300, 50, 150, 50), 40, 150);
   append(db, 'assistant', 'run-1', 4, 'assistant', 'message', 'user');
@@ -72,7 +72,7 @@ it('aggregates assistant + compaction requests into one Run, with cache read/wri
       cacheReadTokens: 180, cacheWriteTokens: 60, reportedCount: 2, unknownCount: 0,
       cacheHitRate: 180 / 640, complete: true,
     },
-    latestContext: { inputTokens: 500, contextWindowTokens: 32768, modelId: 'fake', stale: false },
+    latestContext: { inputTokens: 500, contextWindowTokens: 32768, modelId: 'fake', stale: false, contextComposition:{systemBytes:1200,summaryBytes:500,historyBytes:2300} },
   });
   const assistantMetrics = JSON.parse(String(db.prepare("SELECT metrics_json FROM entries WHERE id='assistant'").get()?.metrics_json));
   expect(assistantMetrics.requestId).toBe(primary.requestId);
@@ -104,6 +104,68 @@ it('accounts for a failed preparation with no User Entry, then recovers persiste
     totalTokens: 190, unknownCount: 1, reportedCount: 1, complete: false,
   });
   expect(JSON.parse(String(db.prepare("SELECT usage_json FROM sessions WHERE id='session'").get()?.usage_json)).pendingRun).toBe(null);
+  db.close();
+});
+
+it('clears an old context snapshot when the latest narrative request has no usage', () => {
+  const db = seed(), store = new UsageStore(db);
+  store.beginRun('session', 'first', 'first-request');
+  const first = new RunContext('session', 'first', 'config').request('generation');
+  store.beginRequest(first, 'fake', 32768);
+  store.finishRequest(first, 'completed', tokenUsage(200, 30), undefined, 1);
+  store.settleRun('session', 'first', 'completed');
+  expect(store.view('session').latestContext).toMatchObject({inputTokens:200, outputTokens:30});
+  store.beginRun('session', 'second', 'second-request');
+  const second = new RunContext('session', 'second', 'config').request('generation');
+  store.beginRequest(second, 'fake', 32768);
+  store.finishRequest(second, 'error', undefined, undefined, 1);
+  store.settleRun('session', 'second', 'failed');
+  expect(store.view('session').latestContext).toBeNull();
+  db.close();
+});
+
+it.each([
+  {input:100, output:20, compress:false},
+  {input:31_600, output:80, compress:true},
+  {input:null, output:null, compress:true},
+])('uses reported context for compaction: $input / $output', async ({input,output,compress}) => {
+  const db = seed();
+  let parent = 'opening-entry';
+  for (let i = 0; i < 6; i++) {
+    const user = `user-${i}`, assistant = `assistant-${i}`;
+    append(db, user, `run-${i}`, 2 + i * 2, 'user', 'message', parent);
+    append(db, assistant, `run-${i}`, 3 + i * 2, 'assistant', 'message', user);
+    parent = assistant;
+  }
+  // A long multibyte history must not itself trigger compression when usage is low.
+  db.prepare('UPDATE entries SET payload=? WHERE id=?').run(
+    JSON.stringify({message:{role:'assistant',content:'故事'.repeat(30_000)}}), 'assistant-0');
+  if (input !== null && output !== null) {
+    const row = db.prepare('SELECT usage_json FROM sessions WHERE id=?').get('session')!;
+    const usage = JSON.parse(String(row.usage_json));
+    usage.latestContext = {inputTokens:input,outputTokens:output,contextWindowTokens:32768,
+      modelId:'fake',apiModelConfigId:'config',runId:'run-5',requestId:'last',finishedAt:1};
+    db.prepare('UPDATE sessions SET usage_json=? WHERE id=?').run(JSON.stringify(usage), 'session');
+  }
+  let calls = 0;
+  const gateway: ModelGateway = {
+    resolve: () => model, toolVerified: () => true,
+    stream: () => ({async *[Symbol.asyncIterator]() {
+      calls++;
+      yield {type:'text_delta',delta:'response',contentIndex:0,partial:{} as never} as AssistantMessageEvent;
+      yield {type:'done',reason:'stop',message:{role:'assistant',content:[{type:'text',text:'response'}],
+        api:'openai-completions',provider:'fake',model:'fake',usage:tokenUsage(100,20),stopReason:'stop',timestamp:Date.now()}} as AssistantMessageEvent;
+    }}),
+  };
+  const credentials: CredentialStore = { async get() { return 'test'; }, async set() {}, async delete() {} };
+  const { AgentRuntime } = await import('../src/agent/runtime/agent-runtime.js');
+  const runtime = new AgentRuntime(db, credentials, gateway);
+  const {runId,stream} = await runtime.prepare('session','continue',randomUUID(),parent);
+  const reader = stream.getReader();
+  while (!(await reader.read()).done) { /* drain */ }
+  expect(runtime.status('session',runId)?.status).toBe('completed');
+  expect(calls > 1).toBe(compress);
+  expect(Number(db.prepare("SELECT count(*) AS count FROM entries WHERE run_id=? AND type='compaction'").get(runId)?.count)).toBe(compress ? 1 : 0);
   db.close();
 });
 
@@ -191,7 +253,7 @@ it('migrates an existing database in place without resetting previously stored r
   } finally { rmSync(folder, { recursive: true, force: true }); }
 });
 
-it('counts only the narrative request for mandatory state-tool submissions', async () => {
+it('counts every request in the tool loop and uses the last continuation context', async () => {
   const db = openDatabase(':memory:');
   seedWorld(db, 'state-world', {
     spec: 'world_card', spec_version: '0.1', data: {
@@ -204,20 +266,21 @@ it('counts only the narrative request for mandatory state-tool submissions', asy
     },
   });
   const credentials: CredentialStore = { async get() { return 'test'; }, async set() {}, async delete() {} };
+  let callCount = 0;
   const gateway: ModelGateway = {
     resolve: () => model,
     toolVerified: () => true,
-    stream: (_model, _context, opts) => ({
+    stream: () => ({
       async *[Symbol.asyncIterator]() {
-        const required = opts.toolChoice === ('required' as ToolChoice);
+        const first = ++callCount === 1;
         const message = {
           role: 'assistant', api: 'openai-completions', provider: 'fake', model: 'fake',
-          content: required ? [{ type: 'text', text: 'story' },{ type: 'toolCall', id: 'state', name: 'update_state', arguments: { updates: [] } }]
+          content: first ? [{ type: 'text', text: 'story' },{ type: 'toolCall', id: 'state', name: 'update_state', arguments: { updates: [] } }]
             : [{ type: 'text', text: 'story' }],
-          usage: tokenUsage(600, 50, 400, 100),
-          stopReason: required ? 'toolUse' : 'stop', timestamp: Date.now(),
+          usage: first ? tokenUsage(600, 50, 400, 100) : tokenUsage(800, 80, 400, 100),
+          stopReason: first ? 'toolUse' : 'stop', timestamp: Date.now(),
         };
-        yield { type: 'done', reason: required ? 'toolUse' : 'stop', message } as AssistantMessageEvent;
+        yield { type: 'done', reason: first ? 'toolUse' : 'stop', message } as AssistantMessageEvent;
       },
     }),
   };
@@ -236,14 +299,14 @@ it('counts only the narrative request for mandatory state-tool submissions', asy
   expect(runtime.status(session.id, runId)?.status).toBe('completed');
   expect(new UsageStore(db).view(session.id)).toMatchObject({
     cumulative: {
-      inputTokens: 1100, outputTokens: 50, totalTokens: 1150,
-      cacheReadTokens: 400, cacheWriteTokens: 100, reportedCount: 1,
+      inputTokens: 2400, outputTokens: 130, totalTokens: 2530,
+      cacheReadTokens: 800, cacheWriteTokens: 200, reportedCount: 2,
     },
-    latestContext: { inputTokens: 1100, contextWindowTokens: 32768, stale: false },
+    latestContext: { inputTokens: 1300, outputTokens:80, contextWindowTokens: 32768, stale: false },
   });
   const entries = db.prepare("SELECT metrics_json FROM entries WHERE session_id=? AND role='assistant' AND run_id=?")
     .all(session.id, runId);
   const phases = entries.map(row => JSON.parse(String(row.metrics_json)).phase);
-  expect(phases).toEqual(['generation']);
+  expect(phases).toEqual(['generation','continuation']);
   db.close();
 });

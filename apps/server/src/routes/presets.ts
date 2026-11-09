@@ -8,7 +8,7 @@ import { referenceCounts } from '../repositories/config-references.js';
 
 const ids = ['main', 'personaInfo', 'characterInfo', 'worldState', 'chatHistory', 'userInput', 'postHistory'];
 const node = z.object({ id: z.string().min(1), kind: z.enum(['system', 'text']), name: z.string(), source: z.string().optional(), role: z.enum(['system', 'user', 'assistant', 'auto']), enabled: z.boolean(), content: z.string().optional() }).strict();
-const preset = z.object({ name: z.string().trim().min(1), description: z.string().optional(), model_parameters: z.object({temperature:z.number().min(0).max(2).optional()}).strict().optional(), budget: z.object({ max_context_tokens: z.number().int().positive().optional(), max_output_tokens: z.number().int().positive() }), summary_prompt: z.string(), nodes: z.array(node) }).strict().superRefine((p, ctx) => {
+const preset = z.object({ name: z.string().trim().min(1), description: z.string().optional(), model_parameters: z.object({temperature:z.number().min(0).max(2).optional()}).strict().optional(), budget: z.object({ context_strategy: z.enum(['compact','standard','extended']), max_output_tokens: z.number().int().positive() }).strict(), summary_prompt: z.string(), nodes: z.array(node) }).strict().superRefine((p, ctx) => {
   if ('state_update_mode' in p) ctx.addIssue({code:'custom',message:'state_update_mode is unsupported; state updates use tools only'});
   const nodeIds = p.nodes.map(n => n.id);
   if (new Set(nodeIds).size !== nodeIds.length) ctx.addIssue({ code: 'custom', message: 'Duplicate node ID' });
@@ -24,7 +24,7 @@ const normalizeStored = (value: any) => ({...value,nodes:value.nodes.map((n: {id
   ...(n.id==='main' && (!n.name || n.name==='main' || n.name==='主要提示')?{name:'叙事风格'}:{}),
 }))});
 const nodePatch = node.partial().extend({ id: z.string().min(1) }).strict();
-const patch = z.object({ name: z.string().min(1).optional(), description: z.string().nullable().optional(), model_parameters: z.object({temperature:z.number().min(0).max(2).optional()}).strict().optional(), budget: z.object({ max_context_tokens: z.number().int().positive().nullable().optional(), max_output_tokens: z.number().int().positive().optional() }).optional(), summary_prompt: z.string().optional(), nodes: z.array(nodePatch).optional(), add_nodes: z.array(node).optional(), remove_node_ids: z.array(z.string()).optional(), nodes_order: z.array(z.string()).optional() }).strict();
+const patch = z.object({ name: z.string().min(1).optional(), description: z.string().nullable().optional(), model_parameters: z.object({temperature:z.number().min(0).max(2).optional()}).strict().optional(), budget: z.object({ context_strategy: z.enum(['compact','standard','extended']).optional(), max_output_tokens: z.number().int().positive().optional() }).strict().optional(), summary_prompt: z.string().optional(), nodes: z.array(nodePatch).optional(), add_nodes: z.array(node).optional(), remove_node_ids: z.array(z.string()).optional(), nodes_order: z.array(z.string()).optional() }).strict();
 
 export function presetRoutes(db: DatabaseSync): Hono {
   const app = new Hono();
@@ -81,7 +81,6 @@ export function presetRoutes(db: DatabaseSync): Hono {
       const { nodes, add_nodes, remove_node_ids, nodes_order, budget, ...fields } = changes;
       const next = { ...current, ...fields, budget: { ...current.budget, ...budget }, nodes: [...current.nodes] };
       if (next.description === null) delete next.description;
-      if (next.budget.max_context_tokens === null) delete next.budget.max_context_tokens;
       if (nodes) {
         if (new Set(nodes.map(n => n.id)).size !== nodes.length) throw new Error('Duplicate node patch');
         for (const change of nodes) {

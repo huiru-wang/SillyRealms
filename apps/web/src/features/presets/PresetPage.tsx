@@ -7,7 +7,7 @@ import {ErrorNotice,Header,Loading,useLoad} from '../../app/ui';
 
 const BUILTIN=['main','personaInfo','characterInfo','worldState','chatHistory','userInput','postHistory'];
 function blankPreset(){
- return {name:'',description:'',model_parameters:{temperature:1},budget:{max_output_tokens:2048},summary_prompt:'总结此前发生的故事。',nodes:BUILTIN.map(id=>({
+ return {name:'',description:'',model_parameters:{temperature:1},budget:{context_strategy:'standard',max_output_tokens:2048},summary_prompt:'总结此前发生的故事。',nodes:BUILTIN.map(id=>({
   id,kind:'system',name:({main:'叙事风格',personaInfo:'玩家设定',characterInfo:'角色设定',worldState:'世界状态',chatHistory:'聊天历史',userInput:'玩家输入',postHistory:'历史后置'} as Record<string,string>)[id],
   source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true,...(id==='main'?{content:''}:{})
  }))};
@@ -88,7 +88,7 @@ export function PresetPage({isNew=false}:{isNew?:boolean}){
         <div className="editor-form editor-form-cols">
           <label>最大输出 Token<input type="number" min="1" value={draft.budget.max_output_tokens} onChange={e=>update({budget:{...draft.budget,max_output_tokens:Number(e.target.value)}})}/></label>
           <label>温度（0–2）<input type="number" min="0" max="2" step="0.1" value={draft.model_parameters?.temperature??1} onChange={e=>update({model_parameters:{...draft.model_parameters,temperature:Number(e.target.value)}})}/></label>
-          <label>最大上下文 Token（可留空）<input type="number" min="1" placeholder="使用模型默认限制" value={draft.budget.max_context_tokens??''} onChange={e=>{const n=e.target.value;const budget={...draft.budget};if(n)budget.max_context_tokens=Number(n);else delete budget.max_context_tokens;update({budget});}}/></label>
+          <label>上下文策略<select value={draft.budget.context_strategy} onChange={e=>update({budget:{...draft.budget,context_strategy:e.target.value}})}><option value="compact">轻量对话 · 128K</option><option value="standard">标准叙事 · 256K</option><option value="extended">长篇沉浸 · 512K</option></select><small>实际容量受会话所选模型的上下文窗口限制。</small></label>
           <label className="editor-wide">摘要 Prompt<textarea rows={3} value={draft.summary_prompt??''} onChange={e=>update({summary_prompt:e.target.value})}/></label>
         </div>
       </section>
