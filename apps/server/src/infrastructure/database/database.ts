@@ -118,7 +118,7 @@ export function openDatabase(path: string): DatabaseSync {
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
 
-  const defaultMain = [
+  const legacyMain = [
     '你是 SillyRealms 的世界叙事 Agent。根据世界卡、角色、世界书、历史及玩家输入推进故事，保持事实和时间线一致。',
     '尊重玩家对自己角色行动和内心的决定权；不要为了修改状态而虚构剧情事件。',
     '若当前世界存在可写的 message 状态，状态一致性属于本轮任务：叙事中的实际变化必须写入 update_state，不能只在正文中描述。',
@@ -126,14 +126,15 @@ export function openDatabase(path: string): DatabaseSync {
     '工具更新使用目标字段的完整替换值，勿在叙事中输出 JSON Patch 或内部状态检查过程。',
     '没有真实状态变化时不编造更新；工具执行失败应依据结果修正。',
   ].join('\n');
-  const defaultPostHistory = [
+  const legacyPostHistory = [
     '本轮结束前：若存在可写 message 状态，请核对刚刚发生的事件与状态定义。',
     '若确定有变化，调用 update_state 逐项同步；若没有变化，不要制造更新。',
     '所有状态更新以工具为准，正文描述不能代替写入；工具调用后不要继续推进剧情。',
   ].join('\n');
+  const builtinNames:Record<string,string> = {main:'叙事风格',personaInfo:'玩家设定',characterInfo:'角色设定',worldState:'世界状态',chatHistory:'聊天历史',userInput:'玩家输入',postHistory:'历史后置'};
   const defaultNodes = ['main','personaInfo','characterInfo','worldState','chatHistory','userInput','postHistory']
-    .map(id=>({id,name:id,kind:'system',source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true,
-      ...(id==='main'?{content:defaultMain}:id==='postHistory'?{content:defaultPostHistory}:{})}));
+    .map(id=>({id,name:builtinNames[id]!,kind:'system',source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true,
+      ...(['main','postHistory'].includes(id)?{content:''}:{})}));
   const defaultPreset = {
     name:'标准叙事', budget:{max_output_tokens:2048},
     summary_prompt:'概述故事迄今发生的关键事件、角色、状态和未解决的线索，保持准确简洁。',
@@ -142,24 +143,23 @@ export function openDatabase(path: string): DatabaseSync {
   const now=Date.now();
   db.prepare('INSERT OR IGNORE INTO presets(id,name,config_json,created_at,updated_at) VALUES(?,?,?,?,?)')
     .run('sr-default-preset',defaultPreset.name,JSON.stringify(defaultPreset),now,now);
-  // Backfill only the untouched empty built-in preset, never a customized one.
-  // Existing Sessions reference this preset ID and see the improvement on the next run.
+  // Safely migrate only known previous built-in text. Never overwrite custom prompts.
   const existingDefault = db.prepare("SELECT config_json FROM presets WHERE id='sr-default-preset'").get();
   if (existingDefault) {
     const existing = JSON.parse(String(existingDefault.config_json));
-    const expectedIds = defaultNodes.map(node => node.id);
-    const pristine = Array.isArray(existing.nodes) && existing.nodes.length === expectedIds.length &&
-      existing.nodes.every((node: {id:string;name:string;kind:string;source?:string;role:string;enabled:boolean;content?:string}, index: number) => {
-        const builtIn = defaultNodes[index]!;
-        return node.id === builtIn.id && node.name === builtIn.name && node.kind === builtIn.kind &&
-          node.source === builtIn.source && node.role === builtIn.role &&
-          node.enabled === builtIn.enabled && !node.content;
-      });
-    if (pristine) {
-      existing.nodes = defaultNodes;
-      db.prepare("UPDATE presets SET config_json=?,updated_at=? WHERE id='sr-default-preset'")
-        .run(JSON.stringify(existing),now);
+    let changed = false;
+    if (Array.isArray(existing.nodes)) for (const node of existing.nodes) {
+      if (node.id === 'main') {
+        if (node.content === legacyMain || node.content === undefined) { node.content = ''; changed = true; }
+      } else if (node.id === 'postHistory') {
+        if (node.content === legacyPostHistory || node.content === undefined) { node.content = ''; changed = true; }
+      }
+      if (builtinNames[node.id] && (node.name === node.id || node.name === '主要提示')) {
+        node.name = builtinNames[node.id]; changed = true;
+      }
     }
+    if (changed) db.prepare("UPDATE presets SET config_json=?,updated_at=? WHERE id='sr-default-preset'")
+      .run(JSON.stringify(existing),now);
   }
   db.prepare('INSERT OR IGNORE INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,?,?,?,?)')
     .run('sr-default-preset',null,now,now);

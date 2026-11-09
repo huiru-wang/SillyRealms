@@ -5,21 +5,26 @@ import { setState } from './state-tool.js';
 
 /** Tool routing is separate from the model loop; state validation stays in the state domain. */
 export class ToolExecutor {
-  /** Apply a review as one in-memory transaction; an invalid change must not partially update state. */
-  executeReview(
-    call: ToolCall, workspace: Record<string, Json>, modules: Record<string, any>, active: Set<string>,
+  /** Apply an entire update_state batch atomically: one invalid item rejects every change. */
+  execute(
+    call: ToolCall,
+    workspace: Record<string, Json>,
+    modules: Record<string, any>,
+    active: Set<string>,
   ): ToolResultMessage {
     let result: { ok: boolean; code?: string; updated?: number };
     try {
-      const args = call.arguments as Record<string, unknown>;
-      if (call.name !== 'review_state' || call.argumentsError || !Array.isArray(args?.updates) || args.updates.length > 100) {
+      const args = call.arguments as Record<string, unknown> | undefined;
+      if (call.name !== 'update_state' || call.argumentsError || !Array.isArray(args?.updates) || args.updates.length > 100)
         throw new Error(ErrorCodes.INVALID_TOOL_CALL);
-      }
       const candidate = structuredClone(workspace);
+      const paths = new Set<string>();
       for (const raw of args.updates) {
         if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(ErrorCodes.INVALID_TOOL_CALL);
         const update = raw as Record<string, unknown>;
-        if (typeof update.path !== 'string' || !Object.hasOwn(update, 'value')) throw new Error(ErrorCodes.INVALID_TOOL_CALL);
+        if (typeof update.path !== 'string' || !Object.hasOwn(update, 'value') || paths.has(update.path))
+          throw new Error(ErrorCodes.INVALID_TOOL_CALL);
+        paths.add(update.path);
         setState(candidate, modules, active, update.path, update.value);
       }
       for (const [key, value] of Object.entries(candidate)) workspace[key] = value;
@@ -31,33 +36,6 @@ export class ToolExecutor {
       role: 'toolResult', toolCallId: call.id, toolName: call.name,
       content: [{ type: 'text', text: JSON.stringify(result) }],
       isError: !result.ok, timestamp: Date.now(),
-    };
-  }
-
-  execute(
-    call: ToolCall,
-    workspace: Record<string, Json>,
-    modules: Record<string, any>,
-    active: Set<string>,
-  ): ToolResultMessage {
-    let result: { ok: boolean; code?: string };
-    try {
-      if (call.name !== 'update_state' || call.argumentsError ||
-        !(typeof call.arguments.path === 'string' || Array.isArray(call.arguments.path))) {
-        throw new Error(ErrorCodes.INVALID_TOOL_CALL);
-      }
-      setState(workspace, modules, active, call.arguments.path as string | string[], call.arguments.value);
-      result = { ok: true };
-    } catch {
-      result = { ok: false, code: ErrorCodes.INVALID_STATE_UPDATE };
-    }
-    return {
-      role: 'toolResult',
-      toolCallId: call.id,
-      toolName: call.name,
-      content: [{ type: 'text', text: JSON.stringify(result) }],
-      isError: !result.ok,
-      timestamp: Date.now(),
     };
   }
 }

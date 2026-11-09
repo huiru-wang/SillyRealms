@@ -25,6 +25,21 @@ describe('preset and model configuration', () => {
     expect((await app.request(`/api/v1/presets/${created.data.item.id}`, { method: 'DELETE' })).status).toBe(200);
     db.close();
   });
+  it('normalizes the legacy main label on import, read and export without changing its ID or prompt', async () => {
+    const db=openDatabase(':memory:'),app=createApp(db,new MemoryCredentials());
+    try {
+      const input=structuredClone(preset);
+      input.nodes[0]!.name='主要提示';
+      const created=await app.request('/api/v1/presets/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});
+      expect(created.status).toBe(201);
+      const item=(await created.json() as {data:{item:{id:string;nodes:Array<{id:string;name:string;content?:string}>}}}).data.item;
+      expect(item.nodes[0]).toMatchObject({id:'main',name:'叙事风格',content:'old'});
+      const read=(await (await app.request('/api/v1/presets/'+item.id)).json() as {data:{item:{nodes:Array<{name:string}>}}}).data.item;
+      expect(read.nodes[0]?.name).toBe('叙事风格');
+      const exported=await (await app.request('/api/v1/presets/'+item.id+'/export')).json() as {nodes:Array<{id:string;name:string;content?:string}>};
+      expect(exported.nodes[0]).toMatchObject({id:'main',name:'叙事风格',content:'old'});
+    } finally {db.close();}
+  });
   it('restores the old credential if updating its configuration fails', async () => {
     const db=openDatabase(':memory:'),store=new MemoryCredentials(),app=createApp(db,store);
     const directory=await (await app.request('/api/v1/providers/models')).json() as {data:{providers:Array<{providerId:string;models:Array<{id:string}>}>}};

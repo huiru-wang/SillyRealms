@@ -28,9 +28,9 @@ test('inserting into an empty first row replaces it without a leading or trailin
   const instance=editor();
   instance.update(() => {
     const paragraph=$createParagraphNode();$getRoot().append(paragraph);paragraph.selectStart();
-    $insertRoleplayBlock('thought');
+    $insertRoleplayBlock('speech');
   },{discrete:true});
-  assert.deepEqual(childSummary(instance),[{kind:'thought',text:''}]);
+  assert.deepEqual(childSummary(instance),[{kind:'speech',text:''}]);
   instance.getEditorState().read(()=>{
     const selection=$getSelection();assert.ok($isRangeSelection(selection));
     assert.ok($isRoleplayBlockNode(selection.anchor.getNode().getTopLevelElementOrThrow()));
@@ -55,24 +55,24 @@ test('inserting at the start or end does not leave an accidental empty action ro
     const instance=editor();
     instance.update(() => {
       const paragraph=$createParagraphNode(),text=$createTextNode('房间里');paragraph.append(text);$getRoot().append(paragraph);
-      text.select(offset,offset);$insertRoleplayBlock('thought');
+      text.select(offset,offset);$insertRoleplayBlock('speech');
     },{discrete:true});
     const summary=childSummary(instance);
     assert.equal(summary.length,2,JSON.stringify(summary));
-    assert.equal(summary.filter(item=>item.kind==='thought').length,1);
+    assert.equal(summary.filter(item=>item.kind==='speech').length,1);
     assert.equal(summary.filter(item=>item.text==='').length,1,'only the new typed block should be empty');
   }
 });
 
-test('inserting another type after a typed block replaces its existing empty next row', () => {
+test('inserting another block after a typed block replaces its existing empty next row', () => {
   const instance=editor();
   instance.update(() => {
-    const thought=$createRoleplayBlockNode('thought');thought.append($createTextNode('想法'));
-    const empty=$createParagraphNode();$getRoot().append(thought,empty);empty.selectStart();
+    const speech=$createRoleplayBlockNode('speech');speech.append($createTextNode('对白'));
+    const empty=$createParagraphNode();$getRoot().append(speech,empty);empty.selectStart();
     $insertRoleplayBlock('speech');
   },{discrete:true});
   assert.deepEqual(childSummary(instance),[
-    {kind:'thought',text:'想法'},
+    {kind:'speech',text:'对白'},
     {kind:'speech',text:''},
   ]);
 });
@@ -80,10 +80,10 @@ test('inserting another type after a typed block replaces its existing empty nex
 test('Enter exit creates or reuses the next ordinary paragraph', () => {
   const instance=editor();
   instance.update(() => {
-    const typed=$createRoleplayBlockNode('thought');typed.append($createTextNode('我在想'));$getRoot().append(typed);
+    const typed=$createRoleplayBlockNode('speech');typed.append($createTextNode('你好'));$getRoot().append(typed);
     $exitRoleplayBlock(typed);
   },{discrete:true});
-  assert.deepEqual(childSummary(instance),[{kind:'thought',text:'我在想'},{kind:'action',text:''}]);
+  assert.deepEqual(childSummary(instance),[{kind:'speech',text:'你好'},{kind:'action',text:''}]);
   instance.getEditorState().read(()=>{
     const selection=$getSelection();assert.ok($isRangeSelection(selection));
     assert.equal(selection.anchor.getNode().getTopLevelElementOrThrow().getTextContent(),'');

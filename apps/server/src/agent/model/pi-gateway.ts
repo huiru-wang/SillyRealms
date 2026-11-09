@@ -34,10 +34,10 @@ export class PiGateway implements ModelGateway {
     const controller = new AbortController(); const timeout = setTimeout(()=>controller.abort(),30000);
     try {
       let done = false, called = false;
-      const context:Context = { messages:[{role:'user',content:'Call the update_state tool with path test.value and value 1. Do not answer in prose.',timestamp:Date.now()}], tools:[stateTool] };
+      const context:Context = { messages:[{role:'user',content:'Write one short narrative sentence, then call update_state with {updates:[{path:"test.value",value:1}]}. Do not write after the tool.',timestamp:Date.now()}], tools:[stateTool] };
       for await (const event of this.stream(model,context,{apiKey,signal:controller.signal,maxTokens:128})) {
         if (event.type === 'error') throw new Error(ErrorCodes.PROVIDER_TEST_FAILED);
-        if (event.type === 'done') { done = true; called = event.message.content.some(p => p.type === 'toolCall' && p.name === 'update_state' && !p.argumentsError && p.arguments.path === 'test.value' && p.arguments.value === 1); }
+        if (event.type === 'done') { done = true; called = event.message.content.some(p => p.type === 'toolCall' && p.name === 'update_state' && !p.argumentsError && Array.isArray(p.arguments.updates) && p.arguments.updates.length === 1 && p.arguments.updates[0]?.path === 'test.value' && p.arguments.updates[0]?.value === 1); }
       }
       if (!done) throw new Error(ErrorCodes.PROVIDER_TEST_FAILED);
       if (called) this.verified.add(`${provider}\0${id}`);

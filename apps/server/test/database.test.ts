@@ -52,8 +52,8 @@ it('seeds the ordinary default preset and retains app defaults across restarts',
     const first=openDatabase(path);
     expect(first.prepare('SELECT id FROM presets').all()).toEqual([{id:'sr-default-preset'}]);
     const preset=JSON.parse(String(first.prepare('SELECT config_json FROM presets WHERE id=?').get('sr-default-preset')?.config_json));
-    expect(preset.nodes.find((node:{id:string})=>node.id==='main').content).toContain('状态一致性');
-    expect(preset.nodes.find((node:{id:string})=>node.id==='postHistory').content).toContain('update_state');
+    expect(preset.nodes.find((node:{id:string})=>node.id==='main')).toMatchObject({name:'叙事风格',content:''});
+    expect(preset.nodes.find((node:{id:string})=>node.id==='postHistory').content).toBe('');
 
     expect(first.prepare('SELECT default_preset_id FROM app_settings WHERE id=1').get()?.default_preset_id).toBe('sr-default-preset'); first.close();
     const second=openDatabase(path);
@@ -83,7 +83,7 @@ it('upgrades only an untouched empty built-in preset and preserves customized co
     first.close();
     const second=openDatabase(path);
     const upgraded=read(second);
-    expect(upgraded.nodes.find((n:{id:string})=>n.id==='main').content).toContain('状态一致性');
+    expect(upgraded.nodes.find((n:{id:string})=>n.id==='main')).toMatchObject({name:'叙事风格',content:''});
     upgraded.nodes.find((n:{id:string})=>n.id==='main').content='CUSTOM_MAIN';
     second.prepare("UPDATE presets SET config_json=? WHERE id='sr-default-preset'").run(JSON.stringify(upgraded));
     second.close();

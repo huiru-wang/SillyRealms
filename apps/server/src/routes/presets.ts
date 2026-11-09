@@ -19,7 +19,10 @@ const preset = z.object({ name: z.string().trim().min(1), description: z.string(
   for (const n of p.nodes) if (n.id !== 'postHistory' && !n.enabled) ctx.addIssue({ code:'custom', message:`Node ${n.id} must be enabled` });
   for (const n of p.nodes) if ((n.id === 'chatHistory' && n.role !== 'auto') || (n.id === 'userInput' && n.role !== 'user') || (n.id !== 'chatHistory' && n.role === 'auto') || (n.kind === 'text' && n.source !== undefined)) ctx.addIssue({ code: 'custom', message: `Invalid role or source for ${n.id}` });
 });
-const normalizeStored = (value: any) => ({...value,nodes:value.nodes.map((n: {id:string})=>n.id==='postHistory'?n:{...n,enabled:true})});
+const normalizeStored = (value: any) => ({...value,nodes:value.nodes.map((n: {id:string;name?:string})=>({
+  ...n,...(n.id!=='postHistory'?{enabled:true}:{}),
+  ...(n.id==='main' && (!n.name || n.name==='main' || n.name==='主要提示')?{name:'叙事风格'}:{}),
+}))});
 const nodePatch = node.partial().extend({ id: z.string().min(1) }).strict();
 const patch = z.object({ name: z.string().min(1).optional(), description: z.string().nullable().optional(), model_parameters: z.object({temperature:z.number().min(0).max(2).optional()}).strict().optional(), budget: z.object({ max_context_tokens: z.number().int().positive().nullable().optional(), max_output_tokens: z.number().int().positive().optional() }).optional(), summary_prompt: z.string().optional(), nodes: z.array(nodePatch).optional(), add_nodes: z.array(node).optional(), remove_node_ids: z.array(z.string()).optional(), nodes_order: z.array(z.string()).optional() }).strict();
 
@@ -33,7 +36,7 @@ export function presetRoutes(db: DatabaseSync): Hono {
       const input=z.record(z.string(),z.unknown()).parse(await c.req.json());
       const names=z.array(z.string().trim().min(1)).default([]).parse(input.tags);
       delete input.tags;
-      const value=preset.parse(input);
+      const value=preset.parse(normalizeStored(input));
       const id=randomUUID(), now=Date.now();
       transaction(db,()=>{
         const base=value.name;

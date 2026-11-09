@@ -95,7 +95,7 @@ describe('Pi SDK contract PoC', () => {
   });
   it('records tool capability only after a successful tool probe', async () => {
     const gateway=new PiGateway();expect(gateway.toolVerified('deepseek','deepseek-flash')).toBe(false);
-    const chunks=[{id:'test',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'call_1',type:'function',function:{name:'update_state',arguments:'{\"path\":\"test.value\",\"value\":1}'}}]},finish_reason:null}]},{id:'test',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]}];
+    const chunks=[{id:'test',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'call_1',type:'function',function:{name:'update_state',arguments:'{\"updates\":[{\"path\":\"test.value\",\"value\":1}]}'}}]},finish_reason:null}]},{id:'test',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]}];
     vi.stubGlobal('fetch',async()=>new Response(chunks.map(c=>`data: ${JSON.stringify(c)}\n\n`).join('')+'data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}}));
     try { expect(await gateway.verify('deepseek','deepseek-flash','fake')).toBe(true); expect(gateway.toolVerified('deepseek','deepseek-flash')).toBe(true); }
     finally { vi.unstubAllGlobals(); }

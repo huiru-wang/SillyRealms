@@ -34,7 +34,6 @@ import {$exitRoleplayBlock, $insertRoleplayBlock, $isBlankParagraph, $removeEmpt
 
 const MAX_LENGTH = 100000;
 const actions: Array<{kind: RoleplayBlockKind; label: string}> = [
-  {kind: 'thought', label: '内心'},
   {kind: 'speech', label: '话语'},
   {kind: 'instruction', label: '叙事指令'},
 ];
@@ -71,7 +70,7 @@ function $replaceDraft(value: string) {
       }
       return;
     }
-    if (block.kind === 'thought' || block.kind === 'speech') {
+    if (block.kind === 'speech') {
       const node = $createRoleplayBlockNode(block.kind);
       const text = block.text.replace(/[\r\n]+/g, ' ');
       if (text) node.append($createTextNode(text));
@@ -79,10 +78,14 @@ function $replaceDraft(value: string) {
       return;
     }
     const paragraph = $createParagraphNode();
-    if (block.text) paragraph.append($createTextNode(block.text));
+    if (block.text) paragraph.append($createTextNode(block.kind === 'thought' ? block.text.split('\n').map(line=>`> ${line}`).join('\n') : block.text));
     root.append(paragraph);
   });
   if (root.isEmpty()) root.append($createParagraphNode());
+  // Clearing/replacing a draft must also restore a valid selection: otherwise
+  // subsequent toolbar clicks can target a detached Lexical node.
+  const last = root.getLastChild();
+  if ($isElementNode(last)) last.selectEnd();
 }
 
 function $lastActionParagraph() {

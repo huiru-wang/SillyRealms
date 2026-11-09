@@ -191,7 +191,7 @@ it('migrates an existing database in place without resetting previously stored r
   } finally { rmSync(folder, { recursive: true, force: true }); }
 });
 
-it('counts hidden state-review usage but keeps the latest context from narrative generation', async () => {
+it('counts only the narrative request for mandatory state-tool submissions', async () => {
   const db = openDatabase(':memory:');
   seedWorld(db, 'state-world', {
     spec: 'world_card', spec_version: '0.1', data: {
@@ -209,15 +209,15 @@ it('counts hidden state-review usage but keeps the latest context from narrative
     toolVerified: () => true,
     stream: (_model, _context, opts) => ({
       async *[Symbol.asyncIterator]() {
-        const review = opts.toolChoice === ('required' as ToolChoice);
+        const required = opts.toolChoice === ('required' as ToolChoice);
         const message = {
           role: 'assistant', api: 'openai-completions', provider: 'fake', model: 'fake',
-          content: review ? [{ type: 'toolCall', id: 'review', name: 'review_state', arguments: { updates: [] } }]
+          content: required ? [{ type: 'text', text: 'story' },{ type: 'toolCall', id: 'state', name: 'update_state', arguments: { updates: [] } }]
             : [{ type: 'text', text: 'story' }],
-          usage: review ? tokenUsage(20, 10) : tokenUsage(600, 50, 400, 100),
-          stopReason: review ? 'toolUse' : 'stop', timestamp: Date.now(),
+          usage: tokenUsage(600, 50, 400, 100),
+          stopReason: required ? 'toolUse' : 'stop', timestamp: Date.now(),
         };
-        yield { type: 'done', reason: review ? 'toolUse' : 'stop', message } as AssistantMessageEvent;
+        yield { type: 'done', reason: required ? 'toolUse' : 'stop', message } as AssistantMessageEvent;
       },
     }),
   };
@@ -236,14 +236,14 @@ it('counts hidden state-review usage but keeps the latest context from narrative
   expect(runtime.status(session.id, runId)?.status).toBe('completed');
   expect(new UsageStore(db).view(session.id)).toMatchObject({
     cumulative: {
-      inputTokens: 1120, outputTokens: 60, totalTokens: 1180,
-      cacheReadTokens: 400, cacheWriteTokens: 100, reportedCount: 2,
+      inputTokens: 1100, outputTokens: 50, totalTokens: 1150,
+      cacheReadTokens: 400, cacheWriteTokens: 100, reportedCount: 1,
     },
     latestContext: { inputTokens: 1100, contextWindowTokens: 32768, stale: false },
   });
   const entries = db.prepare("SELECT metrics_json FROM entries WHERE session_id=? AND role='assistant' AND run_id=?")
     .all(session.id, runId);
   const phases = entries.map(row => JSON.parse(String(row.metrics_json)).phase);
-  expect(phases).toEqual(['generation', 'state_review']);
+  expect(phases).toEqual(['generation']);
   db.close();
 });

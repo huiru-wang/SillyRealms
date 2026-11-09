@@ -21,17 +21,17 @@ async function run(name:string, test:()=>Promise<void>){try{await test();results
 createRoot(document.getElementById('root')!).render(<App/>);
 void (async()=>{
  await pause();
- await run('inserting a thought block in the middle preserves prefix and suffix', async()=>{
+ await run('inserting a speech block in the middle preserves prefix and suffix', async()=>{
   setExternal('走进房间'); await pause(); const e=document.querySelector<HTMLElement>('[contenteditable]')!; e.focus(); await pause();
   const text=document.createTreeWalker(e.querySelector('p')!,NodeFilter.SHOW_TEXT).nextNode();assert(text,`editor HTML: ${e.innerHTML}`);
   const selection=window.getSelection()!,range=document.createRange();range.setStart(text,2);range.collapse(true);selection.removeAllRanges();selection.addRange(range);await pause();
-  document.querySelector<HTMLButtonElement>('.sr-composer-tool-thought')!.click();await pause();
-  const block=document.querySelector<HTMLElement>('.sr-composer-thought')!;
+  document.querySelector<HTMLButtonElement>('.sr-composer-tool-speech')!.click();await pause();
+  const block=document.querySelector<HTMLElement>('.sr-composer-speech')!;
   assert(block.tagName==='P',`typed node should be block-level: ${block.outerHTML}`);
   edit('有危险');await pause();
   assert(block.textContent==='有危险',`typed text not inserted: ${block.outerHTML}`);
   const value=document.querySelector('#draft')!.textContent!;
-  assert(value.includes('走进')&&value.includes('房间')&&value.includes('> 有危险'),value);
+  assert(value.includes('走进')&&value.includes('房间')&&value.includes('“有危险”'),value);
  });
  await run('empty first row is replaced without adding a blank line',async()=>{
   setExternal('');await pause();document.querySelector<HTMLButtonElement>('.sr-composer-tool-speech')!.click();await pause();
@@ -64,18 +64,18 @@ void (async()=>{
   assert(value.indexOf('<sr_instruction>')>value.indexOf('继续叙事'),value);
  });
  await run('multiline paste inside a type block is kept on one line',async()=>{
-  setExternal('');await pause();document.querySelector<HTMLButtonElement>('.sr-composer-tool-thought')!.click();await pause();
+  setExternal('');await pause();document.querySelector<HTMLButtonElement>('.sr-composer-tool-speech')!.click();await pause();
   const transfer=new DataTransfer();transfer.setData('text/plain','第一行\n第二行');
   document.querySelector<HTMLElement>('[contenteditable]')!.dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));await pause();
-  assert(document.querySelector('.sr-composer-thought')?.textContent==='第一行 第二行',document.querySelector('[contenteditable]')!.innerHTML);
+  assert(document.querySelector('.sr-composer-speech')?.textContent==='第一行 第二行',document.querySelector('[contenteditable]')!.innerHTML);
  });
- await run('external draft restores typed blocks and preserves middle blank rows',async()=>{
-  setExternal('前文\n\n> 内心\n\n“对白”\n\n\n\n后文\n\n<sr_instruction>\n缓慢\n</sr_instruction>');await pause();
+ await run('legacy thought draft renders as ordinary text, not a typed input block',async()=>{
+  setExternal('前文\n\n> 旧内心\n\n“对白”\n\n后文\n\n<sr_instruction>\n缓慢\n</sr_instruction>');await pause();
   const editor=document.querySelector<HTMLElement>('[contenteditable]')!;
-  assert(editor.querySelectorAll('.sr-composer-thought').length===1,'missing thought block');
+  assert(!editor.querySelector('.sr-composer-thought'),'thought input block should not exist');
+  assert(editor.textContent?.includes('> 旧内心'),'legacy text should remain visible');
   assert(editor.querySelectorAll('.sr-composer-speech').length===1,'missing speech block');
   assert(editor.querySelectorAll('.sr-composer-instruction').length===1,'missing instruction block');
-  assert(editor.querySelectorAll('p').length>=6,editor.innerHTML);
  });
  document.getElementById('results')!.textContent=JSON.stringify(results);
 })();

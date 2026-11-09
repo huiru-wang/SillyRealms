@@ -10,7 +10,6 @@ import type { RunPostProcessor } from './run-post-processor.js';
 import type { RunStore, RunOutcome } from '../persistence/run-store.js';
 import type { RunEvent, RunTask, PreparedRun } from './types.js';
 import type { ToolExecutor } from '../tools/tool-executor.js';
-import { stateReviewMessages, stateReviewTool } from '../tools/state-tool.js';
 import { requiredToolChoice } from '../model/pi-gateway.js';
 
 export class AgentRunner {
@@ -31,12 +30,10 @@ export class AgentRunner {
     release: () => void;
   }): Promise<void> {
     const { sessionId, runId, userId, prepared, task, runContext, streamController, release } = args;
-    const { model, key, messages, tools, modules, worldState, active, workspace, output, temperature, userInput } = prepared;
+    const { model, key, messages, tools, modules, worldState, active, workspace, output, temperature } = prepared;
     let outcome: RunOutcome = 'completed';
     const initialWorkspace = JSON.stringify(workspace);
     let partialId: string | null = null, partialText = '', pendingHigh = '';
-    let hadSuccessfulStateCall = false;
-    const narrative: string[] = [];
 
     const writeText = async (text: string) => {
       if (!text || task.stopped) return;
@@ -69,91 +66,61 @@ export class AgentRunner {
     };
 
     try {
-      for (let turn = 0; turn < 32; turn++) {
-        partialId = null;
-        partialText = '';
-        pendingHigh = '';
-        let final: AssistantMessage | undefined;
-        const request = runContext.request(turn === 0 ? 'generation' : 'continuation');
-        for await (const event of this.client.events(model, { messages, tools }, {
-          apiKey: key, signal: task.controller.signal, maxTokens: output, temperature,
-        }, request)) {
-          if (task.stopped) break;
-          if (event.type === 'text_delta' && event.delta) {
-            let chunk = pendingHigh + event.delta;
-            pendingHigh = '';
-            const last = chunk.charCodeAt(chunk.length - 1);
-            if (last >= 0xd800 && last <= 0xdbff) {
-              pendingHigh = chunk.slice(-1);
-              chunk = chunk.slice(0, -1);
-            }
-            // Match the UTF-8 replacement behavior of the stream encoder.
-            await writeText(new TextDecoder().decode(new TextEncoder().encode(chunk)));
-          } else if (event.type === 'done') {
-            if (pendingHigh) { await writeText('\uFFFD'); pendingHigh = ''; }
-            final = event.message;
-          } else if (event.type === 'error' && !task.stopped) {
-            throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
+      // When writable message state exists, require the single state tool on the
+      // narrative request itself. There is no separate review or continuation call.
+      const toolChoice = active.size > 0 ? requiredToolChoice(model) : undefined;
+      if (active.size > 0 && !toolChoice) throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
+      const request = runContext.request('generation');
+      let final: AssistantMessage | undefined;
+      for await (const event of this.client.events(model, { messages, tools }, {
+        apiKey: key, signal: task.controller.signal, maxTokens: output, temperature, toolChoice,
+      }, request)) {
+        if (task.stopped) break;
+        if (event.type === 'text_delta' && event.delta) {
+          let chunk = pendingHigh + event.delta;
+          pendingHigh = '';
+          const last = chunk.charCodeAt(chunk.length - 1);
+          if (last >= 0xd800 && last <= 0xdbff) {
+            pendingHigh = chunk.slice(-1);
+            chunk = chunk.slice(0, -1);
           }
+          await writeText(new TextDecoder().decode(new TextEncoder().encode(chunk)));
+        } else if (event.type === 'done') {
+          if (pendingHigh) { await writeText('\uFFFD'); pendingHigh = ''; }
+          final = event.message;
+        } else if (event.type === 'error' && !task.stopped) {
+          throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
         }
-        if (task.stopped) { outcome = 'stopped'; break; }
+      }
+      if (task.stopped) outcome = 'stopped';
+      else {
         if (!final) throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
-
+        const calls = final.content.filter(p => p.type === 'toolCall');
+        if (active.size > 0) {
+          const callIndex = final.content.findIndex(p => p.type === 'toolCall');
+          const before = final.content.slice(0, callIndex);
+          const after = final.content.slice(callIndex + 1);
+          if (calls.length !== 1 || calls[0]!.name !== 'update_state' ||
+              !before.some(p => p.type === 'text' && p.text.trim()) ||
+              after.some(p => p.type === 'text' && p.text.trim()))
+            throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
+        } else if (calls.length) {
+          throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
+        }
         const finalText = final.content.filter(p => p.type === 'text').map(p => p.text).join('');
-        if (finalText) narrative.push(finalText);
         const savedId = this.store.completeAssistant(sessionId, runId, final, finalText, partialId, partialText);
         try { this.usage.attachEntry(sessionId, runId, request.requestId, savedId); }
         catch (error) { debugLog('Assistant 统计关联失败', { sessionId, runId, error: String(error) }); }
-        if (!partialId && finalText) {
-          this.emit(sessionId, 'message.created', {
-            runId, message: { id: savedId, role: 'assistant', text: finalText, status: 'completed', createdAt: final.timestamp },
-          });
-        }
+        if (!partialId && finalText) this.emit(sessionId, 'message.created', {
+          runId, message: { id: savedId, role: 'assistant', text: finalText, status: 'completed', createdAt: final.timestamp },
+        });
         if (partialId) this.emit(sessionId, 'message.final', { runId, messageId: partialId, status: 'completed' });
-        messages.push(final);
-        const calls = final.content.filter(p => p.type === 'toolCall');
-        if (!calls.length) break;
-        for (const call of calls) {
-          if (task.stopped) break;
-          const result = this.executor.execute(call, workspace, modules, active);
-          if (!result.isError && call.name === 'update_state') hadSuccessfulStateCall = true;
-          this.store.appendToolResult(sessionId, runId, result);
-          messages.push(result);
-        }
-        if (task.stopped) { outcome = 'stopped'; break; }
-        if (turn === 31) throw new RuntimeError(ErrorCodes.TOOL_LIMIT_EXCEEDED);
-      }
-
-      // A model that ended prose without calling the optional tool gets one
-      // mandatory, compact state check. No active message state: no extra call.
-      if (!task.stopped && active.size > 0 && !hadSuccessfulStateCall) {
-        const toolChoice = requiredToolChoice(model);
-        if (!toolChoice) throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
-        const reviewMessages = stateReviewMessages(modules, active, workspace, userInput, narrative.join('\n\n'));
-        let review: AssistantMessage | undefined;
-        const reviewRequest = runContext.request('state_review');
-        for await (const event of this.client.events(model, { messages: reviewMessages, tools: [stateReviewTool] }, {
-          apiKey: key, signal: task.controller.signal, maxTokens: output, temperature, toolChoice,
-        }, reviewRequest)) {
-          if (task.stopped) break;
-          if (event.type === 'done') review = event.message;
-          else if (event.type === 'error') throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
-        }
-        if (!task.stopped) {
-          const calls = review?.content.filter(p => p.type === 'toolCall') ?? [];
-          if (calls.length !== 1 || calls[0]!.name !== 'review_state') {
-            throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
-          }
-          const result = this.executor.executeReview(calls[0]!, workspace, modules, active);
-          // Preserve the tool protocol but never show unsolicited review prose.
-          const reviewId = this.store.completeAssistant(sessionId, runId, { ...review!, content: calls }, '', null, '');
-          try { this.usage.attachEntry(sessionId, runId, reviewRequest.requestId, reviewId); }
-          catch (error) { debugLog('状态检查统计关联失败', { sessionId, runId, error: String(error) }); }
+        if (calls.length) {
+          const result = this.executor.execute(calls[0]!, workspace, modules, active);
           this.store.appendToolResult(sessionId, runId, result);
           if (result.isError) throw new RuntimeError(ErrorCodes.INVALID_STATE_UPDATE);
         }
       }
-      if (task.stopped) outcome = 'stopped';
     } catch (error) {
       debugLog('模型执行异常', {
         sessionId, runId,

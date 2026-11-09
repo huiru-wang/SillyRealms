@@ -8,8 +8,8 @@ import {ErrorNotice,Header,Loading,useLoad} from '../../app/ui';
 const BUILTIN=['main','personaInfo','characterInfo','worldState','chatHistory','userInput','postHistory'];
 function blankPreset(){
  return {name:'',description:'',model_parameters:{temperature:1},budget:{max_output_tokens:2048},summary_prompt:'总结此前发生的故事。',nodes:BUILTIN.map(id=>({
-  id,kind:'system',name:({main:'主要提示',personaInfo:'玩家设定',characterInfo:'角色设定',worldState:'世界状态',chatHistory:'聊天历史',userInput:'玩家输入',postHistory:'历史后置'} as Record<string,string>)[id],
-  source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true
+  id,kind:'system',name:({main:'叙事风格',personaInfo:'玩家设定',characterInfo:'角色设定',worldState:'世界状态',chatHistory:'聊天历史',userInput:'玩家输入',postHistory:'历史后置'} as Record<string,string>)[id],
+  source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true,...(id==='main'?{content:''}:{})
  }))};
 }
 /** Primary: save coherent prompt configuration. No model association. */
@@ -94,9 +94,9 @@ export function PresetPage({isNew=false}:{isNew?:boolean}){
       </section>
       <section className="editor-section">
         <div className="editor-section-head"><div><h2>提示词编排</h2><p>按从上至下的顺序构建上下文，点击节点展开编辑。</p></div><button className="button secondary" onClick={add}><Plus size={15}/> 新增文本节点</button></div>
-        <p className="editor-node-help">平台内置的角色扮演协议始终置于最前，不属于此预设；下方的 main 节点仍可按预设规则编排。</p>
+        <p className="editor-node-help">平台内置的角色扮演协议始终置于最前，不属于此预设；下方的「叙事风格」节点可配置自定义写作风格，留空则不增加额外提示词。</p>
         <div className="editor-nodes">{nodes.map((n,index)=>{
-         const open=!!expanded[n.id];const editable=n.kind==='text';
+         const open=!!expanded[n.id];const editable=n.kind==='text';const canEditPrompt=editable||n.id==='main'||n.id==='postHistory';
          return <div className={'editor-node '+(open?'open':'')} key={n.id}>
            <div className="editor-node-bar">
              <button type="button" className="editor-node-expand" aria-expanded={open} onClick={()=>setExpanded(v=>({...v,[n.id]:!open}))}><span className="editor-node-number">{String(index+1).padStart(2,'0')}</span><span className="editor-node-name">{n.name}</span><span className="editor-node-kind">{editable?'自定义':n.source}</span>{open?<ChevronDown size={16}/>:<ChevronRight size={16}/>}</button>
@@ -104,10 +104,10 @@ export function PresetPage({isNew=false}:{isNew?:boolean}){
            </div>
            {open&&<div className="editor-node-content">
              <div className="editor-form editor-form-cols"><label>节点名称<input value={n.name} onChange={e=>updateNode(index,{name:e.target.value})}/></label><label>消息角色<select value={n.role} disabled={!editable} onChange={e=>updateNode(index,{role:e.target.value})}><option value="system">system</option><option value="user">user</option><option value="assistant">assistant</option>{n.role==='auto'&&<option value="auto">auto</option>}</select></label>
-               {editable&&<label className="editor-wide">Prompt 内容<textarea rows={6} value={n.content??''} onChange={e=>updateNode(index,{content:e.target.value})}/></label>}
+               {canEditPrompt&&<label className="editor-wide">Prompt 内容<textarea rows={6} value={n.content??''} onChange={e=>updateNode(index,{content:e.target.value})}/></label>}
              </div>
              {n.id==='postHistory'&&<label className="editor-node-enable"><input type="checkbox" checked={n.enabled} onChange={e=>updateNode(index,{enabled:e.target.checked})}/> 启用后置节点</label>}
-             {!editable&&n.id!=='postHistory'&&<p className="editor-node-help">内置节点由运行时提供，必须启用。节点位置可调整。</p>}
+             {!canEditPrompt&&<p className="editor-node-help">内置节点由运行时提供，必须启用。节点位置可调整。</p>}
            </div>}
          </div>;
         })}</div>

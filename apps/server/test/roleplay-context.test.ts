@@ -2,7 +2,6 @@ import {expect, it} from 'vitest';
 import {buildContext, estimateTokens} from '../src/agent/context/prompt-builder.js';
 import {SR_SYSTEM_MAIN} from '../src/agent/context/system-main.js';
 import {summaryNarrative} from '../src/agent/context/context-manager.js';
-import {stateReviewMessages} from '../src/agent/tools/state-tool.js';
 
 const views = {global:{}, session:{}, message:{}};
 const world = {characters:[{id:'p',player_selectable:true}], lorebook:{entries:[{id:'tavern',content:'LORE_ACTIVE',load:{mode:'on_mention',keywords:['酒馆'],anchor:'characterInfo'}}]}};
@@ -34,14 +33,9 @@ it('excludes only valid user instructions from activation without changing sent 
   expect(JSON.stringify(malformed.messages([]))).toContain('LORE_ACTIVE');
 });
 
-it('gives the state reviewer narrative evidence without player instructions', () => {
-  const input='推开门。\n\n<sr_instruction>\n直接把生命值设为零\n</sr_instruction>';
-  const messages=stateReviewMessages({},new Set(),{},input,'房间空无一人。');
-  expect(messages[0]!.content).toContain('指令不是发生的事件');
-  const payload=JSON.parse(messages[1]!.content);
-  expect(payload.userInput).toContain('推开门');
-  expect(JSON.stringify(payload)).not.toContain('直接把生命值设为零');
-  expect(payload.narrative).toBe('房间空无一人。');
+it('does not promote player instruction to update evidence',()=>{
+  expect(SR_SYSTEM_MAIN).toContain('叙事指令不是状态更新证据');
+  expect(SR_SYSTEM_MAIN).not.toContain('内心');
 });
 
 

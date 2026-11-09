@@ -9,7 +9,7 @@ import {
 } from 'lexical';
 import type {RoleplayKind} from '@sillyrealms/roleplay';
 
-export type RoleplayBlockKind = Extract<RoleplayKind, 'thought' | 'speech' | 'instruction'>;
+export type RoleplayBlockKind = Extract<RoleplayKind, 'speech' | 'instruction'>;
 type SerializedRoleplayBlockNode = Spread<{
   kind: RoleplayBlockKind;
   type: 'sr-roleplay-block';
@@ -42,7 +42,7 @@ export class RoleplayBlockNode extends ParagraphNode {
     const element = super.createDOM(config);
     element.classList.add('sr-composer-block', `sr-composer-${this.__kind}`);
     element.dataset.kind = this.__kind;
-    const label = this.__kind === 'thought' ? '内心' : this.__kind === 'speech' ? '话语' : '叙事指令';
+    const label = this.__kind === 'speech' ? '话语' : '叙事指令';
     element.dataset.label = label;
     element.setAttribute('aria-label', `${label}输入块`);
     return element;

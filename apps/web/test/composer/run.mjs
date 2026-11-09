@@ -33,7 +33,7 @@ try {
         const result=await call('Runtime.evaluate',{expression:'document.querySelector("#results")?.textContent || "[]"',returnByValue:true});
         tests=JSON.parse(result.result.value);if(tests.length)break;await pause(100);
       }
-      if(!tests.length)throw new Error(`${name}: no browser test results`);
+      if(!tests.length){const diagnostic=await call('Runtime.evaluate',{returnByValue:true,expression:'JSON.stringify({url:location.href,ready:document.readyState,root:document.getElementById("root")?.innerHTML?.slice(0,900),error:document.querySelector("vite-error-overlay")?.shadowRoot?.textContent?.slice(0,1000)})'});throw new Error(`${name}: no browser test results ${diagnostic.result.value}`);}
       for(const test of tests)console.log(`${test.pass?'PASS':'FAIL'} ${name}: ${test.name}${test.error?`: ${test.error}`:''}`);
       if(tests.some(test=>!test.pass))process.exitCode=1;
       if(name==='composer'){

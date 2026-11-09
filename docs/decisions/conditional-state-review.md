@@ -1,6 +1,6 @@
 # Conditional mandatory state review for narrative Runs
 
-Status: implemented (2026-11-08)
+Status: superseded (2026-11-09) by [mandatory-batched-state-update.md](mandatory-batched-state-update.md). Historical implementation record only.
 
 ## Why
 The optional update_state tool was sent to the provider, but an auto tool-choice model could finish narration without a tool call. A stronger default preset alone cannot guarantee state consistency.

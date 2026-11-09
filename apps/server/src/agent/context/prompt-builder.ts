@@ -37,7 +37,8 @@ export function buildContext(world: World, nodes: PresetNode[], playerId: string
   const characters = world.characters.map((v,i) => ({v,i})).filter(({v,i}) => v.id !== playerId && active({...v,enabled:true},'$.data.characters['+i+'].load','角色')).sort((a,b) => (a.v.order ?? 0) - (b.v.order ?? 0) || a.i-b.i).map(({v}) => render(v.prompt ?? '')).filter(Boolean);
   const lore = (world.lorebook?.entries ?? []).map((v,i) => ({v,i})).filter(({v,i}) => active(v,'$.data.lorebook.entries['+i+'].load','世界书')).sort((a,b) => (a.v.load?.order ?? 0) - (b.v.load?.order ?? 0) || a.i-b.i);
   const activeModules: Record<'global'|'session'|'message', Set<string>> = { global:new Set(), session:new Set(), message:new Set() };
-  const stateParts:string[] = [];
+  const readonlyStateParts:string[] = [];
+  const writableStateParts:string[] = [];
   for (const scope of ['global','session','message'] as const) {
     const fields = world.state?.scopes?.[scope] ?? {};
     for (const [name, def] of Object.entries(fields)) {
@@ -45,7 +46,9 @@ export function buildContext(world: World, nodes: PresetNode[], playerId: string
       if (active(source,'$.data.state.scopes.'+scope+'.'+name+'.load','状态')) {
         activeModules[scope].add(name);
         const limits=[def.min!==undefined?`最小值 ${def.min}`:'',def.max!==undefined?`最大值 ${def.max}`:''].filter(Boolean).join('，');
-        stateParts.push([`${name}（${scope === 'message' ? '可更新' : '只读'}；${scope}；${def.type}${limits ? '；'+limits : ''}）`,typeof def.description==='string'?render(def.description):'',`当前值：${JSON.stringify(views[scope][name])}`].filter(Boolean).join('\n'));
+        const record = [`${name}（${scope === 'message' ? '可更新' : '只读'}；${scope}；${def.type}${limits ? '；'+limits : ''}）`,typeof def.description==='string'?render(def.description):'',`当前值：${JSON.stringify(views[scope][name])}`].filter(Boolean).join('\n');
+        if (scope === 'message') writableStateParts.push(record);
+        else readonlyStateParts.push(record);
       }
     }
   }
@@ -58,9 +61,12 @@ export function buildContext(world: World, nodes: PresetNode[], playerId: string
       if (n.id === 'personaInfo') body = playerActive ? render(player.prompt ?? '') : '';
       else if (n.id === 'characterInfo') body = characters.join('\n\n');
       else if (n.id === 'worldState') {
-        const modules=world.state?.scopes?.message??{};
-        const intro=activeModules.message.size ? stateToolInstructions(modules,activeModules.message,render,false) : '当前状态仅供读取；没有可用的消息状态更新工具。';
-        body=[intro,...stateParts].join('\n');
+        const writable = activeModules.message.size > 0;
+        body = [
+          ...(writable ? [stateToolInstructions(), `【可更新状态】\n${writableStateParts.join('\n\n')}`]
+            : ['当前不存在激活的可写 message 状态，不提供状态更新工具。']),
+          ...(readonlyStateParts.length ? [`【只读状态】\n${readonlyStateParts.join('\n\n')}`] : []),
+        ].join('\n\n');
       }
       else if (n.id === 'userInput') body = input;
       else body = render(n.content ?? '');

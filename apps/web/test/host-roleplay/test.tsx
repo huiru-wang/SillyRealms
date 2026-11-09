@@ -24,7 +24,7 @@ window.fetch=async(input, init)=>{
   if(path.startsWith('/api/v1/presets?')) data={items:[],hasMore:false};
   else if(path==='/api/v1/api-model-configs') data={items:[]};
   else if(path==='/api/v1/sessions/test') data={tipEntryId:'tip',worldId:'world',title:'测试',presetId:null,apiModelConfigId:null};
-  else if(path==='/api/v1/worlds/world') data={item:{data:{}}};
+  else if(path==='/api/v1/worlds/world') data={item:{data:{ui:{type:'react',source:"import React from 'react'; export default function Story(){return <div>Story</div>}"}}}};
   else if(path==='/api/v1/sessions/test/state') data={global:{},session:{},message:{}};
   else if(path.startsWith('/api/v1/sessions/test/runs?')) data={runs:[],nextCursor:null,hasMore:false};
   else if(path==='/api/v1/sessions/test/runs'&&init?.method==='POST') {
@@ -42,13 +42,13 @@ const wait=(ms=100)=>new Promise(r=>setTimeout(r,ms));
 function assert(value:unknown,message:string):asserts value{if(!value)throw Error(message);}
 async function test(name:string,fn:()=>Promise<void>){try{await fn();results.push({name,pass:true});}catch(e){results.push({name,pass:false,error:String(e)});}}
 function text(){return document.querySelector<HTMLElement>('[contenteditable]')?.innerText??'';}
-async function typeBlock(value:string){document.querySelector<HTMLButtonElement>('.sr-composer-tool-thought')!.click();await wait();document.execCommand('insertText',false,value);await wait();}
+async function typeBlock(value:string){document.querySelector<HTMLButtonElement>('.sr-composer-tool-speech')!.click();await wait();document.execCommand('insertText',false,value);await wait();}
 async function send(){let b=document.querySelector<HTMLButtonElement>('.host-send-button')!;for(let i=0;i<100&&b.disabled;i++){await wait();b=document.querySelector<HTMLButtonElement>('.host-send-button')!;}assert(!b.disabled,'send is disabled');b.click();await wait();}
 createRoot(document.getElementById('root')!).render(<div className="sr-shell"><SessionHost id="test"/></div>);
 void (async()=>{
   for(let i=0;i<100;i++){await wait();if(document.querySelector<HTMLButtonElement>('.host-send-button')&&!document.querySelector('[contenteditable]')?.hasAttribute('aria-disabled')&&document.querySelector('iframe')){await wait(800);break;}}
   await test('POST serializes semantic text and clears immediately after acceptance',async()=>{
-    await typeBlock('第一轮');await send();assert(calls.length===1,'not exactly one request');const payload=calls[0] as any;assert(typeof payload.text==='string'&&payload.text.includes('> 第一轮'),'incorrect serialized text');assert(!text().includes('第一轮'),'draft was not cleared after POST acceptance');stream.emit('run.stopped',lastRunId);await wait();assert(!text().includes('第一轮'),'stopped event restored submitted draft');
+    await typeBlock('第一轮');await send();assert(calls.length===1,'not exactly one request');const payload=calls[0] as any;assert(typeof payload.text==='string'&&payload.text.includes('“第一轮”'),'incorrect serialized text');assert(!text().includes('第一轮'),'draft was not cleared after POST acceptance');stream.emit('run.stopped',lastRunId);await wait();assert(!text().includes('第一轮'),'stopped event restored submitted draft');
   });
   await test('send removes trailing blank rows but preserves blank rows in the middle',async()=>{
     const editor=document.querySelector<HTMLElement>('[contenteditable]')!;editor.focus();document.execCommand('insertText',false,'前文');
