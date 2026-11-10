@@ -1,5 +1,18 @@
-.backdrop{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:rgba(9,8,13,.68);padding:20px;backdrop-filter:blur(6px)}
-.panel{width:min(440px,100%);border:1px solid var(--stroke-strong);border-radius:17px;background:var(--surface);box-shadow:var(--drop-shadow)}
+.backdrop{
+  position:fixed;inset:0;z-index:50;display:grid;place-items:center;
+  background:rgba(9,8,13,.68);padding:20px;backdrop-filter:blur(6px);
+  opacity:0;
+  transition:opacity var(--motion-overlay) var(--ease-standard);
+}
+.panel{
+  width:min(440px,100%);border:1px solid var(--stroke-strong);
+  border-radius:17px;background:var(--surface);box-shadow:var(--drop-shadow);
+  opacity:0;transform:translateY(9px) scale(.987);
+  transition:opacity var(--motion-overlay) var(--ease-standard),
+    transform var(--motion-overlay) var(--ease-layout);
+}
+.backdrop[data-state="open"]{opacity:1}
+.backdrop[data-state="open"] .panel{opacity:1;transform:translateY(0) scale(1)}
 .header{display:flex;align-items:center;justify-content:space-between;padding:21px 23px;border-bottom:1px solid var(--stroke)}
 .header h2{margin:0;font-size:17px;font-weight:600}
 .header button{width:32px;height:32px;display:grid;place-items:center;border-radius:9px;color:var(--text-muted)}

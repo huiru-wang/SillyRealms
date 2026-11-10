@@ -366,3 +366,18 @@ pnpm --filter @sillyrealms/studio test:visual
 ```
 
 截图输出：`apps/studio/tests/visual/output/`（Git 忽略；需已运行开发服务器）。
+
+## 13. 交互一致性迭代（2026-11-10）
+
+> 对 Studio 初步测试发现的三个问题完成本轮改造；整体视觉仍待用户主观验收。
+
+- [x] Sidebar 展开/收起改用同一浮动圆角容器，统一材质、边框、图标位置及底部纵向操作。
+- [x] 添加 Motion Tokens；侧栏轨道、页面 padding 和分类间距同步连续过渡，文字与列表通过透明度显隐。
+- [x] 导航与分类 Selected + Hover 不再重复变色；非选中项仍保留适度 Hover 和焦点状态。
+- [x] Dialog 使用统一淡入/淡出、微位移动效；遵守 reduced-motion。
+- [x] 修复移动端 Drawer 在桌面偏好为 collapsed 时隐藏导航文字和会话列表的情况。
+- [x] Chrome CDP 测试增加 CSS grid 中间帧单调变化、侧栏材质一致性、Selected Hover、移动端偏好及 reduced-motion 检查。
+- [x] Studio TypeScript、Vite Build、Chrome UI smoke 与旧 apps/web TypeScript 已通过。
+- [ ] 用户在真实浏览器中确认最终动效感受、间距和配色，独立封面仍是临时版本。
+
+详细规则见 `docs/design/studio-reference-decisions.md` 与 `apps/studio/AGENTS.md`。未对 Server、SDK 和旧 Web 业务实施修改。

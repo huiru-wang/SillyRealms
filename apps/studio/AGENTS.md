@@ -11,3 +11,12 @@
 - Verify using `pnpm --filter @sillyrealms/studio typecheck`, `build`, and `test:visual` against a running Vite server.
 - After user acceptance: promote validated tokens and patterns to formal design system. Never overwrite an approved visual reference merely to pass visual tests.
 - The platform UI design rules must not leak into future creator iframe styling or alter the existing runtime security boundary.
+
+## Interaction invariants (2026-11-10 refinement)
+
+- Sidebar expanded/collapsed is ONE persistent rounded floating surface: same inset, radius, background, border, icon anchors and bottom-action layout.
+- Animate the shell track and dependent world-page spacing together. Keep sidebar content mounted; fade labels/list with inert and aria-hidden while collapsed.
+- Selected + Hover must NOT override selected colors; Hover feedback belongs to nonselected items. Keep focus-visible for keyboard users.
+- Use the shared Motion Tokens for navigation and overlays, with no ornamental bounce; respect prefers-reduced-motion including zero delay.
+- Mobile Drawer must show labels and data regardless of persisted desktop collapsed state.
+- Extend the CDP visual regression whenever navigation behavior, selected state or responsive transitions change.

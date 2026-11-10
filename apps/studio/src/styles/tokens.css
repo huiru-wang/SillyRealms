@@ -1,10 +1,14 @@
 :root{
   --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
   --space-5:20px; --space-6:24px; --space-8:32px; --space-10:40px;
-  --size-sidebar-expanded:296px; --size-sidebar-collapsed:84px;
+  --size-sidebar-expanded:280px; --size-sidebar-collapsed:64px;
   --font-ui:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
   --font-10:10px; --font-11:11px; --font-12:12px; --font-13:13px;
   --font-14:14px; --font-16:16px; --font-20:20px; --font-28:28px;
   --radius-xs:7px; --radius-sm:9px; --radius-md:12px; --radius-card:15px;
   --duration-quick:150ms; --duration-ui:190ms;
+  --motion-fast:130ms; --motion-reveal:140ms; --motion-hide:90ms;
+  --motion-layout:270ms; --motion-overlay:200ms;
+  --ease-standard:cubic-bezier(.2,.65,.3,1);
+  --ease-layout:cubic-bezier(.4,0,.2,1);
 }

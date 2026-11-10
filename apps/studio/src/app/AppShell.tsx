@@ -1,6 +1,6 @@
 import {useCallback,useEffect,useState} from 'react';
 import {NavLink,Outlet,useLocation,useNavigate} from 'react-router-dom';
-import {BookOpen,Box,ChevronLeft,ChevronRight,Layers3,Menu,MessageCircle,MonitorCog,Moon,PanelLeftClose,Settings,Sun,X} from 'lucide-react';
+import {BookOpen,Box,Layers3,Menu,MessageCircle,Moon,PanelLeftClose,PanelLeftOpen,Settings,Sun,X} from 'lucide-react';
 import {Modal} from '../components/ui/Modal';
 import {useTheme} from '../hooks/useTheme';
 import styles from './AppShell.module.css';
@@ -31,27 +31,27 @@ export function AppShell(){
   };
   useEffect(()=>setMobileOpen(false),[location.pathname]);
   const closeSettings=useCallback(()=>setShowSettings(false),[]);
+  const labelsHidden=collapsed&&!mobileOpen;
   return <div className={styles.layout} data-collapsed={collapsed?'true':'false'}>
     <button className={styles.mobileOpen} aria-label="打开导航" onClick={()=>setMobileOpen(true)}><Menu size={20}/></button>
-    {mobileOpen&&<button className={styles.mobileShade} aria-label="关闭导航" onClick={()=>setMobileOpen(false)}/>}
+    <button className={styles.mobileShade} data-open={mobileOpen} disabled={!mobileOpen} aria-hidden={!mobileOpen} aria-label="关闭导航遮罩" onClick={()=>setMobileOpen(false)}/>
     <aside className={[styles.sidebarWrap,mobileOpen?styles.mobileVisible:''].join(' ')}>
       <div className={styles.sidebar}>
         <div className={styles.brandRow}>
-          <button className={styles.brand} title={collapsed?'展开侧边栏':'SillyRealms'} onClick={collapsed&&!mobileOpen?toggleCollapsed:()=>nav('/worlds')} aria-label={collapsed?'展开侧边栏':'返回世界卡'}>
-            <span className={styles.brandMark}>{collapsed&&!mobileOpen?'SR':'◢'}</span>
-            {(!collapsed||mobileOpen)&&<span className={styles.brandName}>SillyRealms</span>}
+          <button className={styles.brand} title="返回世界卡" aria-label="返回世界卡" onClick={()=>nav('/worlds')}>
+            <span className={styles.brandMark} aria-hidden="true">◢</span>
+            <span className={styles.brandName} aria-hidden={labelsHidden}>SillyRealms</span>
           </button>
-          {!collapsed&&<button className={styles.collapseButton} aria-label="收起侧边栏" title="收起侧边栏" onClick={toggleCollapsed}><PanelLeftClose size={17}/></button>}
           <button className={styles.mobileClose} aria-label="关闭导航" onClick={()=>setMobileOpen(false)}><X size={19}/></button>
         </div>
 
         <nav className={styles.primaryNav} aria-label="主导航">
-          {NAV.map(({title,path,Icon})=><NavLink key={path} to={path} title={collapsed?title:undefined} aria-label={title} className={({isActive})=>[styles.navItem,isActive?styles.navSelected:''].join(' ')}>
+          {NAV.map(({title,path,Icon})=><NavLink key={path} to={path} title={labelsHidden?title:undefined} aria-label={title} className={({isActive})=>[styles.navItem,isActive?styles.navSelected:''].join(' ')}>
             <Icon size={20} strokeWidth={1.8} aria-hidden="true"/>
-            {(!collapsed||mobileOpen)&&<span>{title}</span>}
+            <span className={styles.navLabel} aria-hidden={labelsHidden}>{title}</span>
           </NavLink>)}
         </nav>
-        {(!collapsed||mobileOpen)&&<div className={styles.sidebarData}>
+        <div className={styles.sidebarData} inert={labelsHidden} aria-hidden={labelsHidden}>
           <section className={styles.dataSection} aria-labelledby="sessions-heading">
             <h2 id="sessions-heading" className={styles.sectionTitle}>会话列表</h2>
             <button className={styles.sessionRow} onClick={()=>nav('/sessions/changan')}>
@@ -70,14 +70,22 @@ export function AppShell(){
             <button className={styles.presetRow} onClick={()=>nav('/presets/general')}><span>通用叙事</span><span className={styles.defaultPill}>默认</span></button>
             <button className={styles.presetRow} onClick={()=>nav('/presets/roleplay')}>角色扮演</button>
           </section>
-        </div>}
+        </div>
         <div className={styles.bottom}>
-          <button className={styles.bottomButton} title="设置" aria-label="设置" onClick={()=>setShowSettings(true)}><Settings size={20}/>{(!collapsed||mobileOpen)&&<span>设置</span>}</button>
-          <button className={styles.bottomButton} title={theme==='dark'?'切换亮色主题':'切换暗色主题'} aria-label={theme==='dark'?'切换亮色主题':'切换暗色主题'} onClick={toggleTheme}>
-            {theme==='dark'?<Moon size={20}/>:<Sun size={20}/>}
-            {(!collapsed||mobileOpen)&&<span>主题</span>}
+          <button className={styles.bottomButton} title={labelsHidden?'设置':undefined} aria-label="设置" onClick={()=>setShowSettings(true)}>
+            <Settings size={20} strokeWidth={1.8} aria-hidden="true"/>
+            <span className={styles.bottomLabel} aria-hidden={labelsHidden}>设置</span>
           </button>
-          {collapsed&&!mobileOpen&&<button className={styles.expandAtBottom} aria-label="展开侧边栏" title="展开侧边栏" onClick={toggleCollapsed}><ChevronRight size={18}/></button>}
+          <button className={styles.bottomButton} title={labelsHidden?'切换主题':undefined} aria-label={theme==='dark'?'切换亮色主题':'切换暗色主题'} onClick={toggleTheme}>
+            {theme==='dark'?<Moon size={20} strokeWidth={1.8} aria-hidden="true"/>:<Sun size={20} strokeWidth={1.8} aria-hidden="true"/>}
+            <span className={styles.bottomLabel} aria-hidden={labelsHidden}>主题</span>
+          </button>
+          <button className={styles.bottomButton} title={collapsed?'展开侧边栏':'收起侧边栏'}
+            aria-label={collapsed?'展开侧边栏':'收起侧边栏'} aria-expanded={!collapsed}
+            onClick={toggleCollapsed}>
+            {collapsed?<PanelLeftOpen size={20} strokeWidth={1.8} aria-hidden="true"/>:<PanelLeftClose size={20} strokeWidth={1.8} aria-hidden="true"/>}
+            <span className={styles.bottomLabel} aria-hidden={labelsHidden}>{collapsed?'展开侧边栏':'收起侧边栏'}</span>
+          </button>
         </div>
       </div>
     </aside>

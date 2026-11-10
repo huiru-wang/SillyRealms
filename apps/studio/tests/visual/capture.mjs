@@ -4,7 +4,7 @@
  * Output screenshots are local and ignored by Git.
  */
 import {spawn} from 'node:child_process';
-import {mkdtemp,mkdir,readFile,readdir,rm,writeFile} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 
@@ -81,18 +81,74 @@ try{
     if(!okay)throw new Error('No element: '+selector);
     await delay(280);
   };
+  let forcedHoverNodeId=null;
+  async function hover(selector){
+    if(forcedHoverNodeId){
+      await send('CSS.forcePseudoState',{nodeId:forcedHoverNodeId,forcedPseudoClasses:[]});
+    }
+    const {root}=await send('DOM.getDocument',{depth:1});
+    const {nodeId}=await send('DOM.querySelector',{nodeId:root.nodeId,selector});
+    if(!nodeId)throw new Error('Missing selector for forced hover: '+selector);
+    await send('CSS.forcePseudoState',{nodeId,forcedPseudoClasses:['hover']});
+    forcedHoverNodeId=nodeId;
+    await delay(180);
+  }
+  async function bg(selector){
+    return evaluate('getComputedStyle(document.querySelector('+JSON.stringify(selector)+')).backgroundColor');
+  }
   const assert=(condition,message)=>{if(!condition)throw new Error(message);};
 
-  await send('Page.enable');await send('Runtime.enable');
+  await send('Page.enable');await send('Runtime.enable');await send('DOM.enable');await send('CSS.enable');
+  await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'},{name:'hover',value:'hover'},{name:'pointer',value:'fine'}]});
   await viewport(1536,864);
   await navigate(base+'/worlds?sidebar=expanded&theme=dark');
   assert(await evaluate('document.querySelectorAll("[aria-label^=\\"查看世界卡\\"]").length')===8,'Expected 8 cards');
   await screenshot('home-expanded-1536');
-  await click('[aria-label="收起侧边栏"]');
-  assert(await evaluate('document.querySelector("[data-collapsed]").dataset.collapsed')==='true','Sidebar did not collapse');
+
+  // No competing hover highlight when an item is already selected.
+  const selectedNav='nav[aria-label="主导航"] a[aria-current="page"]';
+  const selectedCategory='nav[aria-label="世界分类"] button:first-child';
+  const navBackground=await bg(selectedNav);
+  await hover(selectedNav);
+  assert(await bg(selectedNav)===navBackground,'Selected nav changes background on hover');
+  const categoryBackground=await bg(selectedCategory);
+  await hover(selectedCategory);
+  assert(await bg(selectedCategory)===categoryBackground,'Selected category changes background on hover');
+  const unselectedNav='nav[aria-label="主导航"] a:nth-child(2)';
+  const idleBg=await bg(unselectedNav);
+  await hover(unselectedNav);
+  // Headless CDP can report :hover without repainting the transitioned background.
+  // Verify the unselected-only rule exists, not a timing-sensitive interpolated pixel.
+  const hasNonSelectedHoverRule=await evaluate('([...document.styleSheets].some(s=>[...s.cssRules].some(r=>r.cssText.includes(":not(") && r.cssText.includes(":hover") && r.cssText.includes("navItem"))))');
+  assert(hasNonSelectedHoverRule,'Missing unselected navigation hover rule');
+
+  // The same floating sidebar must smoothly interpolate its track, not snap to a dock.
+  const trackExpr='document.querySelector("aside").getBoundingClientRect().width';
+  const initialWidth=await evaluate(trackExpr);
+  const layoutTransition=await evaluate('(()=>{const s=getComputedStyle(document.querySelector("[data-collapsed]"));return {duration:parseFloat(s.transitionDuration),property:s.transitionProperty}})()');
+  assert(layoutTransition.property==='grid-template-columns' && layoutTransition.duration>=0.25,'Missing layout transition');
+  const sidebarBefore=await evaluate('(()=>{const s=getComputedStyle(document.querySelector("aside > div"));return {r:s.borderRadius,b:s.backgroundColor}})()');
+  const startCollapse=await evaluate('(()=>{const b=document.querySelector(\'[aria-label="收起侧边栏"]\');b?.click();return !!b})()');
+  assert(startCollapse,'Collapse control missing');
+  await until('document.querySelector("[data-collapsed]").dataset.collapsed==="true"');
+  const transition=await evaluate('(()=>{const a=document.getAnimations().find(a=>a.transitionProperty==="grid-template-columns");return a?{duration:a.effect.getTiming().duration,playState:a.playState,currentTime:a.currentTime}:null})()');
+  assert(transition && transition.duration>=250,'Grid transition not created');
+  const widths=await evaluate('(()=>{const a=document.getAnimations().find(a=>a.transitionProperty==="grid-template-columns");if(!a)return null;a.pause();const out=[];for(const ms of [40,95,160]){a.currentTime=ms;out.push(document.querySelector("aside").getBoundingClientRect().width)}a.currentTime=95;return out})()');
+  if(widths)await screenshot('home-transition-mid-1536');
+  await evaluate('document.getAnimations().filter(a=>a.transitionProperty==="grid-template-columns").forEach(a=>a.finish())');
+  await delay(50);
+  const widthEnd=await evaluate(trackExpr);
+  assert(widths!==null && widths[0]<initialWidth-10 && widths[0]>widths[1] && widths[1]>widths[2] && widths[2]>widthEnd,
+    'Sidebar width did not interpolate monotonically: '+[initialWidth,...(widths||[]),widthEnd].join(', '));
+  assert(Math.abs(widthEnd-92)<3,'Collapsed track expected ~92px, got '+widthEnd);
+  const sidebarAfter=await evaluate('(()=>{const s=getComputedStyle(document.querySelector("aside > div"));return {r:s.borderRadius,b:s.backgroundColor}})()');
+  assert(JSON.stringify(sidebarBefore)===JSON.stringify(sidebarAfter),'Sidebar changes shape/material between states');
+  assert(await evaluate('!!document.querySelector("aside [aria-hidden=true][inert]")'),
+    'Collapsed sidebar data should be inert');
   await screenshot('home-collapsed-1536');
   await click('[aria-label="展开侧边栏"]');
   assert(await evaluate('document.querySelector("[data-collapsed]").dataset.collapsed')==='false','Sidebar did not expand');
+  assert(Math.abs((await evaluate(trackExpr))-initialWidth)<3,'Sidebar expansion did not restore width');
   await click('button[aria-label="设置"]');
   assert(await evaluate('!!document.querySelector("[role=dialog]")'),'Settings dialog not opened');
   await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
@@ -107,14 +163,25 @@ try{
   assert(await evaluate('!!document.querySelector("[role=dialog]")'),'World detail dialog not opened');
   await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
   await until('!document.querySelector("[role=dialog]")');
+  await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+  const reducedDuration=await evaluate('parseFloat(getComputedStyle(document.querySelector("[data-collapsed]")).transitionDuration)');
+  assert(reducedDuration<0.001,'Reduced-motion preference must suppress layout motion');
+  await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'},{name:'hover',value:'hover'},{name:'pointer',value:'fine'}]});
   await viewport(390,844,true);
   await navigate(base+'/worlds?sidebar=expanded&theme=dark');
   await screenshot('home-mobile-390');
   await click('[aria-label="打开导航"]');
   assert(await evaluate('document.querySelector("[aria-label=\\"关闭导航\\"]") !== null'),'Mobile menu missing');
   await screenshot('home-mobile-menu-390');
+  // A collapsed desktop preference must never hide labels in the mobile drawer.
+  await navigate(base+'/worlds?sidebar=collapsed&theme=dark');
+  await click('[aria-label="打开导航"]');
+  const mobileDataVisible=await evaluate('(()=>{const d=document.querySelector(\'aside section[aria-labelledby="sessions-heading"]\')?.parentElement;const t=document.querySelector(\'aside nav a span\');return !!d && !d.inert && getComputedStyle(d).visibility==="visible" && getComputedStyle(t).opacity==="1"})()');
+  assert(mobileDataVisible,'Mobile drawer must reveal all labels even with collapsed desktop preference');
+  await click('[aria-label="关闭导航"]');
+  assert(await evaluate('document.querySelector("[aria-label=\\"关闭导航遮罩\\"]").dataset.open')==='false','Mobile drawer did not close');
   assert(exceptionCount===0,'Browser JS exceptions: '+exceptionCount);
-  console.log('PASS: desktop expanded/collapsed, eight cards, settings dialog/Escape, theme, category, card detail, mobile menu.');
+  console.log('PASS: stable sidebar material, intermediate animation width, selected hover, desktop expanded/collapsed, dialogs, theme, category, detail, mobile menu.');
   console.log('Screenshots:',out);
 }catch(e){
   console.error('FAIL:',e);
