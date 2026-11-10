@@ -18,7 +18,7 @@ it('imports text unchanged, strips unknown fields and rejects object description
   try {
     const invalid=await app.request('/api/v1/worlds/import',upload({...base,description:{format:'html',content:'wrong'},tags:['unused']}));
     expect(invalid.status).toBe(422);
-    expect(await invalid.json()).toMatchObject({code:'INVALID_WORLD'});
+    expect(await invalid.json()).toMatchObject({success:false,errorCode:'INVALID_WORLD'});
     expect(db.prepare('SELECT COUNT(*) AS n FROM tags').get()?.n).toBe(0);
     const unsafe=await app.request('/api/v1/worlds/import',upload({...base,state:{schema_version:1,scopes:{message:{bad:JSON.parse('{"type":"json","initial":{"__proto__":1}}')}}}}));
     expect(unsafe.status).toBe(422);
@@ -50,8 +50,8 @@ it('filters tags, copies independent world defaults to sessions and protects ref
     const page=(await call('/worlds?'+ids+'&match=any&limit=1')).data;
     const next=(await call('/worlds?'+ids+'&match=any&limit=1&cursor='+page.nextCursor)).data;
     expect(page.items[0].id).not.toBe(next.items[0].id);
-    expect((await call('/presets?'+ids)).data.code).toBe('TAG_TYPE_MISMATCH');
-    expect((await call('/worlds?tagId=missing')).data.code).toBe('TAG_NOT_FOUND');
+    expect((await call('/presets?'+ids)).data.errorCode).toBe('TAG_TYPE_MISMATCH');
+    expect((await call('/worlds?tagId=missing')).data.errorCode).toBe('TAG_NOT_FOUND');
 
     configureWorldModel(db,w.id);
     expect((await call('/worlds/'+w.id,json('PATCH',{defaultPresetId:p.id}))).status).toBe(200);
@@ -69,7 +69,7 @@ it('filters tags, copies independent world defaults to sessions and protects ref
 
     const removal=await call('/presets/'+p.id,{method:'DELETE'});
     expect(removal.status).toBe(409);
-    expect(removal.data.code).toBe('CONFIG_IN_USE');
+    expect(removal.data.errorCode).toBe('CONFIG_IN_USE');
     const updated=await call('/sessions/'+first.id,json('PATCH',{presetId:q.id,apiModelConfigId:'model-y'}));
     expect(updated.status).toBe(200);
     expect((await call('/sessions/'+first.id)).data).toMatchObject({presetId:q.id,apiModelConfigId:'model-y'});
@@ -101,7 +101,7 @@ it('rolls back imported worlds and tag names together and reports corrupt stored
     const {data:{item}}=await (await app.request('/api/v1/worlds/import',upload(base))).json() as {data:{item:{id:string}}};
     db.prepare('UPDATE worlds SET state=? WHERE id=?').run('{"extra":1}',item.id);
     const result=await app.request('/api/v1/worlds/'+item.id);
-    expect(await result.json()).toMatchObject({code:'WORLD_CORRUPT',message:'世界卡损坏',data:null});
+    expect(await result.json()).toMatchObject({success:false,errorCode:'WORLD_CORRUPT',errorMessage:expect.stringContaining('世界卡损坏'),data:{path:expect.any(String),reason:expect.any(String)}});
     expect(db.prepare('SELECT state FROM worlds WHERE id=?').get(item.id)?.state).toBe('{"extra":1}');
   } finally {db.close();}
 });

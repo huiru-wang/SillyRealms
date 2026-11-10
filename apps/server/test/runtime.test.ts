@@ -28,7 +28,7 @@ it('V1 runs survive an event disconnect and lock all sessions in their world',as
  const event=await app.request('/api/v1/sessions/session/events');const reader=event.body!.getReader();
  const send=(sid:string,tip:string)=>app.request('/api/v1/sessions/'+sid+'/runs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:'go',requestId:crypto.randomUUID(),expectedTipEntryId:tip})});
  const run=await send('session','opening-entry');expect(run.status).toBe(202);await ready;expect((await send('other','other-entry')).status).toBe(409);
- const write=await app.request('/api/v1/sessions/other/state',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({updates:[{scope:'message',path:'hero.hp',value:7}]})});expect(write.status).toBe(200);expect(await write.json()).toMatchObject({data:[{success:false,message:'WORLD_BUSY'}]});
+ const write=await app.request('/api/v1/sessions/other/state',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({updates:[{scope:'message',path:'hero.hp',value:7}]})});expect(write.status).toBe(200);expect(await write.json()).toMatchObject({data:[{success:false,errorCode:'WORLD_BUSY',errorMessage:'世界卡正在使用中'}]});
  await reader.cancel();release();const runId=(await run.json() as {data:{runId:string}}).data.runId;for(let i=0;i<100;i++){if((await (await app.request(`/api/v1/sessions/session/runs/${runId}`)).json() as {data:{status:string}}).data.status==='completed')break;await new Promise(r=>setTimeout(r,5));}
  const history=await (await app.request('/api/v1/sessions/session/runs?limit=5')).json() as {data:{runs:Array<{messages:Array<{role:string;text:string}>}>}};expect(history.data.runs.at(-1)?.messages.filter(s=>s.role==='assistant').map(s=>s.text).join('')).toBe('onetwo');db.close();
 });
@@ -57,4 +57,69 @@ it('stops a Run while a continuation is waiting for the model',async()=>{
     expect(calls).toBe(2);
     expect(runtime.busy('session')).toBe(false);
   } finally {db.close();}
+});
+
+it.each([
+  { label: 'preserves a known model error', thrown: new Error('CONTEXT_BUDGET_EXCEEDED'), expected: 'CONTEXT_BUDGET_EXCEEDED', message: '上下文超出模型允许范围' },
+  { label: 'redacts an unknown provider exception', thrown: new Error('upstream token secret-12345'), expected: 'PROVIDER_ERROR', message: '模型服务调用失败' },
+])('$label in SSE and persisted run status', async ({ thrown, expected, message }) => {
+  const gateway: ModelGateway = {
+    resolve: () => model,
+    toolVerified: () => true,
+    stream: () => ({ async *[Symbol.asyncIterator]() { throw thrown; } }),
+  };
+  const { db, app } = setup(gateway);
+  const streamResponse = await app.request('/api/v1/sessions/session/events');
+  const reader = streamResponse.body!.getReader();
+  try {
+    const started = await app.request('/api/v1/sessions/session/runs', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'go', requestId: crypto.randomUUID(), expectedTipEntryId: 'opening-entry' }),
+    });
+    expect(started.status).toBe(202);
+    const response = await started.json() as { data: { runId: string } };
+    let seen = '';
+    for (let i=0; i<12 && !seen.includes('event: run.failed'); i++) {
+      const next = await reader.read();
+      if (next.done) break;
+      seen += new TextDecoder().decode(next.value);
+    }
+    const failed = /event: run.failed\ndata: ([^\n]+)/.exec(seen);
+    expect(failed).not.toBeNull();
+    const event = JSON.parse(failed![1]!) as Record<string, unknown>;
+    expect(event).toMatchObject({ runId: response.data.runId, errorCode: expected, errorMessage: message });
+    expect(event).not.toHaveProperty('error');
+    expect(seen).not.toContain('secret-12345');
+    const statusResponse = await app.request('/api/v1/sessions/session/runs/' + response.data.runId);
+    expect(await statusResponse.json()).toMatchObject({
+      success: true, data: { status: 'failed', errorCode: expected, errorMessage: message },
+    });
+  } finally { await reader.cancel(); db.close(); }
+});
+
+it('reports asynchronous preflight failures through the same SSE fields', async () => {
+  const limited: Model<Api> = { ...model, maxTokens: 32 };
+  const gateway: ModelGateway = {
+    resolve: () => limited, toolVerified: () => true,
+    stream: () => ({ async *[Symbol.asyncIterator]() { throw Error('should not call model'); } }),
+  };
+  const { db, app } = setup(gateway);
+  const events = await app.request('/api/v1/sessions/session/events');
+  const reader = events.body!.getReader();
+  try {
+    const started = await app.request('/api/v1/sessions/session/runs', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'go', requestId: crypto.randomUUID(), expectedTipEntryId: 'opening-entry' }),
+    });
+    expect(started.status).toBe(202);
+    let output='';
+    for (let i=0; i<12 && !output.includes('event: run.failed'); i++) {
+      const next=await reader.read();if(next.done)break;
+      output+=new TextDecoder().decode(next.value);
+    }
+    const failed=/event: run.failed\ndata: ([^\n]+)/.exec(output);
+    expect(JSON.parse(failed![1]!)).toMatchObject({
+      errorCode:'CONTEXT_BUDGET_EXCEEDED',errorMessage:'上下文超出模型允许范围',
+    });
+  } finally { await reader.cancel(); db.close(); }
 });

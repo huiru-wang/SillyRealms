@@ -47,7 +47,7 @@ it('holds app defaults, stores exact source bytes, and copies world defaults int
     expect(JSON.parse(String(db.prepare('SELECT characters_json FROM worlds WHERE id=?').get(id)?.characters_json))).toEqual(sample.data.characters);
     const missing=await app.request('/api/v1/sessions',post({worldId:id,openingId:'o',userCharacterId:'p'}));
     expect(missing.status).toBe(422);
-    expect(await missing.json()).toMatchObject({code:'WORLD_CONFIG_INCOMPLETE'});
+    expect(await missing.json()).toMatchObject({success:false,errorCode:'WORLD_CONFIG_INCOMPLETE'});
 
     seedModel(db,'model-a');seedModel(db,'model-b');
     const savedDefault=await app.request('/api/v1/app-settings',patch({defaultApiModelConfigId:'model-a'}));
@@ -74,7 +74,7 @@ it('holds app defaults, stores exact source bytes, and copies world defaults int
     expect((await app.request('/api/v1/presets/sr-default-preset',{method:'DELETE'})).status).toBe(409);
     const modelRemoval=await app.request('/api/v1/api-model-configs/model-b',{method:'DELETE'});
     expect(modelRemoval.status).toBe(409);
-    expect(await modelRemoval.json()).toMatchObject({code:'CONFIG_IN_USE'});
+    expect(await modelRemoval.json()).toMatchObject({success:false,errorCode:'CONFIG_IN_USE'});
     const exported=await (await app.request('/api/v1/worlds/'+id+'/export')).json() as any;
     expect(exported.data.characters).toEqual(sample.data.characters);
     expect(exported.data.lorebook).toEqual(sample.data.lorebook);
@@ -95,7 +95,7 @@ it('rejects tampered original world source without mutating the structured card'
     writeFileSync(join(dir,'workspaces','worlds',id,'source','input.json'),'{"tampered":true}');
     const res=await app.request('/api/v1/worlds/'+id+'/source');
     expect(res.status).toBe(422);
-    expect(await res.json()).toMatchObject({code:'WORLD_CORRUPT'});
+    expect(await res.json()).toMatchObject({success:false,errorCode:'WORLD_CORRUPT'});
     const reconstructed=await app.request('/api/v1/worlds/'+id+'/export');
     expect(reconstructed.status).toBe(200);
     expect((await reconstructed.json() as any).data.name).toBe(sample.data.name);

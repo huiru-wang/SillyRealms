@@ -77,7 +77,7 @@ it('reports invalid state batches without failing narration or applying partial 
   expect(toolResults).toHaveLength(1);
   expect(toolResults[0]?.isError).toBe(true);
   expect(events.filter(e=>e.type==='tool.failed')).toMatchObject([
-    {payload:{toolCallId:'state',toolName:'update_state',code:'INVALID_STATE_UPDATE'}},
+    {payload:{toolCallId:'state',toolName:'update_state',errorCode:'STATE_OUT_OF_RANGE',errorMessage:'状态值超出允许范围'}},
   ]);
   expect(events.at(-1)).toMatchObject({type:'run.updated',payload:{status:'completed'}});
 });
@@ -114,8 +114,8 @@ it('continues executing later tools after a failed call',async()=>{
   expect(status).toBe('completed');
   expect(state).toMatchObject({阶段:'推进',计数:0});
   expect(toolResults.map(result=>result.isError)).toEqual([true,false,true]);
-  expect(events.filter(e=>e.type==='tool.failed').map(e=>e.payload.code))
-    .toEqual(['INVALID_STATE_UPDATE','INVALID_TOOL_CALL']);
+  expect(events.filter(e=>e.type==='tool.failed').map(e=>e.payload.errorCode))
+    .toEqual(['STATE_OUT_OF_RANGE','INVALID_TOOL_CALL']);
 });
 it('continues after a tool-only reply so the model can produce narrative',async()=>{
   const content=[{type:'toolCall',id:'state',name:'update_state',arguments:{updates:[]}}];

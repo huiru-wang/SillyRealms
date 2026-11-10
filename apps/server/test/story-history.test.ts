@@ -8,7 +8,7 @@ it('does not duplicate deltas already in the initial history and keeps terminal 
  expect(mergeInitial(runs,events)[0]).toEqual({id:'r',status:'completed',messages:[{id:'m',role:'assistant',text:'AB'}]});
 });
 it('accepts a preflight failure without a created event',()=>{
- expect(applyRunEvent([],{event:'run.failed',data:{runId:'r',messages:[],error:'fail'}})).toEqual([{id:'r',status:'failed',messages:[]}]);
+ expect(applyRunEvent([],{event:'run.failed',data:{runId:'r',messages:[],errorCode:'INTERNAL_ERROR',errorMessage:'服务器内部错误'}})).toEqual([{id:'r',status:'failed',messages:[]}]);
 });
 
 it('merges consecutive assistant messages for display across streamed and completed runs',()=>{

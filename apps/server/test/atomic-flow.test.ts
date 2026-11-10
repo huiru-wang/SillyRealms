@@ -28,12 +28,12 @@ it('runs V1 state, message and events through a temporary database and fake prov
     const session=created.data.item;
     const events=await app.request(`/api/v1/sessions/${session.id}/events`);const reader=events.body!.getReader();
     const sent=await app.request(`/api/v1/sessions/${session.id}/runs`,post({text:'继续',requestId:'123e4567-e89b-42d3-a456-426614174000',expectedTipEntryId:session.tipEntryId}));
-    expect(sent.status).toBe(202);expect((await sent.json() as {code:string}).code).toBe('OK');
+    expect(sent.status).toBe(202);expect((await sent.json() as {success:boolean}).success).toBe(true);
     let text='';while(!text.includes('event: run.completed')){const part=await reader.read();if(part.done)break;text+=new TextDecoder().decode(part.value);}
     expect(text).toContain('event: run.created');expect(text).toContain('event: run.delta');expect(text).toContain('event: state.changed');expect(calls).toBe(2);
     expect(text).toContain('event: tool.failed');
     expect(text).toContain('"toolCallId":"bad"');
-    expect(text).toContain('"code":"INVALID_STATE_UPDATE"');
+    expect(text).toContain('"errorCode":"STATE_ROOT_NOT_ACTIVE"');
     expect(text).not.toContain('event: run.failed');
     expect(text.indexOf('event: tool.failed')).toBeLessThan(text.indexOf('event: run.completed'));
     const state=await (await app.request(`/api/v1/sessions/${session.id}/state`)).json() as {data:{message:{进度:{阶段:string}}}};

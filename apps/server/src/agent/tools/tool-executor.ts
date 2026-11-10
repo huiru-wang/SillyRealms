@@ -1,5 +1,5 @@
 import type { ToolCall, ToolResultMessage } from '@earendil-works/pi-ai';
-import { ErrorCodes } from '../../common/error-codes.js';
+import { ErrorCodes, normalizeError } from '../../common/error-codes.js';
 import type { Json } from '../../domain/state/state.js';
 import { setState } from './state-tool.js';
 
@@ -30,9 +30,7 @@ export class ToolExecutor {
       for (const [key, value] of Object.entries(candidate)) workspace[key] = value;
       result = { ok: true, updated: args.updates.length };
     } catch (error) {
-      const code = error instanceof Error && error.message === ErrorCodes.INVALID_TOOL_CALL
-        ? ErrorCodes.INVALID_TOOL_CALL : ErrorCodes.INVALID_STATE_UPDATE;
-      result = { ok: false, code };
+      result = { ok: false, code: normalizeError(error, ErrorCodes.INVALID_STATE_UPDATE).errorCode };
     }
     return {
       role: 'toolResult', toolCallId: call.id, toolName: call.name,

@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
-import { AgentRuntime, RuntimeError } from '../agent/index.js';
+import { AgentRuntime } from '../agent/index.js';
 import { historyRuns } from '../domain/session/history-runs.js';
-import { ErrorCodes } from '../common/error-codes.js';
+import { ErrorCodes, errorInfo, isErrorCode, normalizeError, type ErrorCode } from '../common/error-codes.js';
 import { failure, ok } from '../common/http-response.js';
 import { UsageStore } from '../agent/persistence/usage-store.js';
 
@@ -16,25 +16,31 @@ export function sessionRuntimeRoutes(db:DatabaseSync,runtime:AgentRuntime):Hono 
   const usage = new UsageStore(db);
   app.get('/:id/usage', c => {
     const id = c.req.param('id');
-    if (!session(id)) return c.json(failure(ErrorCodes.SESSION_NOT_FOUND,'会话不存在'),404);
+    if (!session(id)) return c.json(failure(ErrorCodes.SESSION_NOT_FOUND),404);
     return c.json(ok(usage.view(id)));
   });
   app.post('/:id/runs',async c=>{
     const input=runRequest.safeParse(await c.req.json().catch(()=>null));
-    if(!input.success)return c.json(failure(ErrorCodes.INVALID_REQUEST,'请求无效'),400);
+    if(!input.success)return c.json(failure(ErrorCodes.INVALID_REQUEST),400);
     try {const result=await runtime.start(c.req.param('id'),input.data.text,input.data.requestId,input.data.expectedTipEntryId);return c.json(ok({runId:result.runId,requestId:result.requestId}),202);}
-    catch(error){const code=error instanceof RuntimeError?error.code:ErrorCodes.INVALID_REQUEST;const status=code==='SESSION_NOT_FOUND'?404:['WORLD_BUSY','SESSION_BUSY','TIP_CONFLICT','REQUEST_ALREADY_EXISTS'].includes(code)?409:422;return c.json({code,message:code,data:null},status);}
+    catch(error){
+      const { errorCode } = normalizeError(error);
+      const status = errorCode === ErrorCodes.SESSION_NOT_FOUND ? 404
+        : new Set<ErrorCode>([ErrorCodes.WORLD_BUSY, ErrorCodes.SESSION_BUSY, ErrorCodes.TIP_CONFLICT, ErrorCodes.REQUEST_ALREADY_EXISTS]).has(errorCode) ? 409
+          : errorCode === ErrorCodes.INTERNAL_ERROR ? 500 : 422;
+      return c.json(failure(errorCode), status);
+    }
   });
   app.get('/:id/runs/:runId',c=>{
     const result=runtime.status(c.req.param('id'),c.req.param('runId'));
-    return result?c.json(ok(result)):c.json(failure(ErrorCodes.RUN_NOT_FOUND,'运行不存在'),404);
+    return result?c.json(ok(result)):c.json(failure(ErrorCodes.RUN_NOT_FOUND),404);
   });
   app.post('/:id/runs/:runId/stop',async c=>{
     const result=await runtime.stop(c.req.param('id'),c.req.param('runId'));
-    return result?c.json(ok(result)):c.json(failure(ErrorCodes.RUN_NOT_FOUND,'运行不存在'),404);
+    return result?c.json(ok(result)):c.json(failure(ErrorCodes.RUN_NOT_FOUND),404);
   });
   app.get('/:id/events',c=>{
-    const id=c.req.param('id');if(!session(id))return c.json(failure(ErrorCodes.SESSION_NOT_FOUND,'会话不存在'),404);
+    const id=c.req.param('id');if(!session(id))return c.json(failure(ErrorCodes.SESSION_NOT_FOUND),404);
     const encoder=new TextEncoder();let dispose=()=>{};let timer:ReturnType<typeof setInterval>;
     const stream=new ReadableStream<Uint8Array>({start(controller){
       let closed=false;
@@ -49,8 +55,14 @@ export function sessionRuntimeRoutes(db:DatabaseSync,runtime:AgentRuntime):Hono 
           else if(message?.role==='assistant' && message.text)send('run.delta',{runId,messageId:message.id,text:message.text});
         } else if(event==='message.delta') send('run.delta',{runId,messageId:payload.messageId,text:payload.text});
         else if(event==='run.updated' && payload.status==='completed')send('run.completed',{runId,messages:messages(runId)});
-        else if(event==='run.updated' && payload.status==='failed')send('run.failed',{runId,messages:messages(runId),error:payload.errorCode??'RUN_FAILED'});
-        else if(event==='run.updated' && payload.status==='stopped')send('run.stopped',{runId,messages:messages(runId)});
+        else if(event==='run.updated' && payload.status==='failed') {
+          const code = isErrorCode(payload.errorCode) ? payload.errorCode : ErrorCodes.INTERNAL_ERROR;
+          send('run.failed',{
+            runId, messages: messages(runId), errorCode: code,
+            errorMessage: typeof payload.errorMessage === 'string' && payload.errorMessage
+              ? payload.errorMessage : errorInfo(code).errorMessage,
+          });
+        } else if(event==='run.updated' && payload.status==='stopped')send('run.stopped',{runId,messages:messages(runId)});
         else if(event==='state.changed' && typeof payload.path==='string')send('state.changed',payload);
         else if(event==='tool.failed')send('tool.failed',payload);
         else if(event==='usage.updated')send('usage.updated',payload);

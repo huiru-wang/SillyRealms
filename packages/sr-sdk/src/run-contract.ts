@@ -15,7 +15,7 @@ export type RunEvent =
   | { event: 'run.created'; data: { runId: string; messages: ChatMessage[] } }
   | { event: 'run.delta'; data: { runId: string; messageId: string; text: string } }
   | { event: 'run.completed'; data: { runId: string; messages: ChatMessage[] } }
-  | { event: 'run.failed'; data: { runId: string; messages: ChatMessage[]; error: string } }
+  | { event: 'run.failed'; data: { runId: string; messages: ChatMessage[]; errorCode: string; errorMessage: string } }
   | { event: 'run.stopped'; data: { runId: string; messages: ChatMessage[] } };
 
 export type HistoryRunsResult = {

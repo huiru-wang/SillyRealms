@@ -1,4 +1,5 @@
-import { ErrorCodes } from '../common/error-codes.js';
+import { ErrorCodes, normalizeError, type ErrorCode } from '../common/error-codes.js';
+import { failure } from '../common/http-response.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { z } from 'zod';
@@ -40,9 +41,10 @@ function validateIds(db:DatabaseSync,type:Kind,ids:string[]) {
     if (!row || row.type!==type) throw new Error(row?'TAG_TYPE_MISMATCH':'TAG_NOT_FOUND',{cause:id});
   }
 }
-function failure(c:Context,error:unknown,fallback:string) {
-  const known=error instanceof Error && ['TAG_NOT_FOUND','TAG_TYPE_MISMATCH','INVALID_CURSOR','INVALID_MATCH'].includes(error.message);
-  return c.json({error:{code:known?error.message:fallback,...(known && error.cause ? {id:error.cause}:{})}},422);
+function tagFailure(c: Context, error: unknown, fallback: ErrorCode) {
+  const info = normalizeError(error, fallback);
+  const id = error instanceof Error && typeof error.cause === 'string' ? error.cause : undefined;
+  return c.json(failure(info.errorCode, id ? `标签 ID: ${id}` : undefined, id ? { id } : null), 422);
 }
 export function targetRoutes(app:Hono,db:DatabaseSync,type:Kind) {
   const target=table[type];
@@ -50,7 +52,7 @@ export function targetRoutes(app:Hono,db:DatabaseSync,type:Kind) {
     const id=c.req.param('id');
     try {
       const body=z.object({tagIds:z.array(z.string().min(1))}).strict().parse(await c.req.json());
-      if (!db.prepare('SELECT 1 FROM '+target+' WHERE id=?').get(id)) return c.json({error:{code:type.toUpperCase()+'_NOT_FOUND'}},404);
+      if (!db.prepare('SELECT 1 FROM '+target+' WHERE id=?').get(id)) return c.json(failure(type==='world' ? ErrorCodes.WORLD_NOT_FOUND : ErrorCodes.PRESET_NOT_FOUND),404);
       transaction(db,()=>{
         const ids=[...new Set(body.tagIds)];
         validateIds(db,type,ids);
@@ -61,7 +63,7 @@ export function targetRoutes(app:Hono,db:DatabaseSync,type:Kind) {
         if(added.length || removed.length) db.prepare('UPDATE '+target+' SET updated_at=? WHERE id=?').run(Date.now(),id);
       });
       return c.json({ok:true});
-    } catch(error) {return failure(c,error,'INVALID_TAGS');}
+    } catch(error) {return tagFailure(c,error,ErrorCodes.INVALID_TAGS);}
   });
   app.get('/',c=>{
     try {
@@ -91,6 +93,6 @@ export function targetRoutes(app:Hono,db:DatabaseSync,type:Kind) {
       const tags=selectedIds.length?db.prepare('SELECT a.target_id,t.id,t.name FROM tag_assignments a JOIN tags t ON t.id=a.tag_id WHERE t.type=? AND a.target_id IN ('+marks+') ORDER BY t.sort_order,t.id').all(type,...selectedIds):[];
       const extras=selectedIds.length?db.prepare(type==='world'?'SELECT w.id,w.cover,w.default_preset_id,w.default_api_model_config_id,(SELECT count(*) FROM sessions s WHERE s.world_id=w.id) AS session_count FROM worlds w WHERE w.id IN ('+marks+')':'SELECT p.id,p.config_json FROM presets p WHERE p.id IN ('+marks+')').all(...selectedIds):[];
       return c.json({items:items.map(r=>{const extra=extras.find(e=>e.id===r.id);return {id:r.id,name:r.name,createdAt:r.created_at,updatedAt:r.updated_at,tags:tags.filter(t=>t.target_id===r.id).map(t=>({id:t.id,name:t.name})),...(type==='world'?{cover:extra?.cover??null,defaultPresetId:extra?.default_preset_id??null,defaultApiModelConfigId:extra?.default_api_model_config_id??null,sessionCount:extra?.session_count??0}:{description:extra ? JSON.parse(String(extra.config_json)).description??null : null})};}),hasMore,nextCursor:hasMore&&last?Buffer.from(JSON.stringify({signature,time:last[column],id:last.id})).toString('base64url'):null});
-    } catch(error) {return failure(c,error,'INVALID_QUERY');}
+    } catch(error) {return tagFailure(c,error,ErrorCodes.INVALID_QUERY);}
   });
 }

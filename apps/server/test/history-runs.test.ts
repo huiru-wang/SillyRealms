@@ -32,9 +32,9 @@ it('serves the target V1 run history inside the common response envelope', async
     const app=createApp(db);
     const response=await app.request('/api/v1/sessions/s/runs?limit=20');
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({code:'OK',message:'',data:{runs:[{id:'r',status:'completed',messages:[{id:'e',role:'assistant',text:'开局'}]}],nextCursor:null,hasMore:false}});
+    expect(await response.json()).toEqual({success:true,errorCode:null,errorMessage:'',data:{runs:[{id:'r',status:'completed',messages:[{id:'e',role:'assistant',text:'开局'}]}],nextCursor:null,hasMore:false}});
     const invalid=await app.request('/api/v1/sessions/s/runs?limit=21');
     expect(invalid.status).toBe(400);
-    expect(await invalid.json()).toMatchObject({code:'INVALID_CURSOR',data:null});
+    expect(await invalid.json()).toMatchObject({success:false,errorCode:'INVALID_CURSOR',data:null});
   } finally { db.close(); }
 });

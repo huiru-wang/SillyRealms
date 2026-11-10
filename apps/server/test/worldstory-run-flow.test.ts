@@ -54,7 +54,7 @@ it('refuses creating a new session when the world default preset is not set',asy
   expect((await app.request('/api/v1/worlds/world',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({defaultPresetId:null})})).status).toBe(200);
   const response=await app.request('/api/v1/sessions',post({worldId:'world',openingId:'o',userCharacterId:'p'}));
   expect(response.status).toBe(422);
-  expect(await response.json()).toMatchObject({code:'WORLD_CONFIG_INCOMPLETE'});
+  expect(await response.json()).toMatchObject({success:false,errorCode:'WORLD_CONFIG_INCOMPLETE'});
   expect(db.prepare('SELECT COUNT(*) AS n FROM entries').get()?.n).toBe(1);
  } finally {db.close();}
 });

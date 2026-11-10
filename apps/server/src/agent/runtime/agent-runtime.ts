@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { ErrorCodes } from '../../common/error-codes.js';
+import { ErrorCodes, normalizeError } from '../../common/error-codes.js';
 import { debugLog } from '../../common/debug.js';
 import type { CredentialStore } from '../../infrastructure/credentials/store.js';
 import type { ModelGateway } from '../model/pi-gateway.js';
@@ -71,7 +71,7 @@ export class AgentRuntime {
       finally { reader.releaseLock(); }
     }).catch(error => this.emit(sessionId, 'run.updated', {
       runId: task.runId, status: 'failed',
-      errorCode: error instanceof RuntimeError ? error.code : ErrorCodes.INVALID_REQUEST,
+      ...normalizeError(error),
     }));
     return Promise.resolve({ runId: task.runId, requestId, status: 'preparing' });
   }

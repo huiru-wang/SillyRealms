@@ -1,3 +1,4 @@
+import { failure } from '../common/http-response.js';
 import { ErrorCodes } from '../common/error-codes.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
@@ -18,12 +19,12 @@ export function providerRoutes(db: DatabaseSync, credentials: CredentialStore, g
   const get = (id: string) => db.prepare('SELECT * FROM api_model_configs WHERE id=?').get(id);
   const validModel = (provider: string, model: string) => !!catalog.getModel(provider, model);
   providers.get('/models', c => c.json({ providers: catalog.getProviders().map(provider => ({ providerId: provider.id, models: catalog.getModels(provider.id).map(m => ({ id: m.id, name: m.name, contextWindow: m.contextWindow, maxTokens: m.maxTokens, toolSupport: 'unknown' })) })) }));
-  configs.get('/', async c => { try { return c.json({ items: await Promise.all(db.prepare('SELECT * FROM api_model_configs ORDER BY name,id').all().map(publicRow)) }); } catch { return c.json({ error: { code: ErrorCodes.CREDENTIAL_STORE_ERROR, message: 'Credential store unavailable' } }, 500); } });
-  configs.get('/:id', async c => { const row = get(c.req.param('id')); if (!row) return c.json({ error: { code: ErrorCodes.API_MODEL_CONFIG_NOT_FOUND, message: 'Model configuration not found' } }, 404); try { return c.json({ item: await publicRow(row) }); } catch { return c.json({ error: { code: ErrorCodes.CREDENTIAL_STORE_ERROR, message: 'Credential store unavailable' } }, 500); } });
+  configs.get('/', async c => { try { return c.json({ items: await Promise.all(db.prepare('SELECT * FROM api_model_configs ORDER BY name,id').all().map(publicRow)) }); } catch { return c.json(failure(ErrorCodes.CREDENTIAL_STORE_ERROR),500); } });
+  configs.get('/:id', async c => { const row = get(c.req.param('id')); if (!row) return c.json(failure(ErrorCodes.API_MODEL_CONFIG_NOT_FOUND),404); try { return c.json({ item: await publicRow(row) }); } catch { return c.json(failure(ErrorCodes.CREDENTIAL_STORE_ERROR),500); } });
   configs.post('/', async c => {
     try {
       const body = input.parse(await c.req.json());
-      if (!validModel(body.providerId, body.modelId)) return c.json({ error: { code: ErrorCodes.MODEL_NOT_FOUND, message: 'Model not found' } }, 422);
+      if (!validModel(body.providerId, body.modelId)) return c.json(failure(ErrorCodes.MODEL_NOT_FOUND),422);
       const id = randomUUID(), now = Date.now();
       await credentials.set(id, body.apiKey);
       try {
@@ -35,26 +36,26 @@ export function providerRoutes(db: DatabaseSync, credentials: CredentialStore, g
         });
       } catch { await credentials.delete(id); throw new Error(ErrorCodes.CONFIG_SAVE_FAILED); }
       return c.json({ item: await publicRow(get(id)!) }, 201);
-    } catch { return c.json({ error: { code: ErrorCodes.CONFIG_SAVE_FAILED, message: 'Could not save model configuration' } }, 422); }
+    } catch { return c.json(failure(ErrorCodes.CONFIG_SAVE_FAILED),422); }
   });
   configs.post('/:id/test', async c => {
     const row = get(c.req.param('id'));
-    if (!row) return c.json({error:{code:ErrorCodes.API_MODEL_CONFIG_NOT_FOUND,message:'Model configuration not found'}},404);
+    if (!row) return c.json(failure(ErrorCodes.API_MODEL_CONFIG_NOT_FOUND),404);
     try {
       const key = await credentials.get(String(row.credential_ref));
-      if (!key) return c.json({error:{code:ErrorCodes.CREDENTIAL_NOT_CONFIGURED,message:'Credential not configured'}},422);
-      if (!gateway.verify) return c.json({error:{code:ErrorCodes.PROVIDER_TEST_UNAVAILABLE,message:'Connection test unavailable'}},422);
+      if (!key) return c.json(failure(ErrorCodes.CREDENTIAL_NOT_CONFIGURED),422);
+      if (!gateway.verify) return c.json(failure(ErrorCodes.PROVIDER_TEST_UNAVAILABLE),422);
       const toolVerified = await gateway.verify(String(row.provider_id),String(row.model_id),key);
       return c.json({ok:true,toolVerified});
-    } catch { return c.json({error:{code:ErrorCodes.PROVIDER_TEST_FAILED,message:'Connection test failed'}},502); }
+    } catch { return c.json(failure(ErrorCodes.PROVIDER_TEST_FAILED),502); }
   });
   configs.patch('/:id', async c => {
     const row = get(c.req.param('id'));
-    if (!row) return c.json({ error: { code: ErrorCodes.API_MODEL_CONFIG_NOT_FOUND, message: 'Model configuration not found' } }, 404);
+    if (!row) return c.json(failure(ErrorCodes.API_MODEL_CONFIG_NOT_FOUND),404);
     try {
       const body = patch.parse(await c.req.json());
       const provider = body.providerId ?? String(row.provider_id), model = body.modelId ?? String(row.model_id);
-      if (!validModel(provider, model)) return c.json({ error: { code: ErrorCodes.MODEL_NOT_FOUND, message: 'Model not found' } }, 422);
+      if (!validModel(provider, model)) return c.json(failure(ErrorCodes.MODEL_NOT_FOUND),422);
       const ref=String(row.credential_ref);
       const previous = body.apiKey === undefined ? null : await credentials.get(ref);
       if (body.apiKey !== undefined) await credentials.set(ref, body.apiKey);
@@ -64,15 +65,15 @@ export function providerRoutes(db: DatabaseSync, credentials: CredentialStore, g
         throw err;
       }
       return c.json({ item: await publicRow(get(String(row.id))!) });
-    } catch { return c.json({ error: { code: ErrorCodes.CONFIG_UPDATE_FAILED, message: 'Could not update model configuration' } }, 422); }
+    } catch { return c.json(failure(ErrorCodes.CONFIG_UPDATE_FAILED),422); }
   });
   configs.delete('/:id', async c => {
     const row = get(c.req.param('id'));
-    if (!row) return c.json({ error: { code: ErrorCodes.API_MODEL_CONFIG_NOT_FOUND, message: 'Model configuration not found' } }, 404);
+    if (!row) return c.json(failure(ErrorCodes.API_MODEL_CONFIG_NOT_FOUND),404);
     const refs=referenceCounts(db,'model',String(row.id));
-    if(refs.total>0) return c.json({error:{code:ErrorCodes.CONFIG_IN_USE,counts:refs}},409);
+    if(refs.total>0) return c.json(failure(ErrorCodes.CONFIG_IN_USE, `当前有 ${refs.total} 处引用`, { counts: refs }),409);
     try { await credentials.delete(String(row.credential_ref)); db.prepare('DELETE FROM api_model_configs WHERE id=?').run(String(row.id)); return c.json({ ok: true }); }
-    catch { return c.json({ error: { code: ErrorCodes.CREDENTIAL_DELETE_FAILED, message: 'Could not delete credentials' } }, 500); }
+    catch { return c.json(failure(ErrorCodes.CREDENTIAL_DELETE_FAILED),500); }
   });
   return { providers, configs };
 }

@@ -101,7 +101,7 @@ export function SessionHost({id}:{id:string}) {
           if(['run.completed','run.failed','run.stopped'].includes(name)){
             terminal.current.add(data.runId);if(terminal.current.size>100){const oldest=terminal.current.values().next().value!;terminal.current.delete(oldest);}
             if(activeRef.current===data.runId){activeRef.current=null;setActiveRun(null);}
-            if(name==='run.failed')setNotice('生成失败：'+String(data.error??''));
+            if(name==='run.failed')setNotice('生成失败：'+String(data.errorMessage??'未知错误'));
           } else if(!terminal.current.has(data.runId)){activeRef.current=data.runId;setActiveRun(data.runId);}
         }
         port.current?.postMessage({type:'event',event:{event:name,data}});

@@ -29,6 +29,6 @@ window.fetch=async(input,init)=>{
   else if(path==='/api/v1/sessions/test/state')data={global:{},session:{},message:{}};
   else if(path.startsWith('/api/v1/sessions/test/runs?'))data={runs:[{id:'font-run',status:'completed',messages}],nextCursor:null,hasMore:false};
   else if(path==='/api/v1/sessions/test/usage')data={cumulative:{inputTokens:10000,outputTokens:1200,totalTokens:11200,cacheReadTokens:2000,cacheWriteTokens:500,cacheHitRate:.2,complete:true,unknownCount:0},latestContext:{inputTokens:6000,contextWindowTokens:128000,ratio:6000/128000,modelId:'fake',stale:false,contextComposition:{systemBytes:1000,summaryBytes:2000,historyBytes:3000}}};
-  return new Response(JSON.stringify({code:'OK',data}),{status:200,headers:{'content-type':'application/json'}});
+  return new Response(JSON.stringify({success:true,errorCode:null,errorMessage:'',data}),{status:200,headers:{'content-type':'application/json'}});
 };
 createRoot(document.getElementById('root')!).render(<div className="sr-shell"><SessionHost id="test"/></div>);

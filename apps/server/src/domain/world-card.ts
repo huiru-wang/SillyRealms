@@ -110,5 +110,5 @@ function splitReason(error:unknown):[string,string] {
 }
 export function storedError(error:unknown,path='$') {
   const [detail,reason]=splitReason(error);
-  return {code:ErrorCodes.WORLD_CORRUPT,message:'世界卡损坏',details:{path:error instanceof CardError?error.path:detail==='$'?path:detail,reason}};
+  return {code:ErrorCodes.WORLD_CORRUPT,details:{path:error instanceof CardError?error.path:detail==='$'?path:detail,reason}};
 }

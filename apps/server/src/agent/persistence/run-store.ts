@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { ErrorCodes } from '../../common/error-codes.js';
+import { ErrorCodes, errorInfo, type PublicError } from '../../common/error-codes.js';
 import { RuntimeError } from '../shared/errors.js';
 import { readAncestors } from '../../domain/session/ancestors.js';
 import type { Json } from '../../domain/state/state.js';
@@ -118,7 +118,7 @@ export class RunStore {
   appendToolResult(sessionId: string, runId: string, message: object): void {
     this.appendAtomic(sessionId, runId, 'message', 'toolResult', { message }, {});
   }
-  finalize(sessionId: string, userId: string, partialId: string | null, outcome: RunOutcome, workspace: Record<string, Json>): void {
+  finalize(sessionId: string, userId: string, partialId: string | null, outcome: RunOutcome, workspace: Record<string, Json>, runFailure: PublicError | null = null): void {
     this.transaction(() => {
       if (partialId && outcome !== 'completed') {
         const row = this.db.prepare('SELECT ext_data FROM entries WHERE id=?').get(partialId);
@@ -129,6 +129,7 @@ export class RunStore {
       if (!user) throw new Error(ErrorCodes.RUN_NOT_FOUND);
       const ext = JSON.parse(String(user.ext_data));
       ext.run.status = outcome;
+      if (outcome === 'failed') Object.assign(ext.run, runFailure ?? errorInfo(ErrorCodes.INTERNAL_ERROR));
       this.db.prepare('UPDATE entries SET ext_data=? WHERE id=?').run(JSON.stringify(ext), userId);
       if (outcome !== 'failed') {
         this.db.prepare('UPDATE entries SET state=? WHERE id=?').run(
@@ -136,13 +137,13 @@ export class RunStore {
       }
     });
   }
-  markCommitFailed(userId: string): void {
+  markCommitFailed(userId: string, runFailure: PublicError = errorInfo(ErrorCodes.STATE_COMMIT_FAILED)): void {
     try {
       const user = this.db.prepare('SELECT ext_data FROM entries WHERE id=?').get(userId);
       if (user) {
         const ext = JSON.parse(String(user.ext_data));
         ext.run.status = 'failed';
-        ext.run.error = 'STATE_COMMIT_FAILED';
+        Object.assign(ext.run, runFailure);
         this.db.prepare('UPDATE entries SET ext_data=? WHERE id=?').run(JSON.stringify(ext), userId);
       }
     } catch { /* database unavailable: recovered as interrupted on restart */ }

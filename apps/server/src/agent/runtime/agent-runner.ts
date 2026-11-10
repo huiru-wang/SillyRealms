@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
-import { ErrorCodes } from '../../common/error-codes.js';
+import { ErrorCodes, errorInfo, isErrorCode, normalizeError, type ErrorCode, type PublicError } from '../../common/error-codes.js';
 import { debugLog } from '../../common/debug.js';
 import { validateSnapshot, type Json } from '../../domain/state/state.js';
 import { RuntimeError } from '../shared/errors.js';
@@ -32,6 +32,7 @@ export class AgentRunner {
     const { sessionId, runId, userId, prepared, task, runContext, streamController, release } = args;
     const { model, key, messages, tools, modules, worldState, active, workspace, output, temperature, contextComposition } = prepared;
     let outcome: RunOutcome = 'completed';
+    let runFailure: PublicError | null = null;
     const initialWorkspace = JSON.stringify(workspace);
     let partialId: string | null = null, partialText = '', pendingHigh = '';
 
@@ -91,7 +92,7 @@ export class AgentRunner {
             if (pendingHigh) { await writeText('\uFFFD'); pendingHigh = ''; }
             final = event.message;
           } else if (event.type === 'error' && !task.stopped) {
-            throw new RuntimeError(ErrorCodes.PROVIDER_ERROR);
+            throw new RuntimeError(normalizeError(event.error, ErrorCodes.PROVIDER_ERROR).errorCode);
           }
         }
         if (task.stopped) break;
@@ -119,13 +120,13 @@ export class AgentRunner {
           this.store.appendToolResult(sessionId, runId, result);
           conversation.push(result);
           if (result.isError) {
-            let code: string = ErrorCodes.INVALID_TOOL_CALL;
+            let code: ErrorCode = ErrorCodes.INVALID_TOOL_CALL;
             try {
               const detail = result.content.find(part => part.type === 'text');
               const data = detail ? JSON.parse(detail.text) as { code?: unknown } : null;
-              if (typeof data?.code === 'string') code = data.code;
+              if (isErrorCode(data?.code)) code = data.code;
             } catch { /* Generic tool errors need not be JSON. */ }
-            const failure = { runId, toolCallId: call.id, toolName: call.name, code };
+            const failure = { runId, toolCallId: call.id, toolName: call.name, ...errorInfo(code) };
             debugLog(call.name === 'update_state' ? '状态更新失败' : '工具执行失败', failure);
             this.emit(sessionId, 'tool.failed', failure);
           }
@@ -138,14 +139,19 @@ export class AgentRunner {
         error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : String(error),
       });
       outcome = task.stopped ? 'stopped' : 'failed';
+      if (outcome === 'failed') runFailure = normalizeError(error);
     }
 
+    let stage: 'validation' | 'commit' = 'validation';
     try {
       if (outcome !== 'failed') validateSnapshot(worldState, 'message', workspace);
-      this.store.finalize(sessionId, userId, partialId, outcome, workspace);
-    } catch {
+      stage = 'commit';
+      this.store.finalize(sessionId, userId, partialId, outcome, workspace, runFailure);
+    } catch (error) {
       outcome = 'failed';
-      this.store.markCommitFailed(userId);
+      runFailure = normalizeError(error, stage === 'validation'
+        ? ErrorCodes.INVALID_STATE_UPDATE : ErrorCodes.STATE_COMMIT_FAILED);
+      this.store.markCommitFailed(userId, runFailure);
     }
     if (partialId && outcome !== 'completed') this.emit(sessionId, 'message.final', { runId, messageId: partialId, status: outcome });
     if (outcome !== 'failed') {
@@ -161,7 +167,7 @@ export class AgentRunner {
     try {
       this.emit(sessionId, 'run.updated', {
         runId, status: outcome, tipEntryId: this.store.tip(sessionId),
-        ...(outcome === 'failed' ? { errorCode: 'RUN_FAILED' } : {}),
+        ...(outcome === 'failed' ? (runFailure ?? errorInfo(ErrorCodes.INTERNAL_ERROR)) : {}),
       });
       try { streamController.close(); } catch { /* consumer already disconnected */ }
     } finally { release(); }

@@ -14,7 +14,7 @@ describe('world imports and sessions', () => {
     expect(db.prepare('SELECT name FROM tags ORDER BY name').all().map(row => row.name)).toEqual(['fantasy','other']);
     const create = await app.request('/api/v1/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ worldId: result.data.item.id, openingId: 'open', userCharacterId: 'player' }) });
     expect(create.status).toBe(422);
-    expect(await create.json()).toMatchObject({code:'WORLD_CONFIG_INCOMPLETE'});
+    expect(await create.json()).toMatchObject({success:false,errorCode:'WORLD_CONFIG_INCOMPLETE'});
     configureWorldModel(db,result.data.item.id);
     const configured=await app.request('/api/v1/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({worldId:result.data.item.id,openingId:'open',userCharacterId:'player'})});
     expect(configured.status).toBe(201);
@@ -38,9 +38,9 @@ it('reports an invalid lore load rule without executing world content', async ()
   const form = new FormData();
   form.set('file', new File([JSON.stringify(invalid)], 'world.json'));
   const response = await app.request('/api/v1/worlds/import', { method:'POST', body:form });
-  const result = await response.json() as {code:string;message:string};
+  const result = await response.json() as {errorCode:string;errorMessage:string};
   expect(response.status).toBe(422);
-  expect(result.message).toContain('$.data.lorebook.entries[0].load.keywords');
+  expect(result.errorMessage).toContain('$.data.lorebook.entries[0].load.keywords');
   db.close();
 });
 
@@ -50,7 +50,7 @@ it('rejects a session tip pointing into another session', async () => {
   db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,state,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('e2','s2',null,'r2',1,'message','assistant',0,now,JSON.stringify({message:{role:'assistant',content:'other'}}),'[]','{}');
   const response=await createApp(db).request('/api/v1/sessions/s1/history');
   expect(response.status).toBe(500);
-  expect((await response.json() as {code:string}).code).toBe('INVALID_PARENT_CHAIN');
+  expect((await response.json() as {errorCode:string}).errorCode).toBe('INVALID_PARENT_CHAIN');
   db.close();
 });
 

@@ -15,8 +15,8 @@ it('commits state items independently, returns every result and emits committed 
     const runtime={worldBusy:()=>false,emit:(_id:string,event:string,payload:unknown)=>events.push({event,payload})} as unknown as AgentRuntime;
     const app=stateUpdateRoutes(db,runtime);
     const response=await app.request('/s/state',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({updates:[{path:'灵力',value:1.5},{path:'不存在',value:1},{path:'进度.阶段',value:'导入'},{path:'灵力',value:1.5}]})});
-    const result=await response.json() as {data:Array<{success:boolean;message:string}>};
-    expect(result.data.map(item=>item.success)).toEqual([true,false,true,true]);expect(result.data[1]?.message).toBe('STATE_NOT_FOUND');
+    const result=await response.json() as {data:Array<{success:boolean;errorCode:string;errorMessage:string}>};
+    expect(result.data.map(item=>item.success)).toEqual([true,false,true,true]);expect(result.data[1]?.errorCode).toBe('STATE_NOT_FOUND');
     expect(events).toEqual([{event:'state.changed',payload:{path:'灵力',scope:'message',value:1.5}},{event:'state.changed',payload:{path:'进度.阶段',scope:'message',value:'导入'}}]);
     expect(JSON.parse(String(db.prepare('SELECT state FROM entries WHERE id=?').get('e')?.state))).toEqual([{key:'灵力',value:1.5},{key:'进度',value:{阶段:'导入'}}]);
   } finally {db.close();}

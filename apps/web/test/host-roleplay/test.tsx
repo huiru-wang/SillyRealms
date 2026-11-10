@@ -15,7 +15,7 @@ class FakeEventSource {
   addEventListener(type:string,handler:(e:MessageEvent)=>void){this.listeners[type]=handler;}
   emitUsage(){this.listeners['usage.updated']?.({data:JSON.stringify({runId:'run-usage'})} as MessageEvent);}
   close(){}
-  emit(type:string,runId:string){this.listeners[type]?.({data:JSON.stringify({runId,messages:[],error:"模拟失败"})} as MessageEvent);}
+  emit(type:string,runId:string){this.listeners[type]?.({data:JSON.stringify({runId,messages:[],errorCode:'PROVIDER_ERROR',errorMessage:'模拟失败'})} as MessageEvent);}
 }
 (globalThis as any).EventSource=FakeEventSource;
 const realFetch=window.fetch.bind(window);
@@ -31,13 +31,13 @@ window.fetch=async(input, init)=>{
   else if(path.startsWith('/api/v1/sessions/test/runs?')) data={runs:[],nextCursor:null,hasMore:false};
   else if(path==='/api/v1/sessions/test/runs'&&init?.method==='POST') {
     calls.push(JSON.parse(String(init.body)));
-    if(failNextRunPost){failNextRunPost=false;return new Response(JSON.stringify({code:'SIMULATED_FAILURE',message:'模拟请求失败'}),{status:500,headers:{'Content-Type':'application/json'}});}
+    if(failNextRunPost){failNextRunPost=false;return new Response(JSON.stringify({success:false,errorCode:'INTERNAL_ERROR',errorMessage:'模拟请求失败',data:null}),{status:500,headers:{'Content-Type':'application/json'}});}
     lastRunId=`run-${++counter}`;data={runId:lastRunId};
-    const response=new Response(JSON.stringify({code:'OK',data}),{status:200,headers:{'Content-Type':'application/json'}});
+    const response=new Response(JSON.stringify({success:true,errorCode:null,errorMessage:'',data}),{status:200,headers:{'Content-Type':'application/json'}});
     if(delayNextRunPost){delayNextRunPost=false;return new Promise<Response>(resolve=>{resolveDelayedPost=()=>resolve(response);});}
     return response;
   }
-  return new Response(JSON.stringify({code:'OK',data}),{status:200,headers:{'Content-Type':'application/json'}});
+  return new Response(JSON.stringify({success:true,errorCode:null,errorMessage:'',data}),{status:200,headers:{'Content-Type':'application/json'}});
 };
 const results:Array<{name:string;pass:boolean;error?:string}>=[];
 const wait=(ms=100)=>new Promise(r=>setTimeout(r,ms));

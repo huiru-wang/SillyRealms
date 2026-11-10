@@ -22,6 +22,7 @@ export const ErrorCodes = {
   TIP_CONFLICT: 'TIP_CONFLICT',
   // Run lifecycle and context.
   RUN_NOT_FOUND: 'RUN_NOT_FOUND',
+  STATE_COMMIT_FAILED: 'STATE_COMMIT_FAILED',
   RUN_STOPPED: 'RUN_STOPPED',
   REQUEST_ALREADY_EXISTS: 'REQUEST_ALREADY_EXISTS',
   CONTEXT_BUDGET_EXCEEDED: 'CONTEXT_BUDGET_EXCEEDED',
@@ -83,6 +84,117 @@ export const ErrorCodes = {
   INVALID_TAG_ORDER: 'INVALID_TAG_ORDER',
   INVALID_TAG_TYPE: 'INVALID_TAG_TYPE',
   TAG_NOT_FOUND: 'TAG_NOT_FOUND',
+  INVALID_TAGS: 'INVALID_TAGS',
+  INVALID_QUERY: 'INVALID_QUERY',
 } as const;
 
 export type ErrorCode = typeof ErrorCodes[keyof typeof ErrorCodes];
+
+/** Stable, human-readable descriptions. Every wire code must have one. */
+export const ErrorMessages = {
+  INVALID_REQUEST: '请求参数无效',
+  NOT_FOUND: '接口不存在',
+  INTERNAL_ERROR: '服务器内部错误',
+  INVALID_MATCH: '匹配参数无效',
+  INVALID_CURSOR: '分页参数或游标无效',
+  BODY_TOO_LARGE: '请求内容超出大小限制',
+  FILE_TOO_LARGE: '文件超出大小限制',
+  ORIGIN_FORBIDDEN: '请求来源不被允许',
+  SESSION_NOT_FOUND: '会话不存在',
+  SESSION_BUSY: '会话正在运行',
+  INVALID_SESSION: '会话配置无效',
+  INVALID_OPENING_OR_CHARACTER: '开局或玩家角色无效',
+  INVALID_PLAYER_CHARACTER: '玩家角色无效',
+  INVALID_PARENT_CHAIN: '会话历史链无效',
+  INVALID_SUMMARY_BOUNDARY: '历史摘要边界无效',
+  ENTRY_ROLE_MISMATCH: '历史消息角色不匹配',
+  SESSION_DELETE_FAILED: '删除会话失败',
+  TIP_CONFLICT: '会话已发生变化，请刷新后重试',
+  RUN_NOT_FOUND: '运行记录不存在',
+  STATE_COMMIT_FAILED: '运行结果提交失败',
+  RUN_STOPPED: '运行已停止',
+  REQUEST_ALREADY_EXISTS: '请求已存在',
+  CONTEXT_BUDGET_EXCEEDED: '上下文超出模型允许范围',
+  SUMMARY_FAILED: '历史摘要生成失败',
+  SUMMARY_EMPTY: '历史摘要内容为空',
+  INVALID_TOOL_CALL: '工具调用参数无效',
+  TOOL_LIMIT_EXCEEDED: '工具调用次数超出限制',
+  INVALID_STATE_UPDATE: '状态更新失败',
+  INVALID_STATE: '世界状态无效',
+  INVALID_STATE_RANGE: '状态范围定义无效',
+  INVALID_STATE_TYPE: '状态类型无效',
+  STATE_INITIAL_REQUIRED: '状态缺少初始值',
+  STATE_SCHEMA_MISMATCH: '状态结构与定义不匹配',
+  WHEN_UNSUPPORTED: '状态条件表达式不受支持',
+  INVALID_STATE_PATH: '状态路径无效',
+  INVALID_STATE_VALUE: '状态值无效',
+  INVALID_STATE_KEY: '状态字段名无效',
+  STATE_NOT_FOUND: '状态字段不存在',
+  STATE_OUT_OF_RANGE: '状态值超出允许范围',
+  STATE_VALUE_TOO_DEEP: '状态数据层级超出限制',
+  STATE_GROUP_NOT_WRITABLE: '状态组不可写入',
+  STATE_ROOT_NOT_ACTIVE: '状态根节点未激活',
+  STATE_VALUE_TOO_LARGE: '状态数据超出大小限制',
+  WORLD_NOT_FOUND: '世界卡不存在',
+  WORLD_BUSY: '世界卡正在使用中',
+  WORLD_CORRUPT: '世界卡损坏',
+  WORLD_DELETE_FAILED: '删除世界卡失败',
+  WORLD_CONFIG_INCOMPLETE: '世界卡配置不完整',
+  WORLD_SOURCE_NOT_FOUND: '世界卡源文件不存在',
+  CONFIG_IN_USE: '配置正在使用中',
+  INVALID_WORLD: '世界卡内容无效',
+  INVALID_WORLD_PATCH: '世界卡更新参数无效',
+  PRESET_NOT_FOUND: '预设不存在',
+  PRESET_NOT_SELECTED: '尚未选择预设',
+  PRESET_NAME_CONFLICT: '预设名称已存在',
+  INVALID_PRESET: '预设内容无效',
+  INVALID_PRESET_BUDGET: '预设上下文预算无效',
+  API_MODEL_CONFIG_NOT_FOUND: '模型配置不存在',
+  API_MODEL_CONFIG_NOT_SELECTED: '尚未选择模型配置',
+  CREDENTIAL_NOT_CONFIGURED: '模型凭据未配置',
+  CREDENTIAL_STORE_UNSUPPORTED: '当前系统不支持凭据存储',
+  INVALID_API_KEY: 'API Key 无效',
+  CREDENTIAL_DELETE_FAILED: '删除模型凭据失败',
+  CREDENTIAL_STORE_ERROR: '模型凭据存储不可用',
+  CONFIG_SAVE_FAILED: '保存模型配置失败',
+  CONFIG_UPDATE_FAILED: '更新模型配置失败',
+  INVALID_MODEL_PARAMETERS: '模型参数无效',
+  MODEL_NOT_FOUND: '模型不存在',
+  PROVIDER_ERROR: '模型服务调用失败',
+  PROVIDER_TEST_FAILED: '模型连接测试失败',
+  PROVIDER_TEST_UNAVAILABLE: '模型连接测试不可用',
+  INVALID_TAG: '标签无效或重复',
+  TAG_TYPE_MISMATCH: '标签类型不匹配',
+  INVALID_TAG_ORDER: '标签顺序无效',
+  INVALID_TAG_TYPE: '标签类型无效',
+  TAG_NOT_FOUND: '标签不存在',
+  INVALID_TAGS: '标签参数无效',
+  INVALID_QUERY: '查询参数无效',
+ } as const satisfies Record<ErrorCode, string>;
+
+export type PublicError = { errorCode: ErrorCode; errorMessage: string };
+const codeSet: ReadonlySet<string> = new Set(Object.values(ErrorCodes));
+
+export function isErrorCode(value: unknown): value is ErrorCode {
+  return typeof value === 'string' && codeSet.has(value);
+}
+
+/** Details must be intentionally public; never pass raw provider or database exceptions. */
+export function errorInfo(code: ErrorCode, detail?: string): PublicError {
+  const suffix = detail?.trim().replace(/[\r\n\t]+/g, ' ').slice(0, 300);
+  return { errorCode: code, errorMessage: ErrorMessages[code] + (suffix ? '：' + suffix : '') };
+}
+
+export function normalizeError(error: unknown, fallback: ErrorCode = ErrorCodes.INTERNAL_ERROR): PublicError {
+  const candidate = error instanceof Error
+    ? (isErrorCode((error as Error & { code?: unknown }).code)
+      ? (error as Error & { code: ErrorCode }).code : error.message)
+    : null;
+  const code = isErrorCode(candidate) ? candidate : fallback;
+  if (code === ErrorCodes.WORLD_CORRUPT && error instanceof Error) {
+    const details = (error as Error & { details?: Record<string, string> }).details;
+    if (details && typeof details.path === 'string' && typeof details.reason === 'string')
+      return errorInfo(code, `${details.path}: ${details.reason}`);
+  }
+  return errorInfo(code);
+}

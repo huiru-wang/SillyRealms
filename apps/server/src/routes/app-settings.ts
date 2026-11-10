@@ -1,3 +1,4 @@
+import { failure } from '../common/http-response.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -18,12 +19,12 @@ export function appSettingsRoutes(db:DatabaseSync):Hono {
   app.get('/',c=>c.json({item:read()}));
   app.patch('/',async c=>{
     const parsed=patchSchema.safeParse(await c.req.json().catch(()=>null));
-    if(!parsed.success) return c.json({error:{code:ErrorCodes.INVALID_REQUEST}},422);
+    if(!parsed.success) return c.json(failure(ErrorCodes.INVALID_REQUEST),422);
     const next={...read(),...parsed.data};
     if(next.defaultPresetId && !db.prepare('SELECT 1 FROM presets WHERE id=?').get(next.defaultPresetId))
-      return c.json({error:{code:ErrorCodes.PRESET_NOT_FOUND}},422);
+      return c.json(failure(ErrorCodes.PRESET_NOT_FOUND),422);
     if(next.defaultApiModelConfigId && !db.prepare('SELECT 1 FROM api_model_configs WHERE id=?').get(next.defaultApiModelConfigId))
-      return c.json({error:{code:ErrorCodes.API_MODEL_CONFIG_NOT_FOUND}},422);
+      return c.json(failure(ErrorCodes.API_MODEL_CONFIG_NOT_FOUND),422);
     db.prepare('UPDATE app_settings SET default_preset_id=?,default_api_model_config_id=?,updated_at=? WHERE id=1')
       .run(next.defaultPresetId,next.defaultApiModelConfigId,Date.now());
     return c.json({item:read()});

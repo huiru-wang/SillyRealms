@@ -1,3 +1,4 @@
+import { failure } from '../common/http-response.js';
 import { ErrorCodes } from '../common/error-codes.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
@@ -46,7 +47,7 @@ export function presetRoutes(db: DatabaseSync): Hono {
         importTags(db,'preset',id,names);
       });
       return c.json({item:{id,...value,tags:tagNames(db,'preset',id)},warnings:[]},201);
-    } catch(err) {return c.json({error:{code:ErrorCodes.INVALID_PRESET,message:err instanceof Error?err.message:'Invalid preset'}},422);}
+    } catch {return c.json(failure(ErrorCodes.INVALID_PRESET),422);}
   };
   app.post('/',c=>create(c));
   app.post('/import',c=>create(c));
@@ -65,7 +66,7 @@ export function presetRoutes(db: DatabaseSync): Hono {
     const id=c.req.param('id');
     if(!read(id)) return c.json(missing,404);
     const refs=referenceCounts(db,'preset',id);
-    if(refs.total>0) return c.json({error:{code:ErrorCodes.CONFIG_IN_USE,counts:refs}},409);
+    if(refs.total>0) return c.json(failure(ErrorCodes.CONFIG_IN_USE, `当前有 ${refs.total} 处引用`, { counts: refs }),409);
     transaction(db,()=>{
       clearTags(db,'preset',id);
       db.prepare('DELETE FROM presets WHERE id=?').run(id);
@@ -76,7 +77,7 @@ export function presetRoutes(db: DatabaseSync): Hono {
     try {
       const changes = patch.parse(await c.req.json());
       const row = read(c.req.param('id'));
-      if (!row) return c.json({ error: { code: ErrorCodes.PRESET_NOT_FOUND, message: 'Preset not found' } }, 404);
+      if (!row) return c.json(failure(ErrorCodes.PRESET_NOT_FOUND),404);
       const current = normalizeStored(JSON.parse(String(row.config_json)));
       const { nodes, add_nodes, remove_node_ids, nodes_order, budget, ...fields } = changes;
       const next = { ...current, ...fields, budget: { ...current.budget, ...budget }, nodes: [...current.nodes] };
@@ -101,10 +102,10 @@ export function presetRoutes(db: DatabaseSync): Hono {
         next.nodes = nodes_order.map(id => next.nodes.find((n: {id:string}) => n.id === id));
       }
       const validated = preset.parse(next);
-      if(db.prepare('SELECT 1 FROM presets WHERE name=? AND id<>?').get(validated.name,String(row.id))) return c.json({error:{code:ErrorCodes.PRESET_NAME_CONFLICT}},409);
+      if(db.prepare('SELECT 1 FROM presets WHERE name=? AND id<>?').get(validated.name,String(row.id))) return c.json(failure(ErrorCodes.PRESET_NAME_CONFLICT),409);
       db.prepare('UPDATE presets SET name=?, config_json=?, updated_at=? WHERE id=?').run(validated.name, JSON.stringify(validated), Date.now(), row.id as string);
       return c.json({ item: { id: row.id, ...validated }, warnings:[] });
-    } catch (err) { return c.json({ error: { code: ErrorCodes.INVALID_PRESET, message: err instanceof Error ? err.message : 'Invalid preset' } }, 422); }
+    } catch { return c.json(failure(ErrorCodes.INVALID_PRESET),422); }
   });
   return app;
 }

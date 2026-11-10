@@ -2,6 +2,8 @@ import type { Api, AssistantMessageEvent, Context, Model, ToolChoice } from '@ea
 import type { ModelGateway } from './pi-gateway.js';
 import type { UsageStore, RequestMeta, RequestMetrics } from '../persistence/usage-store.js';
 import { debugLog } from '../../common/debug.js';
+import { ErrorCodes, normalizeError } from '../../common/error-codes.js';
+import { RuntimeError } from '../shared/errors.js';
 
 /**
  * The single boundary for model calls (generation and compaction).
@@ -37,9 +39,12 @@ export class ModelClient {
     options.signal.addEventListener('abort', wake, { once: true });
     if (options.signal.aborted) wake();
     try {
-      iterator = this.gateway.stream(model, context, options)[Symbol.asyncIterator]();
+      try { iterator = this.gateway.stream(model, context, options)[Symbol.asyncIterator](); }
+      catch (error) { throw new RuntimeError(normalizeError(error, ErrorCodes.PROVIDER_ERROR).errorCode); }
       while (true) {
-        const result = await Promise.race([iterator.next(), aborted]);
+        let result;
+        try { result = await Promise.race([iterator.next(), aborted]); }
+        catch (error) { throw new RuntimeError(normalizeError(error, ErrorCodes.PROVIDER_ERROR).errorCode); }
         if (result === marker) { finish('aborted'); return; }
         if (result.done) return;
         const event = result.value;
