@@ -1,0 +1,56 @@
+:root,[data-theme="dark"]{
+  color-scheme:dark;
+  --canvas:#1c1a24;
+  --canvas-glow:rgba(107,75,135,.18);
+  --sidebar-bg:#18161f;
+  --sidebar-edge:rgba(205,196,231,.09);
+  --surface:#282530;
+  --surface-raised:#302b39;
+  --surface-hover:#35303e;
+  --surface-active:#40364e;
+  --stroke:rgba(222,209,240,.11);
+  --stroke-strong:rgba(224,209,244,.19);
+  --text:#f6f3fa;
+  --text-secondary:#c8c2d0;
+  --text-muted:#9993a4;
+  --accent:#ad89d0;
+  --accent-soft:rgba(144,109,174,.23);
+  --accent-selected:rgba(132,95,168,.28);
+  --focus:#c6a5e9;
+  --shade:rgba(15,13,21,.65);
+  --drop-shadow:0 20px 55px rgba(0,0,0,.32);
+}
+[data-theme="light"]{
+  color-scheme:light;
+  --canvas:#f5f3f7;
+  --canvas-glow:rgba(136,107,172,.09);
+  --sidebar-bg:#f0edf3;
+  --sidebar-edge:rgba(49,42,63,.10);
+  --surface:#fdfcfe;
+  --surface-raised:#fff;
+  --surface-hover:#e9e4ee;
+  --surface-active:#e1d8ea;
+  --stroke:rgba(68,55,77,.12);
+  --stroke-strong:rgba(68,55,77,.22);
+  --text:#292532;
+  --text-secondary:#61596b;
+  --text-muted:#7b7385;
+  --accent:#76528e;
+  --accent-soft:rgba(131,94,153,.12);
+  --accent-selected:rgba(131,94,153,.17);
+  --focus:#8b5eab;
+  --shade:rgba(15,13,21,.56);
+  --drop-shadow:0 20px 55px rgba(52,35,64,.17);
+}
+
+/* Color Lab exploratory palettes. Keep component and layout rules identical. */
+[data-theme="dark"][data-palette="neutral"]{
+  --canvas:#18181c;--sidebar-bg:#151518;--surface:#26262b;--surface-raised:#303036;
+  --surface-hover:#34343b;--surface-active:#38353e;--canvas-glow:rgba(100,92,117,.075);
+  --accent:#baaacb;--accent-soft:rgba(143,133,157,.16);--accent-selected:rgba(149,134,163,.23);
+}
+[data-theme="dark"][data-palette="cool"]{
+  --canvas:#191b25;--sidebar-bg:#151720;--surface:#272a36;--surface-raised:#303344;
+  --surface-hover:#373a4b;--surface-active:#3b3d52;--canvas-glow:rgba(94,106,153,.12);
+  --accent:#a6a8db;--accent-soft:rgba(112,119,177,.17);--accent-selected:rgba(115,124,177,.27);
+}

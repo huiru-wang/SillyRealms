@@ -331,3 +331,38 @@ docs/design/
 - 后续能够**直接在新 App 上接入真实业务**，不用推倒重来，也不影响现有 SR 的稳定功能。
 
 > 建议开工顺序：**Phase 0 → Phase 1 → Phase 2 → 用户视觉验收 → Phase 3/4 → Phase 5 → Phase 6**。先做到首页足够好，再抽象、验证、推广。
+
+
+---
+
+## 12. 实施记录：第一轮静态 App（2026-11-10）
+
+> 此部分是实施后的实况，**不覆盖上文尚未完成的整体计划**。
+
+### 已完成
+
+- [x] 创建 `apps/studio`，加入 pnpm workspace，保持旧 `apps/web` 与 Server 源码不变。
+- [x] 实现 React + Vite + TypeScript 工程，独立 5174 开发端口、独立构建。
+- [x] 建立深色主题 Token、AppShell、展开/收起 Sidebar、会话及预设静态列表、底部设置/主题按钮。
+- [x] 世界卡首页：分类、8 张封面、标题、会话数、导入示意弹窗与静态详情；4 列桌面布局及移动端布局。
+- [x] 辅助页面路由、Color Lab（3 套 dark 色调候选）、模拟设置弹窗。
+- [x] 通过 TypeScript、Vite build、Headless Chrome 浏览器的展开/收起截图和基础交互检查；390px 实拍可查看。
+- [x] 增加 Studio 独立 Agent 规则与参考裁决记录（`docs/design/studio-reference-decisions.md`）。
+
+### 未完成及待确认
+
+- [ ] **Phase 0 未完全结束**：用户聊天中的两张原型原图未拷贝到 Mac 仓库。目前仅能依据聊天可视内容开发，无法准确原图像素比对。
+- [ ] 8 张世界卡独立原图尚缺，当前提取并加工的封面为临时素材。
+- [ ] 当前截图只是第一轮草案，尚待用户精修与最终视觉确认。
+- [ ] 复杂页验证、正式 Design System v1.0 未锁定；业务对接仍排除。
+
+### 验证指令
+
+```bash
+pnpm --filter @sillyrealms/studio dev
+pnpm --filter @sillyrealms/studio typecheck
+pnpm --filter @sillyrealms/studio build
+pnpm --filter @sillyrealms/studio test:visual
+```
+
+截图输出：`apps/studio/tests/visual/output/`（Git 忽略；需已运行开发服务器）。

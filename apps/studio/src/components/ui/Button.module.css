@@ -1,0 +1,5 @@
+.button{display:inline-flex;justify-content:center;align-items:center;gap:9px;min-height:40px;padding:0 17px;border:1px solid var(--stroke);border-radius:var(--radius-sm);background:var(--surface-raised);color:var(--text);font-size:var(--font-13);font-weight:500;white-space:nowrap;transition:background var(--duration-quick),border-color var(--duration-quick),transform var(--duration-quick)}
+.button:hover{background:var(--surface-hover);border-color:var(--stroke-strong)}
+.button:active{transform:translateY(1px)}
+.icon{display:inline-flex;align-items:center;justify-content:center}
+.accent{background:var(--accent-selected);border-color:var(--stroke-strong)}

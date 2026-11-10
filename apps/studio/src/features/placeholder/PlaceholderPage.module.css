@@ -1,0 +1,7 @@
+.page{padding:92px 44px 40px;min-height:100%}
+.page h1{margin:0;font-size:28px;font-weight:600}
+.panel{margin-top:42px;max-width:560px;padding:58px 44px;display:flex;flex-direction:column;align-items:flex-start;gap:14px;border:1px solid var(--stroke);border-radius:16px;background:rgba(140,114,170,.055);color:var(--text-muted)}
+.panel h2{font-size:17px;color:var(--text);margin:0;font-weight:500}
+.panel p{font-size:14px;line-height:1.75;margin:0 0 16px}
+.panel a{display:flex;align-items:center;gap:8px;color:var(--accent)}
+@media(max-width:760px){.page{padding:84px 20px 35px}.panel{padding:36px 24px}}

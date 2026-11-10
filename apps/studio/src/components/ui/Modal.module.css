@@ -1,0 +1,8 @@
+.backdrop{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:rgba(9,8,13,.68);padding:20px;backdrop-filter:blur(6px)}
+.panel{width:min(440px,100%);border:1px solid var(--stroke-strong);border-radius:17px;background:var(--surface);box-shadow:var(--drop-shadow)}
+.header{display:flex;align-items:center;justify-content:space-between;padding:21px 23px;border-bottom:1px solid var(--stroke)}
+.header h2{margin:0;font-size:17px;font-weight:600}
+.header button{width:32px;height:32px;display:grid;place-items:center;border-radius:9px;color:var(--text-muted)}
+.header button:hover{background:var(--surface-hover);color:var(--text)}
+.body{padding:21px 23px 26px;line-height:1.7;color:var(--text-secondary)}
+.body p{margin:0 0 12px}

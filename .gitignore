@@ -35,3 +35,5 @@ coverage/
 
 # Keep MVU research notes under the character-card data directory
 data/
+# Studio visual test output
+apps/studio/tests/visual/output/

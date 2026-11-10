@@ -1,0 +1,8 @@
+html{font-family:var(--font-ui);font-size:var(--font-13);font-weight:400;-webkit-font-smoothing:antialiased}
+body{background:var(--canvas);color:var(--text)}
+#root{min-height:100dvh}
+button{border:0;background:none;color:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--focus);outline-offset:3px}
+::selection{background:var(--accent-selected)}
+:where(button,a){-webkit-tap-highlight-color:transparent}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
