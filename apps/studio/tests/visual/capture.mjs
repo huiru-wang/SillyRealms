@@ -125,6 +125,7 @@ try{
   // No competing hover highlight when an item is already selected.
   const selectedNav='nav[aria-label="主导航"] a[aria-current="page"]';
   const selectedCategory='nav[aria-label="世界分类"] button:first-child';
+  await delay(350);
   const navBackground=await bg(selectedNav);
   await hover(selectedNav);
   assert(await bg(selectedNav)===navBackground,'Selected nav changes background on hover');
@@ -172,6 +173,7 @@ try{
   }
   await click('[aria-label="展开侧边栏"]');
   assert(await evaluate('document.querySelector("[data-collapsed]").dataset.collapsed')==='false','Sidebar did not expand');
+  await delay(380);
   assert(Math.abs((await evaluate(trackExpr))-initialWidth)<3,'Sidebar expansion did not restore width');
   await click('button[aria-label="设置"]');
   assert(await evaluate('!!document.querySelector("[role=dialog]")'),'Settings dialog not opened');
@@ -188,9 +190,21 @@ try{
   assert(await evaluate('document.querySelectorAll("[aria-label^=\\"查看世界卡\\"]").length')===2,'Filtering failed');
   await click('nav[aria-label="世界分类"] button:nth-child(1)');
   await click('button[aria-label="查看世界卡：长安风云"]');
-  assert(await evaluate('!!document.querySelector("[role=dialog]")'),'World detail dialog not opened');
-  await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
-  await until('!document.querySelector("[role=dialog]")');
+  await until(`location.pathname==="/worlds/changan" && !!document.querySelector('[aria-label="世界内容导航"]')`);
+  await screenshot('world-detail-expanded-1536');
+  assert(await evaluate(`document.querySelectorAll('[data-role-strip="expanded"] button').length`)===10,'Expanded role list missing');
+  assert(await evaluate(`getComputedStyle(document.querySelector('[data-role-strip="compact"]').parentElement).opacity`)==='0','Compact roles must be initially hidden');
+  await evaluate('document.getElementById("main-content").scrollTop=1000');
+  await until(`getComputedStyle(document.querySelector('[data-role-strip="compact"]').parentElement).opacity==="1"`);
+  await delay(250);
+  await screenshot('world-detail-compact-1536');
+  await click('[data-role-strip="compact"] button:nth-child(5)');
+  assert(await evaluate(`document.querySelector('[data-role-strip="expanded"] button:nth-child(5)').getAttribute("aria-pressed")`)==='true','Role selected state not synced');
+  await click('nav[aria-label="世界详情章节"] button:nth-child(2)');
+  assert(await evaluate('document.querySelector("article h2")?.textContent')==='世界书','Tab content failed to switch');
+  await evaluate('document.getElementById("main-content").scrollTop=0');
+  await until(`getComputedStyle(document.querySelector('[data-role-strip="compact"]').parentElement).opacity==="0"`);
+  await click('a[aria-label="世界卡"]');
   await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
   const reducedDuration=await evaluate('parseFloat(getComputedStyle(document.querySelector("[data-collapsed]")).transitionDuration)');
   assert(reducedDuration<0.001,'Reduced-motion preference must suppress layout motion');
@@ -201,12 +215,20 @@ try{
   await viewport(390,844,true);
   await navigate(base+'/worlds?sidebar=expanded&theme=dark');
   await screenshot('home-mobile-390');
+  await click('button[aria-label="查看世界卡：长安风云"]');
+  await screenshot('world-detail-mobile-390');
+  await evaluate('document.getElementById("main-content").scrollTop=1000');
+  await delay(400);
+  await screenshot('world-detail-mobile-compact-390');
+  assert(await evaluate('document.documentElement.scrollWidth<=390'),'Mobile horizontal page overflow');
+  await click('a[aria-label="世界卡"]');
   await click('[aria-label="打开导航"]');
   assert(await evaluate('document.querySelector("[aria-label=\\"关闭导航\\"]") !== null'),'Mobile menu missing');
   await screenshot('home-mobile-menu-390');
   // A collapsed desktop preference must never hide labels in the mobile drawer.
   await navigate(base+'/worlds?sidebar=collapsed&theme=dark');
   await click('[aria-label="打开导航"]');
+  await delay(350);
   const mobileDataVisible=await evaluate('(()=>{const d=document.querySelector(\'aside section[aria-labelledby="sessions-heading"]\')?.parentElement;const t=document.querySelector(\'aside nav a span\');return !!d && !d.inert && getComputedStyle(d).visibility==="visible" && getComputedStyle(t).opacity==="1"})()');
   assert(mobileDataVisible,'Mobile drawer must reveal all labels even with collapsed desktop preference');
   assert(await evaluate(`document.querySelectorAll('a[aria-label="会话列表"]').length`)===1,'List links should not be duplicated');
