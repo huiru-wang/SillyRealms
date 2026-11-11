@@ -26,26 +26,22 @@
 }
 .overviewToolbar{
   position:absolute;inset:12px 0 auto;
-  display:flex;justify-content:space-between;align-items:center;
+  display:flex;justify-content:flex-end;align-items:center;
   height:36px;pointer-events:none;z-index:2;
 }
-.back,.overviewToggle{
+.overviewToggle{
   display:inline-flex;align-items:center;justify-content:center;
   min-width:36px;height:36px;border-radius:var(--radius-sm);
   color:var(--text-muted);pointer-events:auto;
   transition:color var(--motion-fast),background-color var(--motion-fast);
 }
-.back{gap:8px;font-size:12px;justify-content:flex-start}
-.back svg{flex:none}
-.back span{opacity:var(--summary-opacity);width:calc(44px * (1 - var(--collapse-progress)));overflow:hidden;white-space:nowrap}
 @media(hover:hover) and (pointer:fine){
-  .back:hover{color:var(--text)}
   .overviewToggle:hover{background:var(--surface-hover);color:var(--text)}
 }
 .overviewTop{
   position:absolute;
   top:calc(52px - 34px * var(--collapse-progress));
-  left:calc(40px * var(--collapse-progress));right:46px;
+  left:0;right:46px;
   display:grid;
   grid-template-columns:calc(104px - 68px * var(--collapse-progress)) minmax(0,1fr);
   gap:calc(24px - 12px * var(--collapse-progress));
@@ -74,9 +70,6 @@
 .tags>span{padding:4px 8px;background:var(--surface);border:1px solid var(--stroke);color:var(--text-secondary);font-size:11px;border-radius:6px;flex:none}
 .tags>.worldFacts{background:none;border:0;color:var(--text-muted);padding-left:4px;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto}
 .overviewRoles{position:absolute;left:0;right:0;bottom:11px;min-width:0;opacity:var(--overview-role-opacity)}
-.roleHeading{display:flex;align-items:baseline;gap:14px;margin-bottom:7px}
-.roleHeading h2{font-size:12px;font-weight:500;margin:0;color:var(--text-secondary)}
-.roleHeading span{font-size:11px;color:var(--text-muted)}
 .roleStrip{
   display:flex;gap:14px;overflow-x:auto;overflow-y:hidden;
   overscroll-behavior-x:contain;scrollbar-width:none;touch-action:pan-x pan-y;
@@ -103,7 +96,7 @@
 .roleActive .roleAvatar{background:var(--accent-soft);border-color:var(--accent)}
 @media(hover:hover) and (pointer:fine){.role:not(.roleActive):hover{background:var(--surface-hover);color:var(--text)}}
 .compactRoles{
-  position:absolute;top:10px;left:clamp(328px,29%,360px);right:46px;
+  position:absolute;top:10px;left:clamp(288px,26%,320px);right:46px;
   min-width:0;opacity:var(--compact-role-opacity);
 }
 .overviewRoles[inert],.compactRoles[inert]{visibility:hidden;pointer-events:none}
@@ -158,7 +151,7 @@
   .page{--detail-inset:28px}
   .workspace{grid-template-columns:144px minmax(0,1fr);gap:22px}
   .worldText{max-width:calc(670px - 492px * var(--collapse-progress))}
-  .compactRoles{left:286px}
+  .compactRoles{left:246px}
   .tags>.worldFacts{display:none}
 }
 /* With the desktop sidebar open, a tablet still needs the full reading width. */
@@ -187,11 +180,10 @@
     --overview-compact-height:136px;
   }
   .overviewToolbar{top:19px;height:44px}
-  .back{margin-left:54px;height:44px}
   .overviewToggle{height:44px;width:44px}
   .overviewTop{
     top:calc(73px - 51px * var(--collapse-progress));
-    left:calc(90px * var(--collapse-progress));
+    left:calc(54px * var(--collapse-progress));
     right:calc(44px * var(--collapse-progress));
     grid-template-columns:calc(84px - 54px * var(--collapse-progress)) minmax(0,1fr);
     gap:calc(16px - 6px * var(--collapse-progress));
@@ -205,8 +197,6 @@
   .tags>span{font-size:10px;padding:3px 6px}
   .tags>span:nth-child(n+3){display:none}
   .overviewRoles{bottom:13px}
-  .roleHeading{gap:10px;margin-bottom:6px}
-  .roleHeading span{font-size:10px}
   .roleStrip{gap:10px}
   .role{flex-basis:68px}
   .roleAvatar{width:56px;height:56px}
@@ -224,14 +214,13 @@
 /* Manual scrolling retains its layout response; reduced motion removes
    identity scaling and staged fading, and programmatic scrolling is instant. */
 @media(prefers-reduced-motion:reduce){
-  .overviewTop{top:18px;left:40px;grid-template-columns:36px minmax(0,1fr);gap:12px}
+  .overviewTop{top:18px;left:0;grid-template-columns:36px minmax(0,1fr);gap:12px}
   .cover{height:44px;border-radius:8px}
   .worldText h1{font-size:17px;padding-top:10px}
   .summary{margin-top:10px}
-  .back span{visibility:hidden}
 }
 @media(prefers-reduced-motion:reduce) and (max-width:760px){
-  .overviewTop{top:22px;left:90px;right:44px;grid-template-columns:30px minmax(0,1fr);gap:10px}
+  .overviewTop{top:22px;left:54px;right:44px;grid-template-columns:30px minmax(0,1fr);gap:10px}
   .cover{height:36px}
   .worldText h1{font-size:14px;padding-top:8px}
 }

@@ -1,7 +1,7 @@
 import {useLayoutEffect,useRef,useState,type CSSProperties,type KeyboardEvent,type RefObject} from 'react';
 import {Link,useParams} from 'react-router-dom';
-import {ArrowLeft,BookOpen,BookText,ChevronDown,ChevronRight,ChevronUp,Compass,Settings2,SlidersHorizontal} from 'lucide-react';
-import {worlds} from '../../fixtures/worlds';
+import {BookOpen,BookText,ChevronDown,ChevronRight,ChevronUp,Compass,Settings2,SlidersHorizontal} from 'lucide-react';
+import {defaultRoleNames,worlds} from '../../fixtures/worlds';
 import styles from './WorldDetailPage.module.css';
 
 type Section = '介绍'|'世界书'|'世界状态'|'开局'|'运行配置';
@@ -9,7 +9,6 @@ const sections:{name:Section;icon:typeof BookOpen}[]=[
   {name:'介绍',icon:BookOpen},{name:'世界书',icon:BookText},{name:'世界状态',icon:SlidersHorizontal},
   {name:'开局',icon:Compass},{name:'运行配置',icon:Settings2}
 ];
-const names=['罗斯','凯莉','Robin','詹姆斯','清月','安娜','林恩','艾琳','查理','伊莎贝拉'];
 const description='一座繁华而神秘的城市，传统与未知交错。每个人都拥有自己的秘密与愿望，随你的选择，关系和故事将沿着不同的轨迹展开。在这里，任何相遇都可能成为一段新的传奇。';
 
 type RoleAnchor = {index:number;fraction:number};
@@ -41,7 +40,7 @@ function restoreRoleAnchor(strip:HTMLDivElement,anchor:RoleAnchor,expected:WeakM
   expected.set(strip,left);
   strip.scrollLeft=left;
 }
-function RoleStrip({compact,active,onChoose,stripRef}:{compact:boolean;active:number;onChoose:(i:number)=>void;stripRef:RefObject<HTMLDivElement|null>}){
+function RoleStrip({names,compact,active,onChoose,stripRef}:{names:readonly string[];compact:boolean;active:number;onChoose:(i:number)=>void;stripRef:RefObject<HTMLDivElement|null>}){
   const navigateRoles=(event:KeyboardEvent<HTMLDivElement>)=>{
     if(event.altKey||event.ctrlKey||event.metaKey)return;
     const keys=['ArrowLeft','ArrowRight','Home','End'];
@@ -76,6 +75,7 @@ function SectionContent({section,worldTitle}:{section:Section;worldTitle:string}
 export function WorldDetailPage(){
   const {worldId}=useParams();
   const world=worlds.find(w=>w.id===worldId);
+  const names=world?.roleNames??defaultRoleNames;
   const [selectedRole,setSelectedRole]=useState(2);
   const [section,setSection]=useState<Section>('介绍');
   const [progress,setProgress]=useState(0);
@@ -227,7 +227,6 @@ export function WorldDetailPage(){
     <div ref={viewport} className={styles.viewport} data-world-viewport>
       <section className={styles.overview} aria-label="世界概览" data-world-overview>
         <div className={styles.overviewToolbar}>
-          <Link className={styles.back} to="/worlds" aria-label="返回世界卡列表"><ArrowLeft size={17}/><span>世界卡</span></Link>
           <button ref={overviewToggle} className={styles.overviewToggle} onClick={()=>scrollOverview(!isCompact)} aria-label={isCompact?'展开世界概览':'收起世界概览'} title={isCompact?'展开世界概览':'收起世界概览'} aria-expanded={!isCompact}>
             {isCompact?<ChevronDown size={17}/>:<ChevronUp size={17}/>}
           </button>
@@ -243,11 +242,10 @@ export function WorldDetailPage(){
           </div>
         </div>
         <div className={styles.overviewRoles} inert={!overviewRoleVisible} aria-hidden={!overviewRoleVisible}>
-          <div className={styles.roleHeading}><h2>世界角色</h2><span>选择角色，探索不同的故事视角</span></div>
-          <RoleStrip compact={false} active={selectedRole} onChoose={setSelectedRole} stripRef={overviewRoles}/>
+          <RoleStrip names={names} compact={false} active={selectedRole} onChoose={setSelectedRole} stripRef={overviewRoles}/>
         </div>
         <div className={styles.compactRoles} aria-label="世界内容导航" inert={!compactVisible} aria-hidden={!compactVisible}>
-          <RoleStrip compact active={selectedRole} onChoose={setSelectedRole} stripRef={compactRoles}/>
+          <RoleStrip names={names} compact active={selectedRole} onChoose={setSelectedRole} stripRef={compactRoles}/>
         </div>
       </section>
       <div className={styles.workspace} data-world-workspace>

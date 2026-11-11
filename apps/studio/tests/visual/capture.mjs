@@ -150,6 +150,15 @@ try{
     await click('button[aria-label="查看世界卡：长安风云"]');
     await until('location.pathname==="/worlds/changan" && !!document.querySelector("[data-world-content]") && [...document.images].every(img=>img.complete)');
     await delay(120);
+    const overviewClean=await evaluate('('+function(){
+      const overview=document.querySelector('[data-world-overview]');
+      const page=document.querySelector('[data-collapse-progress]');
+      return ![...overview.querySelectorAll('h2')].some(heading=>heading.textContent.trim()==='世界角色')
+        && !overview.textContent.includes('选择角色，探索不同的故事视角')
+        && !page.querySelector('a[href="/worlds"],[aria-label="返回世界卡列表"]')
+        && !!document.querySelector('aside a[aria-label="世界卡"][href="/worlds"]');
+    }.toString()+')()');
+    assert(overviewClean,'World detail should omit the role hint and page back button while retaining sidebar navigation');
   }
 
   async function checkOverviewWheel() {
@@ -210,7 +219,7 @@ try{
     const ratio=expanded.overview.height/expanded.outerHeight;
     assert(ratio>=0.27&&ratio<=0.46,label+': overview should occupy about one third of the viewport; got '+ratio.toFixed(3));
     assert(expanded.nav.length===5 && expanded.nav.every(r=>r.top>=expanded.workspace.top-1 && r.bottom<=expanded.viewport.bottom+1),label+': all five sections must be visible on entry');
-    assert(expanded.roles.expanded.names.length===10 && JSON.stringify(expanded.roles.expanded.names)===JSON.stringify(expanded.roles.compact.names),label+': both role lists must retain all world characters');
+    assert(expanded.roles.expanded.names.length===20 && JSON.stringify(expanded.roles.expanded.names)===JSON.stringify(expanded.roles.compact.names),label+': both role lists must retain all 20 长安风云 characters');
     assert(expanded.roles.expanded.opacity>0.99 && expanded.roles.compact.opacity<0.01 && expanded.roles.compact.inert,label+': compact roles must initially be invisible and inert');
     assert(expanded.range>40,label+': outer scroll should have a bounded collapse range');
     await screenshot(shots[0]);
@@ -284,6 +293,60 @@ try{
     await until('Number(document.querySelector("[data-collapse-progress]").dataset.collapseProgress)>0.99');
     assert((await worldMetrics()).contentTop===0,'Section click should reset only the detail content to its start');
     console.log('PASS: short-content wheel isolation and repeated section activation.');
+  }
+
+  async function checkLastRoleBrowsing(label) {
+    const inspect=kind=>evaluate('('+function(kind){
+      const strip=document.querySelector('[data-role-strip="'+kind+'"]');
+      const rect=el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}};
+      const buttons=[...strip.querySelectorAll('button')];
+      return {bounds:rect(strip),first:rect(buttons[0]),last:rect(buttons.at(-1)),lastName:buttons.at(-1).title,count:buttons.length,left:strip.scrollLeft,max:strip.scrollWidth-strip.clientWidth,width:strip.scrollWidth};
+    }.toString()+')('+JSON.stringify(kind)+')');
+    const wheel=async(info,deltaX)=>{
+      const point={x:(info.bounds.left+info.bounds.right)/2,y:(info.bounds.top+info.bounds.bottom)/2};
+      await send('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
+      await send('Input.dispatchMouseEvent',{type:'mouseWheel',...point,deltaX,deltaY:0});
+      await delay(240);
+    };
+    const press=async(bounds)=>{
+      const point={x:(bounds.left+bounds.right)/2,y:(bounds.top+bounds.bottom)/2};
+      await send('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
+      await send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});
+      await send('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});
+      await delay(100);
+    };
+    for(const [kind,progress] of [['expanded',0],['compact',1]]){
+      await setWorldProgress(progress);
+      const before=await worldMetrics();
+      let strip=await inspect(kind);
+      assert(strip.count===20 && strip.max>100,label+': '+kind+' must exercise an overflowing 20-character list');
+      await wheel(strip,-strip.width);
+      strip=await inspect(kind);
+      assert(strip.left<2,label+': '+kind+' horizontal wheel could not reach the first character');
+      await press(strip.first);
+      const firstSelection=(await worldMetrics()).roles[kind];
+      assert(firstSelection.selected===firstSelection.names[0],label+': '+kind+' first character could not be selected by pointer input');
+      await wheel(strip,strip.width);
+      strip=await inspect(kind);
+      assert(Math.abs(strip.left-strip.max)<2 && strip.last.left>=strip.bounds.left-1 && strip.last.right<=strip.bounds.right+1,label+': '+kind+' horizontal wheel could not fully reveal the last character');
+      await press(strip.last);
+      const after=await worldMetrics();
+      assert(after.roles.expanded.selected===strip.lastName && after.roles.compact.selected===strip.lastName,label+': choosing the last '+kind+' character did not synchronize both role lists');
+      assert(Math.abs(after.outerTop-before.outerTop)<1 && Math.abs(after.overview.height-before.overview.height)<1 && Math.abs(after.workspace.top-before.workspace.top)<1 && Math.abs(after.workspace.height-before.workspace.height)<1 && Math.abs(after.contentTop-before.contentTop)<1,label+': '+kind+' horizontal browsing moved A/B or the detail content');
+      await screenshot('world-detail-'+kind+'-last-role-'+label);
+    }
+    console.log('PASS: '+label+' real horizontal browsing reaches and selects character 20 in both densities without moving A/B.');
+  }
+
+  async function checkOtherWorldRoleCount() {
+    const label=await evaluate('([...document.querySelectorAll(\'button[aria-label^="查看世界卡："]\')].find(button=>button.getAttribute("aria-label")!=="查看世界卡：长安风云"))?.getAttribute("aria-label")');
+    assert(label,'Need one other world fixture to verify the character expansion is scoped');
+    await click('button[aria-label='+JSON.stringify(label)+']');
+    await until('location.pathname.startsWith("/worlds/") && location.pathname!=="/worlds/changan" && !!document.querySelector("[data-role-strip]")');
+    const counts=await evaluate('["expanded","compact"].map(kind=>document.querySelectorAll(\'[data-role-strip="\'+kind+\'"] button\').length)');
+    assert(counts.every(count=>count===10),'Only 长安风云 should have 20 characters; another world unexpectedly changed: '+counts.join('/'));
+    await click('aside a[aria-label="世界卡"]');
+    console.log('PASS: another world keeps its original 10 characters and sidebar navigation returns to the library.');
   }
 
   async function checkRoleAnchor(label) {
@@ -420,6 +483,7 @@ try{
     'world-detail-expanded-1536','world-detail-transition-1536','world-detail-compact-1536'
   ]);
   await checkOverviewWheel();
+  await checkLastRoleBrowsing('1536');
   await click('[data-role-strip="compact"] button:nth-child(5)');
   assert(await evaluate(`document.querySelector('[data-role-strip="expanded"] button:nth-child(5)').getAttribute("aria-pressed")`)==='true','Role selected state not synced');
   await checkDetailScrollIsolation('1536');
@@ -428,6 +492,7 @@ try{
   assert((await worldMetrics()).contentTop===0,'Switching sections should reset detail scroll position');
   await checkShortDetailIsolation();
   await click('a[aria-label="世界卡"]');
+  await checkOtherWorldRoleCount();
   await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
   const reducedDuration=await evaluate('parseFloat(getComputedStyle(document.querySelector("[data-collapsed]")).transitionDuration)');
   assert(reducedDuration<0.001,'Reduced-motion preference must suppress layout motion');
@@ -456,6 +521,7 @@ try{
   await checkWorldGeometry('390',[
     'world-detail-mobile-390','world-detail-mobile-transition-390','world-detail-mobile-compact-390'
   ]);
+  await checkLastRoleBrowsing('390');
   await checkRoleAnchor('390');
   await click('a[aria-label="世界卡"]');
   await click('[aria-label="打开导航"]');
@@ -482,7 +548,7 @@ try{
   ]);
   await checkRoleAnchor('375');
   assert(exceptionCount===0,'Browser JS exceptions: '+exceptionCount);
-  console.log('PASS: stable sidebar material, intermediate animation width, selected hover, desktop expanded/collapsed, dialogs, theme, category, independent A/B scrolling, role anchors, reduced motion, and 375/390/768/1280/1536 layouts.');
+  console.log('PASS: stable sidebar material, intermediate animation width, selected hover, desktop expanded/collapsed, dialogs, theme, category, independent A/B scrolling, 20-character browsing and role anchors, reduced motion, and 375/390/768/1280/1536 layouts.');
   console.log('Screenshots:',out);
 }catch(e){
   console.error('FAIL:',e);
