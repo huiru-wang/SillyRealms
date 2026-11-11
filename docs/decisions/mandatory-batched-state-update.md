@@ -1,6 +1,6 @@
 # One-request batched state update with prompt-level tool guidance
 
-Status: superseded in part. The general model/tool loop, continuation rules and per-item state-update behavior in `agent-tool-loop.md` replace the one-request, post-tool-stop and atomic batch rules below. This historical decision supersedes `conditional-state-review.md`.
+Status: historical decision. The [general tool-loop capability](agent-tool-loop.md) superseded the one-request/post-tool-stop and atomic-batch rules below. The [2026-11-11 narrative state-tail decision](narrative-state-tail-protocol.md), approved but pending implementation, now replaces narrative mandatory-tool rules and preset worldState/postHistory placement. The content below records the old design; it is not the target narrative contract. General tool code remains available. This historical decision superseded `conditional-state-review.md`.
 
 ## Behavior
 - The preset `main` internal ID remains unchanged for existing presets, imports, exports, session references and world-book anchors. Its visible default name is **叙事风格**; new/default built-in prompt is empty and editable. The platform fixed system protocol is separate.

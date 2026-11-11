@@ -37,8 +37,10 @@ normal four-field JSON error. SSE responses remain `text/event-stream`.
 ```
 
 `tool.failed` contains run ID, tool call ID, tool name, and the same two error
-fields. Other event types do not need empty error fields. Tool failure is not
-automatically a Run failure: it is passed to the model using the standard loop.
+fields. Other event types do not need empty error fields. In an explicitly
+tool-enabled general flow, tool failure is not automatically a Run failure:
+the tool result is passed to the model using that flow's standard loop. This
+is not a requirement for the approved single-request narrative path.
 
 Known errors are preserved through Agent Runtime, Runner and tools. Unknown
 exceptions map to a safe registered code, and gateway exceptions use
@@ -60,3 +62,13 @@ The top-level HTTP request can succeed with `success:true` while individual
 updates inside `data` fail independently. Each item reports
 `success/errorCode/errorMessage` using the same success/failure conventions.
 State commits and notifications retain their existing per-item semantics.
+
+## Narrative state-tail contract (approved, pending implementation)
+
+The [new narrative runtime](narrative-state-tail-runtime.md) supplies no tools and emits no fabricated tool.failed event. Complete JSON arrays use ordered per-item validation: valid items commit, invalid items are reported in the persisted Run stateUpdate result. A successfully committed array with skipped items completes the Run with a partial-sync notice.
+
+Missing, truncated, malformed, oversized or repeated tails preserve confirmed story, leave state unchanged and fail the Run with registered state-tail errorCode/errorMessage. The planned codes and result shape are defined in the [plan](../../plan/sr-narrative-state-tail-protocol-v1.md). Provider and persistence errors retain their own safe codes. No retry or repair model request is introduced.
+
+Run queries and terminal SSE must expose the same persisted stateUpdate result; Host and SDK types must be updated together when implemented. A stop before commit discards candidates; a stop after commit does not revert state or the terminal outcome. state.changed follows successful authoritative commit and actual changes.
+
+These are target contract changes only; this document does not claim the new fields or error codes are already implemented.

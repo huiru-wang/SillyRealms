@@ -3,8 +3,10 @@
 - Treat a session as one continuous history for new work; do not add world-branch logic unless explicitly requested. Explain product flows before technical details.
 - Context compaction uses the previous narrative request's reported input and output usage; see `docs/technical/context-compaction.md`.
 - Preset context strategies are compact (128K), standard (256K), and extended (512K), capped by the model context window.
-- Agent runs use a general model/tool loop: return tool results to the model and continue until it stops calling tools. With active writable message state, require at least one state tool call; use empty updates if nothing changes.
-- State-tool batches apply valid updates in order, skip and report invalid items, and commit the workspace under the existing Run completion/stopping rules.
+- Approved narrative target (pending implementation): one model request emits plain story plus a state tail when writable message state is active. Narrative does not register tools, require tool calls, enter a tool loop, or send results back to the model. See `plan/sr-narrative-state-tail-protocol-v1.md` and `docs/decisions/narrative-state-tail-protocol.md`.
+- Keep `update_state`, ToolExecutor and the general model/tool loop as separate capabilities. Run lifecycle, locks, streaming, validation, persistence, Usage and cancellation remain runtime responsibilities; do not describe the new narrative path as an Agent loop.
+- A complete, bounded, unique JSON-array tail and normal model termination are prerequisites to narrative state updates. Apply valid items in order, skip/report invalid items, and process repeated paths in order. Missing/invalid tails preserve story but fail the Run without state changes; stop before commit discards candidate state. Generic tool-loop behavior remains separate.
+- The approved rollout includes one-time session/entry cleanup and targeted preset/lore normalization, only during a later explicitly authorized implementation upgrade. Documentation edits never execute this cleanup. Preserve worlds/global state, other preset content, models, credentials, tags, app settings and original world files.
 
 ## Project identity
 SR is a local-first world-card client and runtime for multi-character narrative experiences, branching conversations, creator-defined React UIs, presets, and optional state.
@@ -100,7 +102,7 @@ Inspect package scripts before relying on a check; report exactly what ran.
 - Skills are reusable procedures, not project facts.
 
 - Character `description` is user-facing; only `prompt` enters model context, subject to the shared load rules. `load.mode: never` disables dynamic loading for characters, lore entries, and state modules.
-- Preset nodes other than `postHistory` must remain enabled; node order is configurable.
+- Approved preset/message target (pending implementation): remove `worldState` and `postHistory`; keep a fixed built-in message skeleton with state/output rules after native history and before current input. Preserve custom text nodes in the front area after style, including their original roles and relative order; only custom order is configurable. Put all activated lore in a separate `world_info` message ordered by `load.order` then original index, explicitly normalize retired anchor/position fields, and verify final Provider payload ordering.
 
 - Atomic SDK/Host/Server V1 and `SR.WorldStory` use the creator SDK and isolated iframe boundary; legacy state schemas and V2 routes are not compatible. Message rendering rules are display-only; platform input and draft are Host-owned. See `docs/technical/worldstory-runtime-v1.md` and `docs/data-formats/worldstory-message-render-v1.md`.
 

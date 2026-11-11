@@ -9,3 +9,11 @@ Presets select `compact` (131,072), `standard` (262,144), or `extended` (524,288
 Automatic provider overflow retry is not implemented. A new large input, fixed prompt, or output may still exceed the provider window before the next usage-based check. Summary requests are split using a fixed character limit, not a Token count; a provider error fails preparation without discarding original history.
 
 The structural byte proportions shown in the usage panel are illustrative only and do not drive compression.
+
+## Approved narrative transition (pending implementation, 2026-11-11)
+
+The [single-request narrative plan](../../plan/sr-narrative-state-tail-protocol-v1.md) keeps compaction independent. Summary remains an assistant message before native user/assistant history. Dynamic authoritative state and output rules follow retained history and precede current input; only clean stories, never state tails or raw tool records, feed narrative history and summaries.
+
+Narrative Usage comes from its one actual generation request and includes the invisible state tail. Summary requests remain separately accounted; neither a tail failure nor compaction supplies an automatic narrative repair request.
+
+The version-1 preset replacement described above is historical migration behavior, not a template for this rollout. The later explicitly authorized upgrade uses a new version gate, preserves other preset content and non-session data, and clears entries followed by sessions once. This documentation update does not run that cleanup or alter the existing compaction implementation.

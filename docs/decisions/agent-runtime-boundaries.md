@@ -45,3 +45,13 @@ The V1 session/run endpoints, SSE event names and payloads, persistence-before-s
 The earlier runtime refactor introduced a synchronous missing-preset preflight in `AgentRuntime.start()`, which is retained here. `RuntimeError` is still exported publicly through `agent/index.ts`.
 
 This directory migration does **not** include a database/schema change, creator SDK change, provider behavior change, or Token usage accounting. Future request-level usage collection belongs at the model call boundary and should persist separately, including compaction and tool continuations.
+
+## Approved narrative separation (pending implementation, 2026-11-11)
+
+The [state-tail decision](narrative-state-tail-protocol.md) introduces a single-request narrative execution path. It is not an Agent loop. Preserve AgentRuntime lifecycle, locks, streaming, cancellation and persistence boundaries; retain AgentRunner's general tool loop and update_state for separate uses.
+
+The target Prompt uses fixed independent setting messages, a front custom-node area, native history, then platform state/output rules before current input. Validate actual Provider payload positions. The new narrative parser owns framing and bounded tail collection; the state domain retains item validation, and persistence owns final commit eligibility.
+
+Current completeAssistant/finalize behavior needs explicit adaptation: raw responses must always be nonNarrative, visible entries contain clean story, and a stop before narrative commit cannot save candidate state. This differs from the generic loop's existing stopped-workspace behavior.
+
+The separately authorized implementation upgrade will delete old session data and normalize retired preset/lore fields as described in the [plan](../../plan/sr-narrative-state-tail-protocol-v1.md). That is a future migration, not a side effect of this documentation update or the original directory reorganization.

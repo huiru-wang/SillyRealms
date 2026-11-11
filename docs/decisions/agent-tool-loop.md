@@ -1,9 +1,23 @@
 # General model and tool loop
 
-Status: implemented (2026-11-10), with mandatory state-tool choice restored on user request. Supersedes the one-request and stop-after-tool rules in `mandatory-batched-state-update.md`.
+Status: general capability retained. The [single-request narrative decision](narrative-state-tail-protocol.md) is approved and pending implementation as of 2026-11-11. It replaces mandatory narrative state-tool invocation as a design requirement, without deleting this capability.
 
-For each user Run with active writable message state, require at least one `update_state` tool call. Use `{"updates":[]}` when nothing changes. Where supported, the initial request sets the provider's required tool choice; once the state tool is called, subsequent requests use the provider's normal tool selection so the agent can finish. If the model ends without the required call, the Run fails. When no writable message state is active, no state tool is supplied or required.
+## Retained capability
 
-Persist each assistant response and stream its narrative. When it requests tools, execute every returned call, persist each result, append the assistant response and tool results to the in-memory model conversation, and request the model again. Continue until the model returns no tool calls or the Run is stopped or fails. There is no special continuation prompt for a tool-only response.
+For an explicitly tool-enabled consumer, persist assistant responses, execute returned calls, persist each tool result and append it to the in-memory model conversation. Continue until the model returns no tool calls or execution stops or fails. There is no special continuation prompt for a tool-only response.
 
-State updates are evaluated independently in input order against the isolated Run workspace. Valid items are applied; invalid items are skipped and logged without their paths or values. Repeated paths are evaluated in order. A partially or entirely invalid batch returns an error tool result containing the applied count and skipped item indexes/error codes, and emits the existing `tool.failed` event using the first error code. Invalid tool calls and batches over 100 items are rejected before any updates. The workspace is committed under the existing completion/stopping rules. This replaces the all-or-nothing batch validation in `mandatory-batched-state-update.md`. Raw assistant and tool entries remain distinct from user-visible narrative. Each model request is accounted separately, including continuations, and the last narrative request supplies the latest context usage. No SDK, HTTP route, event schema, or historical entry migration is required. Cancellation and provider failure retain their existing Run semantics. No paid provider calls were made for verification.
+The update_state implementation and ToolExecutor remain available. State updates are evaluated independently in input order against an isolated workspace. Valid items apply; invalid items are skipped and logged without paths or values. Repeated paths are processed in order. Invalid outer tool arguments and batches over 100 items are rejected before any updates.
+
+A partially or entirely invalid tool batch returns an error tool result with the applied count and skipped indexes/error codes and emits the existing tool.failed event. Results may be returned to the model only in a flow that actually uses the tool loop. Raw assistant/tool entries remain distinct from visible narrative. Usage accounts for each actual request.
+
+## Narrative target
+
+Narrative does not enter this loop, provide update_state or force tool choice. It makes one model request and handles a plain story plus state tail on the server. Run lifecycle, locks, idempotency, persistence, streams and cancellation remain in the runtime.
+
+Tail validation reuses state-domain semantics without fabricating tool calls/results. A structurally valid array applies valid items in order and reports skipped items; repeated paths remain ordered. Tail protocol failure or a pre-commit stop does not submit state. See the [implementation contract](../technical/narrative-state-tail-runtime.md).
+
+## Current implementation and transition
+
+Before the approved migration is implemented, agent-runner.ts still contains the existing narrative loop and required-state-call check. This is a current-code fact, not a requirement to carry it into the new narrative path.
+
+Separate narrative invocation from the generic loop without deleting the generic code or silently changing its stopping behavior. Retain generic-loop tests; add independent single-request narrative tests. The earlier [batched state-tool decision](mandatory-batched-state-update.md) remains historical context.
