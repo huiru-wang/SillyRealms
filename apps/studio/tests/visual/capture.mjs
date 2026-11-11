@@ -98,6 +98,232 @@ try{
   }
   const assert=(condition,message)=>{if(!condition)throw new Error(message);};
 
+  // Exercise the independent overview/workspace contract with real browser geometry and input.
+  function worldMetrics() {
+    return evaluate('('+function(){
+      const main=document.getElementById('main-content');
+      const overview=document.querySelector('[data-world-overview]');
+      const viewport=document.querySelector('[data-world-viewport]');
+      const workspace=document.querySelector('[data-world-workspace]');
+      const content=document.querySelector('[data-world-content]');
+      const rect=el=>{const r=el.getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,width:r.width,height:r.height}};
+      const roles={};
+      for(const kind of ['expanded','compact']){
+        const strip=document.querySelector('[data-role-strip="'+kind+'"]');
+        const buttons=[...strip.querySelectorAll('button')];
+        const bounds=strip.getBoundingClientRect();
+        const first=buttons.find(b=>{const r=b.getBoundingClientRect();return r.right>bounds.left+1 && r.left<bounds.right-1});
+        let opacity=1;
+        for(let node=strip;node;node=node.parentElement){
+          const style=getComputedStyle(node);
+          opacity*=Number(style.opacity);
+          if(style.visibility==='hidden'||style.display==='none')opacity=0;
+        }
+        roles[kind]={names:buttons.map(b=>b.title),selected:buttons.find(b=>b.getAttribute('aria-pressed')==='true')?.title,anchor:first?.title,opacity,inert:!!strip.closest('[inert]'),scrollLeft:strip.scrollLeft,maxScroll:strip.scrollWidth-strip.clientWidth};
+      }
+      return {
+        outerTop:main.scrollTop,range:main.scrollHeight-main.clientHeight,outerHeight:main.clientHeight,
+        progress:Number(document.querySelector('[data-collapse-progress]').dataset.collapseProgress),
+        overview:rect(overview),viewport:rect(viewport),workspace:rect(workspace),content:rect(content),
+        contentTop:content.scrollTop,contentRange:content.scrollHeight-content.clientHeight,
+        nav:[...document.querySelectorAll('nav[aria-label="世界详情章节"] button')].map(rect),
+        pageTop:document.scrollingElement.scrollTop,pageWidth:document.documentElement.scrollWidth,windowWidth:innerWidth,roles
+      };
+    }.toString()+')()');
+  }
+
+  async function setWorldProgress(progress) {
+    await evaluate('(()=>{const main=document.getElementById("main-content");main.scrollTo({top:(main.scrollHeight-main.clientHeight)*'+progress+',behavior:"instant"})})()');
+    await until('Math.abs(Number(document.querySelector("[data-collapse-progress]").dataset.collapseProgress)-'+progress+')<0.025');
+    await delay(80);
+  }
+
+  async function worldWheel(deltaY) {
+    const {content}=await worldMetrics();
+    const point={x:(content.left+content.right)/2,y:Math.min(content.bottom-20,content.top+Math.max(35,content.height/2))};
+    await send('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
+    await send('Input.dispatchMouseEvent',{type:'mouseWheel',...point,deltaX:0,deltaY});
+    await delay(320);
+  }
+
+  async function openWorldDetail() {
+    await click('button[aria-label="查看世界卡：长安风云"]');
+    await until('location.pathname==="/worlds/changan" && !!document.querySelector("[data-world-content]") && [...document.images].every(img=>img.complete)');
+    await delay(120);
+  }
+
+  async function checkOverviewWheel() {
+    await setWorldProgress(0);
+    const dispatch=async(point,deltaY)=>{
+      await send('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
+      await send('Input.dispatchMouseEvent',{type:'mouseWheel',...point,deltaX:0,deltaY});
+      await delay(320);
+    };
+    let before=await worldMetrics();
+    await dispatch({x:before.overview.right-15,y:before.overview.top+90},85);
+    let after=await worldMetrics();
+    assert(after.outerTop>before.outerTop+20 && after.overview.height<before.overview.height-20 && after.workspace.top<before.workspace.top-20,'A-area wheel must collapse A and raise B');
+    assert(after.contentTop===before.contentTop,'A-area wheel must not scroll detail content');
+    before=after;
+    const section=before.nav[0];
+    await dispatch({x:(section.left+section.right)/2,y:(section.top+section.bottom)/2},65);
+    after=await worldMetrics();
+    assert(after.outerTop>before.outerTop+15 && after.overview.height<before.overview.height-15,'Left-navigation wheel must reach the outer overview scroll');
+    assert(after.contentTop===before.contentTop,'Left-navigation wheel must not scroll detail content');
+    before=after;
+    await dispatch({x:before.overview.right-15,y:before.overview.top+65},-90);
+    after=await worldMetrics();
+    assert(after.outerTop<before.outerTop-20 && after.overview.height>before.overview.height+20,'Reverse wheel over A must restore the overview');
+    await setWorldProgress(1);
+    console.log('PASS: real wheel over A and left navigation drives the outer collapse and restores A.');
+  }
+
+  async function checkCompactLongTitle() {
+    const original=await evaluate('document.querySelector("[data-world-overview] h1").textContent');
+    try{
+      await evaluate('document.querySelector("[data-world-overview] h1").textContent="长安风云：繁华与隐秘交织的千年古城，十位人物共同书写的命运长卷"');
+      const layout=await evaluate('('+function(){
+        const title=document.querySelector('[data-world-overview] h1');
+        const roles=document.querySelector('[data-role-strip="compact"]');
+        const text=title.getBoundingClientRect(),strip=roles.getBoundingClientRect();
+        const hit=document.elementFromPoint(text.right-4,text.top+text.height/2);
+        return {
+          gap:strip.left-text.right,
+          clipped:title.scrollWidth>title.clientWidth,
+          ellipsis:getComputedStyle(title).textOverflow,
+          titleHit:hit===title||title.contains(hit)
+        };
+      }.toString()+')()');
+      assert(layout.clipped && layout.ellipsis==='ellipsis','Long compact title should truncate within its allocated width');
+      assert(layout.gap>=8,'Long compact title overlaps or crowds the role list: gap='+layout.gap);
+      assert(layout.titleHit,'Compact title must remain hit-testable for text selection and its full-title tooltip');
+      await screenshot('world-detail-long-title-1280');
+    }finally{
+      await evaluate('document.querySelector("[data-world-overview] h1").textContent='+JSON.stringify(original));
+    }
+    console.log('PASS: 1280 compact long title remains separated, truncated, and hit-testable.');
+  }
+
+  async function checkWorldGeometry(label,shots) {
+    await setWorldProgress(0);
+    const expanded=await worldMetrics();
+    const ratio=expanded.overview.height/expanded.outerHeight;
+    assert(ratio>=0.27&&ratio<=0.46,label+': overview should occupy about one third of the viewport; got '+ratio.toFixed(3));
+    assert(expanded.nav.length===5 && expanded.nav.every(r=>r.top>=expanded.workspace.top-1 && r.bottom<=expanded.viewport.bottom+1),label+': all five sections must be visible on entry');
+    assert(expanded.roles.expanded.names.length===10 && JSON.stringify(expanded.roles.expanded.names)===JSON.stringify(expanded.roles.compact.names),label+': both role lists must retain all world characters');
+    assert(expanded.roles.expanded.opacity>0.99 && expanded.roles.compact.opacity<0.01 && expanded.roles.compact.inert,label+': compact roles must initially be invisible and inert');
+    assert(expanded.range>40,label+': outer scroll should have a bounded collapse range');
+    await screenshot(shots[0]);
+    const samples=[expanded];
+    for(const progress of [0.25,0.5,0.75,1]){
+      await setWorldProgress(progress);
+      const current=await worldMetrics();
+      const previous=samples.at(-1);
+      assert(current.overview.height<previous.overview.height-1,label+': A height did not shrink continuously');
+      assert(current.workspace.top<previous.workspace.top-1,label+': B did not move upward with A');
+      assert(Math.abs((expanded.overview.height-current.overview.height)-(expanded.workspace.top-current.workspace.top))<2,label+': B displacement must equal the released A height');
+      assert(Math.abs(current.overview.top-expanded.overview.top)<2,label+': A should remain attached to the top');
+      assert(Math.abs(current.workspace.bottom-expanded.workspace.bottom)<2,label+': B should fill the remaining viewport');
+      assert(Math.abs(current.range-expanded.range)<2,label+': shrinking A changed the outer scroll range');
+      assert(current.content.bottom<=current.viewport.bottom+2 && current.workspace.top>=current.overview.bottom-2,label+': content escaped its workspace');
+      assert(current.roles.expanded.opacity<0.01 || current.roles.compact.opacity<0.01,label+': lower roles must fade out before compact roles appear');
+      assert(current.pageTop===0 && current.pageWidth<=current.windowWidth+1,label+': detail should not create document scrolling');
+      samples.push(current);
+      if(progress===0.5)await screenshot(shots[1]);
+    }
+    const compact=samples.at(-1);
+    assert(compact.roles.compact.opacity>0.99 && compact.roles.expanded.opacity<0.01 && compact.roles.expanded.inert,label+': compact state must expose only the upper role list');
+    assert(compact.roles.compact.selected===compact.roles.expanded.selected,label+': selected role changed during collapse');
+    await screenshot(shots[2]);
+    console.log('World layout '+label+':',JSON.stringify(samples.map(s=>({scroll:Math.round(s.outerTop),a:Math.round(s.overview.height),bTop:Math.round(s.workspace.top),bHeight:Math.round(s.workspace.height)}))));
+  }
+
+  async function checkDetailScrollIsolation(label) {
+    await setWorldProgress(0);
+    await evaluate('document.querySelector("[data-world-content]").scrollTop=0');
+    let before=await worldMetrics();
+    assert(before.contentRange>30,label+': introduction fixture must exercise real content scrolling');
+    await worldWheel(180);
+    let after=await worldMetrics();
+    assert(after.contentTop>20,label+': wheel over detail did not scroll its content');
+    assert(Math.abs(after.outerTop-before.outerTop)<1 && Math.abs(after.overview.height-before.overview.height)<1,label+': detail scrolling collapsed the overview');
+    await setWorldProgress(0.4);
+    for(const edge of ['top','bottom']){
+      await evaluate('(()=>{const content=document.querySelector("[data-world-content]");content.scrollTop='+(edge==='top'?'0':'content.scrollHeight')+'})()');
+      await delay(100);
+      before=await worldMetrics();
+      await worldWheel(edge==='top'?-650:650);
+      after=await worldMetrics();
+      assert(Math.abs(after.outerTop-before.outerTop)<1 && Math.abs(after.workspace.top-before.workspace.top)<1,label+': '+edge+' detail boundary leaked wheel scrolling into the outer page');
+      assert(Math.abs(after.contentTop-before.contentTop)<1,label+': content did not remain at its '+edge+' boundary');
+    }
+    await evaluate('(()=>{const content=document.querySelector("[data-world-content]");content.scrollTop=0;content.focus({preventScroll:true})})()');
+    assert(await evaluate('document.activeElement===document.querySelector("[data-world-content]")'),label+': detail must be keyboard focusable');
+    before=await worldMetrics();
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key:'PageDown',code:'PageDown',windowsVirtualKeyCode:34,nativeVirtualKeyCode:34});
+    await send('Input.dispatchKeyEvent',{type:'keyUp',key:'PageDown',code:'PageDown',windowsVirtualKeyCode:34,nativeVirtualKeyCode:34});
+    await delay(350);
+    after=await worldMetrics();
+    assert(after.contentTop>10 && Math.abs(after.outerTop-before.outerTop)<1,label+': PageDown should scroll the focused detail only');
+    console.log('PASS: '+label+' detail wheel, both boundaries, and keyboard isolation.');
+  }
+
+  async function checkShortDetailIsolation() {
+    await click('nav[aria-label="世界详情章节"] button:nth-child(5)');
+    await until('document.querySelector("[data-world-content] h2")?.textContent==="运行配置" && Number(document.querySelector("[data-collapse-progress]").dataset.collapseProgress)>0.99');
+    await setWorldProgress(0.4);
+    const before=await worldMetrics();
+    assert(before.contentRange<=1,'Runtime fixture should fit without overflow, so short-content wheel isolation is actually exercised');
+    for(const delta of [-650,650]){
+      await worldWheel(delta);
+      const after=await worldMetrics();
+      assert(Math.abs(after.outerTop-before.outerTop)<1 && after.contentTop===0,'A non-overflowing detail pane leaked wheel scrolling into the outer page');
+    }
+    // Clicking the already-selected section must still bring the workspace into reading mode.
+    await click('nav[aria-label="世界详情章节"] button:nth-child(5)');
+    await until('Number(document.querySelector("[data-collapse-progress]").dataset.collapseProgress)>0.99');
+    assert((await worldMetrics()).contentTop===0,'Section click should reset only the detail content to its start');
+    console.log('PASS: short-content wheel isolation and repeated section activation.');
+  }
+
+  async function checkRoleAnchor(label) {
+    await setWorldProgress(0);
+    await evaluate('('+function(){
+      const strip=document.querySelector('[data-role-strip="expanded"]');
+      const button=strip.querySelectorAll('button')[2];
+      strip.scrollLeft+=button.getBoundingClientRect().left-strip.getBoundingClientRect().left+2;
+    }.toString()+')()');
+    await delay(150);
+    const before=await worldMetrics();
+    assert(before.roles.expanded.scrollLeft>40 && before.roles.expanded.anchor!==before.roles.expanded.names[0],label+': role anchor check must begin away from the first character');
+    await setWorldProgress(1);
+    const compact=await worldMetrics();
+    assert(compact.roles.compact.anchor===before.roles.expanded.anchor,label+': compact list lost the first visible character ('+before.roles.expanded.anchor+' → '+compact.roles.compact.anchor+')');
+    await click('[data-role-strip="compact"] button:nth-child(4)');
+    const selected=(await worldMetrics()).roles;
+    assert(selected.compact.selected===selected.compact.names[3] && selected.expanded.selected===selected.compact.selected,label+': role selection did not synchronize');
+    await setWorldProgress(0);
+    const restored=await worldMetrics();
+    assert(restored.roles.expanded.anchor===compact.roles.compact.anchor,label+': expanded list lost its browsing anchor after restoring');
+    assert(restored.roles.expanded.selected===selected.compact.selected,label+': selected character changed when restoring the overview');
+    console.log('PASS: '+label+' complete role lists, selection, and horizontal browsing anchor.');
+  }
+
+  async function checkWorldReducedMotion() {
+    await openWorldDetail();
+    await setWorldProgress(0);
+    const position=await evaluate('('+async function(){
+      document.querySelector('nav[aria-label="世界详情章节"] button:nth-child(3)').click();
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const main=document.getElementById('main-content');
+      return {actual:main.scrollTop,target:main.scrollHeight-main.clientHeight};
+    }.toString()+')()');
+    assert(Math.abs(position.actual-position.target)<2,'Reduced motion should reach the compact workspace immediately on section activation');
+    assert(await evaluate('document.querySelector("[data-world-content] h2")?.textContent')==='世界状态','Reduced-motion section activation failed');
+    await screenshot('world-detail-reduced-motion-1536');
+    await click('a[aria-label="世界卡"]');
+  }
+
   await send('Page.enable');await send('Runtime.enable');await send('DOM.enable');await send('CSS.enable');
   await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'},{name:'hover',value:'hover'},{name:'pointer',value:'fine'}]});
   await viewport(1536,864);
@@ -189,38 +415,48 @@ try{
   await click('nav[aria-label="世界分类"] button:nth-child(3)');
   assert(await evaluate('document.querySelectorAll("[aria-label^=\\"查看世界卡\\"]").length')===2,'Filtering failed');
   await click('nav[aria-label="世界分类"] button:nth-child(1)');
-  await click('button[aria-label="查看世界卡：长安风云"]');
-  await until(`location.pathname==="/worlds/changan" && !!document.querySelector('[aria-label="世界内容导航"]')`);
-  await screenshot('world-detail-expanded-1536');
-  assert(await evaluate(`document.querySelectorAll('[data-role-strip="expanded"] button').length`)===10,'Expanded role list missing');
-  assert(await evaluate(`getComputedStyle(document.querySelector('[data-role-strip="compact"]').parentElement).opacity`)==='0','Compact roles must be initially hidden');
-  await evaluate('document.getElementById("main-content").scrollTop=1000');
-  await until(`getComputedStyle(document.querySelector('[data-role-strip="compact"]').parentElement).opacity==="1"`);
-  await delay(250);
-  await screenshot('world-detail-compact-1536');
+  await openWorldDetail();
+  await checkWorldGeometry('1536',[
+    'world-detail-expanded-1536','world-detail-transition-1536','world-detail-compact-1536'
+  ]);
+  await checkOverviewWheel();
   await click('[data-role-strip="compact"] button:nth-child(5)');
   assert(await evaluate(`document.querySelector('[data-role-strip="expanded"] button:nth-child(5)').getAttribute("aria-pressed")`)==='true','Role selected state not synced');
+  await checkDetailScrollIsolation('1536');
   await click('nav[aria-label="世界详情章节"] button:nth-child(2)');
-  assert(await evaluate('document.querySelector("article h2")?.textContent')==='世界书','Tab content failed to switch');
-  await evaluate('document.getElementById("main-content").scrollTop=0');
-  await until(`getComputedStyle(document.querySelector('[data-role-strip="compact"]').parentElement).opacity==="0"`);
+  await until('document.querySelector("[data-world-content] h2")?.textContent==="世界书" && Number(document.querySelector("[data-collapse-progress]").dataset.collapseProgress)>0.99');
+  assert((await worldMetrics()).contentTop===0,'Switching sections should reset detail scroll position');
+  await checkShortDetailIsolation();
   await click('a[aria-label="世界卡"]');
   await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
   const reducedDuration=await evaluate('parseFloat(getComputedStyle(document.querySelector("[data-collapsed]")).transitionDuration)');
   assert(reducedDuration<0.001,'Reduced-motion preference must suppress layout motion');
+  await checkWorldReducedMotion();
   await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'},{name:'hover',value:'hover'},{name:'pointer',value:'fine'}]});
   await viewport(1280,800);
   await navigate(base+'/worlds?sidebar=expanded&theme=dark');
   await screenshot('home-expanded-1280');
+  await openWorldDetail();
+  await checkWorldGeometry('1280',[
+    'world-detail-expanded-1280','world-detail-transition-1280','world-detail-compact-1280'
+  ]);
+  await checkCompactLongTitle();
+  await click('a[aria-label="世界卡"]');
+  await viewport(768,1024);
+  await navigate(base+'/worlds?sidebar=expanded&theme=dark');
+  await openWorldDetail();
+  await checkWorldGeometry('768',[
+    'world-detail-tablet-768','world-detail-tablet-transition-768','world-detail-tablet-compact-768'
+  ]);
+  await click('a[aria-label="世界卡"]');
   await viewport(390,844,true);
   await navigate(base+'/worlds?sidebar=expanded&theme=dark');
   await screenshot('home-mobile-390');
-  await click('button[aria-label="查看世界卡：长安风云"]');
-  await screenshot('world-detail-mobile-390');
-  await evaluate('document.getElementById("main-content").scrollTop=1000');
-  await delay(400);
-  await screenshot('world-detail-mobile-compact-390');
-  assert(await evaluate('document.documentElement.scrollWidth<=390'),'Mobile horizontal page overflow');
+  await openWorldDetail();
+  await checkWorldGeometry('390',[
+    'world-detail-mobile-390','world-detail-mobile-transition-390','world-detail-mobile-compact-390'
+  ]);
+  await checkRoleAnchor('390');
   await click('a[aria-label="世界卡"]');
   await click('[aria-label="打开导航"]');
   assert(await evaluate('document.querySelector("[aria-label=\\"关闭导航\\"]") !== null'),'Mobile menu missing');
@@ -238,8 +474,15 @@ try{
   await click('[aria-label="打开导航"]');
   await click('[aria-label="关闭导航"]');
   assert(await evaluate('document.querySelector("[aria-label=\\"关闭导航遮罩\\"]").dataset.open')==='false','Mobile drawer did not close');
+  await viewport(375,812,true);
+  await navigate(base+'/worlds?sidebar=expanded&theme=dark');
+  await openWorldDetail();
+  await checkWorldGeometry('375',[
+    'world-detail-mobile-375','world-detail-mobile-transition-375','world-detail-mobile-compact-375'
+  ]);
+  await checkRoleAnchor('375');
   assert(exceptionCount===0,'Browser JS exceptions: '+exceptionCount);
-  console.log('PASS: stable sidebar material, intermediate animation width, selected hover, desktop expanded/collapsed, dialogs, theme, category, detail, mobile menu.');
+  console.log('PASS: stable sidebar material, intermediate animation width, selected hover, desktop expanded/collapsed, dialogs, theme, category, independent A/B scrolling, role anchors, reduced motion, and 375/390/768/1280/1536 layouts.');
   console.log('Screenshots:',out);
 }catch(e){
   console.error('FAIL:',e);

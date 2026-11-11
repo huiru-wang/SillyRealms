@@ -1,6 +1,6 @@
-import {useEffect,useLayoutEffect,useRef,useState} from 'react';
+import {useLayoutEffect,useRef,useState,type CSSProperties,type KeyboardEvent,type RefObject} from 'react';
 import {Link,useParams} from 'react-router-dom';
-import {ArrowLeft,BookOpen,BookText,ChevronRight,Compass,Settings2,ScrollText,SlidersHorizontal,Users} from 'lucide-react';
+import {ArrowLeft,BookOpen,BookText,ChevronDown,ChevronRight,ChevronUp,Compass,Settings2,SlidersHorizontal} from 'lucide-react';
 import {worlds} from '../../fixtures/worlds';
 import styles from './WorldDetailPage.module.css';
 
@@ -12,9 +12,54 @@ const sections:{name:Section;icon:typeof BookOpen}[]=[
 const names=['罗斯','凯莉','Robin','詹姆斯','清月','安娜','林恩','艾琳','查理','伊莎贝拉'];
 const description='一座繁华而神秘的城市，传统与未知交错。每个人都拥有自己的秘密与愿望，随你的选择，关系和故事将沿着不同的轨迹展开。在这里，任何相遇都可能成为一段新的传奇。';
 
-function RoleStrip({compact,active,onChoose,stripRef}:{compact:boolean;active:number;onChoose:(i:number)=>void;stripRef:React.RefObject<HTMLDivElement|null>}){
-  return <div className={[styles.roleStrip,compact?styles.roleStripCompact:''].join(' ')} ref={stripRef} role="group" aria-label="世界角色列表" data-role-strip={compact?'compact':'expanded'}>
-    {names.map((name,i)=><button key={name} className={[styles.role,active===i?styles.roleActive:''].join(' ')} title={name} aria-pressed={active===i} onClick={()=>onChoose(i)}>
+type RoleAnchor = {index:number;fraction:number};
+const clamp=(value:number,min=0,max=1)=>Math.min(max,Math.max(min,value));
+const expandedOpacity=(progress:number)=>1-clamp((progress-.08)/.32);
+const compactOpacity=(progress:number)=>clamp((progress-.6)/.3);
+
+// Keep the visible character, rather than the pixel offset, across two densities.
+function rolePositions(strip:HTMLDivElement){
+  const left=strip.getBoundingClientRect().left;
+  return Array.from(strip.querySelectorAll<HTMLButtonElement>('button')).map(button=>({
+    button,left:button.getBoundingClientRect().left-left+strip.scrollLeft,width:button.offsetWidth
+  }));
+}
+function readRoleAnchor(strip:HTMLDivElement):RoleAnchor{
+  const roles=rolePositions(strip);
+  let index=0;
+  for(let i=1;i<roles.length;i++)if(roles[i].left<=strip.scrollLeft+1)index=i;
+  const item=roles[index];
+  if(!item)return {index:0,fraction:0};
+  const step=(roles[index+1]?.left??item.left+item.width)-item.left;
+  return {index,fraction:clamp((strip.scrollLeft-item.left)/step)};
+}
+function restoreRoleAnchor(strip:HTMLDivElement,anchor:RoleAnchor,expected:WeakMap<HTMLDivElement,number>){
+  const roles=rolePositions(strip),item=roles[anchor.index];
+  if(!item)return;
+  const step=(roles[anchor.index+1]?.left??item.left+item.width)-item.left;
+  const left=clamp(item.left+step*anchor.fraction,0,strip.scrollWidth-strip.clientWidth);
+  expected.set(strip,left);
+  strip.scrollLeft=left;
+}
+function RoleStrip({compact,active,onChoose,stripRef}:{compact:boolean;active:number;onChoose:(i:number)=>void;stripRef:RefObject<HTMLDivElement|null>}){
+  const navigateRoles=(event:KeyboardEvent<HTMLDivElement>)=>{
+    if(event.altKey||event.ctrlKey||event.metaKey)return;
+    const keys=['ArrowLeft','ArrowRight','Home','End'];
+    if(!keys.includes(event.key))return;
+    const strip=event.currentTarget;
+    const buttons=Array.from(strip.querySelectorAll<HTMLButtonElement>('button'));
+    const index=buttons.indexOf(event.target as HTMLButtonElement);
+    if(index<0)return;
+    event.preventDefault();
+    const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:clamp(index+(event.key==='ArrowRight'?1:-1),0,buttons.length-1);
+    const button=buttons[next];
+    button.focus({preventScroll:true});
+    const item=button.getBoundingClientRect(),view=strip.getBoundingClientRect();
+    if(item.left<view.left)strip.scrollLeft+=item.left-view.left-3;
+    else if(item.right>view.right)strip.scrollLeft+=item.right-view.right+3;
+  };
+  return <div className={[styles.roleStrip,compact?styles.roleStripCompact:''].join(' ')} ref={stripRef} role="group" aria-label="世界角色列表" data-role-strip={compact?'compact':'expanded'} onKeyDown={navigateRoles}>
+    {names.map((name,i)=><button key={name} data-role-index={i} className={[styles.role,active===i?styles.roleActive:''].join(' ')} title={name} aria-pressed={active===i} onClick={()=>onChoose(i)}>
       <span className={styles.roleAvatar} aria-hidden="true"><span>{name.slice(0,1)}</span></span>
       <span className={styles.roleName}>{name}</span>
     </button>)}
@@ -29,71 +74,190 @@ function SectionContent({section,worldTitle}:{section:Section;worldTitle:string}
 }
 
 export function WorldDetailPage(){
-  const {worldId}=useParams();const world=worlds.find(w=>w.id===worldId);
+  const {worldId}=useParams();
+  const world=worlds.find(w=>w.id===worldId);
   const [selectedRole,setSelectedRole]=useState(2);
   const [section,setSection]=useState<Section>('介绍');
-  const [compactVisible,setCompactVisible]=useState(false);
-  const [overviewRoleVisible,setOverviewRoleVisible]=useState(true);
+  const [progress,setProgress]=useState(0);
+  const [reducedMotion,setReducedMotion]=useState(false);
+  const page=useRef<HTMLDivElement>(null);
+  const viewport=useRef<HTMLDivElement>(null);
+  const content=useRef<HTMLElement>(null);
+  const overviewToggle=useRef<HTMLButtonElement>(null);
   const overviewRoles=useRef<HTMLDivElement>(null);
   const compactRoles=useRef<HTMLDivElement>(null);
-  const compactHeader=useRef<HTMLElement>(null);
-  const overview=useRef<HTMLElement>(null);
-  const scrollSync=useRef(false);
-  useEffect(()=>{
-    const main=document.getElementById('main-content');if(!main)return;
-    main.scrollTop=0;
-    let frame=0;
-    const update=()=>{
-      cancelAnimationFrame(frame);
-      frame=requestAnimationFrame(()=>{
-        const headerY=compactHeader.current?.getBoundingClientRect().top??9999;
-        const viewportY=main.getBoundingClientRect().top;
-        const roleY=overviewRoles.current?.getBoundingClientRect().bottom??9999;
-        const showHeader=headerY<=viewportY+62;
-        setCompactVisible(showHeader);
-        setOverviewRoleVisible(roleY>viewportY+108);
-      });
-    };
-    main.addEventListener('scroll',update,{passive:true});window.addEventListener('resize',update);update();
-    return()=>{main.removeEventListener('scroll',update);window.removeEventListener('resize',update);cancelAnimationFrame(frame)};
-  },[worldId]);
+  const collapseRange=useRef(0);
+  const roleAnchor=useRef<RoleAnchor>({index:0,fraction:0});
+  const expectedRoleScroll=useRef(new WeakMap<HTMLDivElement,number>());
+  const pendingRoleFocus=useRef<number|null>(null);
+  const overviewRoleOpacity=reducedMotion?(progress<.5?1:0):expandedOpacity(progress);
+  const compactRoleOpacity=reducedMotion?(progress>=.5?1:0):compactOpacity(progress);
+  const overviewRoleVisible=overviewRoleOpacity>0;
+  const compactVisible=compactRoleOpacity>0;
+  const isCompact=progress>=.999;
+
   useLayoutEffect(()=>{
-    const a=overviewRoles.current,b=compactRoles.current;if(!a||!b)return;
-    const onA=()=>{if(scrollSync.current)return;scrollSync.current=true;b.scrollLeft=a.scrollLeft;scrollSync.current=false};
-    const onB=()=>{if(scrollSync.current)return;scrollSync.current=true;a.scrollLeft=b.scrollLeft;scrollSync.current=false};
-    a.addEventListener('scroll',onA,{passive:true});b.addEventListener('scroll',onB,{passive:true});
-    return()=>{a.removeEventListener('scroll',onA);b.removeEventListener('scroll',onB)};
+    const main=document.getElementById('main-content');
+    const track=page.current,stage=viewport.current;
+    if(!main||!track||!stage)return;
+    const motion=window.matchMedia('(prefers-reduced-motion: reduce)');
+    let frame=0,lastProgress=0;
+    const update=()=>{
+      const next=clamp(main.scrollTop/Math.max(1,collapseRange.current));
+      // Move focus before making an outgoing strip inert; the incoming strip
+      // receives the same character once it becomes visible.
+      const active=document.activeElement as HTMLElement|null;
+      const outgoing=overviewRoles.current?.contains(active)&&
+        (motion.matches?next>=.5:expandedOpacity(next)===0)
+        ||compactRoles.current?.contains(active)&&
+        (motion.matches?next<.5:compactOpacity(next)===0);
+      if(outgoing&&active?.dataset.roleIndex!==undefined){
+        pendingRoleFocus.current=Number(active.dataset.roleIndex);
+        overviewToggle.current?.focus({preventScroll:true});
+      }
+      lastProgress=next;
+      setProgress(next);
+    };
+    const queueUpdate=()=>{
+      cancelAnimationFrame(frame);
+      frame=requestAnimationFrame(update);
+    };
+    const measure=()=>{
+      // This track has a fixed length independent of A's current height.
+      // Observing the viewport (never A) avoids resize/scroll feedback loops.
+      const nextRange=Math.max(1,track.offsetHeight-stage.clientHeight);
+      if(Math.abs(nextRange-collapseRange.current)>.5){
+        collapseRange.current=nextRange;
+        main.scrollTo({top:lastProgress*nextRange,behavior:'instant'});
+      }
+      queueUpdate();
+    };
+    const motionChanged=()=>{setReducedMotion(motion.matches);queueUpdate();};
+    main.scrollTo({top:0,behavior:'instant'});
+    setProgress(0);
+    setSelectedRole(2);
+    setSection('介绍');
+    roleAnchor.current={index:0,fraction:0};
+    pendingRoleFocus.current=null;
+    measure();
+    motionChanged();
+    const observer=new ResizeObserver(measure);
+    observer.observe(stage);
+    main.addEventListener('scroll',queueUpdate,{passive:true});
+    motion.addEventListener('change',motionChanged);
+    return()=>{
+      observer.disconnect();
+      main.removeEventListener('scroll',queueUpdate);
+      motion.removeEventListener('change',motionChanged);
+      cancelAnimationFrame(frame);
+    };
   },[worldId]);
+
+  useLayoutEffect(()=>{
+    const expanded=overviewRoles.current,compact=compactRoles.current;
+    if(!expanded||!compact)return;
+    const sync=(source:HTMLDivElement,target:HTMLDivElement)=>{
+      const expected=expectedRoleScroll.current.get(source);
+      expectedRoleScroll.current.delete(source);
+      if(expected!==undefined&&Math.abs(source.scrollLeft-expected)<1)return;
+      if(source.parentElement?.inert)return;
+      roleAnchor.current=readRoleAnchor(source);
+      restoreRoleAnchor(target,roleAnchor.current,expectedRoleScroll.current);
+    };
+    const onExpanded=()=>sync(expanded,compact);
+    const onCompact=()=>sync(compact,expanded);
+    expanded.addEventListener('scroll',onExpanded,{passive:true});
+    compact.addEventListener('scroll',onCompact,{passive:true});
+    return()=>{
+      expanded.removeEventListener('scroll',onExpanded);
+      compact.removeEventListener('scroll',onCompact);
+    };
+  },[worldId]);
+
+  useLayoutEffect(()=>{
+    const visible=compactVisible?compactRoles.current:overviewRoleVisible?overviewRoles.current:null;
+    if(!visible)return;
+    restoreRoleAnchor(visible,roleAnchor.current,expectedRoleScroll.current);
+    if(pendingRoleFocus.current!==null){
+      if(document.activeElement===overviewToggle.current){
+        visible.querySelector<HTMLButtonElement>('[data-role-index="'+pendingRoleFocus.current+'"]')?.focus({preventScroll:true});
+      }
+      pendingRoleFocus.current=null;
+    }
+  },[compactVisible,overviewRoleVisible]);
+
+  useLayoutEffect(()=>{
+    content.current?.scrollTo({top:0,behavior:'instant'});
+  },[section,worldId]);
+
+  const scrollOverview=(collapsed:boolean)=>{
+    document.getElementById('main-content')?.scrollTo({
+      top:collapsed?collapseRange.current:0,
+      behavior:reducedMotion?'instant':'smooth'
+    });
+  };
+  const chooseSection=(next:Section)=>{
+    setSection(next);
+    content.current?.scrollTo({top:0,behavior:'instant'});
+    scrollOverview(true);
+  };
+  const scrollContentWithKeyboard=(event:KeyboardEvent<HTMLElement>)=>{
+    // Keyboard scrolling belongs to the focused reading pane, including its
+    // boundaries and short chapters. Never let Home/PageUp expand the overview.
+    if(event.target!==event.currentTarget||event.altKey||event.ctrlKey||event.metaKey)return;
+    const pane=event.currentTarget;
+    const step=Math.max(40,pane.clientHeight*.85);
+    const positions:Record<string,number>={
+      Home:0,End:pane.scrollHeight,PageUp:pane.scrollTop-step,PageDown:pane.scrollTop+step,
+      ArrowUp:pane.scrollTop-40,ArrowDown:pane.scrollTop+40,' ':pane.scrollTop+(event.shiftKey?-step:step)
+    };
+    if(!(event.key in positions)||event.shiftKey&&event.key!==' ')return;
+    event.preventDefault();
+    pane.scrollTo({top:positions[event.key],behavior:'instant'});
+  };
+
   if(!world)return <div className={styles.notFound}><h1>未找到世界卡</h1><Link to="/worlds">返回世界卡</Link></div>;
-  return <div className={styles.page}>
-    <section ref={overview} className={styles.overview} aria-label="世界概览">
-      <Link className={styles.back} to="/worlds"><ArrowLeft size={16}/>世界卡</Link>
-      <div className={styles.overviewTop}>
-        <img className={styles.cover} src={world.cover} alt=""/>
-        <div className={styles.worldText}>
-          <div className={styles.overline}>WORLD PROFILE <span> / {world.genre}</span></div>
-          <h1>{world.title}</h1>
-          <p>{world.description} {description}</p>
-          <div className={styles.tags}>{world.categories.map(c=><span key={c}>{c}</span>)}<span>{world.genre}</span></div>
-          <div className={styles.worldFacts}><span><Users size={15}/> {names.length} 位角色</span><span><ScrollText size={15}/> {world.sessionCount} 个会话</span></div>
+  const layoutStyle={
+    '--collapse-progress':progress,
+    '--overview-role-opacity':overviewRoleOpacity,
+    '--compact-role-opacity':compactRoleOpacity,
+    '--summary-opacity':reducedMotion?(progress<.5?1:0):1-clamp(progress/.35)
+  } as CSSProperties;
+  return <div ref={page} className={styles.page} style={layoutStyle} data-collapse-progress={progress}>
+    <div ref={viewport} className={styles.viewport} data-world-viewport>
+      <section className={styles.overview} aria-label="世界概览" data-world-overview>
+        <div className={styles.overviewToolbar}>
+          <Link className={styles.back} to="/worlds" aria-label="返回世界卡列表"><ArrowLeft size={17}/><span>世界卡</span></Link>
+          <button ref={overviewToggle} className={styles.overviewToggle} onClick={()=>scrollOverview(!isCompact)} aria-label={isCompact?'展开世界概览':'收起世界概览'} title={isCompact?'展开世界概览':'收起世界概览'} aria-expanded={!isCompact}>
+            {isCompact?<ChevronDown size={17}/>:<ChevronUp size={17}/>}
+          </button>
         </div>
+        <div className={styles.overviewTop}>
+          <img className={styles.cover} src={world.cover} alt=""/>
+          <div className={styles.worldText}>
+            <h1 title={world.title}>{world.title}</h1>
+            <div className={styles.summary} aria-hidden={reducedMotion?progress>=.5:progress>=.35}>
+              <p>{world.description} {description}</p>
+              <div className={styles.tags}>{world.categories.map(c=><span key={c}>{c}</span>)}<span>{world.genre}</span><span className={styles.worldFacts}>{names.length} 位角色 · {world.sessionCount} 个会话</span></div>
+            </div>
+          </div>
+        </div>
+        <div className={styles.overviewRoles} inert={!overviewRoleVisible} aria-hidden={!overviewRoleVisible}>
+          <div className={styles.roleHeading}><h2>世界角色</h2><span>选择角色，探索不同的故事视角</span></div>
+          <RoleStrip compact={false} active={selectedRole} onChoose={setSelectedRole} stripRef={overviewRoles}/>
+        </div>
+        <div className={styles.compactRoles} aria-label="世界内容导航" inert={!compactVisible} aria-hidden={!compactVisible}>
+          <RoleStrip compact active={selectedRole} onChoose={setSelectedRole} stripRef={compactRoles}/>
+        </div>
+      </section>
+      <div className={styles.workspace} data-world-workspace>
+        <nav className={styles.tabs} aria-label="世界详情章节">
+          {sections.map(({name,icon:Icon})=><button key={name} className={[styles.tab,section===name?styles.tabActive:''].join(' ')} onClick={()=>chooseSection(name)} aria-current={section===name?'page':undefined}><Icon size={17} strokeWidth={1.8}/><span>{name}</span></button>)}
+        </nav>
+        <article ref={content} className={styles.content} data-world-content tabIndex={0} aria-label={section+'详情'} onKeyDown={scrollContentWithKeyboard}>
+          <div className={styles.contentInner}><SectionContent section={section} worldTitle={world.title}/></div>
+        </article>
       </div>
-      <div className={[styles.overviewRoles,!overviewRoleVisible?styles.rolesGone:''].join(' ')}>
-        <div className={styles.roleHeading}><h2>世界角色</h2><span>选择角色，探索不同的故事视角</span></div>
-        <RoleStrip compact={false} active={selectedRole} onChoose={setSelectedRole} stripRef={overviewRoles}/>
-      </div>
-    </section>
-    <header ref={compactHeader} className={[styles.compactHeader,compactVisible?styles.compactShown:''].join(' ')} aria-label="世界内容导航">
-      <div className={styles.compactIdentity}><img src={world.cover} alt=""/><span title={world.title}>{world.title}</span></div>
-      <div className={styles.compactRoles} inert={!compactVisible} aria-hidden={!compactVisible}>
-        <RoleStrip compact active={selectedRole} onChoose={setSelectedRole} stripRef={compactRoles}/>
-      </div>
-    </header>
-    <div className={styles.workspace}>
-      <nav className={styles.tabs} aria-label="世界详情章节">
-        {sections.map(({name,icon:Icon})=><button key={name} className={[styles.tab,section===name?styles.tabActive:''].join(' ')} onClick={()=>setSection(name)} aria-current={section===name?'page':undefined}><Icon size={17} strokeWidth={1.8}/><span>{name}</span></button>)}
-      </nav>
-      <article className={styles.content} key={section}><SectionContent section={section} worldTitle={world.title}/></article>
     </div>
   </div>;
 }
