@@ -6,10 +6,7 @@ import {useTheme} from '../hooks/useTheme';
 import styles from './AppShell.module.css';
 
 const NAV=[
-  {title:'世界卡',path:'/worlds',Icon:BookOpen},
-  {title:'会话',path:'/sessions',Icon:MessageCircle},
-  {title:'预设',path:'/presets',Icon:Layers3},
-  {title:'模型配置',path:'/models',Icon:Box}
+  {title:'世界卡',path:'/worlds',Icon:BookOpen}
 ] as const;
 
 function getCollapse(){
@@ -51,24 +48,26 @@ export function AppShell(){
             <span className={styles.navLabel} aria-hidden={labelsHidden}>{title}</span>
           </NavLink>)}
         </nav>
-        <div className={styles.sidebarData} inert={labelsHidden} aria-hidden={labelsHidden}>
+        <div className={styles.sidebarData}>
           <section className={styles.dataSection} aria-labelledby="sessions-heading">
-            <h2 id="sessions-heading" className={styles.sectionTitle}>会话列表</h2>
+            <h2 id="sessions-heading" className={styles.sectionTitle}><NavLink to="/sessions" title={labelsHidden?'会话列表':undefined} aria-label="会话列表" className={({isActive})=>[styles.navItem,isActive?styles.navSelected:''].join(' ')}><MessageCircle size={20} strokeWidth={1.8} aria-hidden="true"/><span className={styles.navLabel} aria-hidden={labelsHidden}>会话列表</span></NavLink></h2>
+            <div className={styles.shortcuts} inert={labelsHidden} aria-hidden={labelsHidden}>
             <button className={styles.sessionRow} onClick={()=>nav('/sessions/changan')}>
               <img src="/covers/changan.webp" alt=""/>
               <span className={styles.rowText}><strong>长安风云</strong><small>初入长安</small></span>
-              <span className={styles.more} aria-hidden="true">···</span>
             </button>
             <button className={styles.sessionRow} onClick={()=>nav('/sessions/neon')}>
               <img src="/covers/neon.webp" alt=""/>
               <span className={styles.rowText}><strong>霓虹之城</strong><small>雨夜重逢</small></span>
-              <span className={styles.more} aria-hidden="true">···</span>
             </button>
+            </div>
           </section>
           <section className={styles.dataSection} aria-labelledby="presets-heading">
-            <h2 id="presets-heading" className={styles.sectionTitle}>预设列表</h2>
+            <h2 id="presets-heading" className={styles.sectionTitle}><NavLink to="/presets" title={labelsHidden?'预设列表':undefined} aria-label="预设列表" className={({isActive})=>[styles.navItem,isActive?styles.navSelected:''].join(' ')}><Layers3 size={20} strokeWidth={1.8} aria-hidden="true"/><span className={styles.navLabel} aria-hidden={labelsHidden}>预设列表</span></NavLink></h2>
+            <div className={styles.shortcuts} inert={labelsHidden} aria-hidden={labelsHidden}>
             <button className={styles.presetRow} onClick={()=>nav('/presets/general')}><span>通用叙事</span><span className={styles.defaultPill}>默认</span></button>
             <button className={styles.presetRow} onClick={()=>nav('/presets/roleplay')}>角色扮演</button>
+            </div>
           </section>
         </div>
         <div className={styles.bottom}>
@@ -80,6 +79,10 @@ export function AppShell(){
             {theme==='dark'?<Moon size={20} strokeWidth={1.8} aria-hidden="true"/>:<Sun size={20} strokeWidth={1.8} aria-hidden="true"/>}
             <span className={styles.bottomLabel} aria-hidden={labelsHidden}>主题</span>
           </button>
+          <NavLink to="/models" title={labelsHidden?'模型':undefined} aria-label="模型" className={({isActive})=>[styles.bottomButton,isActive?styles.navSelected:''].join(' ')}>
+            <Box size={20} strokeWidth={1.8} aria-hidden="true"/>
+            <span className={styles.bottomLabel} aria-hidden={labelsHidden}>模型</span>
+          </NavLink>
           <button className={styles.bottomButton} title={collapsed?'展开侧边栏':'收起侧边栏'}
             aria-label={collapsed?'展开侧边栏':'收起侧边栏'} aria-expanded={!collapsed}
             onClick={toggleCollapsed}>

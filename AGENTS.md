@@ -4,6 +4,7 @@
 - Context compaction uses the previous narrative request's reported input and output usage; see `docs/technical/context-compaction.md`.
 - Preset context strategies are compact (128K), standard (256K), and extended (512K), capped by the model context window.
 - Agent runs use a general model/tool loop: return tool results to the model and continue until it stops calling tools. With active writable message state, require at least one state tool call; use empty updates if nothing changes.
+- State-tool batches apply valid updates in order, skip and report invalid items, and commit the workspace under the existing Run completion/stopping rules.
 
 ## Project identity
 SR is a local-first world-card client and runtime for multi-character narrative experiences, branching conversations, creator-defined React UIs, presets, and optional state.

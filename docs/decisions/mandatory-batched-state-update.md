@@ -1,6 +1,6 @@
 # One-request batched state update with prompt-level tool guidance
 
-Status: superseded in part (2026-11-10). The general model/tool loop and continuation rules in `agent-tool-loop.md` replace the one-request and post-tool-stop rules below. Mandatory state-tool choice, the batch schema, validation and failure-event rules remain applicable as described there. This historical decision supersedes `conditional-state-review.md`.
+Status: superseded in part. The general model/tool loop, continuation rules and per-item state-update behavior in `agent-tool-loop.md` replace the one-request, post-tool-stop and atomic batch rules below. This historical decision supersedes `conditional-state-review.md`.
 
 ## Behavior
 - The preset `main` internal ID remains unchanged for existing presets, imports, exports, session references and world-book anchors. Its visible default name is **叙事风格**; new/default built-in prompt is empty and editable. The platform fixed system protocol is separate.

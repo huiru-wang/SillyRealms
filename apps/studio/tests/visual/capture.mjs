@@ -103,7 +103,24 @@ try{
   await viewport(1536,864);
   await navigate(base+'/worlds?sidebar=expanded&theme=dark');
   assert(await evaluate('document.querySelectorAll("[aria-label^=\\"查看世界卡\\"]").length')===8,'Expected 8 cards');
+  assert(await evaluate(`document.querySelectorAll('nav[aria-label="主导航"] a').length`)===1,'Primary navigation should contain only worlds');
+  assert(await evaluate(`document.querySelector('aside section img')?.clientWidth`)===44,'Session thumbnail should be 44px');
+  const primaryStyles=await evaluate(`['世界卡','会话列表','预设列表'].map(label=>{const el=document.querySelector('a[aria-label="'+label+'"]');const s=getComputedStyle(el);return [s.fontSize,s.fontWeight,s.color,!!el.querySelector('svg')]})`);
+  assert(primaryStyles.every(style=>JSON.stringify(style.slice(0,2))===JSON.stringify(primaryStyles[0].slice(0,2))&&style[3]),'Primary links should share typography and icons');
+  const sidebarEdges=await evaluate(`(()=>{const selectors=['nav[aria-label="主导航"] a','#sessions-heading a','aside section button','#presets-heading a'];return selectors.map(s=>{const r=document.querySelector(s).getBoundingClientRect();return [r.left,r.right]})})()`);
+  assert(sidebarEdges.every(([left,right])=>Math.abs(left-sidebarEdges[0][0])<1&&Math.abs(right-sidebarEdges[0][1])<1),'Sidebar row edges should align: '+JSON.stringify(sidebarEdges));
   await screenshot('home-expanded-1536');
+  for(const [selector,path] of [['#sessions-heading a','/sessions'],['#presets-heading a','/presets'],['a[aria-label="模型"]','/models']]){
+    await click(selector);
+    assert(await evaluate('location.pathname')===path,'Incorrect destination for '+selector);
+    assert(await evaluate('document.querySelector('+JSON.stringify(selector)+')?.getAttribute("aria-current")')==='page','Missing selected state for '+selector);
+    await click('a[aria-label="世界卡"]');
+  }
+  for(const [label,path] of [['长安风云','/sessions/changan'],['通用叙事','/presets/general']]){
+    await evaluate('([...document.querySelectorAll("aside button")].find(b=>b.textContent.includes('+JSON.stringify(label)+'))).click()');
+    assert(await evaluate('location.pathname')===path,'Shortcut did not navigate to '+path);
+    await click('a[aria-label="世界卡"]');
+  }
 
   // No competing hover highlight when an item is already selected.
   const selectedNav='nav[aria-label="主导航"] a[aria-current="page"]';
@@ -114,8 +131,7 @@ try{
   const categoryBackground=await bg(selectedCategory);
   await hover(selectedCategory);
   assert(await bg(selectedCategory)===categoryBackground,'Selected category changes background on hover');
-  const unselectedNav='nav[aria-label="主导航"] a:nth-child(2)';
-  const idleBg=await bg(unselectedNav);
+  const unselectedNav='a[aria-label="模型"]';
   await hover(unselectedNav);
   // Headless CDP can report :hover without repainting the transitioned background.
   // Verify the unselected-only rule exists, not a timing-sensitive interpolated pixel.
@@ -145,18 +161,30 @@ try{
   assert(JSON.stringify(sidebarBefore)===JSON.stringify(sidebarAfter),'Sidebar changes shape/material between states');
   assert(await evaluate('!!document.querySelector("aside [aria-hidden=true][inert]")'),
     'Collapsed sidebar data should be inert');
+  await delay(350);
   await screenshot('home-collapsed-1536');
+  for(const [label,path] of [['会话列表','/sessions'],['预设列表','/presets'],['模型','/models']]){
+    const selector='a[aria-label="'+label+'"]';
+    await click(selector);
+    assert(await evaluate('location.pathname')===path,'Collapsed link did not navigate to '+path);
+    assert(await evaluate('document.querySelector('+JSON.stringify(selector)+')?.getAttribute("aria-current")')==='page','Collapsed link missing selected state');
+    await click('a[aria-label="世界卡"]');
+  }
   await click('[aria-label="展开侧边栏"]');
   assert(await evaluate('document.querySelector("[data-collapsed]").dataset.collapsed')==='false','Sidebar did not expand');
   assert(Math.abs((await evaluate(trackExpr))-initialWidth)<3,'Sidebar expansion did not restore width');
   await click('button[aria-label="设置"]');
   assert(await evaluate('!!document.querySelector("[role=dialog]")'),'Settings dialog not opened');
+  assert(await evaluate('document.getElementById("root").inert'),'Dialog should make background inert');
+  await evaluate(`(()=>{const b=document.querySelector('[role=dialog] button[aria-label="关闭弹窗"]');b.focus();b.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',shiftKey:true,bubbles:true,cancelable:true}))})()`);
+  assert(await evaluate(`document.activeElement===Array.from(document.querySelectorAll('[role=dialog] button')).at(-1)`),'Shift+Tab should wrap inside dialog');
   await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
   await until('!document.querySelector("[role=dialog]")');
+  assert(await evaluate('!document.getElementById("root").inert'),'Dialog should restore background');
   await click('button[aria-label="切换亮色主题"]');
   assert(await evaluate('document.documentElement.dataset.theme')==='light','Theme did not switch');
   await click('button[aria-label="切换暗色主题"]');
-  await click('nav[aria-label="世界分类"] button:nth-child(2)');
+  await click('nav[aria-label="世界分类"] button:nth-child(3)');
   assert(await evaluate('document.querySelectorAll("[aria-label^=\\"查看世界卡\\"]").length')===2,'Filtering failed');
   await click('nav[aria-label="世界分类"] button:nth-child(1)');
   await click('button[aria-label="查看世界卡：长安风云"]');
@@ -167,6 +195,9 @@ try{
   const reducedDuration=await evaluate('parseFloat(getComputedStyle(document.querySelector("[data-collapsed]")).transitionDuration)');
   assert(reducedDuration<0.001,'Reduced-motion preference must suppress layout motion');
   await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'},{name:'hover',value:'hover'},{name:'pointer',value:'fine'}]});
+  await viewport(1280,800);
+  await navigate(base+'/worlds?sidebar=expanded&theme=dark');
+  await screenshot('home-expanded-1280');
   await viewport(390,844,true);
   await navigate(base+'/worlds?sidebar=expanded&theme=dark');
   await screenshot('home-mobile-390');
@@ -178,6 +209,11 @@ try{
   await click('[aria-label="打开导航"]');
   const mobileDataVisible=await evaluate('(()=>{const d=document.querySelector(\'aside section[aria-labelledby="sessions-heading"]\')?.parentElement;const t=document.querySelector(\'aside nav a span\');return !!d && !d.inert && getComputedStyle(d).visibility==="visible" && getComputedStyle(t).opacity==="1"})()');
   assert(mobileDataVisible,'Mobile drawer must reveal all labels even with collapsed desktop preference');
+  assert(await evaluate(`document.querySelectorAll('a[aria-label="会话列表"]').length`)===1,'List links should not be duplicated');
+  await click('#sessions-heading a');
+  assert(await evaluate('location.pathname')==='/sessions','Mobile list heading did not navigate');
+  assert(await evaluate(`document.querySelector('[aria-label="关闭导航遮罩"]').dataset.open`)==='false','Mobile drawer did not close after navigation');
+  await click('[aria-label="打开导航"]');
   await click('[aria-label="关闭导航"]');
   assert(await evaluate('document.querySelector("[aria-label=\\"关闭导航遮罩\\"]").dataset.open')==='false','Mobile drawer did not close');
   assert(exceptionCount===0,'Browser JS exceptions: '+exceptionCount);

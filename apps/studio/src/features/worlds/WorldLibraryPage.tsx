@@ -7,12 +7,12 @@ import {WorldCard} from './WorldCard';
 import styles from './WorldLibraryPage.module.css';
 
 export function WorldLibraryPage(){
-  const [category,setCategory]=useState<WorldCategory>('多角色');
+  const [category,setCategory]=useState<WorldCategory|'全部'>('全部');
   const [selected,setSelected]=useState<World|null>(null);
   const [importOpen,setImportOpen]=useState(false);
   const closeImport=useCallback(()=>setImportOpen(false),[]);
   const closeDetail=useCallback(()=>setSelected(null),[]);
-  const shown=useMemo(()=>worlds.filter(w=>w.categories.includes(category)),[category]);
+  const shown=useMemo(()=>category==='全部'?worlds:worlds.filter(w=>w.categories.includes(category)),[category]);
   return <div className={styles.page}>
     <header className={styles.header}>
       <h1>世界卡</h1>
@@ -20,13 +20,13 @@ export function WorldLibraryPage(){
     </header>
     <div className={styles.body}>
       <nav className={styles.categories} aria-label="世界分类">
-        {categories.map(cat=><button className={[styles.category,category===cat?styles.categoryActive:''].join(' ')} key={cat}
-          onClick={()=>setCategory(cat)} aria-current={category===cat?'page':undefined}>{cat}</button>)}
+        {(['全部',...categories] as const).map(cat=><button className={[styles.category,category===cat?styles.categoryActive:''].join(' ')} key={cat}
+          onClick={()=>setCategory(cat)} aria-pressed={category===cat}>{cat}</button>)}
       </nav>
       <div className={styles.galleryArea}>
         {shown.length>0?
           <div className={styles.gallery}>{shown.map(world=><WorldCard key={world.id} world={world} onClick={()=>setSelected(world)}/>)}</div>
-          :<div className={styles.empty}><Info size={20}/><strong>该分类暂时没有世界卡</strong><span>试试其他分类，或返回「多角色」。</span><button onClick={()=>setCategory('多角色')}>查看全部</button></div>
+          :<div className={styles.empty}><Info size={20}/><strong>该分类暂时没有世界卡</strong><span>试试其他分类，或查看全部世界卡。</span><button onClick={()=>setCategory('全部')}>查看全部</button></div>
         }
       </div>
     </div>

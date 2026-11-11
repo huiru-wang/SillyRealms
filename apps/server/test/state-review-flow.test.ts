@@ -70,12 +70,14 @@ it('submits empty updates without inventing state changes',async()=>{
   expect(status).toBe('completed');expect(calls).toHaveLength(2);
   expect(state).toMatchObject({阶段:'初始',计数:0});
 });
-it('reports invalid state batches without failing narration or applying partial updates',async()=>{
+it('commits valid state updates and reports skipped items without failing narration',async()=>{
   const {calls,state,status,toolResults,events}=await exercise(true,[{path:'阶段',value:'推进'},{path:'计数',value:-1}]);
   expect(status).toBe('completed');expect(calls).toHaveLength(2);
-  expect(state).toMatchObject({阶段:'初始',计数:0});
+  expect(state).toMatchObject({阶段:'推进',计数:0});
   expect(toolResults).toHaveLength(1);
   expect(toolResults[0]?.isError).toBe(true);
+  expect(JSON.parse(toolResults[0]!.content[0]!.text)).toMatchObject({updated:1,skipped:[{index:1,code:'STATE_OUT_OF_RANGE'}]});
+  expect(calls[1]?.payload).toContain('STATE_OUT_OF_RANGE');
   expect(events.filter(e=>e.type==='tool.failed')).toMatchObject([
     {payload:{toolCallId:'state',toolName:'update_state',errorCode:'STATE_OUT_OF_RANGE',errorMessage:'状态值超出允许范围'}},
   ]);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { evaluateLoad } from '../src/agent/context/activation.js';
 import { setState, stateToolInstructions } from '../src/agent/tools/state-tool.js';
 import type { AtomicStateDefinition } from '../src/domain/state/atomic-state.js';
@@ -30,7 +30,25 @@ describe('content activation and direct state tool', () => {
   });
 });
 
-it('batch update_state accepts no-change and atomically rejects invalid batches',async()=>{
+it('logs skipped state items without including paths or values', async()=>{
+  const {ToolExecutor}=await import('../src/agent/tools/tool-executor.js');
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  try {
+    const workspace={hp:1};
+    const result=new ToolExecutor().execute({type:'toolCall',id:'call',name:'update_state',arguments:{updates:[
+      {path:'private-path',value:'private-value'}, {path:'hp',value:5}, {value:1}, {path:'hp',value:7},
+    ]}},workspace,{hp:{type:'number',initial:1}},new Set(['hp']));
+    expect(workspace).toEqual({hp:7});
+    expect(JSON.parse((result.content[0] as {text:string}).text)).toMatchObject({updated:2,skipped:[
+      {index:0,code:'STATE_ROOT_NOT_ACTIVE'},{index:2,code:'INVALID_TOOL_CALL'},
+    ]});
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('private-path');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('private-value');
+  } finally {warn.mockRestore();}
+});
+
+it('batch update_state applies valid items in order and reports skipped items',async()=>{
   const {ToolExecutor}=await import('../src/agent/tools/tool-executor.js');
   const executor=new ToolExecutor();
   const workspace={hp:1,money:5};
@@ -39,10 +57,12 @@ it('batch update_state accepts no-change and atomically rejects invalid batches'
   const makeCall=(updates:Array<{path:string;value:string|number}>)=>({type:'toolCall' as const,id:'r',name:'update_state',arguments:{updates}});
   expect(executor.execute(makeCall([]),workspace,modules,active).isError).toBe(false);
   expect(workspace).toEqual({hp:1,money:5});
-  const failed=executor.execute(makeCall([{path:'hp',value:7},{path:'money',value:'invalid'}]),workspace,modules,active);
+  const failed=executor.execute(makeCall([{path:'hp',value:7},{path:'money',value:'invalid'},{path:'money',value:9}]),workspace,modules,active);
   expect(failed.isError).toBe(true);
-  expect(workspace).toEqual({hp:1,money:5});
-  expect(executor.execute(makeCall([{path:'hp',value:7}]),workspace,modules,active).isError).toBe(false);
-  expect(executor.execute(makeCall([{path:'hp',value:8},{path:'hp',value:9}]),workspace,modules,active).isError).toBe(true);
-  expect(workspace.hp).toBe(7);
+  expect(JSON.parse((failed.content[0] as {text:string}).text)).toMatchObject({ok:false,updated:2,skipped:[{index:1,code:'INVALID_STATE_VALUE'}]});
+  expect(workspace).toEqual({hp:7,money:9});
+  expect(executor.execute(makeCall([{path:'hp',value:8},{path:'hp',value:9}]),workspace,modules,active).isError).toBe(false);
+  expect(workspace.hp).toBe(9);
+  expect(executor.execute(makeCall(Array.from({length:101},()=>({path:'hp',value:1}))),workspace,modules,active).isError).toBe(true);
+  expect(workspace.hp).toBe(9);
 });

@@ -69,44 +69,38 @@
   color:var(--text);
 }
 .navItem:not(.navSelected):hover{background:var(--surface-hover);color:var(--text)}
-.bottomButton:hover{background:var(--surface-hover);color:var(--text)}
+.bottomButton:not(.navSelected):hover{background:var(--surface-hover);color:var(--text)}
 .sessionRow:hover,.presetRow:hover{background:var(--surface-hover)}
 @media(hover:none){
-  .navItem:not(.navSelected):hover,.bottomButton:hover,.sessionRow:hover{
+  .navItem:not(.navSelected):hover,.bottomButton:not(.navSelected):hover,.sessionRow:hover{
     background:transparent;color:inherit;
   }
-  .presetRow:hover{background:rgba(175,151,197,.075)}
+  .presetRow:hover{background:transparent}
 }
 .sidebarData{
   flex:1;min-height:0;min-width:0;
   margin-top:18px;overflow:auto;scrollbar-width:none;
-  opacity:1;visibility:visible;
-  transition:opacity var(--motion-reveal) var(--ease-standard) 115ms,
-    visibility 0s linear 0s;
+  transition:margin-top var(--motion-layout) var(--ease-layout);
 }
 .sidebarData::-webkit-scrollbar{display:none}
-.dataSection{min-width:0;border-top:1px solid var(--stroke);padding:22px 6px 18px}
-.sectionTitle{
-  margin:0 6px 15px;
-  font-size:12px;font-weight:500;letter-spacing:.025em;color:var(--text-muted);
-  white-space:nowrap;
-}
+.dataSection{min-width:0;border-top:1px solid var(--stroke);padding:14px 0 18px;transition:padding var(--motion-layout) var(--ease-layout),border-color var(--motion-fast)}
+.sectionTitle{margin:0;font-size:inherit;font-weight:inherit}
+.shortcuts{max-height:160px;overflow:hidden;opacity:1;transition:max-height var(--motion-layout) var(--ease-layout),opacity var(--motion-reveal) var(--ease-standard) 115ms}
 .sessionRow{
   display:flex;align-items:center;gap:12px;
-  width:100%;min-height:64px;padding:5px 2px;
+  width:100%;min-height:64px;padding:5px 12px;
   text-align:left;border-radius:10px;
   transition:background-color var(--motion-fast) var(--ease-standard);
 }
-.sessionRow img{height:53px;width:53px;border-radius:10px;object-fit:cover;flex-shrink:0}
+.sessionRow img{height:44px;width:44px;border-radius:10px;object-fit:cover;flex-shrink:0}
 .rowText{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}
-.rowText strong{font-size:13px;line-height:1.35;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rowText strong{font-size:12px;line-height:1.35;font-weight:500;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rowText small{font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.more{color:var(--text-muted);font-size:18px;letter-spacing:1px}
 .presetRow{
   width:100%;height:45px;display:flex;align-items:center;justify-content:space-between;
-  border-radius:9px;background:rgba(175,151,197,.075);
-  padding:0 13px;margin-bottom:6px;
-  font-size:13px;text-align:left;white-space:nowrap;
+  border-radius:10px;background:transparent;
+  padding:0 12px;margin-bottom:6px;
+  font-size:12px;color:var(--text-secondary);text-align:left;white-space:nowrap;
   transition:background-color var(--motion-fast) var(--ease-standard);
 }
 .defaultPill{padding:3px 8px;background:var(--accent-soft);border-radius:7px;font-size:11px;color:var(--text-secondary)}
@@ -132,11 +126,9 @@
   opacity:0;
   transition:opacity var(--motion-hide) var(--ease-standard) 0ms;
 }
-.layout[data-collapsed="true"] .sidebarData{
-  opacity:0;visibility:hidden;pointer-events:none;
-  transition:opacity var(--motion-hide) var(--ease-standard) 0ms,
-    visibility 0s linear var(--motion-hide);
-}
+.layout[data-collapsed="true"] .sidebarData{margin-top:4px}
+.layout[data-collapsed="true"] .dataSection{padding:0 0 4px;border-color:transparent}
+.layout[data-collapsed="true"] .shortcuts{max-height:0;opacity:0;transition:max-height var(--motion-layout) var(--ease-layout),opacity var(--motion-hide) var(--ease-standard)}
 .main{
   height:100dvh;min-width:0;overflow-y:auto;
   background:radial-gradient(ellipse 75% 36% at 38% -13%,var(--canvas-glow),transparent 82%),var(--canvas);
@@ -164,12 +156,11 @@
   .layout[data-collapsed="true"] .mobileVisible .brandName,
   .layout[data-collapsed="true"] .mobileVisible .navLabel,
   .layout[data-collapsed="true"] .mobileVisible .bottomLabel{opacity:1}
-  .mobileVisible .sidebarData,
-  .layout[data-collapsed="true"] .mobileVisible .sidebarData{
-    opacity:1;visibility:visible;pointer-events:auto;
-  }
+  .layout[data-collapsed="true"] .mobileVisible .sidebarData{margin-top:18px}
+  .layout[data-collapsed="true"] .mobileVisible .dataSection{padding:14px 0 18px;border-color:var(--stroke)}
+  .layout[data-collapsed="true"] .mobileVisible .shortcuts{max-height:160px;opacity:1}
   .mobileOpen{
-    display:grid;position:fixed;top:19px;left:15px;width:37px;height:37px;
+    display:grid;position:fixed;top:19px;left:15px;width:44px;height:44px;
     place-items:center;border-radius:9px;background:var(--surface-raised);
     z-index:11;border:1px solid var(--stroke);
   }

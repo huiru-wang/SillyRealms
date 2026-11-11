@@ -5,30 +5,34 @@ import { setState } from './state-tool.js';
 
 /** Tool routing is separate from the model loop; state validation stays in the state domain. */
 export class ToolExecutor {
-  /** Apply an entire update_state batch atomically: one invalid item rejects every change. */
+  /** Apply valid updates in order and report invalid items without exposing their values in logs. */
   execute(
     call: ToolCall,
     workspace: Record<string, Json>,
     modules: Record<string, any>,
     active: Set<string>,
   ): ToolResultMessage {
-    let result: { ok: boolean; code?: string; updated?: number };
+    let result: { ok: boolean; code?: string; updated?: number; skipped?: Array<{ index: number; code: string }> };
     try {
       const args = call.arguments as Record<string, unknown> | undefined;
       if (call.name !== 'update_state' || call.argumentsError || !Array.isArray(args?.updates) || args.updates.length > 100)
         throw new Error(ErrorCodes.INVALID_TOOL_CALL);
-      const candidate = structuredClone(workspace);
-      const paths = new Set<string>();
-      for (const raw of args.updates) {
-        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(ErrorCodes.INVALID_TOOL_CALL);
-        const update = raw as Record<string, unknown>;
-        if (typeof update.path !== 'string' || !Object.hasOwn(update, 'value') || paths.has(update.path))
-          throw new Error(ErrorCodes.INVALID_TOOL_CALL);
-        paths.add(update.path);
-        setState(candidate, modules, active, update.path, update.value);
+      let updated = 0;
+      const skipped: Array<{ index: number; code: string }> = [];
+      for (const [index, raw] of args.updates.entries()) {
+        try {
+          if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(ErrorCodes.INVALID_TOOL_CALL);
+          const update = raw as Record<string, unknown>;
+          if (typeof update.path !== 'string' || !Object.hasOwn(update, 'value')) throw new Error(ErrorCodes.INVALID_TOOL_CALL);
+          setState(workspace, modules, active, update.path, update.value);
+          updated++;
+        } catch (error) {
+          const code = normalizeError(error, ErrorCodes.INVALID_STATE_UPDATE).errorCode;
+          skipped.push({ index, code });
+          console.warn('SR_STATE_UPDATE_SKIPPED', { toolCallId: call.id, index, code });
+        }
       }
-      for (const [key, value] of Object.entries(candidate)) workspace[key] = value;
-      result = { ok: true, updated: args.updates.length };
+      result = skipped.length ? { ok: false, code: skipped[0]!.code, updated, skipped } : { ok: true, updated };
     } catch (error) {
       result = { ok: false, code: normalizeError(error, ErrorCodes.INVALID_STATE_UPDATE).errorCode };
     }
