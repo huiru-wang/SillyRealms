@@ -5,17 +5,48 @@
   transition:opacity var(--motion-overlay) var(--ease-standard);
 }
 .panel{
-  width:min(440px,100%);border:1px solid var(--stroke-strong);
+  display:flex;flex-direction:column;min-width:0;
+  width:min(440px,100%);max-height:calc(100dvh - 40px);
+  border:1px solid var(--stroke-strong);
   border-radius:17px;background:var(--surface);box-shadow:var(--drop-shadow);
+  overflow:hidden;
   opacity:0;transform:translateY(9px) scale(.987);
   transition:opacity var(--motion-overlay) var(--ease-standard),
     transform var(--motion-overlay) var(--ease-layout);
 }
 .backdrop[data-state="open"]{opacity:1}
 .backdrop[data-state="open"] .panel{opacity:1;transform:translateY(0) scale(1)}
-.header{display:flex;align-items:center;justify-content:space-between;padding:21px 23px;border-bottom:1px solid var(--stroke)}
-.header h2{margin:0;font-size:17px;font-weight:600}
-.header button{width:44px;height:44px;display:grid;place-items:center;border-radius:9px;color:var(--text-muted)}
+.header{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  flex-shrink:0;padding:21px 23px;border-bottom:1px solid var(--stroke);
+}
+.header h2{min-width:0;margin:0;font-size:17px;font-weight:600;overflow-wrap:anywhere}
+.header button{flex:none;width:44px;height:44px;display:grid;place-items:center;border-radius:9px;color:var(--text-muted)}
 .header button:hover{background:var(--surface-hover);color:var(--text)}
-.body{padding:21px 23px 26px;line-height:1.7;color:var(--text-secondary)}
+.body{
+  flex:1 1 auto;min-height:0;min-width:0;overflow-y:auto;overscroll-behavior:contain;
+  padding:21px 23px 26px;line-height:1.7;color:var(--text-secondary);
+}
 .body p{margin:0 0 12px}
+.footer{
+  display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-shrink:0;
+  padding:16px 23px;border-top:1px solid var(--stroke);
+}
+.backdrop[data-size="editor"]{padding:24px}
+.backdrop[data-size="editor"] .panel{width:min(760px,100%);max-height:calc(100dvh - 48px)}
+@media(max-width:760px){
+  .backdrop[data-size="editor"]{
+    padding:12px;
+    padding-top:max(12px,env(safe-area-inset-top));
+    padding-bottom:max(12px,env(safe-area-inset-bottom));
+  }
+  .backdrop[data-size="editor"] .panel{
+    width:100%;
+    height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    max-height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    border-radius:var(--radius-card);
+  }
+  .backdrop[data-size="editor"] .header{padding:14px 16px}
+  .backdrop[data-size="editor"] .body{padding:16px}
+  .backdrop[data-size="editor"] .footer{padding:12px 16px}
+}

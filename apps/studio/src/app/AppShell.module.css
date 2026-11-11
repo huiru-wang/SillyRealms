@@ -103,7 +103,9 @@
   font-size:12px;color:var(--text-secondary);text-align:left;white-space:nowrap;
   transition:background-color var(--motion-fast) var(--ease-standard);
 }
-.defaultPill{padding:3px 8px;background:var(--accent-soft);border-radius:7px;font-size:11px;color:var(--text-secondary)}
+.presetName{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.presetRow[aria-current="page"],.presetRow[aria-current="page"]:hover{background:var(--accent-selected);color:var(--text)}
+.defaultPill{flex-shrink:0;margin-left:8px;padding:3px 8px;background:var(--accent-soft);border-radius:7px;font-size:11px;color:var(--text-secondary)}
 .bottom{
   display:flex;flex-direction:column;gap:4px;
   flex-shrink:0;min-width:0;

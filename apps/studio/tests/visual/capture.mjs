@@ -7,8 +7,10 @@ import {spawn} from 'node:child_process';
 import {mkdtemp,mkdir,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
+import {checkPresets} from './presets.mjs';
 
 const base=process.env.STUDIO_URL || 'http://127.0.0.1:5174';
+const presetsOnly=process.env.STUDIO_PRESETS_ONLY==='1';
 const chromePath=process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const out=resolve('tests/visual/output');
 const profile=await mkdtemp(join(tmpdir(),'sr-studio-chrome-'));
@@ -22,7 +24,7 @@ try{
   await mkdir(out,{recursive:true});
   browser=spawn(chromePath,[
     '--headless=new','--no-first-run','--no-default-browser-check','--disable-gpu',
-    '--hide-scrollbars','--remote-debugging-port=0','--force-device-scale-factor=1',
+    '--hide-scrollbars','--disable-smooth-scrolling','--remote-debugging-port=0','--force-device-scale-factor=1',
     '--window-size=1536,864','--user-data-dir='+profile,'about:blank'
   ],{stdio:'ignore'});
   let port;
@@ -39,6 +41,7 @@ try{
   conn.addEventListener('message',e=>{
     const data=JSON.parse(e.data);
     if(data.method==='Runtime.exceptionThrown')exceptionCount++;
+    if(data.method==='DOM.documentUpdated')forcedHoverNodeId=null;
     if(data.id){
       const task=pend.get(data.id);if(!task)return;
       pend.delete(data.id);
@@ -321,12 +324,14 @@ try{
       let strip=await inspect(kind);
       assert(strip.count===20 && strip.max>100,label+': '+kind+' must exercise an overflowing 20-character list');
       await wheel(strip,-strip.width);
+      await until('document.querySelector(\'[data-role-strip="'+kind+'"]\').scrollLeft<2');
       strip=await inspect(kind);
       assert(strip.left<2,label+': '+kind+' horizontal wheel could not reach the first character');
       await press(strip.first);
       const firstSelection=(await worldMetrics()).roles[kind];
       assert(firstSelection.selected===firstSelection.names[0],label+': '+kind+' first character could not be selected by pointer input');
       await wheel(strip,strip.width);
+      await until('(()=>{const strip=document.querySelector(\'[data-role-strip="'+kind+'"]\');return Math.abs(strip.scrollLeft-(strip.scrollWidth-strip.clientWidth))<2})()');
       strip=await inspect(kind);
       assert(Math.abs(strip.left-strip.max)<2 && strip.last.left>=strip.bounds.left-1 && strip.last.right<=strip.bounds.right+1,label+': '+kind+' horizontal wheel could not fully reveal the last character');
       await press(strip.last);
@@ -388,6 +393,7 @@ try{
   }
 
   await send('Page.enable');await send('Runtime.enable');await send('DOM.enable');await send('CSS.enable');
+  if(!presetsOnly){
   await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'},{name:'hover',value:'hover'},{name:'pointer',value:'fine'}]});
   await viewport(1536,864);
   await navigate(base+'/worlds?sidebar=expanded&theme=dark');
@@ -405,9 +411,15 @@ try{
     assert(await evaluate('document.querySelector('+JSON.stringify(selector)+')?.getAttribute("aria-current")')==='page','Missing selected state for '+selector);
     await click('a[aria-label="世界卡"]');
   }
-  for(const [label,path] of [['长安风云','/sessions/changan'],['通用叙事','/presets/general']]){
-    await evaluate('([...document.querySelectorAll("aside button")].find(b=>b.textContent.includes('+JSON.stringify(label)+'))).click()');
-    assert(await evaluate('location.pathname')===path,'Shortcut did not navigate to '+path);
+  await evaluate('([...document.querySelectorAll("aside button")].find(b=>b.textContent.includes("长安风云"))).click()');
+  assert(await evaluate('location.pathname')==='/sessions/changan','Session shortcut did not navigate to its session');
+  await click('a[aria-label="世界卡"]');
+  const presetShortcuts=await evaluate('[...document.querySelectorAll("aside [data-preset-shortcut]")].map(link=>({id:link.dataset.presetShortcut,href:link.getAttribute("href")}))');
+  assert(presetShortcuts.length>0&&presetShortcuts.every(link=>link.href?.startsWith("/presets/")),'Preset shortcuts require real links to available presets');
+  for(const shortcut of presetShortcuts){
+    await click('aside [data-preset-shortcut='+JSON.stringify(shortcut.id)+']');
+    assert(await evaluate('location.pathname')===new URL(shortcut.href,base).pathname,'Preset shortcut did not follow its href: '+shortcut.href);
+    assert(await evaluate('!!document.querySelector("[data-preset-workspace]")'),'Preset shortcut should open the preset workbench');
     await click('a[aria-label="世界卡"]');
   }
 
@@ -547,8 +559,10 @@ try{
     'world-detail-mobile-375','world-detail-mobile-transition-375','world-detail-mobile-compact-375'
   ]);
   await checkRoleAnchor('375');
+  }
+  await checkPresets({send,evaluate,until,viewport,click,screenshot,delay,assert,base,hover,bg});
   assert(exceptionCount===0,'Browser JS exceptions: '+exceptionCount);
-  console.log('PASS: stable sidebar material, intermediate animation width, selected hover, desktop expanded/collapsed, dialogs, theme, category, independent A/B scrolling, 20-character browsing and role anchors, reduced motion, and 375/390/768/1280/1536 layouts.');
+  if(!presetsOnly)console.log('PASS: stable sidebar material, intermediate animation width, selected hover, desktop expanded/collapsed, dialogs, theme, category, independent A/B scrolling, 20-character browsing and role anchors, preset workbench/editing/dragging, reduced motion, and 375/390/768/1280/1536 layouts.');
   console.log('Screenshots:',out);
 }catch(e){
   console.error('FAIL:',e);

@@ -3,6 +3,7 @@ import {NavLink,Outlet,useLocation,useNavigate} from 'react-router-dom';
 import {BookOpen,Box,Layers3,Menu,MessageCircle,Moon,PanelLeftClose,PanelLeftOpen,Settings,Sun,X} from 'lucide-react';
 import {Modal} from '../components/ui/Modal';
 import {useTheme} from '../hooks/useTheme';
+import {usePresetStore} from '../features/presets/PresetStore';
 import styles from './AppShell.module.css';
 
 const NAV=[
@@ -23,6 +24,8 @@ export function AppShell(){
   useEffect(()=>{try{document.documentElement.dataset.palette=localStorage.getItem('sr-studio-palette')||'default';}catch{}},[]);
   const nav=useNavigate();
   const location=useLocation();
+  const {presets,defaultPresetId}=usePresetStore();
+  const presetShortcuts=[...presets.filter(preset=>preset.id===defaultPresetId),...presets.filter(preset=>preset.id!==defaultPresetId)].slice(0,2);
   const toggleCollapsed=()=>{
     setCollapsed(v=>{const n=!v;try{localStorage.setItem('sr-studio-sidebar',n?'collapsed':'expanded');}catch{}return n;});
   };
@@ -65,8 +68,9 @@ export function AppShell(){
           <section className={styles.dataSection} aria-labelledby="presets-heading">
             <h2 id="presets-heading" className={styles.sectionTitle}><NavLink to="/presets" title={labelsHidden?'预设列表':undefined} aria-label="预设列表" className={({isActive})=>[styles.navItem,isActive?styles.navSelected:''].join(' ')}><Layers3 size={20} strokeWidth={1.8} aria-hidden="true"/><span className={styles.navLabel} aria-hidden={labelsHidden}>预设列表</span></NavLink></h2>
             <div className={styles.shortcuts} inert={labelsHidden} aria-hidden={labelsHidden}>
-            <button className={styles.presetRow} onClick={()=>nav('/presets/general')}><span>通用叙事</span><span className={styles.defaultPill}>默认</span></button>
-            <button className={styles.presetRow} onClick={()=>nav('/presets/roleplay')}>角色扮演</button>
+            {presetShortcuts.map(preset=><NavLink key={preset.id} to={'/presets/'+preset.id} data-preset-shortcut={preset.id} className={styles.presetRow}>
+              <span className={styles.presetName}>{preset.name || '未命名预设'}</span>{preset.id===defaultPresetId&&<span className={styles.defaultPill}>默认</span>}
+            </NavLink>)}
             </div>
           </section>
         </div>
