@@ -54,3 +54,5 @@
   --surface-hover:#373a4b;--surface-active:#3b3d52;--canvas-glow:rgba(94,106,153,.12);
   --accent:#a6a8db;--accent-soft:rgba(112,119,177,.17);--accent-selected:rgba(115,124,177,.27);
 }
+/* SDK isolated documents inherit the Studio semantic text color. */
+:root{--ink:var(--text)}

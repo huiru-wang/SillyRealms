@@ -627,7 +627,7 @@ SDK 导出纯函数和 `useCharacterMentions` 只读 hook，官方 WorldStory �
 
 ## 15. 实施任务、依赖与文件边界
 
-全部任务当前未执行。建议按下列顺序提交小批次变更；T4、T5 可以在 T1 契约稳定后部分并行，公共文件由主实现者整合。
+全部任务当前未执行。由当前单一 Agent 按下列顺序实施小批次变更，统一整合公共文件并执行验证与复查，不委派子代理。
 
 | 任务 | 依赖 | 工作与主要文件 | 完成条件 |
 |---|---|---|---|
@@ -639,7 +639,7 @@ SDK 导出纯函数和 `useCharacterMentions` 只读 hook，官方 WorldStory �
 | T5 API/SDK/历史闭环 | T1/T4 契约 | session-runtime 路由、history-runs、旧 history 投影、run-contract、session-runtime、story-history、host/frame | 查询/分页/三种终态结果一致，不泄漏私有快照/理由 |
 | T6 Web 预设/会话/建议 UI | T1/T5 | PresetPage、PresetLibraryPage、SessionSettingsDialog、host、world-story、RoleplayComposer | 默认/继承/下轮生效清楚；建议只填草稿、可撤销、旧建议禁用 |
 | T7 关键词候选人物 | T5 | 共享 roleplay 纯函数、story-types/story-context、SDK hook/export、Host/frame 安全词典投影、官方 UI | 不增加模型调用，不改变角色激活；候选误报边界和实际数据通道明确 |
-| T8 集成验收与文档同步 | T1–T7 | 下节测试矩阵及相关 API/SDK/数据格式文档 | 核心负例通过，质量门槛通过，独立审查无阻断问题 |
+| T8 集成验收与文档同步 | T1–T7 | 下节测试矩阵及相关 API/SDK/数据格式文档 | 核心负例通过，质量门槛通过，复查无阻断问题 |
 
 T1 预设改造必须覆盖以下容易遗漏的消费者：
 
@@ -716,7 +716,7 @@ pnpm test:browser
 
 执行前仍需核对各 package scripts：当前根 test/lint 主要覆盖 server，不能据此声称全部 Web/SDK 行为已经自动覆盖。Host-roleplay、SDK 和新增 Provider payload 测试必须确认被实际 test 入口发现。浏览器测试使用 fake provider/临时数据；不得顺手调用真实付费模型或真实库做迁移测试。
 
-本次仅写计划时只做文档 diff、引用路径、示例 JSON、术语/契约一致性和独立审查，不把未执行的上述代码验证标为通过。
+本次仅写计划时只做文档 diff、引用路径、示例 JSON、术语/契约一致性和复查，不把未执行的上述代码验证标为通过。
 
 ## 17. 完成定义与交付顺序
 
@@ -732,10 +732,10 @@ pnpm test:browser
 - [ ] 人物候选仅用净历史关键词，不增加第三次/第三类模型输出。
 - [ ] 用量包含隐藏输出，unknown 不冒充零；无自动修复调用。
 - [ ] 增量迁移保留用户数据及预设内容，重复启动幂等；未执行旧计划的破坏性清理。
-- [ ] 全部阻断测试通过，浏览器核心流程验收，独立审查通过。
+- [ ] 全部阻断测试通过，浏览器核心流程验收，复查通过。
 - [ ] docs/decisions、技术实施状态、配置/API/SDK 文档更新为实际完成状态，并注明仍有限制的 Provider/候选人物识别。
 
-优先把 T1–T5 的服务端契约和稳定性闭环完成，再交付 T6 的交互；T7 是可并行的确定性功能。不得为了提前展示建议按钮跳过状态提交、持久化和历史恢复。
+优先把 T1–T5 的服务端契约和稳定性闭环完成，再交付 T6 的交互；T7 是可单独安排的确定性功能。不得为了提前展示建议按钮跳过状态提交、持久化和历史恢复。
 
 ## 18. 与旧方案和后续扩展的关系
 

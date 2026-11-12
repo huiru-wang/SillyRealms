@@ -1,8 +1,11 @@
-import {useLayoutEffect,useRef,useState,type CSSProperties,type KeyboardEvent,type RefObject,type TouchEvent,type UIEvent,type WheelEvent as ReactWheelEvent} from 'react';
+import {useEffect,useLayoutEffect,useRef,useState,type CSSProperties,type KeyboardEvent,type RefObject,type TouchEvent as ReactTouchEvent,type UIEvent,type WheelEvent as ReactWheelEvent} from 'react';
 import {Link,useParams} from 'react-router-dom';
-import {BookOpen,BookText,ChevronDown,ChevronRight,ChevronUp,Compass,MessageCircle,Settings2,SlidersHorizontal} from 'lucide-react';
-import {defaultRoleNames,worlds} from '../../fixtures/worlds';
-import {sessionSamples} from '../../fixtures/sessions';
+import {BookOpen,BookText,ChevronDown,ChevronRight,ChevronUp,Compass,Ellipsis,MessageCircle,Settings2,SlidersHorizontal} from 'lucide-react';
+import {WorldDocumentRenderer} from '@sillyrealms/sdk';
+import {Modal} from '../../components/ui/Modal';
+import {getWorld,listSessions,safeImage,type WorldDetail} from './api/worlds';
+import {usePaged} from './api/usePaged';
+import {StateItems,WorldState} from './StateInspector';
 import styles from './WorldDetailPage.module.css';
 
 type Section = '介绍'|'世界书'|'世界状态'|'开局'|'运行配置'|'会话';
@@ -10,7 +13,6 @@ const sections:{name:Section;icon:typeof BookOpen}[]=[
   {name:'介绍',icon:BookOpen},{name:'世界书',icon:BookText},{name:'世界状态',icon:SlidersHorizontal},
   {name:'开局',icon:Compass},{name:'会话',icon:MessageCircle},{name:'运行配置',icon:Settings2}
 ];
-const description='一座繁华而神秘的城市，传统与未知交错。每个人都拥有自己的秘密与愿望，随你的选择，关系和故事将沿着不同的轨迹展开。在这里，任何相遇都可能成为一段新的传奇。';
 
 type RoleAnchor = {index:number;fraction:number};
 const clamp=(value:number,min=0,max=1)=>Math.min(max,Math.max(min,value));
@@ -41,7 +43,7 @@ function restoreRoleAnchor(strip:HTMLDivElement,anchor:RoleAnchor,expected:WeakM
   expected.set(strip,left);
   strip.scrollLeft=left;
 }
-function RoleStrip({names,compact,active,onChoose,stripRef}:{names:readonly string[];compact:boolean;active:number;onChoose:(i:number)=>void;stripRef:RefObject<HTMLDivElement|null>}){
+function RoleStrip({names,avatars,compact,active,onChoose,stripRef}:{names:readonly string[];avatars:readonly (string|undefined)[];compact:boolean;active:number;onChoose:(i:number)=>void;stripRef:RefObject<HTMLDivElement|null>}){
   const navigateRoles=(event:KeyboardEvent<HTMLDivElement>)=>{
     if(event.altKey||event.ctrlKey||event.metaKey)return;
     const keys=['ArrowLeft','ArrowRight','Home','End'];
@@ -59,31 +61,70 @@ function RoleStrip({names,compact,active,onChoose,stripRef}:{names:readonly stri
     else if(item.right>view.right)strip.scrollLeft+=item.right-view.right+3;
   };
   return <div className={[styles.roleStrip,compact?styles.roleStripCompact:''].join(' ')} ref={stripRef} role="group" aria-label="世界角色列表" data-role-strip={compact?'compact':'expanded'} onKeyDown={navigateRoles}>
-    {names.map((name,i)=><button key={name} data-role-index={i} className={[styles.role,active===i?styles.roleActive:''].join(' ')} title={name} aria-pressed={active===i} onClick={()=>onChoose(i)}>
-      <span className={styles.roleAvatar} aria-hidden="true"><span>{name.slice(0,1)}</span></span>
+    {names.map((name,i)=><button key={i} data-role-index={i} className={[styles.role,active===i?styles.roleActive:''].join(' ')} title={name} aria-pressed={active===i} onClick={()=>onChoose(i)}>
+      <span className={styles.roleAvatar} aria-hidden="true">{safeImage(avatars[i])?<img src={safeImage(avatars[i])} alt=""/>:<span>{name.slice(0,1)}</span>}</span>
       <span className={styles.roleName}>{name}</span>
     </button>)}
   </div>;
 }
-function SectionContent({section,worldTitle,worldId}:{section:Section;worldTitle:string;worldId:string}){
-  if(section==='会话'){
-    const sessions=sessionSamples.filter(session=>session.worldId===worldId);
-    return <><div className={styles.contentEyebrow}>SESSIONS</div><h2>会话</h2><p className={styles.lead}>在这个世界中开启的故事。</p>{sessions.length?<div className={styles.sessionList}>{sessions.map(session=><Link key={session.id} to={'/sessions/'+session.id} className={styles.sessionLink}>
-      <img src={session.cover} alt=""/><span><strong>{session.title}</strong><small>{session.subtitle}</small><small>{session.preview}</small></span><ChevronRight size={17} aria-hidden="true"/>
-    </Link>)}</div>:<div className={styles.emptySessions}><MessageCircle size={22} aria-hidden="true"/><strong>还没有会话</strong><p>在这个世界开始的故事会显示在这里。</p></div>}</>;
-  }
-  if(section==='世界书')return <><div className={styles.contentEyebrow}>LORE & KNOWLEDGE</div><h2>世界书</h2><p className={styles.lead}>世界运行的规则、历史与背景，在这里汇集。</p>{['城市与时代','组织与势力','约定与禁忌','重要地点'].map((title,i)=><article className={styles.entry} key={title}><span className={styles.entryNumber}>0{i+1}</span><div><h3>{title}</h3><p>{['繁华与隐秘在街巷间共存，过去留下的痕迹仍影响着当下。','各方势力在明处与暗处保持着微妙的平衡。','这里有一些不成文的规则，也有等待被打破的传统。','从喧闹的集市到静谧的庭院，每处都藏有自己的故事。'][i]}</p></div><ChevronRight size={17}/></article>)}</>;
-  if(section==='世界状态')return <><div className={styles.contentEyebrow}>WORLD STATE</div><h2>世界状态</h2><p className={styles.lead}>当前世界的共享状态与环境信息。以下为静态原型数据。</p><div className={styles.stateGrid}>{[['时间','仲夏 · 黄昏'],['天气','薄云，微风'],['地点','城中主街'],['故事阶段','初章'],['城市氛围','平静'],['当前事件','庆典前夕']].map(([k,v])=><div className={styles.stateCell} key={k}><span>{k}</span><strong>{v}</strong></div>)}</div></>;
-  if(section==='开局')return <><div className={styles.contentEyebrow}>OPENINGS</div><h2>故事开局</h2><p className={styles.lead}>从不同的起点进入同一个世界。</p>{['初入城中','雨夜相逢','未寄出的信'].map((s,i)=><article className={styles.opening} key={s}><span>0{i+1}</span><div><h3>{s}</h3><p>{['黄昏时分，你第一次踏进这座城，远处传来悠长的钟声。','一场突如其来的雨，把两个陌生人带到了同一处屋檐下。','一封没有署名的信笺，意外改变了平静的一天。'][i]}</p></div></article>)}</>;
-  if(section==='运行配置')return <><div className={styles.contentEyebrow}>RUNTIME</div><h2>运行配置</h2><p className={styles.lead}>管理这个世界的叙事体验与默认运行选项。</p>{[['默认预设','通用叙事'],['叙事视角','第三人称'],['状态更新','已启用'],['角色选择','允许自由切换']].map(([label,value])=><div className={styles.setting} key={label}><span>{label}</span><strong>{value}</strong></div>)}</>;
-  return <><div className={styles.contentEyebrow}>ABOUT THIS WORLD</div><h2>世界介绍</h2><p className={styles.lead}>{worldTitle}，是一个等待你亲自探索的故事世界。</p><div className={styles.rule}/><h3>故事背景</h3><p>{description}</p><p>故事并不围绕唯一的主角展开。你可以从不同人物的视角出发，见证同一事件如何改变不同人的命运。角色之间的关系也会随着每次选择发生微妙变化。</p><h3>在这里，你可以</h3><p>与形形色色的人物相识、探索尚未揭开的秘密，也可以放慢脚步，感受这个世界的日常。每一个决定都是故事的一部分。</p><div className={styles.quote}>「故事从来没有唯一的答案，只有走过之后，才知道自己选择了哪条路。」</div><h3>世界设定</h3><p>人物拥有各自的立场与动机。世界的时间与环境会推进，事件之间也可能产生联系。不同的开局提供不同的切入点，而世界本身保持统一。</p><p>{description}</p></>;
+function SessionSection({worldId}:{worldId:string}){
+  const {page,loading,error,more,retry}=usePaged(worldId,(cursor,signal)=>listSessions(worldId,cursor,signal));
+  const [menu,setMenu]=useState<string|null>(null);
+  return <>
+    {loading&&!page&&<p role="status">正在加载会话…</p>}
+    {error&&<div role="alert" className={styles.emptySessions}><strong>无法加载会话</strong><button onClick={retry}>重试</button></div>}
+    {page&&page.items.length>0&&<div className={styles.sessionList}>{page.items.map(session=><div key={session.id} className={styles.sessionLink}>
+      <span><strong>{session.title||'未命名会话'}</strong><small>更新于 {new Date(session.updatedAt).toLocaleDateString()}</small></span><div className={styles.sessionActions} onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget))setMenu(null);}} onKeyDown={event=>{if(event.key==='Escape')setMenu(null);}}><button className={styles.moreButton} aria-label={(session.title||'未命名会话')+'的更多操作'} aria-expanded={menu===session.id} onClick={()=>setMenu(menu===session.id?null:session.id)}><Ellipsis size={20}/></button>{menu===session.id&&<div className={styles.moreMenu} role="status">暂无可用操作</div>}</div>
+    </div>)}</div>}
+    {!loading&&!error&&page?.items.length===0&&<div className={styles.emptySessions}><MessageCircle size={22} aria-hidden="true"/><strong>还没有会话</strong><p>在这个世界开始的故事会显示在这里。</p></div>}
+    {page?.hasMore&&!error&&<button className={styles.actionButton} disabled={loading} onClick={more}>{loading?'加载中…':'加载更多'}</button>}
+  </>;
+}
+function SectionContent({section,world}:{section:Section;world:WorldDetail}){
+  const [openingIndex,setOpeningIndex]=useState(0);
+  const [stateOpen,setStateOpen]=useState(false);
+  const [expandedLore,setExpandedLore]=useState<Set<string>>(new Set());
+  const data=world.data,opening=data.openings[openingIndex];
+  const touch=useRef<number|null>(null);
+  const frameCleanup=useRef<(()=>void)|null>(null);
+  useEffect(()=>()=>frameCleanup.current?.(),[]);
+  const finishSwipe=(end:number|undefined)=>{
+    if(end!==undefined&&touch.current!==null&&Math.abs(end-touch.current)>50)setOpeningIndex(i=>Math.max(0,Math.min(data.openings.length-1,i+(end<touch.current!?1:-1))));
+    touch.current=null;
+  };
+  if(section==='会话')return <SessionSection worldId={world.id}/>;
+  if(section==='世界书')return data.lorebook?.entries.length?<div className={styles.loreList}>{data.lorebook.entries.map(entry=><section key={entry.id} className={styles.loreItem}><button className={styles.loreToggle} aria-expanded={expandedLore.has(entry.id)} onClick={()=>setExpandedLore(previous=>{const next=new Set(previous);next.has(entry.id)?next.delete(entry.id):next.add(entry.id);return next;})}><span>{entry.title||'未命名条目'}</span><ChevronRight size={17} className={expandedLore.has(entry.id)?styles.loreChevronOpen:''}/></button>{expandedLore.has(entry.id)&&<div className={styles.loreContent}><WorldDocumentRenderer title={entry.title||'世界书条目'} content={entry.content}/></div>}</section>)}</div>:<p>这个世界还没有世界书条目。</p>;
+  if(section==='世界状态')return <WorldState scopes={data.state?.scopes??{}}/>;
+  if(section==='开局')return opening?<><div onTouchStart={event=>{touch.current=event.touches[0]?.clientX??null;}} onTouchEnd={event=>finishSwipe(event.changedTouches[0]?.clientX)} onLoadCapture={event=>{
+    if(!(event.target instanceof HTMLIFrameElement))return;
+    frameCleanup.current?.();const doc=event.target.contentDocument;if(!doc)return;
+    const start=(e:TouchEvent)=>{touch.current=e.touches[0]?.clientX??null;};
+    const end=(e:TouchEvent)=>finishSwipe(e.changedTouches[0]?.clientX);
+    doc.addEventListener('touchstart',start,{passive:true});doc.addEventListener('touchend',end,{passive:true});
+    frameCleanup.current=()=>{doc.removeEventListener('touchstart',start);doc.removeEventListener('touchend',end);};
+  }}>
+    <div className={styles.openingToolbar}><div className={styles.openingNav}><button className={styles.actionButton} disabled={openingIndex===0} onClick={()=>setOpeningIndex(i=>i-1)} aria-label="上一个开局">‹</button><span>{openingIndex+1} / {data.openings.length}</span><button className={styles.actionButton} disabled={openingIndex===data.openings.length-1} onClick={()=>setOpeningIndex(i=>i+1)} aria-label="下一个开局">›</button></div><button className={styles.stateButton} onClick={()=>setStateOpen(true)}>查看初始状态</button></div>
+    <h3>{opening.name}</h3><WorldDocumentRenderer title={opening.name} content={opening.content}/>
+  </div>{stateOpen&&<Modal title="开局初始状态" size="editor" onClose={()=>setStateOpen(false)}><p className={styles.stateIntro}>“{opening.name}”开始时的消息状态，仅供查看。</p>{Object.keys(data.state?.scopes?.message??{}).length?<StateItems items={data.state?.scopes?.message??{}} overrides={opening.initial_state??{}}/>:<p>这个世界没有声明消息状态。</p>}</Modal>}</>:<p>这个世界没有开局。</p>;
+  if(section==='运行配置')return <><div className={styles.setting}><span>默认预设</span><strong>{world.defaultPresetId?'已设置':'未设置'}</strong></div><div className={styles.setting}><span>默认模型</span><strong>{world.defaultApiModelConfigId?'已设置':'未设置'}</strong></div></>;
+  return data.description?<WorldDocumentRenderer title="世界介绍" content={data.description}/>:<p>{data.summary||'这个世界还没有介绍。'}</p>;
 }
 
 export function WorldDetailPage(){
   const {worldId}=useParams();
-  const world=worlds.find(w=>w.id===worldId);
-  const names=world?.roleNames??defaultRoleNames;
-  const [selectedRole,setSelectedRole]=useState(2);
+  const [world,setWorld]=useState<WorldDetail|null>(null);
+  const [error,setError]=useState(false);
+  const [revision,setRevision]=useState(0);
+  useEffect(()=>{const c=new AbortController();setWorld(null);setError(false);if(worldId)getWorld(worldId,c.signal).then(result=>setWorld(result.item)).catch(()=>{if(!c.signal.aborted)setError(true);});else setError(true);return()=>c.abort();},[worldId,revision]);
+  if(!world||world.id!==worldId)return <div className={styles.notFound}>{error?<><h1>无法加载世界卡</h1><p>世界卡可能不存在，或服务暂时不可用。</p><button className={styles.actionButton} onClick={()=>setRevision(n=>n+1)}>重试</button> <Link to="/worlds">返回世界卡</Link></>:<p role="status">正在加载世界卡…</p>}</div>;
+  return <WorldDetailView key={world.id} world={world}/>;
+}
+function WorldDetailView({world}:{world:WorldDetail}){
+  const worldId=world.id;
+  const names=world.data.characters.map(character=>character.name);
+  const avatars=world.data.characters.map(character=>character.avatar);
+  const [roleDialog,setRoleDialog]=useState<number|null>(null);
+  const [selectedRole,setSelectedRole]=useState(-1);
   const [section,setSection]=useState<Section>('介绍');
   const [progress,setProgress]=useState(0);
   const [reducedMotion,setReducedMotion]=useState(false);
@@ -191,7 +232,7 @@ export function WorldDetailPage(){
     const motionChanged=()=>{setReducedMotion(motion.matches);queueUpdate();};
     main.scrollTo({top:0,behavior:'instant'});
     setProgress(0);
-    setSelectedRole(2);
+    setSelectedRole(-1);
     setSection('介绍');
     roleAnchor.current={index:0,fraction:0};
     pendingRoleFocus.current=null;
@@ -286,8 +327,8 @@ export function WorldDetailPage(){
     requestAnimationFrame(()=>collapseAtContentEnd(pane));
   };
   const contentScroll=(event:UIEvent<HTMLElement>)=>collapseAtContentEnd(event.currentTarget);
-  const contentTouchStart=(event:TouchEvent<HTMLElement>)=>{touchY.current=event.touches[0]?.clientY??null;downwardIntentUntil.current=0;};
-  const contentTouchMove=(event:TouchEvent<HTMLElement>)=>{
+  const contentTouchStart=(event:ReactTouchEvent<HTMLElement>)=>{touchY.current=event.touches[0]?.clientY??null;downwardIntentUntil.current=0;};
+  const contentTouchMove=(event:ReactTouchEvent<HTMLElement>)=>{
     const current=event.touches[0]?.clientY;
     if(current===undefined||touchY.current===null)return;
     if(current<touchY.current-2){
@@ -315,7 +356,6 @@ export function WorldDetailPage(){
     if(downward)requestAnimationFrame(()=>collapseAtContentEnd(pane));
   };
 
-  if(!world)return <div className={styles.notFound}><h1>未找到世界卡</h1><Link to="/worlds">返回世界卡</Link></div>;
   const layoutStyle={
     '--collapse-progress':progress,
     '--overview-role-opacity':overviewRoleOpacity,
@@ -331,20 +371,20 @@ export function WorldDetailPage(){
           </button>
         </div>
         <div className={styles.overviewTop}>
-          <img className={styles.cover} src={world.cover} alt=""/>
+          {safeImage(world.data.cover)?<img className={styles.cover} src={safeImage(world.data.cover)} alt=""/>:<div className={styles.cover} aria-hidden="true"/>}
           <div className={styles.worldText}>
-            <h1 title={world.title}>{world.title}</h1>
+            <h1 title={world.data.name}>{world.data.name}</h1>
             <div className={styles.summary} aria-hidden={reducedMotion?progress>=.5:progress>=.35}>
-              <p>{world.description} {description}</p>
-              <div className={styles.tags}>{world.categories.map(c=><span key={c}>{c}</span>)}<span>{world.genre}</span><span className={styles.worldFacts}>{names.length} 位角色 · {sessionSamples.filter(session=>session.worldId===world.id).length} 个会话</span></div>
+              <p>{world.data.summary||''}</p>
+              <div className={styles.tags}>{world.data.tags?.map(c=><span key={c}>{c}</span>)}<span className={styles.worldFacts}>{names.length} 位角色</span></div>
             </div>
           </div>
         </div>
         <div className={styles.overviewRoles} inert={!overviewRoleVisible} aria-hidden={!overviewRoleVisible}>
-          <RoleStrip names={names} compact={false} active={selectedRole} onChoose={setSelectedRole} stripRef={overviewRoles}/>
+          <RoleStrip names={names} avatars={avatars} compact={false} active={selectedRole} onChoose={i=>{setSelectedRole(i);setRoleDialog(i);}} stripRef={overviewRoles}/>
         </div>
         <div className={styles.compactRoles} aria-label="世界内容导航" inert={!compactVisible} aria-hidden={!compactVisible}>
-          <RoleStrip names={names} compact active={selectedRole} onChoose={setSelectedRole} stripRef={compactRoles}/>
+          <RoleStrip names={names} avatars={avatars} compact active={selectedRole} onChoose={i=>{setSelectedRole(i);setRoleDialog(i);}} stripRef={compactRoles}/>
         </div>
       </section>
       <div className={styles.workspace} data-world-workspace>
@@ -352,9 +392,10 @@ export function WorldDetailPage(){
           {sections.map(({name,icon:Icon})=><button key={name} data-world-section={name} className={[styles.tab,section===name?styles.tabActive:''].join(' ')} onClick={()=>chooseSection(name)} aria-current={section===name?'page':undefined}><Icon size={17} strokeWidth={1.8}/><span>{name}</span></button>)}
         </nav>
         <article ref={content} className={styles.content} data-world-content tabIndex={0} aria-label={section+'详情'} onKeyDown={scrollContentWithKeyboard} onWheel={contentWheel} onScroll={contentScroll} onTouchStart={contentTouchStart} onTouchMove={contentTouchMove}>
-          <div className={styles.contentInner}><SectionContent section={section} worldTitle={world.title} worldId={world.id}/></div>
+          <div className={styles.contentInner}><SectionContent key={section} section={section} world={world}/></div>
         </article>
       </div>
     </div>
+    {roleDialog!==null&&world.data.characters[roleDialog]&&<Modal title={world.data.characters[roleDialog].name} onClose={()=>setRoleDialog(null)}>{world.data.characters[roleDialog].description?<WorldDocumentRenderer title="角色介绍" content={world.data.characters[roleDialog].description!}/>:<p>该角色暂无介绍。</p>}</Modal>}
   </div>;
 }

@@ -13,6 +13,43 @@ function upload(data:unknown) {
   body.set('file',new File([JSON.stringify({spec:'world_card',spec_version:'0.1',data})],'test.json'));
   return {method:'POST',body};
 }
+it('counts sessions per world and filters session pages without mixing cursors',async()=>{
+  const db=openDatabase(':memory:'),app=createApp(db,fakeCredentials);
+  const data=async(path:string,init?:RequestInit)=>{
+    const response=await app.request('/api/v1'+path,init);
+    return {status:response.status,body:await response.json() as any};
+  };
+  try {
+    const worldA=(await data('/worlds/import',upload({...base,name:'World A'}))).body.data.item.id as string;
+    const worldB=(await data('/worlds/import',upload({...base,name:'World B'}))).body.data.item.id as string;
+    configureWorldModel(db,worldA); configureWorldModel(db,worldB);
+    const create=async(worldId:string)=>{
+      const result=await data('/sessions',json('POST',{worldId,openingId:'o',userCharacterId:'p'}));
+      expect(result.status).toBe(201);
+      return result.body.data.item.id as string;
+    };
+    const a1=await create(worldA),b1=await create(worldB),a2=await create(worldA);
+    db.prepare('UPDATE sessions SET updated_at=? WHERE id=?').run(3,a1);
+    db.prepare('UPDATE sessions SET updated_at=? WHERE id=?').run(2,b1);
+    db.prepare('UPDATE sessions SET updated_at=? WHERE id=?').run(1,a2);
+    const worlds=(await data('/worlds?limit=100')).body.data.items as Array<{id:string;sessionCount:number}>;
+    expect(worlds.find(w=>w.id===worldA)?.sessionCount).toBe(2);
+    expect(worlds.find(w=>w.id===worldB)?.sessionCount).toBe(1);
+    const filtered=(await data('/sessions?limit=1&worldId='+worldA)).body.data;
+    expect(filtered.items.map((s:{id:string})=>s.id)).toEqual([a1]);
+    expect(filtered.hasMore).toBe(true);
+    const next=(await data('/sessions?limit=1&worldId='+worldA+'&cursor='+filtered.nextCursor)).body.data;
+    expect(next.items.map((s:{id:string})=>s.id)).toEqual([a2]);
+    expect(next.nextCursor).toBeNull();
+    const all=(await data('/sessions?limit=1')).body.data;
+    expect((await data('/sessions?limit=1&cursor='+all.nextCursor)).body.data.items[0].id).toBe(b1);
+    expect((await data('/sessions?worldId='+worldB+'&cursor='+filtered.nextCursor)).body.errorCode).toBe('INVALID_CURSOR');
+    expect((await data('/sessions?cursor='+filtered.nextCursor)).body.errorCode).toBe('INVALID_CURSOR');
+    expect((await data('/sessions?worldId='+worldA+'&cursor='+all.nextCursor)).body.errorCode).toBe('INVALID_CURSOR');
+    expect((await data('/sessions?worldId=missing')).body.data.items).toEqual([]);
+    expect((await data('/sessions?worldId=')).body.errorCode).toBe('INVALID_REQUEST');
+  } finally {db.close();}
+});
 it('imports text unchanged, strips unknown fields and rejects object descriptions atomically',async()=>{
   const db=openDatabase(':memory:'), app=createApp(db);
   try {

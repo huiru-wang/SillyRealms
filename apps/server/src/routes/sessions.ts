@@ -157,9 +157,12 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
     return c.json({id:row.id,worldId:row.world_id,presetId:row.preset_id,apiModelConfigId:row.api_model_config_id,userCharacterId:row.user_character_id,tipEntryId:row.tip_entry_id,title:row.title,createdAt:row.created_at,updatedAt:row.updated_at});
   });
   app.get('/', c => {
+    const worldId=c.req.query('worldId');
+    if (worldId !== undefined && !worldId.trim()) return c.json(failure(ErrorCodes.INVALID_REQUEST, '世界 ID 不能为空'),400);
     try {
-      const rows=db.prepare('SELECT s.id,s.world_id,s.preset_id,s.api_model_config_id,s.title,s.updated_at,w.name AS world_name,w.cover AS world_cover FROM sessions s LEFT JOIN worlds w ON w.id=s.world_id ORDER BY s.updated_at DESC,s.id DESC').all();
-      const page=pageByUpdated(rows,'sessions',c.req.query('limit'),c.req.query('cursor'));
+      const sql='SELECT s.id,s.world_id,s.preset_id,s.api_model_config_id,s.title,s.updated_at,w.name AS world_name,w.cover AS world_cover FROM sessions s LEFT JOIN worlds w ON w.id=s.world_id'+(worldId === undefined ? '' : ' WHERE s.world_id=?')+' ORDER BY s.updated_at DESC,s.id DESC';
+      const rows=worldId === undefined ? db.prepare(sql).all() : db.prepare(sql).all(worldId);
+      const page=pageByUpdated(rows,'sessions',c.req.query('limit'),c.req.query('cursor'),worldId);
       return c.json({...page,items:page.items.map(r=>({id:r.id,worldId:r.world_id,presetId:r.preset_id,apiModelConfigId:r.api_model_config_id,title:r.title,updatedAt:r.updated_at,worldName:r.world_name,cover:r.world_cover??null}))});
     } catch { return c.json(failure(ErrorCodes.INVALID_CURSOR, '游标无效'),400); }
   });

@@ -4,7 +4,7 @@
 - Read `plan/sr-studio-static-ui-design-v1.md`, `docs/design/studio-reference-decisions.md`, and the latest approved actual-browser screenshots before visual changes.
 - Source hierarchy: user-approved live visual > user-provided concept reference > design decisions > current local component design.
 - New screens reuse AppShell, Sidebar, existing UI primitives, semantic CSS custom properties and established interaction patterns.
-- This phase is static-only: no Server API, SDK, Provider credentials, Session streaming, or real imported files.
+- Studio is gradually replacing Web. World lists and details use read-only Server APIs and may use the official SDK's isolated document renderer; other prototype features remain separate until explicitly integrated. Do not expose Provider credentials or relax the iframe security boundary.
 - Do not implement by embedding screenshots as page backgrounds; use real DOM/CSS/React and independent cover assets.
 - Default dark palette is exploratory until approval; use /lab/colors for controlled color experiments without changing layout.
 - Prefer small visual decisions over speculative UI abstractions. Do not create a standalone design-system package yet.

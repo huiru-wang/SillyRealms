@@ -138,6 +138,8 @@
   height:100dvh;min-width:0;overflow-y:auto;
   background:radial-gradient(ellipse 75% 36% at 38% -13%,var(--canvas-glow),transparent 82%),var(--canvas);
 }
+.worldDetailMain{scrollbar-width:none}
+.worldDetailMain::-webkit-scrollbar{display:none}
 .settingRow{display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--stroke)}
 .settingRow button{color:var(--accent);font-size:12px}
 .mobileOpen,.mobileShade,.mobileClose{display:none}

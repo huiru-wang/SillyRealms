@@ -1,5 +1,5 @@
 import {useCallback,useEffect,useState} from 'react';
-import {Link,NavLink,Outlet,useLocation,useNavigate} from 'react-router-dom';
+import {Link,NavLink,Outlet,useLocation,useMatch,useNavigate} from 'react-router-dom';
 import {BookOpen,Box,Layers3,Menu,MessageCircle,Moon,PanelLeftClose,PanelLeftOpen,Settings,Sun,X} from 'lucide-react';
 import {Modal} from '../components/ui/Modal';
 import {useTheme} from '../hooks/useTheme';
@@ -24,6 +24,7 @@ export function AppShell(){
   useEffect(()=>{try{document.documentElement.dataset.palette=localStorage.getItem('sr-studio-palette')||'default';}catch{}},[]);
   const nav=useNavigate();
   const location=useLocation();
+  const isWorldDetail=Boolean(useMatch('/worlds/:worldId'));
   const {presets,defaultPresetId}=usePresetStore();
   const presetShortcuts=[...presets.filter(preset=>preset.id===defaultPresetId),...presets.filter(preset=>preset.id!==defaultPresetId)].slice(0,2);
   const toggleCollapsed=()=>{
@@ -104,7 +105,7 @@ export function AppShell(){
         </div>
       </div>
     </aside>
-    <main className={styles.main} id="main-content" tabIndex={-1}><Outlet/></main>
+    <main className={[styles.main,isWorldDetail?styles.worldDetailMain:''].join(' ')} id="main-content" tabIndex={-1}><Outlet/></main>
     {showSettings&&<Modal title="外观设置" onClose={closeSettings}>
       <p>这里用于验证 SillyRealms 新平台的设置弹窗和主题交互，不会修改现有 SR 配置。</p>
       <div className={styles.settingRow}><span>当前主题</span><button onClick={toggleTheme}>{theme==='dark'?'深色':'浅色'} · 点击切换</button></div>

@@ -21,14 +21,15 @@ export function WorldDocumentRenderer({content,title='文档',presentation='isol
     const ink=getComputedStyle(document.documentElement).getPropertyValue('--ink').trim();
     const color=CSS.supports('color',ink)?ink:'#20212a';
     const bg=CSS.supports('color',background)?background:'#fff';
-    return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; img-src https:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><meta name="viewport" content="width=device-width, initial-scale=1"><style>:root{--sr-document-ink:${color};--sr-document-background:${bg}}${baseStyle}</style>${rendered.head}</head><body>${rendered.html}</body></html>`;
+    return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; img-src https:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><meta name="viewport" content="width=device-width, initial-scale=1"><style>:root{--sr-document-ink:${color};--sr-document-background:${bg}}${baseStyle}</style>${rendered.head}<style>html,body{height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important}</style></head><body>${rendered.html}</body></html>`;
   },[rendered,themeVersion,background]);
-  useEffect(()=>{
+  useLayoutEffect(()=>{
     const el=frame.current;if(!el)return;
     let observer:ResizeObserver|undefined,doc:Document|null=null;
     const update=()=>{if(!doc?.body)return;el.style.height='0px';el.style.height=Math.max(doc.body.scrollHeight,doc.documentElement.scrollHeight)+'px';};
-    const setup=()=>{observer?.disconnect();doc=el.contentDocument;if(!doc?.body)return;update();observer=new ResizeObserver(update);observer.observe(doc.body);doc.addEventListener('load',update,true);};
+    const setup=()=>{observer?.disconnect();doc?.removeEventListener('load',update,true);doc=el.contentDocument;if(!doc?.body)return;update();observer=new ResizeObserver(update);observer.observe(doc.body);doc.addEventListener('load',update,true);};
     el.addEventListener('load',setup);
+    setup();
     return()=>{el.removeEventListener('load',setup);doc?.removeEventListener('load',update,true);observer?.disconnect();};
   },[srcDoc,presentation]);
   if(presentation==='inline')return <div className={`sr-rich ${className}`} data-density={density} dangerouslySetInnerHTML={{__html:rendered.html}}/>;

@@ -52,14 +52,10 @@ Some design documents describe target/future behavior, not implemented behavior.
 - Event notifications must represent committed/authoritative state; do not invent delivery/replay guarantees.
 - Do not weaken iframe sandboxing, CSP, import allowlists, API authorization, or state validation to make a demo work.
 
-## Multi-agent operating protocol
-The primary Codex agent is Project Director. It owns scope, task routing, integration, conflict resolution, and final acceptance. The project has four focused subagents:
-- `product_designer`: product discovery, UX, interaction and visual design.
-- `architect`: end-to-end technical architecture across Web, Server, SDK, Compiler and storage.
-- `fullstack_engineer`: implementation and integration across the whole stack.
-- `reviewer`: independent product, code, security, regression and visual review.
-
-Use only the agents needed for the task. Usually 1–2 subagents are enough; use 3 for substantial cross-domain work. Do not automatically invoke the whole team. Give each subagent a bounded scope, relevant paths, expected output and edit permissions. Avoid concurrent edits to the same files. A subagent report is not proof; the Director verifies evidence and runs checks. Use separate worktrees only when implementation streams are genuinely independent.
+## Single-agent working rule
+- Use one agent for this project. Do not spawn subagents or delegate work to other agents.
+- The current agent owns discovery, design, architecture, implementation, verification, review, and final acceptance.
+- Perform review as a separate pass over the work and verify findings with source evidence and appropriate checks.
 
 ## Skills routing
 - For a substantial new feature, use `project-kickoff`.
@@ -73,9 +69,9 @@ Use only the agents needed for the task. Usually 1–2 subagents are enough; use
 3. Design: establish interaction model, visual direction, tokens, page specs, responsive rules, and UI states.
 4. Architecture: define boundaries, data ownership, API/SDK contracts, migration/compatibility, and failure behavior.
 5. Plan: split work into tasks with dependencies, owners, file boundaries, and test strategy. Seek approval for material scope/architecture changes.
-6. Implement: parallelize only independent modules; keep contracts stable and integrate continuously.
+6. Implement: work through bounded modules sequentially; keep contracts stable and integrate continuously.
 7. Verify: run typecheck, lint, tests, build, browser flows, and visual checks. Report skipped checks.
-8. Review: obtain independent QA and design/code review; turn findings into explicit fixes.
+8. Review: perform a separate QA and design/code review pass in the current agent; turn findings into explicit fixes.
 9. Re-verify: rerun checks after fixes. Do not call complete while critical acceptance criteria fail.
 
 ## Quality gates
@@ -94,6 +90,7 @@ Web dev: `pnpm dev:web`. Server dev: `pnpm dev`.
 Inspect package scripts before relying on a check; report exactly what ran.
 
 ## Documentation conventions
+- Save proposals and plans, including product, design, and technical proposals, under `plan/`; do not place unimplemented proposals in formal `docs/`.
 - Product behavior: `docs/PRODUCT.md` or product specs.
 - Domain/UI contracts: `docs/design/`.
 - System/API/storage/implementation status: `docs/technical/`.

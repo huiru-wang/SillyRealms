@@ -25,7 +25,7 @@ try {
   await worldFiles.cleanupOrphans(new Set(db.prepare('SELECT id FROM worlds').all().map(row=>String(row.id))));
 } catch { console.warn('SR_WORLD_SOURCE_ORPHAN_CLEANUP_FAILED'); }
 const lanAddresses = [...new Set(Object.values(networkInterfaces()).flatMap(items => (items ?? []).filter(item => item.family === 'IPv4' && !item.internal).map(item => item.address)))];
-const allowedOrigins = new Set(lanAddresses.flatMap(address => [`http://${address}:${port}`, `http://${address}:5173`]));
+const allowedOrigins = new Set(lanAddresses.flatMap(address => [`http://${address}:${port}`, `http://${address}:5173`, `http://${address}:5174`]));
 const app=createApp(db, new MacKeychainStore(), new PiGateway(), worldFiles, allowedOrigins);
 const webDir=fileURLToPath(new URL('../../web/dist/', import.meta.url));
 if (existsSync(webDir)) {
