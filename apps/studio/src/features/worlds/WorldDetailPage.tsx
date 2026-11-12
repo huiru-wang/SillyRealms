@@ -1,13 +1,14 @@
-import {useLayoutEffect,useRef,useState,type CSSProperties,type KeyboardEvent,type RefObject} from 'react';
+import {useLayoutEffect,useRef,useState,type CSSProperties,type KeyboardEvent,type RefObject,type TouchEvent,type UIEvent,type WheelEvent as ReactWheelEvent} from 'react';
 import {Link,useParams} from 'react-router-dom';
-import {BookOpen,BookText,ChevronDown,ChevronRight,ChevronUp,Compass,Settings2,SlidersHorizontal} from 'lucide-react';
+import {BookOpen,BookText,ChevronDown,ChevronRight,ChevronUp,Compass,MessageCircle,Settings2,SlidersHorizontal} from 'lucide-react';
 import {defaultRoleNames,worlds} from '../../fixtures/worlds';
+import {sessionSamples} from '../../fixtures/sessions';
 import styles from './WorldDetailPage.module.css';
 
-type Section = '介绍'|'世界书'|'世界状态'|'开局'|'运行配置';
+type Section = '介绍'|'世界书'|'世界状态'|'开局'|'运行配置'|'会话';
 const sections:{name:Section;icon:typeof BookOpen}[]=[
   {name:'介绍',icon:BookOpen},{name:'世界书',icon:BookText},{name:'世界状态',icon:SlidersHorizontal},
-  {name:'开局',icon:Compass},{name:'运行配置',icon:Settings2}
+  {name:'开局',icon:Compass},{name:'会话',icon:MessageCircle},{name:'运行配置',icon:Settings2}
 ];
 const description='一座繁华而神秘的城市，传统与未知交错。每个人都拥有自己的秘密与愿望，随你的选择，关系和故事将沿着不同的轨迹展开。在这里，任何相遇都可能成为一段新的传奇。';
 
@@ -64,7 +65,13 @@ function RoleStrip({names,compact,active,onChoose,stripRef}:{names:readonly stri
     </button>)}
   </div>;
 }
-function SectionContent({section,worldTitle}:{section:Section;worldTitle:string}){
+function SectionContent({section,worldTitle,worldId}:{section:Section;worldTitle:string;worldId:string}){
+  if(section==='会话'){
+    const sessions=sessionSamples.filter(session=>session.worldId===worldId);
+    return <><div className={styles.contentEyebrow}>SESSIONS</div><h2>会话</h2><p className={styles.lead}>在这个世界中开启的故事。</p>{sessions.length?<div className={styles.sessionList}>{sessions.map(session=><Link key={session.id} to={'/sessions/'+session.id} className={styles.sessionLink}>
+      <img src={session.cover} alt=""/><span><strong>{session.title}</strong><small>{session.subtitle}</small><small>{session.preview}</small></span><ChevronRight size={17} aria-hidden="true"/>
+    </Link>)}</div>:<div className={styles.emptySessions}><MessageCircle size={22} aria-hidden="true"/><strong>还没有会话</strong><p>在这个世界开始的故事会显示在这里。</p></div>}</>;
+  }
   if(section==='世界书')return <><div className={styles.contentEyebrow}>LORE & KNOWLEDGE</div><h2>世界书</h2><p className={styles.lead}>世界运行的规则、历史与背景，在这里汇集。</p>{['城市与时代','组织与势力','约定与禁忌','重要地点'].map((title,i)=><article className={styles.entry} key={title}><span className={styles.entryNumber}>0{i+1}</span><div><h3>{title}</h3><p>{['繁华与隐秘在街巷间共存，过去留下的痕迹仍影响着当下。','各方势力在明处与暗处保持着微妙的平衡。','这里有一些不成文的规则，也有等待被打破的传统。','从喧闹的集市到静谧的庭院，每处都藏有自己的故事。'][i]}</p></div><ChevronRight size={17}/></article>)}</>;
   if(section==='世界状态')return <><div className={styles.contentEyebrow}>WORLD STATE</div><h2>世界状态</h2><p className={styles.lead}>当前世界的共享状态与环境信息。以下为静态原型数据。</p><div className={styles.stateGrid}>{[['时间','仲夏 · 黄昏'],['天气','薄云，微风'],['地点','城中主街'],['故事阶段','初章'],['城市氛围','平静'],['当前事件','庆典前夕']].map(([k,v])=><div className={styles.stateCell} key={k}><span>{k}</span><strong>{v}</strong></div>)}</div></>;
   if(section==='开局')return <><div className={styles.contentEyebrow}>OPENINGS</div><h2>故事开局</h2><p className={styles.lead}>从不同的起点进入同一个世界。</p>{['初入城中','雨夜相逢','未寄出的信'].map((s,i)=><article className={styles.opening} key={s}><span>0{i+1}</span><div><h3>{s}</h3><p>{['黄昏时分，你第一次踏进这座城，远处传来悠长的钟声。','一场突如其来的雨，把两个陌生人带到了同一处屋檐下。','一封没有署名的信笺，意外改变了平静的一天。'][i]}</p></div></article>)}</>;
@@ -87,6 +94,10 @@ export function WorldDetailPage(){
   const overviewRoles=useRef<HTMLDivElement>(null);
   const compactRoles=useRef<HTMLDivElement>(null);
   const collapseRange=useRef(0);
+  const animateOverview=useRef<(collapsed:boolean)=>void>(()=>{});
+  const bottomCollapseRequested=useRef(false);
+  const downwardIntentUntil=useRef(0);
+  const touchY=useRef<number|null>(null);
   const roleAnchor=useRef<RoleAnchor>({index:0,fraction:0});
   const expectedRoleScroll=useRef(new WeakMap<HTMLDivElement,number>());
   const pendingRoleFocus=useRef<number|null>(null);
@@ -101,7 +112,8 @@ export function WorldDetailPage(){
     const track=page.current,stage=viewport.current;
     if(!main||!track||!stage)return;
     const motion=window.matchMedia('(prefers-reduced-motion: reduce)');
-    let frame=0,lastProgress=0;
+    let frame=0,animationFrame=0,settleTimer=0,wheelTimer=0,lastProgress=0;
+    let animating=false,wheelLocked=false,touching=false;
     const update=()=>{
       const next=clamp(main.scrollTop/Math.max(1,collapseRange.current));
       // Move focus before making an outgoing strip inert; the incoming strip
@@ -132,6 +144,50 @@ export function WorldDetailPage(){
       }
       queueUpdate();
     };
+    const moveTo=(collapsed:boolean)=>{
+      cancelAnimationFrame(animationFrame);
+      clearTimeout(settleTimer);
+      const start=main.scrollTop,target=collapsed?collapseRange.current:0;
+      if(motion.matches||Math.abs(start-target)<1){
+        animating=false;
+        main.scrollTo({top:target,behavior:'instant'});
+        queueUpdate();
+        return;
+      }
+      animating=true;
+      const started=performance.now(),duration=380;
+      const tick=(now:number)=>{
+        const t=clamp((now-started)/duration);
+        const eased=1-Math.pow(1-t,3);
+        main.scrollTo({top:start+(target-start)*eased,behavior:'instant'});
+        if(t<1)animationFrame=requestAnimationFrame(tick);
+        else{animating=false;queueUpdate();}
+      };
+      animationFrame=requestAnimationFrame(tick);
+    };
+    animateOverview.current=moveTo;
+    const onScroll=()=>{
+      queueUpdate();
+      if(animating||touching)return;
+      clearTimeout(settleTimer);
+      settleTimer=window.setTimeout(()=>{
+        const position=main.scrollTop/Math.max(1,collapseRange.current);
+        if(position>.001&&position<.999)moveTo(position>=.5);
+      },140);
+    };
+    const onWheel=(event:WheelEvent)=>{
+      if(event.ctrlKey||event.metaKey||Math.abs(event.deltaY)<=Math.abs(event.deltaX)||event.deltaY===0)return;
+      if(content.current?.contains(event.target as Node))return;
+      event.preventDefault();
+      const locked=wheelLocked;
+      wheelLocked=true;
+      clearTimeout(wheelTimer);
+      wheelTimer=window.setTimeout(()=>{wheelLocked=false;},180);
+      if(locked||animating)return;
+      moveTo(event.deltaY>0);
+    };
+    const onTouchStart=()=>{touching=true;clearTimeout(settleTimer);};
+    const onTouchEnd=()=>{touching=false;onScroll();};
     const motionChanged=()=>{setReducedMotion(motion.matches);queueUpdate();};
     main.scrollTo({top:0,behavior:'instant'});
     setProgress(0);
@@ -139,17 +195,31 @@ export function WorldDetailPage(){
     setSection('介绍');
     roleAnchor.current={index:0,fraction:0};
     pendingRoleFocus.current=null;
+    bottomCollapseRequested.current=false;
+    downwardIntentUntil.current=0;
     measure();
     motionChanged();
     const observer=new ResizeObserver(measure);
     observer.observe(stage);
-    main.addEventListener('scroll',queueUpdate,{passive:true});
+    main.addEventListener('scroll',onScroll,{passive:true});
+    main.addEventListener('wheel',onWheel,{passive:false});
+    main.addEventListener('touchstart',onTouchStart,{passive:true});
+    main.addEventListener('touchend',onTouchEnd,{passive:true});
+    main.addEventListener('touchcancel',onTouchEnd,{passive:true});
     motion.addEventListener('change',motionChanged);
     return()=>{
       observer.disconnect();
-      main.removeEventListener('scroll',queueUpdate);
+      main.removeEventListener('scroll',onScroll);
+      main.removeEventListener('wheel',onWheel);
+      main.removeEventListener('touchstart',onTouchStart);
+      main.removeEventListener('touchend',onTouchEnd);
+      main.removeEventListener('touchcancel',onTouchEnd);
       motion.removeEventListener('change',motionChanged);
       cancelAnimationFrame(frame);
+      cancelAnimationFrame(animationFrame);
+      clearTimeout(settleTimer);
+      clearTimeout(wheelTimer);
+      animateOverview.current=()=>{};
     };
   },[worldId]);
 
@@ -191,15 +261,41 @@ export function WorldDetailPage(){
   },[section,worldId]);
 
   const scrollOverview=(collapsed:boolean)=>{
-    document.getElementById('main-content')?.scrollTo({
-      top:collapsed?collapseRange.current:0,
-      behavior:reducedMotion?'instant':'smooth'
-    });
+    if(!collapsed){bottomCollapseRequested.current=false;downwardIntentUntil.current=0;}
+    animateOverview.current(collapsed);
   };
   const chooseSection=(next:Section)=>{
+    bottomCollapseRequested.current=false;
+    downwardIntentUntil.current=0;
     setSection(next);
     content.current?.scrollTo({top:0,behavior:'instant'});
     scrollOverview(true);
+  };
+  const collapseAtContentEnd=(pane:HTMLElement)=>{
+    if(content.current!==pane||bottomCollapseRequested.current||Date.now()>downwardIntentUntil.current)return;
+    if(pane.scrollHeight-pane.clientHeight-pane.scrollTop<=2){
+      bottomCollapseRequested.current=true;
+      animateOverview.current(true);
+    }
+  };
+  const contentWheel=(event:ReactWheelEvent<HTMLElement>)=>{
+    if(event.ctrlKey||event.metaKey||Math.abs(event.deltaY)<=Math.abs(event.deltaX)||event.deltaY===0)return;
+    if(event.deltaY<0){downwardIntentUntil.current=0;return;}
+    downwardIntentUntil.current=Date.now()+500;
+    const pane=event.currentTarget;
+    requestAnimationFrame(()=>collapseAtContentEnd(pane));
+  };
+  const contentScroll=(event:UIEvent<HTMLElement>)=>collapseAtContentEnd(event.currentTarget);
+  const contentTouchStart=(event:TouchEvent<HTMLElement>)=>{touchY.current=event.touches[0]?.clientY??null;downwardIntentUntil.current=0;};
+  const contentTouchMove=(event:TouchEvent<HTMLElement>)=>{
+    const current=event.touches[0]?.clientY;
+    if(current===undefined||touchY.current===null)return;
+    if(current<touchY.current-2){
+      downwardIntentUntil.current=Date.now()+700;
+      const pane=event.currentTarget;
+      requestAnimationFrame(()=>collapseAtContentEnd(pane));
+    }else if(current>touchY.current+2)downwardIntentUntil.current=0;
+    touchY.current=current;
   };
   const scrollContentWithKeyboard=(event:KeyboardEvent<HTMLElement>)=>{
     // Keyboard scrolling belongs to the focused reading pane, including its
@@ -213,7 +309,10 @@ export function WorldDetailPage(){
     };
     if(!(event.key in positions)||event.shiftKey&&event.key!==' ')return;
     event.preventDefault();
+    const downward=positions[event.key]>pane.scrollTop;
+    downwardIntentUntil.current=downward?Date.now()+500:0;
     pane.scrollTo({top:positions[event.key],behavior:'instant'});
+    if(downward)requestAnimationFrame(()=>collapseAtContentEnd(pane));
   };
 
   if(!world)return <div className={styles.notFound}><h1>未找到世界卡</h1><Link to="/worlds">返回世界卡</Link></div>;
@@ -237,7 +336,7 @@ export function WorldDetailPage(){
             <h1 title={world.title}>{world.title}</h1>
             <div className={styles.summary} aria-hidden={reducedMotion?progress>=.5:progress>=.35}>
               <p>{world.description} {description}</p>
-              <div className={styles.tags}>{world.categories.map(c=><span key={c}>{c}</span>)}<span>{world.genre}</span><span className={styles.worldFacts}>{names.length} 位角色 · {world.sessionCount} 个会话</span></div>
+              <div className={styles.tags}>{world.categories.map(c=><span key={c}>{c}</span>)}<span>{world.genre}</span><span className={styles.worldFacts}>{names.length} 位角色 · {sessionSamples.filter(session=>session.worldId===world.id).length} 个会话</span></div>
             </div>
           </div>
         </div>
@@ -250,10 +349,10 @@ export function WorldDetailPage(){
       </section>
       <div className={styles.workspace} data-world-workspace>
         <nav className={styles.tabs} aria-label="世界详情章节">
-          {sections.map(({name,icon:Icon})=><button key={name} className={[styles.tab,section===name?styles.tabActive:''].join(' ')} onClick={()=>chooseSection(name)} aria-current={section===name?'page':undefined}><Icon size={17} strokeWidth={1.8}/><span>{name}</span></button>)}
+          {sections.map(({name,icon:Icon})=><button key={name} data-world-section={name} className={[styles.tab,section===name?styles.tabActive:''].join(' ')} onClick={()=>chooseSection(name)} aria-current={section===name?'page':undefined}><Icon size={17} strokeWidth={1.8}/><span>{name}</span></button>)}
         </nav>
-        <article ref={content} className={styles.content} data-world-content tabIndex={0} aria-label={section+'详情'} onKeyDown={scrollContentWithKeyboard}>
-          <div className={styles.contentInner}><SectionContent section={section} worldTitle={world.title}/></div>
+        <article ref={content} className={styles.content} data-world-content tabIndex={0} aria-label={section+'详情'} onKeyDown={scrollContentWithKeyboard} onWheel={contentWheel} onScroll={contentScroll} onTouchStart={contentTouchStart} onTouchMove={contentTouchMove}>
+          <div className={styles.contentInner}><SectionContent section={section} worldTitle={world.title} worldId={world.id}/></div>
         </article>
       </div>
     </div>

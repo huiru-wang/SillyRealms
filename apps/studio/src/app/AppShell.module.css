@@ -70,12 +70,12 @@
 }
 .navItem:not(.navSelected):hover{background:var(--surface-hover);color:var(--text)}
 .bottomButton:not(.navSelected):hover{background:var(--surface-hover);color:var(--text)}
-.sessionRow:hover,.presetRow:hover{background:var(--surface-hover)}
+.sessionRow:not([aria-current]):hover,.presetRow:not([aria-current]):hover{background:var(--surface-hover)}
 @media(hover:none){
-  .navItem:not(.navSelected):hover,.bottomButton:not(.navSelected):hover,.sessionRow:hover{
+  .navItem:not(.navSelected):hover,.bottomButton:not(.navSelected):hover,.sessionRow:not([aria-current]):hover{
     background:transparent;color:inherit;
   }
-  .presetRow:hover{background:transparent}
+  .presetRow:not([aria-current]):hover{background:transparent}
 }
 .sidebarData{
   flex:1;min-height:0;min-width:0;
@@ -85,7 +85,7 @@
 .sidebarData::-webkit-scrollbar{display:none}
 .dataSection{min-width:0;border-top:1px solid var(--stroke);padding:14px 0 18px;transition:padding var(--motion-layout) var(--ease-layout),border-color var(--motion-fast)}
 .sectionTitle{margin:0;font-size:inherit;font-weight:inherit}
-.shortcuts{max-height:160px;overflow:hidden;opacity:1;transition:max-height var(--motion-layout) var(--ease-layout),opacity var(--motion-reveal) var(--ease-standard) 115ms}
+.shortcuts{max-height:160px;overflow:hidden;opacity:1;padding-top:4px;transition:max-height var(--motion-layout) var(--ease-layout),padding-top var(--motion-layout) var(--ease-layout),opacity var(--motion-reveal) var(--ease-standard) 115ms}
 .sessionRow{
   display:flex;align-items:center;gap:12px;
   width:100%;min-height:64px;padding:5px 12px;
@@ -96,6 +96,8 @@
 .rowText{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}
 .rowText strong{font-size:12px;line-height:1.35;font-weight:500;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rowText small{font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sessionRow[aria-current],.sessionRow[aria-current]:hover{background:var(--accent-selected)}
+.sessionRow[aria-current] .rowText strong{color:var(--text)}
 .presetRow{
   width:100%;height:45px;display:flex;align-items:center;justify-content:space-between;
   border-radius:10px;background:transparent;
@@ -104,6 +106,7 @@
   transition:background-color var(--motion-fast) var(--ease-standard);
 }
 .presetName{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sessionRow:focus-visible,.presetRow:focus-visible{outline-offset:-2px}
 .presetRow[aria-current="page"],.presetRow[aria-current="page"]:hover{background:var(--accent-selected);color:var(--text)}
 .defaultPill{flex-shrink:0;margin-left:8px;padding:3px 8px;background:var(--accent-soft);border-radius:7px;font-size:11px;color:var(--text-secondary)}
 .bottom{
@@ -130,7 +133,7 @@
 }
 .layout[data-collapsed="true"] .sidebarData{margin-top:4px}
 .layout[data-collapsed="true"] .dataSection{padding:0 0 4px;border-color:transparent}
-.layout[data-collapsed="true"] .shortcuts{max-height:0;opacity:0;transition:max-height var(--motion-layout) var(--ease-layout),opacity var(--motion-hide) var(--ease-standard)}
+.layout[data-collapsed="true"] .shortcuts{max-height:0;padding-top:0;opacity:0;transition:max-height var(--motion-layout) var(--ease-layout),padding-top var(--motion-layout) var(--ease-layout),opacity var(--motion-hide) var(--ease-standard)}
 .main{
   height:100dvh;min-width:0;overflow-y:auto;
   background:radial-gradient(ellipse 75% 36% at 38% -13%,var(--canvas-glow),transparent 82%),var(--canvas);
@@ -138,6 +141,8 @@
 .settingRow{display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--stroke)}
 .settingRow button{color:var(--accent);font-size:12px}
 .mobileOpen,.mobileShade,.mobileClose{display:none}
+.skipLink{position:fixed;z-index:50;top:8px;left:8px;padding:11px 16px;border-radius:8px;background:var(--surface-raised);color:var(--text);transform:translateY(-160%)}
+.skipLink:focus-visible{transform:translateY(0)}
 
 @media(max-width:760px){
   .layout,.layout[data-collapsed="true"]{display:block}
@@ -160,7 +165,7 @@
   .layout[data-collapsed="true"] .mobileVisible .bottomLabel{opacity:1}
   .layout[data-collapsed="true"] .mobileVisible .sidebarData{margin-top:18px}
   .layout[data-collapsed="true"] .mobileVisible .dataSection{padding:14px 0 18px;border-color:var(--stroke)}
-  .layout[data-collapsed="true"] .mobileVisible .shortcuts{max-height:160px;opacity:1}
+  .layout[data-collapsed="true"] .mobileVisible .shortcuts{max-height:160px;padding-top:4px;opacity:1}
   .mobileOpen{
     display:grid;position:fixed;top:19px;left:15px;width:44px;height:44px;
     place-items:center;border-radius:9px;background:var(--surface-raised);

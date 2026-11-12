@@ -145,6 +145,17 @@
 .stateCell span{font-size:12px;color:var(--text-muted)}.stateCell strong{font-size:15px;font-weight:500}
 .opening{display:flex;gap:23px;padding:24px;border:1px solid var(--stroke);border-radius:12px;background:var(--surface);margin:14px 0}.opening>span{color:var(--accent)}
 .setting{display:flex;justify-content:space-between;gap:24px;padding:22px 0;border-bottom:1px solid var(--stroke);font-size:14px}.setting span{color:var(--text-secondary)}.setting strong{font-weight:500}
+.sessionList{border-top:1px solid var(--stroke);margin-top:30px}
+.sessionLink{display:flex;align-items:center;gap:16px;min-height:98px;padding:14px 8px;border-bottom:1px solid var(--stroke);border-radius:8px;transition:background var(--motion-fast)}
+.sessionLink img{width:56px;height:66px;object-fit:cover;border-radius:8px;flex-shrink:0}
+.sessionLink>span{display:flex;flex-direction:column;gap:5px;min-width:0;flex:1}
+.sessionLink strong{font-size:14px;font-weight:550;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sessionLink small{font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sessionLink svg{flex-shrink:0;color:var(--text-muted)}
+@media(hover:hover) and (pointer:fine){.sessionLink:hover{background:var(--surface)}}
+.emptySessions{display:flex;flex-direction:column;align-items:center;gap:11px;margin-top:30px;padding:40px 20px;border:1px dashed var(--stroke-strong);border-radius:12px;color:var(--text-muted);text-align:center}
+.emptySessions strong{font-size:14px;font-weight:500;color:var(--text-secondary)}
+.emptySessions p{font-size:12px;line-height:1.7;margin:0;color:var(--text-muted)}
 
 .notFound{padding:80px}.notFound a{color:var(--accent)}
 @media(max-width:1100px){
@@ -176,7 +187,7 @@
 @media(max-width:760px){
   .page{
     --detail-inset:16px;
-    --overview-expanded-height:clamp(312px,39dvh,344px);
+    --overview-expanded-height:clamp(288px,36dvh,320px);
     --overview-compact-height:136px;
   }
   .overviewToolbar{top:19px;height:44px}
@@ -188,7 +199,7 @@
     grid-template-columns:calc(84px - 54px * var(--collapse-progress)) minmax(0,1fr);
     gap:calc(16px - 6px * var(--collapse-progress));
   }
-  .cover{height:calc(100px - 64px * var(--collapse-progress));border-radius:calc(10px - 3px * var(--collapse-progress))}
+  .cover{height:calc(108px - 72px * var(--collapse-progress));border-radius:calc(10px - 3px * var(--collapse-progress))}
   .worldText{max-width:none}
   .worldText h1{font-size:calc(22px - 8px * var(--collapse-progress));padding-top:calc(8px * var(--collapse-progress))}
   .summary{margin-top:7px}
@@ -220,7 +231,8 @@
   .summary{margin-top:10px}
 }
 @media(prefers-reduced-motion:reduce) and (max-width:760px){
-  .overviewTop{top:22px;left:54px;right:44px;grid-template-columns:30px minmax(0,1fr);gap:10px}
-  .cover{height:36px}
-  .worldText h1{font-size:14px;padding-top:8px}
+  .overviewTop{top:calc(73px - 51px * var(--collapse-progress));left:calc(54px * var(--collapse-progress));right:calc(44px * var(--collapse-progress));grid-template-columns:calc(84px - 54px * var(--collapse-progress)) minmax(0,1fr);gap:calc(16px - 6px * var(--collapse-progress))}
+  .cover{height:calc(108px - 72px * var(--collapse-progress))}
+  .worldText h1{font-size:calc(22px - 8px * var(--collapse-progress));padding-top:calc(8px * var(--collapse-progress))}
+  .summary{margin-top:7px}
 }

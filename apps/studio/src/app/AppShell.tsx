@@ -1,5 +1,5 @@
 import {useCallback,useEffect,useState} from 'react';
-import {NavLink,Outlet,useLocation,useNavigate} from 'react-router-dom';
+import {Link,NavLink,Outlet,useLocation,useNavigate} from 'react-router-dom';
 import {BookOpen,Box,Layers3,Menu,MessageCircle,Moon,PanelLeftClose,PanelLeftOpen,Settings,Sun,X} from 'lucide-react';
 import {Modal} from '../components/ui/Modal';
 import {useTheme} from '../hooks/useTheme';
@@ -32,7 +32,15 @@ export function AppShell(){
   useEffect(()=>setMobileOpen(false),[location.pathname]);
   const closeSettings=useCallback(()=>setShowSettings(false),[]);
   const labelsHidden=collapsed&&!mobileOpen;
+  const sessionPaths=['/sessions/changan','/sessions/neon'];
+  const sessionSection=location.pathname==='/sessions'||location.pathname.startsWith('/sessions/');
+  const presetSection=location.pathname==='/presets'||location.pathname.startsWith('/presets/');
+  const sessionShortcutActive=!labelsHidden&&sessionPaths.includes(location.pathname);
+  const presetShortcutActive=!labelsHidden&&presetShortcuts.some(preset=>location.pathname==='/presets/'+preset.id);
+  const sessionHeadingActive=sessionSection&&!sessionShortcutActive;
+  const presetHeadingActive=presetSection&&!presetShortcutActive;
   return <div className={styles.layout} data-collapsed={collapsed?'true':'false'}>
+    <a className={styles.skipLink} href="#main-content">跳转到主要内容</a>
     <button className={styles.mobileOpen} aria-label="打开导航" onClick={()=>setMobileOpen(true)}><Menu size={20}/></button>
     <button className={styles.mobileShade} data-open={mobileOpen} disabled={!mobileOpen} aria-hidden={!mobileOpen} aria-label="关闭导航遮罩" onClick={()=>setMobileOpen(false)}/>
     <aside className={[styles.sidebarWrap,mobileOpen?styles.mobileVisible:''].join(' ')}>
@@ -53,24 +61,24 @@ export function AppShell(){
         </nav>
         <div className={styles.sidebarData}>
           <section className={styles.dataSection} aria-labelledby="sessions-heading">
-            <h2 id="sessions-heading" className={styles.sectionTitle}><NavLink to="/sessions" title={labelsHidden?'会话列表':undefined} aria-label="会话列表" className={({isActive})=>[styles.navItem,isActive?styles.navSelected:''].join(' ')}><MessageCircle size={20} strokeWidth={1.8} aria-hidden="true"/><span className={styles.navLabel} aria-hidden={labelsHidden}>会话列表</span></NavLink></h2>
+            <h2 id="sessions-heading" className={styles.sectionTitle}><Link to="/sessions" title={labelsHidden?'会话列表':undefined} aria-label="会话列表" aria-current={sessionHeadingActive?(location.pathname==='/sessions'?'page':'location'):undefined} className={[styles.navItem,sessionHeadingActive?styles.navSelected:''].join(' ')}><MessageCircle size={20} strokeWidth={1.8} aria-hidden="true"/><span className={styles.navLabel} aria-hidden={labelsHidden}>会话列表</span></Link></h2>
             <div className={styles.shortcuts} inert={labelsHidden} aria-hidden={labelsHidden}>
-            <button className={styles.sessionRow} onClick={()=>nav('/sessions/changan')}>
+            <button className={styles.sessionRow} aria-current={sessionShortcutActive&&location.pathname==='/sessions/changan'?'page':undefined} onClick={()=>nav('/sessions/changan')}>
               <img src="/covers/changan.webp" alt=""/>
               <span className={styles.rowText}><strong>长安风云</strong><small>初入长安</small></span>
             </button>
-            <button className={styles.sessionRow} onClick={()=>nav('/sessions/neon')}>
+            <button className={styles.sessionRow} aria-current={sessionShortcutActive&&location.pathname==='/sessions/neon'?'page':undefined} onClick={()=>nav('/sessions/neon')}>
               <img src="/covers/neon.webp" alt=""/>
               <span className={styles.rowText}><strong>霓虹之城</strong><small>雨夜重逢</small></span>
             </button>
             </div>
           </section>
           <section className={styles.dataSection} aria-labelledby="presets-heading">
-            <h2 id="presets-heading" className={styles.sectionTitle}><NavLink to="/presets" title={labelsHidden?'预设列表':undefined} aria-label="预设列表" className={({isActive})=>[styles.navItem,isActive?styles.navSelected:''].join(' ')}><Layers3 size={20} strokeWidth={1.8} aria-hidden="true"/><span className={styles.navLabel} aria-hidden={labelsHidden}>预设列表</span></NavLink></h2>
+            <h2 id="presets-heading" className={styles.sectionTitle}><Link to="/presets" title={labelsHidden?'预设列表':undefined} aria-label="预设列表" aria-current={presetHeadingActive?(location.pathname==='/presets'?'page':'location'):undefined} className={[styles.navItem,presetHeadingActive?styles.navSelected:''].join(' ')}><Layers3 size={20} strokeWidth={1.8} aria-hidden="true"/><span className={styles.navLabel} aria-hidden={labelsHidden}>预设列表</span></Link></h2>
             <div className={styles.shortcuts} inert={labelsHidden} aria-hidden={labelsHidden}>
-            {presetShortcuts.map(preset=><NavLink key={preset.id} to={'/presets/'+preset.id} data-preset-shortcut={preset.id} className={styles.presetRow}>
+            {presetShortcuts.map(preset=><Link key={preset.id} to={'/presets/'+preset.id} data-preset-shortcut={preset.id} aria-current={presetShortcutActive&&location.pathname==='/presets/'+preset.id?'page':undefined} className={styles.presetRow}>
               <span className={styles.presetName}>{preset.name || '未命名预设'}</span>{preset.id===defaultPresetId&&<span className={styles.defaultPill}>默认</span>}
-            </NavLink>)}
+            </Link>)}
             </div>
           </section>
         </div>
@@ -96,7 +104,7 @@ export function AppShell(){
         </div>
       </div>
     </aside>
-    <main className={styles.main} id="main-content"><Outlet/></main>
+    <main className={styles.main} id="main-content" tabIndex={-1}><Outlet/></main>
     {showSettings&&<Modal title="外观设置" onClose={closeSettings}>
       <p>这里用于验证 SillyRealms 新平台的设置弹窗和主题交互，不会修改现有 SR 配置。</p>
       <div className={styles.settingRow}><span>当前主题</span><button onClick={toggleTheme}>{theme==='dark'?'深色':'浅色'} · 点击切换</button></div>

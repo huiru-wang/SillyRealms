@@ -1,7 +1,7 @@
 :root{
   --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
   --space-5:20px; --space-6:24px; --space-8:32px; --space-10:40px;
-  --size-sidebar-expanded:280px; --size-sidebar-collapsed:64px;
+  --size-sidebar-expanded:248px; --size-sidebar-collapsed:64px;
   --font-ui:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
   --font-10:10px; --font-11:11px; --font-12:12px; --font-13:13px;
   --font-14:14px; --font-16:16px; --font-20:20px; --font-28:28px;

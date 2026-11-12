@@ -1,20 +1,17 @@
 .page{
   container-name:preset-workspace;container-type:inline-size;
   height:100dvh;min-width:0;display:flex;flex-direction:column;
-  padding:52px 34px 24px;overflow:hidden;
+  --page-inset:34px;
+  padding:92px var(--page-inset) 24px;overflow:hidden;
+  transition:padding-left var(--motion-layout) var(--ease-layout),padding-right var(--motion-layout) var(--ease-layout);
 }
-.pageHeader{display:flex;align-items:baseline;gap:12px;min-height:42px;margin-bottom:22px;flex-shrink:0}
-.pageHeader h1{font-size:28px;line-height:1.2;font-weight:560;letter-spacing:-.04em;margin:0}
+:global([data-collapsed="true"]) .page{--page-inset:68px}
+.pageHeader{display:flex;align-items:center;justify-content:space-between;gap:20px;min-height:49px;margin-bottom:44px;flex-shrink:0}
+.pageIdentity{display:flex;align-items:baseline;gap:12px;min-width:0}
+.pageHeader h1{font-size:29px;line-height:1.16;font-weight:560;letter-spacing:-.045em;margin:0}
 .pageCount{font-size:12px;color:var(--text-muted)}
 .workspace{display:grid;grid-template-columns:260px minmax(0,1fr);gap:30px;min-height:0;flex:1}
 .library{min-width:0;min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--stroke);padding-right:20px}
-.libraryTools{display:flex;align-items:center;gap:8px;flex-shrink:0;margin-bottom:14px}
-.search{display:flex;align-items:center;gap:8px;min-width:0;flex:1;height:40px;padding:0 11px;border:1px solid var(--stroke);border-radius:var(--radius-sm);color:var(--text-muted);background:var(--sidebar-bg)}
-.search:focus-within{border-color:var(--focus)}
-.search input{width:100%;min-width:0;outline:0!important;border:0;background:transparent;color:var(--text);font:inherit;font-size:12px}
-.search input::placeholder{color:var(--text-muted)}
-.search>svg{flex-shrink:0}
-.search button{display:grid;place-items:center;flex-shrink:0;min-width:22px;height:30px}
 .iconButton{width:40px;height:40px;display:grid;place-items:center;flex-shrink:0;border-radius:var(--radius-sm);color:var(--text-secondary);transition:background var(--motion-fast)}
 .presetList{flex:1;min-height:0;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-width:thin;scrollbar-color:var(--stroke-strong) transparent;padding:3px 3px 24px}
 .presetItem{display:flex;flex-direction:column;justify-content:center;gap:7px;width:100%;height:72px;margin-bottom:6px;padding:12px 13px;text-align:left;border:1px solid transparent;border-radius:var(--radius-md);transition:background var(--motion-fast),border-color var(--motion-fast)}
@@ -146,21 +143,28 @@
  .page[data-detail="false"] .editor{display:none}
  .page[data-detail="true"] .library{display:none}
  .listBack{display:flex;align-items:center;gap:6px;min-height:40px;color:var(--text-muted);font-size:12px;flex-shrink:0;padding:0 4px}
- .editorIdentity{display:none}
- .editorHeader{gap:8px}
+ .editorHeader{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:'back actions' 'identity identity';gap:4px 8px}
+ .listBack{grid-area:back;justify-self:start}
+ .editorIdentity{grid-area:identity;display:flex;flex-direction:row;align-items:center;gap:8px;min-width:0;padding:2px 4px 4px}
+ .editorActions{grid-area:actions}
  .editorContent{padding-right:3px}
  .presetItem{height:76px;padding:12px 15px}
  .nodeMain{flex-direction:row;align-items:center;justify-content:flex-start;gap:10px}
 }
-@media(max-width:1340px) and (min-width:761px){.page{padding:44px 28px 22px}}
+@media(max-width:1340px) and (min-width:1081px){
+ .page{--page-inset:28px}
+ :global([data-collapsed="true"]) .page{--page-inset:50px}
+}
+@media(max-width:1080px){
+ .page,:global([data-collapsed="true"]) .page{--page-inset:25px;padding-top:68px}
+}
 @media(max-width:760px){
- .page{padding:23px 16px 16px}
- .pageHeader{padding-left:52px;min-height:40px;margin-bottom:24px}
- .pageHeader h1{font-size:24px}
- .libraryTools{margin-bottom:12px}
+ .page,:global([data-collapsed="true"]) .page{--page-inset:16px;padding-top:23px;padding-bottom:16px}
+ .pageHeader{padding-left:50px;min-height:37px;margin-bottom:27px;gap:8px}
+ .pageHeader h1{font-size:23px}
+ .pageHeader .createButton{min-height:44px;padding:0 11px;font-size:13px}
+ .page[data-detail="true"] .createButton{visibility:hidden}
  .iconButton{width:44px;height:44px}
- .search{height:44px}
- .search input{font-size:13px}
  .editorHeader{min-height:51px;padding-bottom:10px}
  .editorActions>button{min-height:40px}
  .editorContent{padding-top:22px}

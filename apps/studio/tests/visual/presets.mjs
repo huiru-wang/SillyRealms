@@ -241,11 +241,7 @@ export async function checkPresets({send,evaluate,until,viewport,click,screensho
   assert(await evaluate('document.activeElement===document.querySelector(\'button[aria-label="更多预设操作"]\')'),'Discard changes should return focus to the preset menu trigger');
   assert(await evaluate('document.querySelector(\'button[aria-label="保存预设"]\').disabled'),'Restoring a saved snapshot should clear dirty state');
 
-  // Search has a real empty result and can recover without losing the selection/draft.
-  await fill('input[aria-label="搜索预设"]','没有匹配的预设-回归');
-  assert(await evaluate('document.querySelectorAll("[data-preset-item]").length')===0,'Preset search should filter the actual list');
-  await pointerClick('button[aria-label="清空搜索"]');
-  assert(await evaluate('document.querySelectorAll("[data-preset-item]").length')===7,'Clearing search should restore all presets');
+  assert(await evaluate('!document.querySelector(\'input[aria-label="搜索预设"]\')'),'Preset library should not show a search field');
   await pointerClick('label:has(input[type="radio"][value="compact"])');
   assert(await evaluate('document.querySelector(\'input[type="radio"][value="compact"]\').checked'),'Context strategy control did not select compact');
 
@@ -454,6 +450,11 @@ export async function checkPresets({send,evaluate,until,viewport,click,screensho
     assert(narrow.content&&narrow.content.width>=Math.min(300,width-48)&&narrow.content.right<=width+1&&narrow.pageWidth<=width,width+': editor should use the available pane without horizontal overflow: '+json(narrow));
     const back=await point('button[aria-label="返回预设列表"]');
     assert(back.x>0,width+': narrow detail requires a visible list return control');
+    assert(await run(function(){
+      const title=document.querySelector('section[aria-label="预设配置"] h2');
+      const rect=title?.getBoundingClientRect();
+      return !!rect&&rect.width>0&&rect.height>0&&rect.left>=0&&rect.right<=innerWidth+1;
+    }),width+': narrow detail should show the current preset name');
     await screenshot('presets-editor-'+width);
     await pointerClick('button[aria-label="编辑叙事风格"]');
     await until('!!document.querySelector("[role=dialog] textarea")');

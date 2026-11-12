@@ -1,0 +1,96 @@
+export async function checkSessions({send,evaluate,until,viewport,click,screenshot,delay,assert,base,hover,bg}){
+  async function open(path){
+    const previous=await evaluate('performance.timeOrigin');
+    await send('Page.navigate',{url:base+path+'?sidebar=expanded&theme=dark'});
+    await until('performance.timeOrigin!=='+previous+' && document.readyState==="complete" && location.pathname==='+JSON.stringify(path)+' && !!document.querySelector("main h1")');
+    await delay(250);
+  }
+  async function checkViewport(width,height,mobile){
+    await viewport(width,height,mobile);
+    for(const name of ['changan','neon']){
+      await open('/sessions/'+name);
+      assert(await evaluate('document.querySelector("[data-session-detail]")?.dataset.sessionDetail')===name,'Session route failed: '+name);
+      const geometry=await evaluate(`(()=>{const d=document.querySelector('[data-session-detail]'),r=d.getBoundingClientRect(),t=d.querySelector('textarea').getBoundingClientRect(),h=d.querySelector('header').getBoundingClientRect();return {page:document.documentElement.scrollWidth,width:innerWidth,right:r.right,bottom:r.bottom,textarea:t.bottom,header:h.bottom}})()`);
+      assert(geometry.page<=width+1&&geometry.right<=width+1&&geometry.bottom<=height+1&&geometry.textarea<=height,`${width} ${name} overflow: `+JSON.stringify(geometry));
+      await screenshot('session-'+name+'-'+width);
+    }
+  }
+  await checkViewport(1536,864,false);
+  await open('/sessions');
+  await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+  await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+  assert(await evaluate('document.activeElement?.textContent')==='跳转到主要内容','Skip link should be the first keyboard stop');
+  assert(await evaluate('document.querySelectorAll("main a[href^=\\"/sessions/\\"]").length')===2,'Session list should have two samples');
+  await screenshot('sessions-list-1536');
+  await click('main a[href="/sessions/changan"]');
+  await until('!!document.querySelector("[data-session-detail=changan]")');
+  const sessionShortcut='aside button:has(img[src="/covers/changan.webp"])';
+  assert(await evaluate('document.querySelector('+JSON.stringify(sessionShortcut)+').getAttribute("aria-current")')==='page','Current session shortcut should be selected');
+  assert(await evaluate('document.querySelector("#sessions-heading a").hasAttribute("aria-current")')===false,'Session heading should not also be selected');
+  const selectedBackground=await bg(sessionShortcut);
+  await hover(sessionShortcut);
+  assert(await bg(sessionShortcut)===selectedBackground,'Selected session should keep its background on hover');
+  await click('[aria-label="收起侧边栏"]');
+  assert(await evaluate('document.querySelector("#sessions-heading a").getAttribute("aria-current")')==='location','Collapsed navigation should represent the current session');
+  assert(await evaluate('document.querySelector('+JSON.stringify(sessionShortcut)+').hasAttribute("aria-current")')===false,'Hidden shortcut should not retain current state');
+  await click('[aria-label="展开侧边栏"]');
+  assert(await evaluate('document.querySelector('+JSON.stringify(sessionShortcut)+').getAttribute("aria-current")')==='page','Expanding should restore the shortcut selection');
+  await evaluate('document.querySelector(\'button[aria-label="查看上下文占比示意"]\').focus()');
+  await click('button[aria-label="查看上下文占比示意"]');
+  assert(await evaluate('!!document.querySelector("[role=dialog]") && document.getElementById("root").inert'),'Context dialog must be accessible and modal');
+  await screenshot('session-context-1536');
+  await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  await until('!document.querySelector("[role=dialog]")');
+  assert(await evaluate('document.activeElement?.getAttribute("aria-label")')==='查看上下文占比示意','Closing context dialog should restore focus');
+  await click('button[aria-label="会话设置"]');
+  assert(await evaluate('!!document.querySelector("[role=dialog]")'),'Session settings should open');
+  await click('[role=dialog] button[aria-label="关闭弹窗"]');
+  await until('!document.querySelector("[role=dialog]")');
+  await evaluate(`(()=>{const el=document.querySelector('textarea');const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;setter.call(el,'保留的草稿');el.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await until('document.querySelector("textarea").value==="保留的草稿"');
+  await click('button:has(svg.lucide-chevron-down)');
+  assert(await evaluate('!document.querySelector("textarea")'),'Composer should collapse');
+  await click('button:has(svg.lucide-chevron-up)');
+  assert(await evaluate('document.querySelector("textarea").value')==='保留的草稿','Collapsing composer lost draft');
+  await click('aside button:has(img[src="/covers/neon.webp"])');
+  await until('!!document.querySelector("[data-session-detail=neon]")');
+  await click('aside button:has(img[src="/covers/changan.webp"])');
+  await until('!!document.querySelector("[data-session-detail=changan]") && document.querySelector("textarea").value==="保留的草稿"');
+  await click('button[aria-label="发送消息到本地预览"]');
+  assert(await evaluate('document.querySelector("[role=status]")?.textContent.includes("本地预览") && document.querySelector("textarea").value===""'),'Local preview must clearly report non-persistent send');
+  await open('/presets');
+  assert(await evaluate('document.querySelector("#presets-heading a").getAttribute("aria-current")')==='page','Preset list should select its heading');
+  await click('aside [data-preset-shortcut]');
+  assert(await evaluate('!!document.querySelector("aside [data-preset-shortcut][aria-current=page]")&&!document.querySelector("#presets-heading a").hasAttribute("aria-current")'),'Preset detail should select only its shortcut');
+  const presetSelected='aside [data-preset-shortcut][aria-current=page]';
+  const presetBackground=await bg(presetSelected);
+  await hover(presetSelected);
+  assert(await bg(presetSelected)===presetBackground,'Selected preset should keep its background on hover');
+  const {root}=await send('DOM.getDocument',{depth:1});
+  const {nodeId}=await send('DOM.querySelector',{nodeId:root.nodeId,selector:presetSelected});
+  await send('CSS.forcePseudoState',{nodeId,forcedPseudoClasses:['focus-visible']});
+  assert(await evaluate('getComputedStyle(document.querySelector('+JSON.stringify(presetSelected)+')).outlineOffset')==='-2px','Shortcut focus outline should fit inside its container');
+  await send('CSS.forcePseudoState',{nodeId,forcedPseudoClasses:[]});
+  await evaluate('document.documentElement.dataset.theme="light"');
+  await screenshot('sidebar-preset-selected-light-1536');
+  await open('/presets/roleplay');
+  assert(await evaluate('document.querySelector("#presets-heading a").getAttribute("aria-current")')==='location','Unlisted preset should select its parent location');
+  await open('/sessions/missing');
+  assert(await evaluate('document.querySelector("#sessions-heading a").getAttribute("aria-current")')==='location','Unlisted session should select its parent location');
+  for(const [width,height,mobile] of [[1280,800,false],[768,1024,false],[390,844,true],[375,812,true],[320,700,true]])await checkViewport(width,height,mobile);
+  assert(await evaluate(`['button[aria-label="查看上下文占比示意"]','button[aria-label="发送消息到本地预览"]'].every(selector=>document.querySelector(selector).getBoundingClientRect().height>=44)`),'Mobile context and send controls should be at least 44px tall');
+  assert(await evaluate(`(()=>{const e=[...document.querySelectorAll('span')].find(node=>node.textContent==='演示');return !!e&&parseFloat(getComputedStyle(e).fontSize)>0&&e.getBoundingClientRect().right<=innerWidth})()`),'Mobile demo status must remain visible');
+  await viewport(390,844,true);
+  const previous=await evaluate('performance.timeOrigin');
+  await send('Page.navigate',{url:base+'/sessions/changan?sidebar=collapsed&theme=dark'});
+  await until('performance.timeOrigin!=='+previous+' && !!document.querySelector("[data-session-detail=changan]")');
+  await click('[aria-label="打开导航"]');
+  assert(await evaluate('document.querySelector('+JSON.stringify(sessionShortcut)+').getAttribute("aria-current")')==='page','Mobile drawer should show the current shortcut even with collapsed desktop preference');
+  assert(await evaluate('document.querySelector("#sessions-heading a").hasAttribute("aria-current")')===false,'Mobile drawer should not select both heading and shortcut');
+  await screenshot('sidebar-session-selected-mobile-390');
+  await click('[aria-label="关闭导航"]');
+  await evaluate('document.documentElement.dataset.theme="light"');
+  await screenshot('session-changan-light-390');
+  console.log('PASS: session list, both visual samples, context/settings, local draft and preview, responsive layout.');
+}
