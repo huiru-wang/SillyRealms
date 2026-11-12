@@ -1,8 +1,10 @@
 # 单次叙事与状态尾块：技术实施契约
 
-> 状态：已确定的目标契约，待实施（2026-11-11）。本次只更新文档；现有运行时代码尚未切换，未清理真实会话。
+> 状态：历史 v1 技术契约（2026-11-11），待实施内容已由 [单次叙事扩展实施方案 v2](../../plan/sr-narrative-extensions-v2.md) 更新。当前实现、任务边界与验收以 v2 为准。
 >
-> 规范详情与验收以 [实施方案](../../plan/sr-narrative-state-tail-protocol-v1.md) 为准；架构边界见 [持久决策](../decisions/narrative-state-tail-protocol.md)。
+> 下文仅保留旧实现映射，不是当前执行清单。v2 改用嵌套扩展尾块，新增行动建议和动态开关，并采用非破坏性兼容迁移；下文的会话清理、预设内容删除和专用输入删除不自动纳入 v2。本次仅更新文档，未切换运行时或修改真实数据库。
+>
+> 历史参考：[v1 方案](../../plan/sr-narrative-state-tail-protocol-v1.md)、[v1 决策](../decisions/narrative-state-tail-protocol.md)。
 
 ## 1. 当前实现与目标路径
 

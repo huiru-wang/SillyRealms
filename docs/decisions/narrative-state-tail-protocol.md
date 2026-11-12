@@ -1,8 +1,10 @@
 # Narrative generation with a state tail
 
-Status: approved design, pending implementation (2026-11-11). This documentation revision does not execute migrations or delete sessions.
+Status: historical v1 decision (2026-11-11), superseded for narrative extensions and rollout scope on 2026-11-12 by the [single-call narrative extensions v2 plan](../../plan/sr-narrative-extensions-v2.md). Runtime implementation remains pending.
 
-Detailed contract: [implementation plan](../../plan/sr-narrative-state-tail-protocol-v1.md). Implementation mapping: [narrative runtime](../technical/narrative-state-tail-runtime.md).
+The body below records the earlier standalone state-tail design, not the current execution checklist. The current plan uses an sr_extensions envelope, two optional capabilities, short non-blocking update reasons and a non-destructive migration. Its rollout does not inherit the session cleanup, preset-content deletion or sr_instruction removal described below. This documentation change executes no migration.
+
+Historical references: [v1 plan](../../plan/sr-narrative-state-tail-protocol-v1.md), [v1 runtime mapping](../technical/narrative-state-tail-runtime.md).
 
 ## Decision
 
