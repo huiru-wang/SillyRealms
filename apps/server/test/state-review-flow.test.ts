@@ -1,9 +1,10 @@
+import { fakeMeasurement } from './fixtures/fake-gateway.js';
 import {expect,it} from 'vitest';
 import type {Api,AssistantMessageEvent,Model,ToolChoice} from '@earendil-works/pi-ai';
-import type {ModelGateway} from '../src/agent/model/pi-gateway.js';
+import type {ModelGateway} from '../src/runtime/model/pi-gateway.js';
 import {openDatabase} from '../src/infrastructure/database/database.js';
 import {createApp} from '../src/app.js';
-import {AgentRuntime} from '../src/agent/runtime/agent-runtime.js';
+import {SRRuntime} from '../src/runtime/sr-runtime.js';
 import {fakeCredentials,seedWorld} from './fixtures/db-seed.js';
 
 const model:Model<Api>={id:'fake',name:'fake',provider:'fake',api:'openai-completions',baseUrl:'http://localhost',input:['text'],reasoning:false,contextWindow:32768,maxTokens:4096,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}};
@@ -13,7 +14,7 @@ const post=(body:unknown)=>({method:'POST',headers:{'content-type':'application/
 async function exercise(stateEnabled:boolean, updates:Array<{path:string,value:unknown}>,omitTool=false,override?:unknown[], later?:unknown[][]) {
   const db=openDatabase(':memory:');
   const calls:Array<{choice?:ToolChoice,tools:string[],payload:string}>=[];
-  const gateway:ModelGateway={resolve:()=>model,toolVerified:()=>true,stream:(_m,context,opts)=>({
+  const gateway:ModelGateway={resolve:()=>model,measure:fakeMeasurement,supportsDirect:()=>true,toolVerified:()=>true,stream:(_m,context,opts)=>({
     async *[Symbol.asyncIterator]() {
       const tools=context.tools?.map(t=>t.name)??[];
       calls.push({choice:opts.toolChoice,tools,payload:JSON.stringify(context.messages)});
@@ -37,7 +38,9 @@ async function exercise(stateEnabled:boolean, updates:Array<{path:string,value:u
     expect(response.status).toBe(201);
     const json=await response.json() as {data:{item:{id:string,tipEntryId:string}}};
     const session=json.data.item;
-    const runtime=new AgentRuntime(db,fakeCredentials,gateway);
+    const modeChanged=await app.request('/api/v1/sessions/'+session.id,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({executionMode:'agent'})});
+    expect(modeChanged.status).toBe(200);
+    const runtime=new SRRuntime(db,fakeCredentials,gateway);
     const events:Array<{type:string;payload:Record<string,unknown>}>=[];
     runtime.onEvent((_id,type,payload)=>events.push({type,payload}));
     const {runId,stream}=await runtime.prepare(session.id,'继续','req-1',session.tipEntryId);

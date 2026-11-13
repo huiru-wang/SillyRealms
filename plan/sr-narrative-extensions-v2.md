@@ -1,6 +1,6 @@
 # SR 单次叙事扩展实施方案 v2
 
-> 日期：2026-11-12。状态：实施方案，运行时代码待实施。
+> 日期：2026-11-12；实施范围更新：2026-11-13。SRRuntime 架构 v2 已实现本方案的 Direct 尾块、状态/建议、配置、迁移与恢复部分。角色提及匹配/Hook 等独立产品任务不属于本次架构范围，未标记整份方案完成。
 >
 > 源码核对基线：`main@c435f3b`。本方案以实际调用链、状态校验、数据库及所有对外消费者为依据，不把已有设计文档当作已实现行为。
 >
@@ -403,8 +403,8 @@ apps/server/src/agent/narrative/
 
 协调流程：
 
-1. AgentRuntime 保持已有锁、幂等、tip 和取消职责，冻结配置。
-2. ContextManager 准备权威状态和上下文；压缩机制保持独立。
+1. SRRuntime 保持已有锁、幂等、tip 和取消职责，冻结 RuntimeConfig，由 DirectRunner 执行单次叙事。
+2. 共享 ContextManager 准备权威状态和上下文；Direct/Agent 均在当前完整请求测量后执行有界摘要闭环，详细政策见 `sr-runtime-context-architecture-v2.md`。
 3. RunStore 建立本轮记录；叙事 Runner 调用 ModelClient.events 一次，不传工具。
 4. 正文经过 splitter，只持久化和发送确认属于故事的增量。
 5. 识别尾块后只接收隐藏内容，不向前端继续发送原始 token；可发 run.phase=extensions。
@@ -627,7 +627,7 @@ SDK 导出纯函数和 `useCharacterMentions` 只读 hook，官方 WorldStory �
 
 ## 15. 实施任务、依赖与文件边界
 
-全部任务当前未执行。由当前单一 Agent 按下列顺序实施小批次变更，统一整合公共文件并执行验证与复查，不委派子代理。
+下表保留本方案完整任务范围；已实现的 Runtime 子集以 `sr-runtime-context-architecture-v2-tasks.md` 的逐项记录为准，未完成独立角色提及任务。由当前单一 Agent 按下列顺序实施小批次变更，统一整合公共文件并执行验证与复查，不委派子代理。
 
 | 任务 | 依赖 | 工作与主要文件 | 完成条件 |
 |---|---|---|---|
@@ -746,3 +746,9 @@ pnpm test:browser
 - 旧 `sr_instruction` 删除及其他独立清理仍需独立实施范围；不能因旧文档仍有历史段落就混入本次任务。
 - 将来新增能力时，需要增加受控 ID、schema、prompt、依赖/失败策略、持久化投影和消费者测试；外层分帧、单次调用和最终提交门槛不必重写。
 - 若将来某能力必须在正文生成前执行、需要实时外部数据或必须反馈模型再生成，它不适合直接塞入本期后置尾块，应另作调用预算与生命周期决策。
+
+## 2026-11-13 Runtime 架构 v2 实施映射
+
+当前目录为 `apps/server/src/runtime/`：`sr-runtime.ts` 统一生命周期，`runners/direct-runner.ts` 执行本协议，`runners/agent-runner.ts` 保留工具循环，`narrative/` 为纯解析/校验模块，`context/` 与 `model/` 共用测量和摘要策略，`persistence/` 共用存储与 Usage。前文 agent 路径表是提案时的基线，不是当前源码路径。
+
+生产测量首期只支持官方 DeepSeek V4.1 Flash 文本适配；实际序列化 BPE 加预留为 estimated，未知路径明确失败，不自动回退上轮 Usage。已通过离线实际 payload 顺序与无工具字段测试；未进行付费端点验证。完整实现/数据保护边界见 [Runtime 状态](../docs/technical/runtime-context-v2.md) 与 [API/SDK/迁移契约](../docs/data-formats/runtime-v2-contract.md)。

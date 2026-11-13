@@ -6,6 +6,8 @@ import { pageByUpdated } from '../common/pagination.js';
 import { readAncestors } from '../domain/session/ancestors.js';
 import { historyRuns } from '../domain/session/history-runs.js';
 import { ok, failure } from '../common/http-response.js';
+import { effectiveCapabilities, capabilityOverridesSchema } from '../runtime/config.js';
+import { publicRunResult } from '../domain/session/run-result.js';
 import { ErrorCodes } from '../common/error-codes.js';
 import { initialState, applyOpening, validateSnapshot, decodeMessageState } from '../domain/state/state.js';
 
@@ -15,8 +17,49 @@ import { readWorld } from '../repositories/world-repository.js';
 import { MacKeychainStore, type CredentialStore } from '../infrastructure/credentials/store.js';
 
 const create = z.object({ worldId: z.string().min(1), openingId: z.string().min(1), userCharacterId: z.string().min(1), title: z.string().optional() }).strict();
-export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = () => false, removeSessions: <T>(ids:string[], remove:()=>T) => Promise<T> = async (_ids, remove) => remove(), worldDeleting:(id:string)=>boolean = () => false, onUpdated:(id:string)=>void = () => {}, credentials: CredentialStore = new MacKeychainStore()): Hono {
+export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = () => false, removeSessions: <T>(ids:string[], remove:()=>T) => Promise<T> = async (_ids, remove) => remove(), worldDeleting:(id:string)=>boolean = () => false, onUpdated:(id:string)=>void = () => {}, credentials: CredentialStore = new MacKeychainStore(), activeRun: (id:string)=>Record<string, any>|null = () => null): Hono {
   const app = new Hono();
+  const capabilityView = (id: string) => {
+    const row = db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
+    if (!row) return null;
+    const presetRow = db.prepare('SELECT config_json FROM presets WHERE id=?').get(String(row.preset_id));
+    const preset = presetRow ? JSON.parse(String(presetRow.config_json)) : {};
+    const overrides = capabilityOverridesSchema.parse(JSON.parse(String(row.capability_overrides_json)));
+    const effective = effectiveCapabilities(preset.capabilities, overrides);
+    const source = (name: 'state_update' | 'action_suggestions') => Object.hasOwn(overrides,name)
+      ? 'session' : Object.hasOwn(preset.capabilities?.[name] ?? {},'enabled') ? 'preset' : 'platform';
+    return { revision:Number(row.capability_revision), overrides,
+      effective: { state_update:{enabled:effective.state_update.enabled},
+        action_suggestions:{enabled:effective.action_suggestions.enabled,count:effective.action_suggestions.count} },
+      sources:{state_update:source('state_update'),action_suggestions:source('action_suggestions')},
+      availability:{applicable:row.execution_mode==='direct',reason:row.execution_mode==='direct'?null:'agent_mode'},
+      activeRun:activeRun(id),
+    };
+  };
+  app.get('/:id/capabilities', c => {
+    const view=capabilityView(c.req.param('id'));
+    return view?c.json(view):c.json(failure(ErrorCodes.SESSION_NOT_FOUND),404);
+  });
+  app.patch('/:id/capabilities', async c => {
+    const parsed=z.object({
+      expectedRevision:z.number().int().nonnegative(),
+      overrides:z.object({state_update:z.boolean().nullable().optional(),action_suggestions:z.boolean().nullable().optional()}).strict(),
+    }).strict().safeParse(await c.req.json().catch(()=>null));
+    if(!parsed.success)return c.json(failure(ErrorCodes.INVALID_CAPABILITY_CONFIG),422);
+    const id=c.req.param('id');
+    return transaction(db,()=>{
+      const row=db.prepare('SELECT capability_revision,capability_overrides_json FROM sessions WHERE id=?').get(id);
+      if(!row)return c.json(failure(ErrorCodes.SESSION_NOT_FOUND),404);
+      if(Number(row.capability_revision)!==parsed.data.expectedRevision)return c.json(failure(ErrorCodes.CAPABILITY_REVISION_CONFLICT),409);
+      const overrides=JSON.parse(String(row.capability_overrides_json));
+      for(const [key,value] of Object.entries(parsed.data.overrides)) {
+        if(value===null)delete overrides[key];else overrides[key]=value;
+      }
+      db.prepare('UPDATE sessions SET capability_overrides_json=?,capability_revision=capability_revision+1,updated_at=? WHERE id=?')
+        .run(JSON.stringify(overrides),Date.now(),id);
+      return c.json(capabilityView(id));
+    });
+  });
   app.get('/:id/runs', c => {
     const id=c.req.param('id');
     const row=db.prepare('SELECT tip_entry_id FROM sessions WHERE id=?').get(id);
@@ -57,10 +100,10 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
         const messageState = applyOpening(world.state, initialState(world.state, 'message'), opening.initial_state);
         const id = randomUUID(), entryId = randomUUID(), runId = randomUUID(), now = Date.now();
         const message = { role: 'assistant', content: [{ type: 'text', text: opening.content }], timestamp: now };
-        db.prepare('INSERT INTO sessions(id,world_id,preset_id,api_model_config_id,user_character_id,tip_entry_id,title,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
-          .run(id,input.worldId,presetId,modelId,input.userCharacterId,entryId,input.title??null,JSON.stringify(sessionState),now,now);
+        db.prepare('INSERT INTO sessions(id,world_id,preset_id,api_model_config_id,user_character_id,tip_entry_id,title,state,created_at,updated_at,execution_mode) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+          .run(id,input.worldId,presetId,modelId,input.userCharacterId,entryId,input.title??null,JSON.stringify(sessionState),now,now,'direct');
         db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,state,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(entryId, id, null, runId, 1, 'message', 'assistant', 0, now, JSON.stringify({ message }), JSON.stringify(Object.entries(messageState).map(([key, value]) => ({ key, value }))), JSON.stringify({ run: { status: 'completed' }, origin: 'opening' }));
-        return c.json({item:{id,worldId:input.worldId,presetId,apiModelConfigId:modelId,userCharacterId:input.userCharacterId,tipEntryId:entryId,title:input.title??null}},201);
+        return c.json({item:{id,worldId:input.worldId,presetId,apiModelConfigId:modelId,userCharacterId:input.userCharacterId,executionMode:'direct',tipEntryId:entryId,title:input.title??null}},201);
       });
     } catch { return c.json(failure(ErrorCodes.INVALID_SESSION),422); }
   });
@@ -69,6 +112,7 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
     try {
       const patch = z.object({
         title:z.string().nullable().optional(),
+        executionMode:z.enum(['direct','agent']).optional(),
         presetId:z.string().min(1).optional(),
         apiModelConfigId:z.string().min(1).optional(),
         userCharacterId:z.string().min(1).optional(),
@@ -88,9 +132,10 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
         if (!world || !readWorld(world).data.characters.some(v => v.id === patch.userCharacterId && v.player_selectable))
           return c.json(failure(ErrorCodes.INVALID_PLAYER_CHARACTER),422);
       }
+      if (busy(c.req.param('id'))) return c.json(failure(ErrorCodes.SESSION_BUSY),409);
       // Atomic update, never partially apply a model/preset pair.
-      db.prepare('UPDATE sessions SET title=?,preset_id=?,api_model_config_id=?,user_character_id=?,updated_at=? WHERE id=?')
-        .run(patch.title!==undefined?patch.title:row.title as string|null,presetId,modelId,patch.userCharacterId??String(row.user_character_id),Date.now(),String(row.id));
+      db.prepare('UPDATE sessions SET title=?,preset_id=?,api_model_config_id=?,user_character_id=?,execution_mode=?,updated_at=? WHERE id=?')
+        .run(patch.title!==undefined?patch.title:row.title as string|null,presetId,modelId,patch.userCharacterId??String(row.user_character_id),patch.executionMode??String(row.execution_mode),Date.now(),String(row.id));
       onUpdated(String(row.id));
       return c.json({ok:true});
     } catch { return c.json(failure(ErrorCodes.INVALID_SESSION),422); }
@@ -112,7 +157,7 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
     const groups = new Map<string, typeof rows>();
     for (const row of rows) { const key = String(row.run_id); const group = groups.get(key) ?? []; group.push(row); groups.set(key, group); }
     const selected = [...groups.entries()].map(([runId, entries]) => ({ runId, entries, start: Number(entries[0]?.seq) })).filter(g => g.start < before).sort((a,b) => b.start-a.start);
-    const runs = selected.slice(0, limit).map(group => ({ runId: group.runId, status: group.entries.map(e => JSON.parse(String(e.ext_data)).run?.status).find(Boolean) ?? 'completed', entries: group.entries.flatMap(entry => {
+    const runs = selected.slice(0, limit).map(group => ({ ...publicRunResult(group.entries.map(e=>JSON.parse(String(e.ext_data)).run).find(Boolean)??{}), runId: group.runId, status: publicRunResult(group.entries.map(e => JSON.parse(String(e.ext_data)).run).find(Boolean)??{status:'completed'}).status, entries: group.entries.flatMap(entry => {
       if (entry.type !== 'message' || !['user','assistant'].includes(String(entry.role))) return [];
       const ext = JSON.parse(String(entry.ext_data)); if (ext.nonNarrative) return [];
       const message = JSON.parse(String(entry.payload)).message;
@@ -152,9 +197,9 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
     } catch { return c.json(failure(ErrorCodes.SESSION_DELETE_FAILED),500); }
   });
   app.get('/:id', c => {
-    const row = db.prepare('SELECT id,world_id,preset_id,api_model_config_id,user_character_id,tip_entry_id,title,created_at,updated_at FROM sessions WHERE id=?').get(c.req.param('id'));
+    const row = db.prepare('SELECT id,world_id,preset_id,api_model_config_id,user_character_id,execution_mode,tip_entry_id,title,created_at,updated_at FROM sessions WHERE id=?').get(c.req.param('id'));
     if (!row) return c.json(failure(ErrorCodes.SESSION_NOT_FOUND),404);
-    return c.json({id:row.id,worldId:row.world_id,presetId:row.preset_id,apiModelConfigId:row.api_model_config_id,userCharacterId:row.user_character_id,tipEntryId:row.tip_entry_id,title:row.title,createdAt:row.created_at,updatedAt:row.updated_at});
+    return c.json({id:row.id,worldId:row.world_id,presetId:row.preset_id,apiModelConfigId:row.api_model_config_id,userCharacterId:row.user_character_id,executionMode:row.execution_mode,activeRun:activeRun(String(row.id)),tipEntryId:row.tip_entry_id,title:row.title,createdAt:row.created_at,updatedAt:row.updated_at});
   });
   app.get('/', c => {
     const worldId=c.req.query('worldId');

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import type { AgentRuntime } from '../agent/index.js';
+import type { SRRuntime } from '../runtime/index.js';
 import { readAncestors } from '../domain/session/ancestors.js';
 import { readWorld } from '../repositories/world-repository.js';
 import { decodeMessageState, validateSnapshot } from '../domain/state/state.js';
@@ -13,7 +13,7 @@ const update = z.object({path:z.string().min(1), scope:z.enum(['global','session
 const request = z.object({updates:z.array(update)}).strict();
 
 /** Process each update separately, preserving order and emitting only committed changes. */
-export function stateUpdateRoutes(db:DatabaseSync,runtime:AgentRuntime):Hono {
+export function stateUpdateRoutes(db:DatabaseSync,runtime:SRRuntime):Hono {
   const app=new Hono();
   app.patch('/:id/state',async c=>{
     const parsed=request.safeParse(await c.req.json().catch(()=>null));

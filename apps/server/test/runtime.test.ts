@@ -1,9 +1,10 @@
+import { fakeMeasurement } from './fixtures/fake-gateway.js';
 import { seedWorld, seedSession } from './fixtures/db-seed.js';
 import { expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/infrastructure/database/database.js';
 import type { CredentialStore } from '../src/infrastructure/credentials/store.js';
-import type { ModelGateway } from '../src/agent/model/pi-gateway.js';
+import type { ModelGateway } from '../src/runtime/model/pi-gateway.js';
 import type { Api, AssistantMessageEvent, Model } from '@earendil-works/pi-ai';
 
 const model:Model<Api> = { id:'fake',name:'fake',provider:'fake',api:'openai-completions',baseUrl:'http://localhost',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:32768,maxTokens:1024 };
@@ -23,7 +24,7 @@ function setup(gateway:ModelGateway) {
 
 it('V1 runs survive an event disconnect and lock all sessions in their world',async()=>{
  let release!:()=>void;let started!:()=>void;const ready=new Promise<void>(r=>{started=r;});const gate=new Promise<void>(r=>{release=r;});
- const gateway:ModelGateway={resolve:()=>model,toolVerified:()=>true,stream:()=>({async *[Symbol.asyncIterator](){yield {type:'text_delta',delta:'one',contentIndex:0,partial:{} as never} as AssistantMessageEvent;started();await gate;yield {type:'text_delta',delta:'two',contentIndex:0,partial:{} as never} as AssistantMessageEvent;yield {type:'done',reason:'stop',message:{role:'assistant',content:[{type:'text',text:'onetwo'}],api:'openai-completions',provider:'fake',model:'fake',usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:0}} as AssistantMessageEvent;}})};
+ const gateway:ModelGateway={resolve:()=>model,measure:fakeMeasurement,supportsDirect:()=>true,toolVerified:()=>true,stream:()=>({async *[Symbol.asyncIterator](){yield {type:'text_delta',delta:'one',contentIndex:0,partial:{} as never} as AssistantMessageEvent;started();await gate;yield {type:'text_delta',delta:'two',contentIndex:0,partial:{} as never} as AssistantMessageEvent;yield {type:'done',reason:'stop',message:{role:'assistant',content:[{type:'text',text:'onetwo'}],api:'openai-completions',provider:'fake',model:'fake',usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:0}} as AssistantMessageEvent;}})};
  const {db,app}=setup(gateway);const now=Date.now();seedSession(db,'other','world','preset','player','other-entry',null,'{}',now,now,'model-config');db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,state,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('other-entry','other',null,'other-open',1,'message','assistant',0,now,JSON.stringify({message:{role:'assistant',content:'opening'}}),'[]','{}');
  const event=await app.request('/api/v1/sessions/session/events');const reader=event.body!.getReader();
  const send=(sid:string,tip:string)=>app.request('/api/v1/sessions/'+sid+'/runs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:'go',requestId:crypto.randomUUID(),expectedTipEntryId:tip})});
@@ -36,7 +37,7 @@ it('V1 runs survive an event disconnect and lock all sessions in their world',as
 it('stops a Run while a continuation is waiting for the model',async()=>{
   let started!:()=>void;const ready=new Promise<void>(resolve=>{started=resolve;});
   let calls=0;
-  const gateway:ModelGateway={resolve:()=>model,toolVerified:()=>true,stream:(_m,_context,opts)=>({async *[Symbol.asyncIterator](){
+  const gateway:ModelGateway={resolve:()=>model,measure:fakeMeasurement,supportsDirect:()=>true,toolVerified:()=>true,stream:(_m,_context,opts)=>({async *[Symbol.asyncIterator](){
     calls++;
     if(calls===1){
       yield {type:'done',reason:'toolUse',message:{role:'assistant',content:[{type:'toolCall',id:'tool',name:'unknown',arguments:{}}],api:'openai-completions',provider:'fake',model:'fake',usage:{input:5,output:1,cacheRead:0,cacheWrite:0,totalTokens:6,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'toolUse',timestamp:Date.now()}} as AssistantMessageEvent;
@@ -47,8 +48,8 @@ it('stops a Run while a continuation is waiting for the model',async()=>{
   }})};
   const {db}=setup(gateway);
   try {
-    const {AgentRuntime}=await import('../src/agent/runtime/agent-runtime.js');
-    const runtime=new AgentRuntime(db,new MemoryCredentials(),gateway);
+    const {SRRuntime}=await import('../src/runtime/sr-runtime.js');
+    const runtime=new SRRuntime(db,new MemoryCredentials(),gateway);
     const {runId,stream}=await runtime.prepare('session','go',crypto.randomUUID(),'opening-entry');
     const reader=stream.getReader();const draining=(async()=>{while(!(await reader.read()).done){/* drain */}})();
     await ready;
@@ -65,7 +66,7 @@ it.each([
 ])('$label in SSE and persisted run status', async ({ thrown, expected, message }) => {
   const gateway: ModelGateway = {
     resolve: () => model,
-    toolVerified: () => true,
+    measure:fakeMeasurement,supportsDirect:()=>true,toolVerified: () => true,
     stream: () => ({ async *[Symbol.asyncIterator]() { throw thrown; } }),
   };
   const { db, app } = setup(gateway);
@@ -100,7 +101,7 @@ it.each([
 it('reports asynchronous preflight failures through the same SSE fields', async () => {
   const limited: Model<Api> = { ...model, maxTokens: 32 };
   const gateway: ModelGateway = {
-    resolve: () => limited, toolVerified: () => true,
+    resolve: () => limited, measure:fakeMeasurement,supportsDirect:()=>true,toolVerified: () => true,
     stream: () => ({ async *[Symbol.asyncIterator]() { throw Error('should not call model'); } }),
   };
   const { db, app } = setup(gateway);

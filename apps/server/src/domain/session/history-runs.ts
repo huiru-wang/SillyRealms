@@ -1,9 +1,10 @@
+import { publicRunResult } from './run-result.js';
 import { ErrorCodes } from '../../common/error-codes.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { readAncestors } from './ancestors.js';
 
 type Message = { id:string; role:'user'|'assistant'; text:string };
-type Run = { id:string; status:string; messages:Message[] };
+type Run = { id:string; status:string; messages:Message[] } & Record<string, any>;
 type Entry = Record<string, unknown>;
 
 /** Read one current ancestry page without splitting runs. Cursor is scoped to the session. */
@@ -28,16 +29,17 @@ export function historyRuns(db:DatabaseSync, sessionId:string, tip:string, limit
   const page=candidates.slice(0,limit).reverse();
   const runs=page.map(([id,group]):Run=>{
     let status='completed';
+    let result:Record<string, any>={};
     const messages:Message[]=[];
     for(const row of group.rows) {
       const ext=JSON.parse(String(row.ext_data));
-      if(ext.run?.status) status=String(ext.run.status);
+      if(ext.run?.status) { result=publicRunResult(ext.run); status=String(result.status); }
       if(row.type!=='message' || (row.role!=='user' && row.role!=='assistant') || ext.nonNarrative) continue;
       const message=JSON.parse(String(row.payload)).message;
       const text=typeof message.content==='string' ? message.content : (message.content??[]).filter((part:{type:string})=>part.type==='text').map((part:{text:string})=>part.text).join('');
       if(text) messages.push({id:String(row.id),role:row.role,text});
     }
-    return { id,status,messages };
+    return { ...result,id,status,messages };
   });
   const hasMore=candidates.length>limit;
   const first=page[0];

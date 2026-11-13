@@ -4,7 +4,7 @@ import {expect,it} from 'vitest';
 import {createApp} from '../src/app.js';
 import {openDatabase} from '../src/infrastructure/database/database.js';
 import {parseCard} from '../src/domain/world-card.js';
-import {buildContext} from '../src/agent/context/prompt-builder.js';
+import {buildContext} from '../src/runtime/context/prompt-builder.js';
 
 const world=JSON.parse(readFileSync(new URL('./fixtures/world-card.json',import.meta.url),'utf8'));
 const source="function Cover(){return null} export default {Cover}";

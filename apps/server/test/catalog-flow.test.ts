@@ -4,7 +4,7 @@ import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/infrastructure/database/database.js';
 import {readFileSync} from 'node:fs';
 const sample=JSON.parse(readFileSync(new URL('./fixtures/preset.json',import.meta.url),'utf8'));
-import { buildContext } from '../src/agent/context/prompt-builder.js';
+import { buildContext } from '../src/runtime/context/prompt-builder.js';
 
 const json=(method:string, body:unknown)=>({method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 const base={name:'Harbor',description:'<b>{{user}}</b> **原文**',characters:[{id:'p',name:'水手',player_selectable:true}],openings:[{id:'o',name:'港口',content:'{{user}} 到港',format:'html'}]};

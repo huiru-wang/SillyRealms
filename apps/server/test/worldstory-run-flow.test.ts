@@ -1,9 +1,10 @@
+import { fakeMeasurement } from './fixtures/fake-gateway.js';
 import { seedWorld, seedSession } from './fixtures/db-seed.js';
 import {expect,it} from 'vitest';
 import type {Api,AssistantMessageEvent,Context,Model} from '@earendil-works/pi-ai';
-import {SR_SYSTEM_MAIN} from '../src/agent/context/system-main.js';
+import {SR_SYSTEM_MAIN} from '../src/runtime/context/system-main.js';
 import type {CredentialStore} from '../src/infrastructure/credentials/store.js';
-import type {ModelGateway} from '../src/agent/model/pi-gateway.js';
+import type {ModelGateway} from '../src/runtime/model/pi-gateway.js';
 import {createApp} from '../src/app.js';
 import {openDatabase} from '../src/infrastructure/database/database.js';
 
@@ -31,7 +32,7 @@ async function until(reader:ReadableStreamDefaultReader<Uint8Array>,name:string)
 }
 
 it('keeps committed partial text when an active V1 run is stopped',async()=>{
- const gateway:ModelGateway={resolve:()=>model,toolVerified:()=>true,stream:(_model,_context,{signal})=>({async *[Symbol.asyncIterator](){yield {type:'text_delta',delta:'部分回复',contentIndex:0,partial:{} as never} as AssistantMessageEvent;await new Promise<void>(resolve=>{if(signal.aborted)resolve();else signal.addEventListener('abort',()=>resolve(),{once:true});});}})};
+ const gateway:ModelGateway={resolve:()=>model,measure:fakeMeasurement,supportsDirect:()=>true,toolVerified:()=>true,stream:(_model,_context,{signal})=>({async *[Symbol.asyncIterator](){yield {type:'text_delta',delta:'部分回复',contentIndex:0,partial:{} as never} as AssistantMessageEvent;await new Promise<void>(resolve=>{if(signal.aborted)resolve();else signal.addEventListener('abort',()=>resolve(),{once:true});});}})};
  const {db,app}=setup(gateway);let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
  try {
   reader=(await app.request('/api/v1/sessions/session/events')).body!.getReader();
@@ -48,7 +49,7 @@ it('keeps committed partial text when an active V1 run is stopped',async()=>{
 });
 
 it('refuses creating a new session when the world default preset is not set',async()=>{
- const gateway:ModelGateway={resolve:()=>model,toolVerified:()=>true,stream:()=>({async *[Symbol.asyncIterator](){throw Error('Provider must not run');}})};
+ const gateway:ModelGateway={resolve:()=>model,measure:fakeMeasurement,supportsDirect:()=>true,toolVerified:()=>true,stream:()=>({async *[Symbol.asyncIterator](){throw Error('Provider must not run');}})};
  const {db,app}=setup(gateway);
  try {
   expect((await app.request('/api/v1/worlds/world',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({defaultPresetId:null})})).status).toBe(200);
@@ -64,7 +65,7 @@ it('sends one SR-RP v1 User Message after the immutable platform System Main',as
  let captured:Context|undefined;
  const gateway:ModelGateway={
   resolve:()=>model,
-  toolVerified:()=>true,
+  measure:fakeMeasurement,supportsDirect:()=>true,toolVerified:()=>true,
   stream:(_model,context)=>{
    captured=context;
    return {async *[Symbol.asyncIterator](){
@@ -90,7 +91,7 @@ it('sends one SR-RP v1 User Message after the immutable platform System Main',as
   const userMessages=captured!.messages.filter(message=>message.role==='user');
   expect(userMessages).toHaveLength(1);
   expect(userMessages[0]!.content).toBe(input);
-  expect(captured!.tools).toEqual([]);
+  expect(captured!.tools??[]).toEqual([]);
   const history=await app.request('/api/v1/sessions/session/runs?limit=5');
   const result=(await history.json()) as {data:{runs:Array<{id:string;messages:Array<{role:string;text:string}>}>}};
   const run=result.data.runs.find(item=>item.id===runId);

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { contextTriggerThreshold } from '../src/agent/context/context-manager.js';
+import { contextTriggerThreshold } from '../src/runtime/context/context-manager.js';
 
 it('maps strategies to model-limited thresholds with output and input reserves', () => {
   expect(contextTriggerThreshold('compact', 1_000_000, 4096)).toBe(131_072 - 4096 - 1024 - 2048);
@@ -8,8 +8,8 @@ it('maps strategies to model-limited thresholds with output and input reserves',
   expect(contextTriggerThreshold('extended', 32_768, 4096)).toBe(32_768 - 4096 - 1024 - 2048);
   expect(contextTriggerThreshold('compact', 1_000_000, 2048)).toBeGreaterThan(42_538);
 });
-import { buildContext } from '../src/agent/context/prompt-builder.js';
-import { estimateContextComposition } from '../src/agent/context/context-manager.js';
+import { buildContext } from '../src/runtime/context/prompt-builder.js';
+import { estimateContextComposition } from '../src/runtime/context/context-manager.js';
 
 it('uses literal content and freezes activation before history changes', () => {
   const world = { characters:[{id:'player',player_selectable:true,prompt:'{{user}}'},{id:'npc',prompt:'NPC',load:{mode:'on_mention',keywords:['forest']}}], lorebook:{entries:[{id:'entry',content:'LITERAL <% danger %>',load:{mode:'on_mention',keywords:['forest'],anchor:'characterInfo',position:'before'}}]} };
@@ -54,6 +54,8 @@ it('logs each dynamic load in one line only when debugging is enabled',async()=>
     const lines=log.mock.calls.map(c=>String(c[0]));
     expect(lines).toHaveLength(4);
     expect(lines.every(line=>!line.includes('\n'))).toBe(true);
+    expect(lines.join(' ')).not.toContain('forest');
+    expect(lines.join(' ')).not.toContain('hero.hp');
     expect(lines.some(line=>line.includes('角色')&&line.includes('关键词')&&line.includes('when=')&&line.includes('命中=是'))).toBe(true);
     expect(lines.some(line=>line.includes('世界书')&&line.includes('always'))).toBe(true);
     expect(lines.some(line=>line.includes('状态')&&line.includes('never')&&line.includes('命中=否'))).toBe(true);

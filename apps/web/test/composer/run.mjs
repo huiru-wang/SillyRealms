@@ -11,7 +11,7 @@ const chromePath=process.env.CHROME_PATH || '/Applications/Google Chrome.app/Con
 const profile=await mkdtemp(join(tmpdir(),'sr-composer-test-'));
 const port = await new Promise((resolve,reject)=>{const probe=createServer();probe.once('error',reject);probe.listen(0,'127.0.0.1',()=>{const port=probe.address().port;probe.close(()=>resolve(port));});});
 const server=spawn(join(webDir,'node_modules/.bin/vite'),['--host','127.0.0.1','--port',String(port),'--strictPort'],{cwd:webDir,stdio:'ignore'});
-const browser=spawn(chromePath,['--headless','--disable-gpu','--no-first-run','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:['ignore','ignore','pipe']});
+const browser=spawn(chromePath,['--headless','--disable-gpu','--no-first-run','--disable-background-timer-throttling','--disable-renderer-backgrounding','--disable-backgrounding-occluded-windows','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:['ignore','ignore','pipe']});
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 try {
   const debugging=await new Promise((resolve,reject)=>{
@@ -22,30 +22,39 @@ try {
   let ready=false;for(let i=0;i<100;i++){try{if((await fetch(`http://127.0.0.1:${port}/test/composer/`)).ok){ready=true;break;}}catch{}await pause(100);}
   if(!ready)throw new Error(`Vite failed to start on port ${port}`);
   const selected=process.env.SR_BROWSER_ONLY;
-  for(const name of (selected?[selected]:['composer','host-roleplay'])){
+  for(const name of (selected?[selected]:['composer','host-roleplay','runtime-v2'])){
     const page=await (await fetch(`http://${debugging}/json/new?http://127.0.0.1:${port}/test/${name}/`,{method:'PUT'})).json();
     const ws=new WebSocket(page.webSocketDebuggerUrl);await new Promise((resolve,reject)=>{ws.addEventListener('open',resolve,{once:true});ws.addEventListener('error',reject,{once:true});});
     let sequence=0;const call=(method,params={},sessionId)=>new Promise((resolve,reject)=>{
-      const id=++sequence;const onMessage=event=>{const response=JSON.parse(event.data);if(response.id!==id)return;ws.removeEventListener('message',onMessage);response.error?reject(Error(response.error.message)):resolve(response.result);};
+      const id=++sequence;const onMessage=event=>{const response=JSON.parse(event.data);if(response.id!==id)return;ws.removeEventListener('message',onMessage);response.error?reject(Error(response.error.message)):response.result?.exceptionDetails?reject(Error(response.result.exceptionDetails.exception?.description??response.result.exceptionDetails.text)):resolve(response.result);};
       ws.addEventListener('message',onMessage);ws.send(JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})}));
     });
+    const waitFor=async(expression,label)=>{
+      for(let i=0;i<100;i++){
+        if((await call('Runtime.evaluate',{expression,returnByValue:true})).result.value)return;
+        await pause(50);
+      }
+      throw Error(name+': timed out waiting for '+label);
+    };
     try {
+      await call('Page.bringToFront');
       await call('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
       await pause(100);
       let tests=[];
-      if(name!=='worldstory-font'){
+      if(name!=='worldstory-font'&&name!=='runtime-v2'){
         for(let i=0;i<250;i++){
           const result=await call('Runtime.evaluate',{expression:'document.querySelector("#results")?.textContent || "[]"',returnByValue:true});
           tests=JSON.parse(result.result.value);if(tests.length>=(name==='host-roleplay'?8:7))break;await pause(100);
         }
-        if(!tests.length)throw new Error(name+': browser tests did not start');
+        if(tests.length<(name==='host-roleplay'?8:7))throw new Error(name+': browser tests did not complete: '+JSON.stringify(tests));
       }
       for(const test of tests)console.log(`${test.pass?'PASS':'FAIL'} ${name}: ${test.name}${test.error?`: ${test.error}`:''}`);
       if(tests.some(test=>!test.pass))process.exitCode=1;
       if(name==='host-roleplay'){
         for(const width of [1280,375]){
           await call('Emulation.setDeviceMetricsOverride',{width,height:812,deviceScaleFactor:1,mobile:width<600});
-          await pause(180);
+          await waitFor('document.querySelector(".host-usage").classList.contains("is-mobile")==='+String(width<600),'responsive usage state');
+          if(width<600)await waitFor('document.querySelector(".host-usage-toggle").getAttribute("aria-expanded")==="false"','collapsed mobile usage');
           const layout=await call('Runtime.evaluate',{returnByValue:true,expression:'JSON.stringify({width:document.documentElement.clientWidth,scrollWidth:document.querySelector(\".host\")?.scrollWidth,hostbar:document.querySelector(".hostbar")?.getBoundingClientRect().width,usage:document.querySelector(".host-usage")?.getBoundingClientRect().height,toggle:getComputedStyle(document.querySelector(".host-usage-toggle")).display,body:!!document.querySelector(".host-usage-body")})'});
           const metrics=JSON.parse(layout.result.value);
           if(metrics.scrollWidth>metrics.width+1||!metrics.usage){console.log('FAIL host-roleplay: '+width+'px token panel layout '+JSON.stringify(metrics));process.exitCode=1;}
@@ -53,7 +62,7 @@ try {
           if(width<600){
             const before=await call('Runtime.evaluate',{returnByValue:true,expression:'document.querySelector("iframe")?.getBoundingClientRect().height'});
             await call('Runtime.evaluate',{expression:'document.querySelector(".host-usage-toggle").click()'});
-            await pause(100);
+            await waitFor('!!document.querySelector(".host-usage-body")','expanded mobile usage');
             const after=await call('Runtime.evaluate',{returnByValue:true,expression:'JSON.stringify({body:!!document.querySelector(".host-usage-body"),height:document.querySelector("iframe")?.getBoundingClientRect().height,position:getComputedStyle(document.querySelector(".host-usage")).position,bodyPosition:getComputedStyle(document.querySelector(".host-usage-body")).position})'});
             const expanded=JSON.parse(after.result.value);
             if(!expanded.body||expanded.height!==before.result.value||expanded.position!=='relative'||expanded.bodyPosition!=='absolute'){console.log('FAIL host-roleplay: mobile usage expansion changed layout '+JSON.stringify(expanded));process.exitCode=1;}
@@ -69,6 +78,7 @@ try {
         }
         await call('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
       }
+      if(name==='runtime-v2'){const {verifyRuntime}=await import('../runtime-v2/assertions.mjs');await verifyRuntime(call,pause);}
       if(name==='worldstory-font'){
         let frameSession=null,frameContextId=null,frameId=null;
         const iframeUrl=(await call('Runtime.evaluate',{expression:'document.querySelector("iframe")?.getAttribute("src")',returnByValue:true})).result.value;
@@ -94,7 +104,7 @@ try {
         };
         let rendered=0;
         for(let i=0;i<180;i++){rendered=Number(await frameEval('document.querySelectorAll(".sr-message").length').catch(()=>0));if(rendered===200)break;await pause(100);}
-        if(rendered!==200)throw new Error('WorldStory did not render 200 messages; rendered '+rendered);
+        if(rendered!==200)throw new Error('WorldStory did not render 200 messages; rendered '+rendered+'; frame='+await frameEval('document.body.innerText')+'; host='+(await call('Runtime.evaluate',{expression:'document.querySelector(".host")?.innerText',returnByValue:true})).result.value);
         for(const width of [1280,375]){
           await call('Emulation.setDeviceMetricsOverride',{width,height:812,deviceScaleFactor:1,mobile:width<600});await pause(180);
           const before=JSON.parse(await frameEval('JSON.stringify({count:document.querySelectorAll(".sr-message").length,fonts:[0,99,199].map(i=>getComputedStyle(document.querySelectorAll(".sr-message .sr-rich")[i]).fontSize),adjust:getComputedStyle(document.documentElement).getPropertyValue("-webkit-text-size-adjust")})'));

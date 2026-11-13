@@ -5,7 +5,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
-import type { ModelGateway } from '../agent/index.js';
+import type { ModelGateway } from '../runtime/index.js';
 import type { CredentialStore } from '../infrastructure/credentials/store.js';
 import { referenceCounts } from '../repositories/config-references.js';
 import { transaction } from '../domain/tags.js';

@@ -9,7 +9,7 @@ import lockfile from 'proper-lockfile';
 import { createApp } from './app.js';
 import { WorldFileStore } from './infrastructure/world-files/world-file-store.js';
 import { MacKeychainStore } from './infrastructure/credentials/store.js';
-import { PiGateway } from './agent/index.js';
+import { PiGateway } from './runtime/index.js';
 import { openDatabase, recoverInterrupted } from './infrastructure/database/database.js';
 
 const dataDir = process.env.SILLYREALMS_DATA_DIR ?? fileURLToPath(new URL('../../../db/', import.meta.url));

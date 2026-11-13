@@ -15,9 +15,10 @@
     "reset:data": "tsx scripts/reset-local-data.ts --confirm-reset-sr-data"
   },
   "dependencies": {
-    "@sillyrealms/roleplay": "workspace:*",
     "@earendil-works/pi-ai": "1.5.0",
     "@hono/node-server": "2.1.6",
+    "@huggingface/tokenizers": "0.2.0",
+    "@sillyrealms/roleplay": "workspace:*",
     "acorn": "8.19.0",
     "hono": "4.13.16",
     "lodash": "4.18.1",

@@ -23,14 +23,14 @@ export function seedWorld(db:DatabaseSync, id:string, card:unknown = demoCard, p
 export function seedSession(
   db:DatabaseSync,id:string,worldId:string,presetId:string|null,characterId:string,
   tipId:string|null,title:string|null,state:string,createdAt:number,updatedAt:number,
-  modelId?:string,
+  modelId?:string, mode: 'direct'|'agent'='agent',
 ) {
   if(!db.prepare('SELECT 1 FROM worlds WHERE id=?').get(worldId)) seedWorld(db,worldId);
   const actualPreset=presetId??'sr-default-preset';
   const actualModel=modelId??String(db.prepare('SELECT default_api_model_config_id FROM worlds WHERE id=?').get(worldId)?.default_api_model_config_id??'test-model');
   seedModel(db,actualModel);
-  db.prepare('INSERT INTO sessions(id,world_id,preset_id,api_model_config_id,user_character_id,tip_entry_id,title,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
-    .run(id,worldId,actualPreset,actualModel,characterId,tipId,title,state,createdAt,updatedAt);
+  db.prepare('INSERT INTO sessions(id,world_id,preset_id,api_model_config_id,user_character_id,tip_entry_id,title,state,created_at,updated_at,execution_mode) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id,worldId,actualPreset,actualModel,characterId,tipId,title,state,createdAt,updatedAt,mode);
 }
 
 import type { CredentialStore } from '../../src/infrastructure/credentials/store.js';

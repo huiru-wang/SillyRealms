@@ -1,16 +1,17 @@
+import { publicRunResult } from '../domain/session/run-result.js';
 import { Hono } from 'hono';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
-import { AgentRuntime } from '../agent/index.js';
+import { SRRuntime } from '../runtime/index.js';
 import { historyRuns } from '../domain/session/history-runs.js';
 import { ErrorCodes, errorInfo, isErrorCode, normalizeError, type ErrorCode } from '../common/error-codes.js';
 import { failure, ok } from '../common/http-response.js';
-import { UsageStore } from '../agent/persistence/usage-store.js';
+import { UsageStore } from '../runtime/persistence/usage-store.js';
 
 const runRequest=z.object({text:z.string().min(1).max(100000).refine(value=>!!value.trim()),requestId:z.string().uuid(),expectedTipEntryId:z.string().min(1)}).strict();
 
 /** Runtime endpoints are version-neutral; the app mounts them under V1. */
-export function sessionRuntimeRoutes(db:DatabaseSync,runtime:AgentRuntime):Hono {
+export function sessionRuntimeRoutes(db:DatabaseSync,runtime:SRRuntime):Hono {
   const app=new Hono();
   const session=(id:string)=>db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
   const usage = new UsageStore(db);
@@ -49,22 +50,24 @@ export function sessionRuntimeRoutes(db:DatabaseSync,runtime:AgentRuntime):Hono 
       dispose=runtime.onEvent((target,event,payload)=>{
         if(target!==id)return;
         const runId=String(payload.runId??'');
+        const publicResult=()=>runtime.status(id,runId)??publicRunResult({...payload,runId});
         if(event==='message.created') {
           const message=payload.message as {id:string;role:string;text:string}|undefined;
-          if(message?.role==='user')send('run.created',{runId,messages:[{id:message.id,role:'user',text:message.text}]});
+          if(message?.role==='user')send('run.created',{...publicResult(),runId,messages:[{id:message.id,role:'user',text:message.text}]});
           else if(message?.role==='assistant' && message.text)send('run.delta',{runId,messageId:message.id,text:message.text});
         } else if(event==='message.delta') send('run.delta',{runId,messageId:payload.messageId,text:payload.text});
-        else if(event==='run.updated' && payload.status==='completed')send('run.completed',{runId,messages:messages(runId)});
+        else if(event==='run.updated' && payload.status==='completed')send('run.completed',{...publicResult(),runId,messages:messages(runId)});
         else if(event==='run.updated' && payload.status==='failed') {
           const code = isErrorCode(payload.errorCode) ? payload.errorCode : ErrorCodes.INTERNAL_ERROR;
           send('run.failed',{
-            runId, messages: messages(runId), errorCode: code,
+            ...publicResult(), runId, messages: messages(runId), errorCode: code,
             errorMessage: typeof payload.errorMessage === 'string' && payload.errorMessage
               ? payload.errorMessage : errorInfo(code).errorMessage,
           });
-        } else if(event==='run.updated' && payload.status==='stopped')send('run.stopped',{runId,messages:messages(runId)});
+        } else if(event==='run.updated' && payload.status==='stopped')send('run.stopped',{...publicResult(),runId,messages:messages(runId)});
         else if(event==='state.changed' && typeof payload.path==='string')send('state.changed',payload);
         else if(event==='tool.failed')send('tool.failed',payload);
+        else if(event==='run.phase')send('run.phase',{runId,phase:payload.phase});
         else if(event==='usage.updated')send('usage.updated',payload);
       });
       timer=setInterval(()=>{try{controller.enqueue(encoder.encode(': heartbeat\n\n'));}catch{dispose();clearInterval(timer);}},15000);

@@ -2,7 +2,7 @@
 
 - Read root `AGENTS.md`, the current task plan, and relevant source/tests before changing behavior; use current documents in `docs/` when applicable.
 - Stack: TypeScript ESM, Hono, Pi Agent packages, SQLite, Zod, Vitest. Node >=22.19. Use pnpm.
-- Keep HTTP route handlers thin. Keep domain rules in domain/services and runtime orchestration in the agent/runtime layer. Follow existing patterns before introducing new layers.
+- Keep HTTP route handlers thin. Keep domain rules in domain/services and runtime orchestration in `src/runtime/`. Follow existing patterns before introducing new layers.
 - Treat SQLite files in `db/` as user data. Never delete, recreate, migrate, or seed the real local DB in routine tests. Tests use temporary isolated DBs.
 - Never log API keys, credentials, full private prompts, or sensitive user content. Debug logging must be opt-in and redacted.
 - Validate external inputs at boundaries. Preserve structured error semantics and API compatibility.

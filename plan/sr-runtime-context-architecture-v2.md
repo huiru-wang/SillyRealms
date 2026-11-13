@@ -1,9 +1,9 @@
 # SRRuntime、上下文策略与双 Runner 架构 v2
 
-> 日期：2026-11-13。状态：架构提案，未实施。
-> 核对源码基线：`7aa4cf4`。本次仅编写方案，不修改运行时代码、不执行数据库迁移、不调用付费模型。
+> 日期：2026-11-13。状态：已获用户授权完成 T0–T9 实现与离线验收，记录见任务清单与文末。
+> 提案核对基线：`7aa4cf4`；实际实施基线：`f25d452`，开始时工作区干净。已修改运行时代码；未提交/推送，未升级真实用户数据库，未调用付费模型。
 > 任务清单：[sr-runtime-context-architecture-v2-tasks.md](./sr-runtime-context-architecture-v2-tasks.md)。
-> 本次修订已纳入用户确认的 `src/runtime/` 目标目录、双 Runner 共用上下文与存储、SRRuntime 内部收尾、摘要输入比例及 narrative 职责；实现仍待执行。
+> 本次修订已纳入用户确认的 `src/runtime/` 目标目录、双 Runner 共用上下文与存储、SRRuntime 内部收尾、摘要输入比例及 narrative 职责；实现与验证以文末执行记录为准。
 
 ## 1. 目标与适用范围
 
@@ -20,11 +20,11 @@
 
 本文接替[双 Runner 架构 v1](./sr-runtime-dual-runner-v1.md)及其任务清单，作为后续架构设计入口。Direct 的尾块语法、状态逐项处理、建议依赖和失败矩阵仍以[叙事扩展 v2](./sr-narrative-extensions-v2.md)为准；本方案细化运行框架，并提出新的当前请求预算流程。
 
-**当前请求预算是行为升级提案。** 现有 AGENTS.md 和技术文档要求的“上一轮 reported usage 触发压缩”仍是现状；不能仅通过写文档就宣称已经替换。实施时须同步相关契约、测试和文档。
+**当前请求预算已在本次授权实施中替换旧政策。** 下节保留提案时的历史基线说明；生产实现与边界见 `docs/technical/context-compaction.md`。旧 Usage 政策只保留纯函数回归，不作为 unknown 计数的降级路径。
 
 用户体验保持一条连续会话历史：切换执行模式不创建分支、不清历史、不回放旧工具/尾块。新会话默认 Direct；从当前工具基线迁移的旧会话建议保持 Agent，来自已上线单次叙事基线的旧会话保持 Direct，已有显式模式不改写。运行中禁止切换模式。
 
-## 2. 当前预算和压缩到底如何工作
+## 2. 提案时的预算与压缩基线（历史说明）
 
 已核对：`apps/server/src/agent/context/context-manager.ts`、`history-compactor.ts`、`prompt-builder.ts`、`persistence/usage-store.ts` 及相关测试。
 
@@ -462,3 +462,11 @@ apps/server/src/runtime/
 关键验收应覆盖：本轮超大输入而上一轮很小、无历史可压缩、固定内容超预算、正常摘要后仍超限、摘要自身超限、非正常摘要结束、策略无进展、调用额度耗尽、Agent 大工具结果、调用/结果配对保护、mode/model 改变计数缓存失效、压缩不改变状态授权、摘要缺口跨再摘要保留、取消/重启/事务失败、真实 Usage 与估算独立、最终 payload 与测量对象一致。
 
 本次文档交付仅做源码核对、引用与一致性检查、架构复查。实际改造时按任务清单运行类型检查、测试、构建与浏览器流程，并更新 AGENTS.md、技术实施状态、API/SDK 文档和新架构决策记录。
+
+## 2026-11-13 实施结论
+
+T0–T9 已完成，逐项结果和关键用例见 [任务清单第 4 节](sr-runtime-context-architecture-v2-tasks.md)。Server/Web typecheck、lint、43 文件 205 项测试、Web build 和完整 browser 回归通过；末次变更按影响补跑 11 项 context/activation 测试及 26 项 runtime-v2 浏览器断言。
+
+生产支持范围为官方 DeepSeek V4.1 Flash 文本请求；计量质量 estimated，unknown 明确拒绝。摘要 R=0.75 已完成离线边界验证，未做付费生成质量评测。实现状态见 [Runtime 技术记录](../docs/technical/runtime-context-v2.md)，公开/迁移契约见 [Runtime v2 数据契约](../docs/data-formats/runtime-v2-contract.md)。
+
+未执行真实用户库迁移、提交或推送；原开发服务保持停止，避免自动升级。独立角色提及匹配等其他叙事产品条目未被本架构验收自动视为完成。

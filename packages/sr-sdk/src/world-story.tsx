@@ -3,7 +3,7 @@ import {useSRSession,useSRStateAPI} from './atomic-context.js';
 import {useStoryConfiguration} from './story-context.js';
 import {applyRunEvent,displayMessages,mergeInitial} from './story-history.js';
 import {captureScrollAnchor,restoreScrollAnchor} from './story-scroll.js';
-import type {Run,RunEvent,StateScope,StateValue} from './index.js';
+import type {Run,SessionRunEvent,StateScope,StateValue} from './index.js';
 import {MessageContent} from './message-content.js';
 
 function StatePanel({close,mobile}:{close:()=>void;mobile:boolean}){
@@ -37,6 +37,23 @@ function StatePanel({close,mobile}:{close:()=>void;mobile:boolean}){
   }):<p>暂无状态</p>}</aside>;
 }
 
+function RunFeedback({run,current,onChoose}:{run:Run;current:boolean;onChoose:(text:string)=>void}){
+  const suggestions=run.extensions?.actionSuggestions;
+  const state=run.extensions?.stateUpdate;
+  const busy=run.status==='preparing'||run.status==='running';
+  return <>
+    {busy&&<p className="sr-thinking" role="status">{run.phase==='extensions'?'正文已生成，正在处理状态与建议…':run.phase==='preparing'?'正在准备上下文…':'正在生成故事…'}</p>}
+    {run.status==='failed'&&<p className="sr-error">本次生成失败，已生成的正文仍会保留。</p>}
+    {run.status==='stopped'&&<p className="sr-thinking">已停止生成{run.executionMode==='direct'?'，本轮未提交状态更新。':''}</p>}
+    {state?.status==='partial'&&<p className="sr-thinking">部分状态更新未通过校验，已保存有效部分，本轮不提供行动建议。</p>}
+    {state?.status==='disabled'&&<p className="sr-thinking">本轮未启用状态更新。</p>}
+    {suggestions?.status==='failed'&&run.status==='completed'&&<p className="sr-thinking">本轮行动建议不可用，可以继续输入。</p>}
+    {suggestions?.status==='ready'&&suggestions.items.length>0&&<section className="sr-suggestions" aria-label="行动建议">
+      <span>{current&&run.status==='completed'?'选择一项填入草稿':'此前的行动建议'}</span>
+      <div>{suggestions.items.map((item,index)=><button key={index} disabled={!current||run.status!=='completed'} title={!current?'故事已推进，此建议已失效':undefined} onClick={()=>onChoose(item)}>{item}</button>)}</div>
+    </section>}
+  </>;
+}
 export function WorldStory({showState=true}:{showState?:boolean}={}){
   const session=useSRSession(),config=useStoryConfiguration();
   const [runs,setRuns]=useState<Run[]>([]),[cursor,setCursor]=useState<string|null>(null),[more,setMore]=useState(false),[loading,setLoading]=useState(true),[error,setError]=useState(''),[stateOpen,setStateOpen]=useState(()=>window.matchMedia('(min-width: 761px)').matches);
@@ -53,37 +70,34 @@ export function WorldStory({showState=true}:{showState?:boolean}={}){
   useEffect(()=>{const query=window.matchMedia('(max-width: 760px)');const update=()=>setMobile(query.matches);query.addEventListener('change',update);return()=>query.removeEventListener('change',update);},[]);
   const closeState=()=>{setStateOpen(false);requestAnimationFrame(()=>stateButton.current?.focus());};
   useEffect(()=>{
-    let frame=0;
     const before=()=>{
       const element=view.current;if(!element)return;
-      fontChangeSnapshot.current={anchor:captureScrollAnchor(element),wasAtEnd:stickToEnd.current};
+      fontChangeSnapshot.current={anchor:captureScrollAnchor(element),wasAtEnd:element.scrollHeight-element.scrollTop-element.clientHeight<64};
     };
     const after=()=>{
       const snapshot=fontChangeSnapshot.current;fontChangeSnapshot.current=null;
       if(!snapshot)return;
-      cancelAnimationFrame(frame);
-      frame=requestAnimationFrame(()=>{
-        const element=view.current;if(!element)return;
-        if(snapshot.wasAtEnd){element.scrollTop=element.scrollHeight;setShowLatest(false);}
-        else if(snapshot.anchor.messageId)restoreScrollAnchor(element,snapshot.anchor);
-      });
+      // Reading geometry flushes the new font's layout synchronously. An
+      // obscured iframe may defer animation frames while Host's modal is open.
+      const element=view.current;if(!element)return;
+      if(snapshot.wasAtEnd){element.scrollTop=element.scrollHeight;stickToEnd.current=true;setShowLatest(false);}
+      else if(snapshot.anchor.messageId)restoreScrollAnchor(element,snapshot.anchor);
     };
     window.addEventListener('sr:font-size-will-change',before);
     window.addEventListener('sr:font-size-changed',after);
     return()=>{
       window.removeEventListener('sr:font-size-will-change',before);
       window.removeEventListener('sr:font-size-changed',after);
-      cancelAnimationFrame(frame);
     };
   },[]);
   useEffect(()=>{
-    let live=true,initial=true;const pending:RunEvent[]=[];
+    let live=true,initial=true;const pending:SessionRunEvent[]=[];
     initialPositionPending.current=true;
     stickToEnd.current=true;
     pendingScrollAnchor.current=null;
     setRuns([]);setCursor(null);setMore(false);setHistoryError('');
     setLoading(true);setError('');
-    const unsubscribe=session.subscribe(event=>{if(initial)pending.push(event);else if(live)setRuns(previous=>applyRunEvent(previous,event));});
+    const unsubscribe=session.subscribe(event=>{if(initial)pending.push(event);else if(live)setRuns(previous=>applyRunEvent(previous,event));},{includePhase:true});
     void session.getHistoryRuns({limit:5}).then(result=>{
       if(!live)return;setRuns(mergeInitial(result.runs,pending));setCursor(result.nextCursor);setMore(result.hasMore);initial=false;setLoading(false);config.ready();
     }).catch(()=>{if(live){initial=false;setLoading(false);setError('历史消息加载失败');}});
@@ -132,5 +146,5 @@ export function WorldStory({showState=true}:{showState?:boolean}={}){
       setLoadingMore(false);
     }
   }
-  return <div className="sr-story"><div className="sr-story-main"><div className="sr-story-toolbar"><span>故事</span>{showState&&<button ref={stateButton} onClick={()=>setStateOpen(open=>!open)} aria-expanded={stateOpen}>状态 {stateOpen?'收起':'展开'}</button>}</div><div className="sr-chat-messages" ref={view} onScroll={event=>{if(initialPositionPending.current)return;const element=event.currentTarget;stickToEnd.current=element.scrollHeight-element.scrollTop-element.clientHeight<64;setShowLatest(!stickToEnd.current);}}>{more&&<button className="sr-more" disabled={loadingMore} onClick={()=>void loadMore()}>{loadingMore?'正在加载…':historyError?'重试加载':'加载更早消息'}</button>}{historyError&&<p className="sr-error" role="alert">{historyError}</p>}{loading&&<p>正在加载故事…</p>}{error&&<p className="sr-error" role="alert">{error} <button onClick={()=>setRetry(value=>value+1)}>重试</button></p>}{!loading&&!error&&!runs.length&&<p>故事尚未开始。</p>}{runs.map(run=><React.Fragment key={run.id}>{displayMessages(run.messages).map(message=><article className={'sr-message '+message.role} data-message-id={message.id} key={message.id}><span className="sr-avatar">{message.role==='user'?'我':'✦'}</span><div className="sr-bubble"><MessageContent message={message} runId={run.id}/></div></article>)}{run.status==='failed'&&<p className="sr-error">本次生成失败</p>}{run.status==='stopped'&&<p className="sr-thinking">已停止生成</p>}</React.Fragment>)}</div>{showLatest&&<button className="sr-more" onClick={()=>{stickToEnd.current=true;if(view.current)view.current.scrollTo({top:view.current.scrollHeight,behavior:'smooth'});setShowLatest(false);}}>回到最新</button>}</div>{showState&&stateOpen&&<>{mobile&&<button className="sr-story-backdrop" aria-label="关闭状态" tabIndex={-1} onClick={closeState}/>}<StatePanel close={closeState} mobile={mobile}/></>}</div>;
+  return <div className="sr-story"><div className="sr-story-main"><div className="sr-story-toolbar"><span>故事</span>{showState&&<button ref={stateButton} onClick={()=>setStateOpen(open=>!open)} aria-expanded={stateOpen}>状态 {stateOpen?'收起':'展开'}</button>}</div><div className="sr-chat-messages" ref={view} onScroll={event=>{if(initialPositionPending.current)return;const element=event.currentTarget;stickToEnd.current=element.scrollHeight-element.scrollTop-element.clientHeight<64;setShowLatest(!stickToEnd.current);}}>{more&&<button className="sr-more" disabled={loadingMore} onClick={()=>void loadMore()}>{loadingMore?'正在加载…':historyError?'重试加载':'加载更早消息'}</button>}{historyError&&<p className="sr-error" role="alert">{historyError}</p>}{loading&&<p>正在加载故事…</p>}{error&&<p className="sr-error" role="alert">{error} <button onClick={()=>setRetry(value=>value+1)}>重试</button></p>}{!loading&&!error&&!runs.length&&<p>故事尚未开始。</p>}{runs.map(run=><React.Fragment key={run.id}>{displayMessages(run.messages).map(message=><article className={'sr-message '+message.role} data-message-id={message.id} key={message.id}><span className="sr-avatar">{message.role==='user'?'我':'✦'}</span><div className="sr-bubble"><MessageContent message={message} runId={run.id}/></div></article>)}<RunFeedback run={run} current={runs.at(-1)?.id===run.id} onChoose={text=>session.setDraft(text)}/></React.Fragment>)}</div>{showLatest&&<button className="sr-more" onClick={()=>{stickToEnd.current=true;if(view.current)view.current.scrollTo({top:view.current.scrollHeight,behavior:'smooth'});setShowLatest(false);}}>回到最新</button>}</div>{showState&&stateOpen&&<>{mobile&&<button className="sr-story-backdrop" aria-label="关闭状态" tabIndex={-1} onClick={closeState}/>}<StatePanel close={closeState} mobile={mobile}/></>}</div>;
 }

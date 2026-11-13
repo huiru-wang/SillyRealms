@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/infrastructure/database/database.js';
 import { ErrorCodes, ErrorMessages, errorInfo, normalizeError } from '../src/common/error-codes.js';
-import { RuntimeError } from '../src/agent/shared/errors.js';
+import { RuntimeError } from '../src/runtime/shared/errors.js';
 
 it('binds every public code to one fixed description and sanitizes details', () => {
   for (const code of Object.values(ErrorCodes)) {

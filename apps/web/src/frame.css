@@ -28,3 +28,11 @@
 .sr-story .sr-message .sr-rp-instruction-panel p{margin:5px 0 0}
 :root[data-theme="dark"] .sr-story .sr-message .sr-rp-speech{color:#f1ce77}
 :root[data-theme="dark"] .sr-story .sr-message .sr-rp-thought{background:#2e2a43;border-color:#a99ced;color:#d4ccf0}
+
+.sr-suggestions{margin:8px 0 18px 34px;max-width:680px;font-size:12px;color:var(--chat-muted)}
+.sr-suggestions>div{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.sr-suggestions button{font:inherit;text-align:left;border:1px solid var(--chat-border,#ddd);background:var(--chat-surface);color:var(--chat-text);border-radius:8px;padding:8px 12px;max-width:100%;overflow-wrap:anywhere;cursor:pointer}
+.sr-suggestions button:hover:not(:disabled){background:var(--chat-surface,#f3f3f3)}
+.sr-suggestions button:disabled{opacity:.5;cursor:default}
+.sr-suggestions button:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+@media(max-width:760px){.sr-suggestions{margin-left:0}.sr-suggestions button{width:100%}}

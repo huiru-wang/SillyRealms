@@ -2,7 +2,7 @@ import { seedSession } from './fixtures/db-seed.js';
 import { expect,it } from 'vitest';
 import { openDatabase } from '../src/infrastructure/database/database.js';
 import { sessionRuntimeRoutes } from '../src/routes/session-runtime.js';
-import type { AgentRuntime } from '../src/agent/runtime/agent-runtime.js';
+import type { SRRuntime } from '../src/runtime/sr-runtime.js';
 
 it('forwards Run and state notifications using the target event names',async()=>{
   const db=openDatabase(':memory:');
@@ -10,7 +10,7 @@ it('forwards Run and state notifications using the target event names',async()=>
     seedSession(db,'s','w',null,'p','e',null,'{}',1,1);
     db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,state,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('e','s',null,'r',1,'message','user',0,1,JSON.stringify({message:{role:'user',content:'你好'}}),null,JSON.stringify({run:{status:'stopped'}}));
     let notify:((target:string,event:string,payload:Record<string,unknown>)=>void)|undefined;
-    const runtime={onEvent:(listener:typeof notify)=>{notify=listener;return()=>{notify=undefined;};}} as unknown as AgentRuntime;
+    const runtime={status:()=>null,onEvent:(listener:typeof notify)=>{notify=listener;return()=>{notify=undefined;};}} as unknown as SRRuntime;
     const response=await sessionRuntimeRoutes(db,runtime).request('/s/events');
     const reader=response.body!.getReader();const decoder=new TextDecoder();
     notify!('s','message.created',{runId:'r',message:{id:'e',role:'user',text:'你好'}});

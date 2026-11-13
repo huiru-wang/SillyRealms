@@ -1,7 +1,8 @@
+import { fakeMeasurement } from './fixtures/fake-gateway.js';
 import { expect, it } from 'vitest';
 import type { Api, AssistantMessageEvent, Model } from '@earendil-works/pi-ai';
-import { ModelClient } from '../src/agent/model/model-client.js';
-import type { ModelGateway } from '../src/agent/model/pi-gateway.js';
+import { ModelClient } from '../src/runtime/model/model-client.js';
+import type { ModelGateway } from '../src/runtime/model/pi-gateway.js';
 
 const model: Model<Api> = {
   id: 'fake', name: 'fake', provider: 'fake', api: 'openai-completions', baseUrl: 'http://localhost',
@@ -14,7 +15,7 @@ it('stops waiting for an uncooperative provider without consuming late responses
   let release!: () => void;
   const gateway: ModelGateway = {
     resolve: () => model,
-    toolVerified: () => true,
+    measure:fakeMeasurement,supportsDirect:()=>true,toolVerified: () => true,
     stream: () => ({
       [Symbol.asyncIterator]() {
         let nextCount = 0;

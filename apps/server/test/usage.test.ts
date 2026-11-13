@@ -1,10 +1,11 @@
+import { fakeMeasurement } from './fixtures/fake-gateway.js';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, it } from 'vitest';
 import type { Api, AssistantMessageEvent, Model, Usage } from '@earendil-works/pi-ai';
 import type { CredentialStore } from '../src/infrastructure/credentials/store.js';
-import type { ModelGateway } from '../src/agent/model/pi-gateway.js';
-import { UsageStore, RunContext } from '../src/agent/persistence/usage-store.js';
+import type { ModelGateway } from '../src/runtime/model/pi-gateway.js';
+import { UsageStore, RunAccounting } from '../src/runtime/persistence/usage-store.js';
 import { openDatabase, recoverInterrupted } from '../src/infrastructure/database/database.js';
 import { seedWorld, seedSession } from './fixtures/db-seed.js';
 import { createApp } from '../src/app.js';
@@ -49,7 +50,7 @@ function append(db: DatabaseSync, id: string, runId: string, seq: number, role: 
 }
 
 it('aggregates assistant + compaction requests into one Run, with cache read/write included in input only once', () => {
-  const db = seed(), store = new UsageStore(db), run = new RunContext('session', 'run-1', 'config');
+  const db = seed(), store = new UsageStore(db), run = new RunAccounting('session', 'run-1', 'config');
   store.beginRun('session', 'run-1', 'request-1');
   const summary = run.request('summary');
   store.beginRequest(summary, 'fake', 32768);
@@ -88,7 +89,7 @@ it('aggregates assistant + compaction requests into one Run, with cache read/wri
 it('accounts for a failed preparation with no User Entry, then recovers persisted but interrupted requests once', () => {
   const db = seed(), store = new UsageStore(db);
   store.beginRun('session', 'failure', 'user-request');
-  const summary = new RunContext('session', 'failure').request('summary');
+  const summary = new RunAccounting('session', 'failure').request('summary');
   store.beginRequest(summary, 'fake', 32768);
   store.finishRequest(summary, 'completed', tokenUsage(100, 50, 40), undefined, 30);
   expect(store.settleRun('session', 'failure', 'failed')).toBe(true);
@@ -96,7 +97,7 @@ it('accounts for a failed preparation with no User Entry, then recovers persiste
   expect(store.settleRun('session', 'failure', 'failed')).toBe(false);
 
   store.beginRun('session', 'interrupted', 'other-user-request');
-  const request = new RunContext('session', 'interrupted').request('generation');
+  const request = new RunAccounting('session', 'interrupted').request('generation');
   store.beginRequest(request, 'fake', 32768);
   recoverInterrupted(db);
   recoverInterrupted(db);
@@ -110,13 +111,13 @@ it('accounts for a failed preparation with no User Entry, then recovers persiste
 it('clears an old context snapshot when the latest narrative request has no usage', () => {
   const db = seed(), store = new UsageStore(db);
   store.beginRun('session', 'first', 'first-request');
-  const first = new RunContext('session', 'first', 'config').request('generation');
+  const first = new RunAccounting('session', 'first', 'config').request('generation');
   store.beginRequest(first, 'fake', 32768);
   store.finishRequest(first, 'completed', tokenUsage(200, 30), undefined, 1);
   store.settleRun('session', 'first', 'completed');
   expect(store.view('session').latestContext).toMatchObject({inputTokens:200, outputTokens:30});
   store.beginRun('session', 'second', 'second-request');
-  const second = new RunContext('session', 'second', 'config').request('generation');
+  const second = new RunAccounting('session', 'second', 'config').request('generation');
   store.beginRequest(second, 'fake', 32768);
   store.finishRequest(second, 'error', undefined, undefined, 1);
   store.settleRun('session', 'second', 'failed');
@@ -125,10 +126,10 @@ it('clears an old context snapshot when the latest narrative request has no usag
 });
 
 it.each([
-  {input:100, output:20, compress:false},
-  {input:31_600, output:80, compress:true},
+  {input:100, output:20, compress:true},
+  {input:31_600, output:80, compress:false},
   {input:null, output:null, compress:true},
-])('uses reported context for compaction: $input / $output', async ({input,output,compress}) => {
+])('measures the current request independently of previous reported usage: $input / $output', async ({input,output,compress}) => {
   const db = seed();
   let parent = 'opening-entry';
   for (let i = 0; i < 6; i++) {
@@ -137,9 +138,9 @@ it.each([
     append(db, assistant, `run-${i}`, 3 + i * 2, 'assistant', 'message', user);
     parent = assistant;
   }
-  // A long multibyte history must not itself trigger compression when usage is low.
+  // Current input measurement controls compaction, independent of the preceding request's usage.
   db.prepare('UPDATE entries SET payload=? WHERE id=?').run(
-    JSON.stringify({message:{role:'assistant',content:'故事'.repeat(30_000)}}), 'assistant-0');
+    JSON.stringify({message:{role:'assistant',content:'故事'.repeat(compress?16_000:20)}}), 'assistant-0');
   if (input !== null && output !== null) {
     const row = db.prepare('SELECT usage_json FROM sessions WHERE id=?').get('session')!;
     const usage = JSON.parse(String(row.usage_json));
@@ -149,7 +150,7 @@ it.each([
   }
   let calls = 0;
   const gateway: ModelGateway = {
-    resolve: () => model, toolVerified: () => true,
+    resolve: () => model, measure:async(m,c)=>{const measured=await fakeMeasurement(m,c);return {...measured,tokens:measured.tokens!*4};},supportsDirect:()=>true,toolVerified: () => true,
     stream: () => ({async *[Symbol.asyncIterator]() {
       calls++;
       yield {type:'text_delta',delta:'response',contentIndex:0,partial:{} as never} as AssistantMessageEvent;
@@ -158,8 +159,8 @@ it.each([
     }}),
   };
   const credentials: CredentialStore = { async get() { return 'test'; }, async set() {}, async delete() {} };
-  const { AgentRuntime } = await import('../src/agent/runtime/agent-runtime.js');
-  const runtime = new AgentRuntime(db, credentials, gateway);
+  const { SRRuntime } = await import('../src/runtime/sr-runtime.js');
+  const runtime = new SRRuntime(db, credentials, gateway);
   const {runId,stream} = await runtime.prepare('session','continue',randomUUID(),parent);
   const reader = stream.getReader();
   while (!(await reader.read()).done) { /* drain */ }
@@ -173,7 +174,7 @@ it('serves two Session dimensions through the server route and records real mode
   const db = seed();
   const gateway: ModelGateway = {
     resolve: () => model,
-    toolVerified: () => true,
+    measure:fakeMeasurement,supportsDirect:()=>true,toolVerified: () => true,
     stream: () => ({
       async *[Symbol.asyncIterator]() {
         yield { type: 'text_delta', delta: 'response', contentIndex: 0, partial: {} as never } as AssistantMessageEvent;
@@ -269,7 +270,7 @@ it('counts every request in the tool loop and uses the last continuation context
   let callCount = 0;
   const gateway: ModelGateway = {
     resolve: () => model,
-    toolVerified: () => true,
+    measure:fakeMeasurement,supportsDirect:()=>true,toolVerified: () => true,
     stream: () => ({
       async *[Symbol.asyncIterator]() {
         const first = ++callCount === 1;
@@ -291,8 +292,9 @@ it('counts every request in the tool loop and uses the last continuation context
   });
   expect(create.status).toBe(201);
   const session = (await create.json() as { data: { item: { id: string; tipEntryId: string } } }).data.item;
-  const { AgentRuntime } = await import('../src/agent/runtime/agent-runtime.js');
-  const runtime = new AgentRuntime(db, credentials, gateway);
+  expect((await app.request('/api/v1/sessions/'+session.id,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({executionMode:'agent'})})).status).toBe(200);
+  const { SRRuntime } = await import('../src/runtime/sr-runtime.js');
+  const runtime = new SRRuntime(db, credentials, gateway);
   const { runId, stream } = await runtime.prepare(session.id, 'continue', randomUUID(), session.tipEntryId);
   const reader = stream.getReader();
   while (!(await reader.read()).done) { /* drain */ }

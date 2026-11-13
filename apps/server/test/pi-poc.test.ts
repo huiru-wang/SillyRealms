@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PiGateway, requiredToolChoice } from '../src/agent/model/pi-gateway.js';
-import { stateTool } from '../src/agent/tools/state-tool.js';
+import { PiGateway, requiredToolChoice } from '../src/runtime/model/pi-gateway.js';
+import { stateTool } from '../src/runtime/tools/state-tool.js';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions';
 import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript';
@@ -73,7 +73,9 @@ describe('Pi SDK contract PoC', () => {
       expect(wasCalled).toBe(true); expect(events).toContain('text_delta'); expect(events).toContain('done');
       expect(sentBody).toMatchObject({tool_choice:'required'});
       const output=String(log.mock.calls[0]?.[0]); const logged=JSON.parse(output.slice(output.indexOf('{'),output.lastIndexOf('\n└─')));
-      expect(logged).toMatchObject({provider:'deepseek',model:'deepseek-flash',payload:sentBody});
+      expect(logged).toMatchObject({provider:'deepseek',model:'deepseek-flash',fingerprint:expect.any(String)});
+      expect(logged).not.toHaveProperty('payload');
+      expect(JSON.stringify(logged)).not.toContain('hello');
       expect(JSON.stringify(logged)).not.toContain('fake');
     } finally { if(oldDebug===undefined)delete process.env.SILLYREALMS_DEBUG;else process.env.SILLYREALMS_DEBUG=oldDebug;log.mockRestore(); vi.unstubAllGlobals(); }
   });

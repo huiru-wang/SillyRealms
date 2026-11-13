@@ -10,7 +10,7 @@ describe('database initialization', () => {
     expect(rows).toHaveLength(8);
     expect(rows.some(row=>String(row.sql).includes('REFERENCES presets'))).toBe(true);
     expect(db.prepare('PRAGMA foreign_keys').get()?.foreign_keys).toBe(1);
-    expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(1);
+    expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(2);
     db.close();
   });
   it('allows only configured LAN origins in addition to local origins', async () => {
@@ -31,7 +31,7 @@ describe('database initialization', () => {
   });
 });
 
-it('replaces legacy presets once and keeps sessions, history, worlds and model settings', async () => {
+it('preserves v1 presets, sessions, history, worlds and model settings during additive v2 migration', async () => {
   const {mkdtempSync,rmSync}=await import('node:fs');
   const {join}=await import('node:path');
   const {tmpdir}=await import('node:os');
@@ -46,17 +46,17 @@ it('replaces legacy presets once and keeps sessions, history, worlds and model s
       .run('entry','session',null,'r',1,'message','assistant',0,1,'{"message":{"role":"assistant","content":"保留故事"}}','{}');
     before.prepare("UPDATE sessions SET usage_json=json_set(usage_json,'$.latestContext',json('{\"inputTokens\":5}')) WHERE id='session'").run();
     before.prepare("UPDATE app_settings SET default_preset_id='custom',default_api_model_config_id='model'").run();
-    before.exec('PRAGMA user_version = 0');
+    before.exec('PRAGMA user_version = 1');
     before.close();
     const after=openDatabase(path);
-    expect(after.prepare('SELECT id FROM presets').all()).toEqual([{id:'sr-default-preset'}]);
-    const preset=JSON.parse(String(after.prepare('SELECT config_json FROM presets').get()?.config_json));
+    expect(after.prepare('SELECT id FROM presets ORDER BY id').all()).toEqual([{id:'custom'},{id:'sr-default-preset'}]);
+    const preset=JSON.parse(String(after.prepare('SELECT config_json FROM presets WHERE id=\'sr-default-preset\'').get()?.config_json));
     expect(preset.budget).toEqual({context_strategy:'standard',max_output_tokens:2048});
-    expect(after.prepare("SELECT preset_id,title,api_model_config_id FROM sessions WHERE id='session'").get()).toMatchObject({preset_id:'sr-default-preset',title:'保留',api_model_config_id:'model'});
-    expect(JSON.parse(String(after.prepare("SELECT usage_json FROM sessions WHERE id='session'").get()?.usage_json)).latestContext).toBeNull();
+    expect(after.prepare("SELECT preset_id,title,api_model_config_id FROM sessions WHERE id='session'").get()).toMatchObject({preset_id:'custom',title:'保留',api_model_config_id:'model'});
+    expect(JSON.parse(String(after.prepare("SELECT usage_json FROM sessions WHERE id='session'").get()?.usage_json)).latestContext).toEqual({inputTokens:5});
     expect(after.prepare("SELECT payload FROM entries WHERE id='entry'").get()?.payload).toContain('保留故事');
-    expect(after.prepare("SELECT default_preset_id,default_api_model_config_id FROM worlds WHERE id='world'").get()).toMatchObject({default_preset_id:'sr-default-preset',default_api_model_config_id:'model'});
-    expect(after.prepare('SELECT default_preset_id,default_api_model_config_id FROM app_settings').get()).toMatchObject({default_preset_id:'sr-default-preset',default_api_model_config_id:'model'});
+    expect(after.prepare("SELECT default_preset_id,default_api_model_config_id FROM worlds WHERE id='world'").get()).toMatchObject({default_preset_id:'custom',default_api_model_config_id:'model'});
+    expect(after.prepare('SELECT default_preset_id,default_api_model_config_id FROM app_settings').get()).toMatchObject({default_preset_id:'custom',default_api_model_config_id:'model'});
     after.prepare('INSERT INTO presets VALUES(?,?,?,?,?)').run('new','新预设','{}',2,2);
     after.close();
     const again=openDatabase(path);
@@ -104,7 +104,7 @@ it('does not expose removed world, branch, or event endpoints', async () => {
   db.close();
 });
 
-it('upgrades only an untouched empty built-in preset and preserves customized content',async()=>{
+it('does not clean up existing built-in prompt fields during subsequent startup',async()=>{
   const {mkdtempSync,rmSync}=await import('node:fs');
   const {join}=await import('node:path');
   const {tmpdir}=await import('node:os');
@@ -118,7 +118,7 @@ it('upgrades only an untouched empty built-in preset and preserves customized co
     first.close();
     const second=openDatabase(path);
     const upgraded=read(second);
-    expect(upgraded.nodes.find((n:{id:string})=>n.id==='main')).toMatchObject({name:'叙事风格',content:''});
+    expect(upgraded).toEqual(legacy);
     upgraded.nodes.find((n:{id:string})=>n.id==='main').content='CUSTOM_MAIN';
     second.prepare("UPDATE presets SET config_json=? WHERE id='sr-default-preset'").run(JSON.stringify(upgraded));
     second.close();

@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { debugLog } from './common/debug.js';
 import { bodyLimit } from 'hono/body-limit';
 import type { DatabaseSync } from 'node:sqlite';
-import { AgentRuntime, PiGateway, type ModelGateway } from './agent/index.js';
+import { SRRuntime, PiGateway, type ModelGateway } from './runtime/index.js';
 import { worldRoutes } from './routes/worlds.js';
 import { appSettingsRoutes } from './routes/app-settings.js';
 import { WorldFileStore, testWorldDataDir } from './infrastructure/world-files/world-file-store.js';
@@ -36,7 +36,7 @@ export function createApp(db: DatabaseSync, credentials: CredentialStore = new M
   });
   app.use('/api/*', bodyLimit({maxSize:11 * 1024 * 1024,onError:c => c.json(failure(ErrorCodes.BODY_TOO_LARGE, '请求内容超过 11 MiB', { path: '$' }),413)}));
   const provider = providerRoutes(db, credentials, gateway);
-  const runtime = new AgentRuntime(db, credentials, gateway);
+  const runtime = new SRRuntime(db, credentials, gateway);
   app.route('/api/v1/sessions', sessionRuntimeRoutes(db,runtime));
   app.route('/api/v1/sessions', stateUpdateRoutes(db,runtime));
   app.route('/api/v1/providers', provider.providers);
@@ -45,7 +45,7 @@ export function createApp(db: DatabaseSync, credentials: CredentialStore = new M
   app.route('/api/v1/worlds', worldRoutes(db, (worldId, ids, remove) => runtime.deleteWorld(worldId,ids,remove), files));
   app.route('/api/v1/app-settings', appSettingsRoutes(db));
   app.route('/api/v1/presets', presetRoutes(db));
-  const sessions=sessionRoutes(db, id => runtime.busy(id), (ids, remove) => runtime.deleteSessions(ids,remove), id => runtime.worldDeleting(id), id => runtime.emit(id,'session.updated',{}), credentials);
+  const sessions=sessionRoutes(db, id => runtime.busy(id), (ids, remove) => runtime.deleteSessions(ids,remove), id => runtime.worldDeleting(id), id => runtime.emit(id,'session.updated',{}), credentials, id=>runtime.activeRun(id));
   app.route('/api/v1/sessions', sessions);
   app.get('/health', (c) => {
     db.prepare('SELECT 1').get();

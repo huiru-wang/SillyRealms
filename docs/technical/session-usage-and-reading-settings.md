@@ -1,6 +1,6 @@
 # Session Token Usage and Reading Settings
 
-Status: implemented 2026-11-09.
+Status: implemented 2026-11-09; Runtime v2 compatibility updated 2026-11-13.
 
 ## Platform ownership
 
@@ -24,7 +24,7 @@ The provider returns one actual aggregate input-token count. It does not attribu
 2. summaryBytes: serialized size of the retained summary item, or zero if there is no summary.
 3. historyBytes: serialized size of retained history other than the summary, plus the current user input.
 
-The UI order is fixed: **system → summary → history**. Only segment proportions are rendered. These byte estimates are not provider tokens and are not used for billing or context-window calculations. Tool schemas and other runtime metadata are not drawn as separate segments. In the current implementation, dynamic state text belongs to the system segment through its preset node. In the approved pending narrative contract, that node is removed; platform-injected state/output rules still belong to the system segment even though they follow history.
+The UI order is fixed: **system → summary → history**. Only segment proportions are rendered. These byte estimates are not provider tokens and are not used for billing or context-window calculations. Tool schemas and other runtime metadata are not drawn as separate segments. Direct places authoritative state/output rules after history; this remains in the system composition category. Agent retains its preset-node layout.
 
 The composition is persisted alongside the actual latestContext Usage snapshot in the existing sessions.usage_json. Continuation requests include additional assistant/tool messages and currently do not have a composition breakdown; the latest usage remains accurate and the panel displays an unavailable composition state. Older snapshots without composition behave the same way.
 
@@ -78,10 +78,10 @@ Browser tests:
 - 200-message WorldStory at 1280px and 375px, with 5/50/200 DOM-count checks.
 - Font changes preserve both a middle reading anchor and bottom anchoring.
 
-## Approved single-request narrative transition (pending implementation)
+## Runtime v2 and current-request budgeting
 
-The [state-tail plan](../../plan/sr-narrative-state-tail-protocol-v1.md) removes narrative tool continuations, not the general loop capability. The one narrative request accounts for both visible story and invisible tail; summary requests and any independently used generic tool calls retain their actual Usage.
+Direct uses one actual generation request for both visible narrative and the hidden extension tail. Agent continues to account for each generation/tool continuation. Summary requests remain separate. The budget meter is independent of these actual Usage totals and is explicitly estimated; it never fabricates a provider usage record.
 
-Context composition must classify the new fixed platform state/output message as system, keep assistant summary separate, and classify native history/current input consistently with the existing panel. Custom preset messages belong to the preset/system composition category regardless of their configured model role; this is a structural display category, not an instruction-role rewrite.
+Context composition classifies the fixed platform state/output message as system, keeps assistant summary separate, and classifies native history/current input consistently. Custom preset text remains in the structural preset/system category regardless of its model role. See [current-request compaction](context-compaction.md).
 
-A later explicitly authorized one-time upgrade clears old sessions and entries, including their usage fields and Run metrics. It preserves worlds, presets outside the specified structural edits, models, credentials and global browser preferences. Only reading-font-size keys of deleted/missing sessions are removed; new sessions created before a client's first upgraded load keep their settings. No cleanup occurs in this documentation revision.
+The additive v1 → v2 upgrade preserves sessions, entries, usage fields, presets and reading preferences. No session/font-key cleanup is part of this rollout. Session settings now add Direct/Agent selection and inherited capability overrides; capability-only changes can be saved while busy for the next Run. API and migration details are in [Runtime v2 contracts](../data-formats/runtime-v2-contract.md).

@@ -1,7 +1,7 @@
 import {expect, it} from 'vitest';
-import {buildContext, estimateMessageBytes} from '../src/agent/context/prompt-builder.js';
-import {SR_SYSTEM_MAIN} from '../src/agent/context/system-main.js';
-import {summaryNarrative} from '../src/agent/context/context-manager.js';
+import {buildContext, estimateMessageBytes} from '../src/runtime/context/prompt-builder.js';
+import {SR_SYSTEM_MAIN} from '../src/runtime/context/system-main.js';
+import {summaryNarrative} from '../src/runtime/context/context-manager.js';
 
 const views = {global:{}, session:{}, message:{}};
 const world = {characters:[{id:'p',player_selectable:true}], lorebook:{entries:[{id:'tavern',content:'LORE_ACTIVE',load:{mode:'on_mention',keywords:['酒馆'],anchor:'characterInfo'}}]}};

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { compressHistory } from '../src/agent/context/history-compactor.js';
+import { compressHistory } from '../src/runtime/context/history-compactor.js';
 
 it('summarizes the oldest messages in order without discarding the tail', async () => {
   const history = Array.from({length:40}, (_, i) => ({ id:`e${i}`, role:'user' as const, text:`message ${i}` }));

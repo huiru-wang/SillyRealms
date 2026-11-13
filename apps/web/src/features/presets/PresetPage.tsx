@@ -7,7 +7,7 @@ import {ErrorNotice,Header,Loading,useLoad} from '../../app/ui';
 
 const BUILTIN=['main','personaInfo','characterInfo','worldState','chatHistory','userInput','postHistory'];
 function blankPreset(){
- return {name:'',description:'',model_parameters:{temperature:1},budget:{context_strategy:'standard',max_output_tokens:2048},summary_prompt:'总结此前发生的故事。',nodes:BUILTIN.map(id=>({
+ return {name:'',description:'',model_parameters:{temperature:1},budget:{context_strategy:'standard',max_output_tokens:2048},summary_prompt:'总结此前发生的故事。',capabilities:{state_update:{enabled:true,prompt:''},action_suggestions:{enabled:false,count:3,prompt:''}},nodes:BUILTIN.map(id=>({
   id,kind:'system',name:({main:'叙事风格',personaInfo:'玩家设定',characterInfo:'角色设定',worldState:'世界状态',chatHistory:'聊天历史',userInput:'玩家输入',postHistory:'历史后置'} as Record<string,string>)[id],
   source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true,...(id==='main'?{content:''}:{})
  }))};
@@ -22,7 +22,7 @@ export function PresetPage({isNew=false}:{isNew?:boolean}){
  const [expanded,setExpanded]=useState<Record<string,boolean>>({});
  const saveRef=useRef(false);
  useEffect(()=>{if(source.value){
-   setDraft({...source.value.item,nodes:source.value.item.nodes.map((n:any)=>n.id==='postHistory'?n:{...n,enabled:true})});
+   setDraft({...source.value.item,nodes:source.value.item.nodes.map((n:any)=>n.kind==='text'||n.id==='postHistory'?n:{...n,enabled:true})});
  }},[source.value]);
  if(!draft)return <main className="page narrow">{source.error?<ErrorNotice message={source.error} onRetry={source.reload}/>:<Loading text="正在读取预设…"/>}</main>;
  const nodes:any[]=draft.nodes;
@@ -46,7 +46,7 @@ export function PresetPage({isNew=false}:{isNew?:boolean}){
      const originals:any[]=source.value.item.nodes;
      const patch={
       name:draft.name,description:draft.description??null,model_parameters:draft.model_parameters??{},
-      budget:draft.budget,summary_prompt:draft.summary_prompt,
+      budget:draft.budget,summary_prompt:draft.summary_prompt,capabilities:draft.capabilities,
       nodes:nodes.filter(n=>originals.some(o=>o.id===n.id)).map(n=>({id:n.id,name:n.name,enabled:n.enabled,role:n.role,...(n.content!==undefined?{content:n.content}:{})})),
       add_nodes:nodes.filter(n=>!originals.some(o=>o.id===n.id)),
       remove_node_ids:originals.filter(o=>!nodes.some(n=>n.id===o.id)).map(o=>o.id),
@@ -64,6 +64,8 @@ export function PresetPage({isNew=false}:{isNew?:boolean}){
   try{await api('v1/presets/'+id,{method:'DELETE'});navigate('/presets');}
   catch(e){setError(e instanceof Error?e.message:String(e));}
  };
+ const capabilities=draft.capabilities??{state_update:{enabled:true,prompt:''},action_suggestions:{enabled:false,count:3,prompt:''}};
+ const updateCapability=(name:'state_update'|'action_suggestions',patch:any)=>update({capabilities:{...capabilities,[name]:{...capabilities[name],...patch}}});
  const isDefault=defaults.value?.item?.defaultPresetId===id;
  return <main className="page narrow preset-editor-page">
    <Link to="/presets" className="editor-back"><ArrowLeft size={15}/> 返回预设列表</Link>
@@ -73,6 +75,7 @@ export function PresetPage({isNew=false}:{isNew?:boolean}){
    </Header>
    {isDefault&&<div className="preset-editor-default"><Check size={16}/> 当前应用默认预设。修改共享内容会影响引用此预设的会话在后续生成中的行为。</div>}
    {error&&<ErrorNotice message={error}/>}
+   {source.value?.warnings?.map((warning:{code:string;mode:string;message:string})=><p className="editor-node-help" key={warning.code}>Direct：{warning.message}</p>)}
    {saved&&<div className="preset-save-ok" role="status"><Check size={16}/>{saved}</div>}
    <div className="preset-editor-layout">
     <section className="preset-editor-main">
@@ -84,17 +87,28 @@ export function PresetPage({isNew=false}:{isNew?:boolean}){
         </div>
       </section>
       <section className="editor-section">
-        <div className="editor-section-head"><div><h2>生成策略</h2><p>控制输出预算与摘要行为，不绑定特定模型。</p></div><span className="editor-section-index">02</span></div>
+        <div className="editor-section-head"><div><h2>生成策略</h2><p>设置上下文窗口档位和输出预算；超过预算时整理较早的历史。</p></div><span className="editor-section-index">02</span></div>
         <div className="editor-form editor-form-cols">
           <label>最大输出 Token<input type="number" min="1" value={draft.budget.max_output_tokens} onChange={e=>update({budget:{...draft.budget,max_output_tokens:Number(e.target.value)}})}/></label>
           <label>温度（0–2）<input type="number" min="0" max="2" step="0.1" value={draft.model_parameters?.temperature??1} onChange={e=>update({model_parameters:{...draft.model_parameters,temperature:Number(e.target.value)}})}/></label>
-          <label>上下文策略<select value={draft.budget.context_strategy} onChange={e=>update({budget:{...draft.budget,context_strategy:e.target.value}})}><option value="compact">轻量对话 · 128K</option><option value="standard">标准叙事 · 256K</option><option value="extended">长篇沉浸 · 512K</option></select><small>实际容量受会话所选模型的上下文窗口限制。</small></label>
+          <label>上下文窗口档位<select value={draft.budget.context_strategy} onChange={e=>update({budget:{...draft.budget,context_strategy:e.target.value}})}><option value="compact">轻量对话 · 128K</option><option value="standard">标准叙事 · 256K</option><option value="extended">长篇沉浸 · 512K</option></select><small>实际容量取此档位与模型窗口的较小值，并为输出保留空间。</small></label>
+          <p className="editor-wide">超限处理：摘要较早历史，保留最近五轮。无法满足预算时会提示调整输入或窗口。</p>
           <label className="editor-wide">摘要 Prompt<textarea rows={3} value={draft.summary_prompt??''} onChange={e=>update({summary_prompt:e.target.value})}/></label>
         </div>
       </section>
       <section className="editor-section">
-        <div className="editor-section-head"><div><h2>提示词编排</h2><p>按从上至下的顺序构建上下文，点击节点展开编辑。</p></div><button className="button secondary" onClick={add}><Plus size={15}/> 新增文本节点</button></div>
-        <p className="editor-node-help">平台内置的角色扮演协议始终置于最前，不属于此预设；下方的「叙事风格」节点可配置自定义写作风格，留空则不增加额外提示词。</p>
+        <div className="editor-section-head"><div><h2>Direct 叙事能力</h2><p>会话可单独覆盖开关。Agent 模式沿用工具循环，不使用这些设置。</p></div></div>
+        <div className="editor-form">
+          <label className="editor-node-enable"><input type="checkbox" checked={capabilities.state_update.enabled} onChange={e=>updateCapability('state_update',{enabled:e.target.checked})}/> 更新故事状态</label>
+          <label>状态更新补充说明<textarea rows={2} maxLength={2000} value={capabilities.state_update.prompt??''} onChange={e=>updateCapability('state_update',{prompt:e.target.value})}/><small>可补充状态判定要求；不能替代平台校验规则。</small></label>
+          <label className="editor-node-enable"><input type="checkbox" checked={capabilities.action_suggestions.enabled} onChange={e=>updateCapability('action_suggestions',{enabled:e.target.checked})}/> 生成行动建议</label>
+          <label>建议数量<select value={capabilities.action_suggestions.count??3} onChange={e=>updateCapability('action_suggestions',{count:Number(e.target.value)})}><option value={2}>2 项</option><option value={3}>3 项</option><option value={4}>4 项</option></select></label>
+          <label>行动建议补充说明<textarea rows={2} maxLength={2000} value={capabilities.action_suggestions.prompt??''} onChange={e=>updateCapability('action_suggestions',{prompt:e.target.value})}/><small>建议只填入草稿，由玩家确认发送。</small></label>
+        </div>
+      </section>
+      <section className="editor-section">
+        <div className="editor-section-head"><div><h2>提示词编排</h2><p>Agent 使用下列编排顺序。Direct 使用固定骨架，保留自定义文本的相对顺序。</p></div><button className="button secondary" onClick={add}><Plus size={15}/> 新增文本节点</button></div>
+        <p className="editor-node-help">Direct 顺序为：平台规则、叙事风格、自定义文本、玩家、角色、世界信息、历史、当前状态与能力规则、当前输入。启用的历史后置文本在 Direct 中移到前方自定义区，旧内容与排列仍保留供 Agent 使用。</p>
         <div className="editor-nodes">{nodes.map((n,index)=>{
          const open=!!expanded[n.id];const editable=n.kind==='text';const canEditPrompt=editable||n.id==='main'||n.id==='postHistory';
          return <div className={'editor-node '+(open?'open':'')} key={n.id}>
@@ -106,8 +120,8 @@ export function PresetPage({isNew=false}:{isNew?:boolean}){
              <div className="editor-form editor-form-cols"><label>节点名称<input value={n.name} onChange={e=>updateNode(index,{name:e.target.value})}/></label><label>消息角色<select value={n.role} disabled={!editable} onChange={e=>updateNode(index,{role:e.target.value})}><option value="system">system</option><option value="user">user</option><option value="assistant">assistant</option>{n.role==='auto'&&<option value="auto">auto</option>}</select></label>
                {canEditPrompt&&<label className="editor-wide">Prompt 内容<textarea rows={6} value={n.content??''} onChange={e=>updateNode(index,{content:e.target.value})}/></label>}
              </div>
-             {n.id==='postHistory'&&<label className="editor-node-enable"><input type="checkbox" checked={n.enabled} onChange={e=>updateNode(index,{enabled:e.target.checked})}/> 启用后置节点</label>}
-             {!canEditPrompt&&<p className="editor-node-help">内置节点由运行时提供，必须启用。节点位置可调整。</p>}
+             {(editable||n.id==='postHistory')&&<label className="editor-node-enable"><input type="checkbox" checked={n.enabled} onChange={e=>updateNode(index,{enabled:e.target.checked})}/> 启用此节点</label>}
+             {!canEditPrompt&&<p className="editor-node-help">内置节点由运行时提供。位置调整用于 Agent；Direct 的权威状态与能力规则固定在历史之后。</p>}
            </div>}
          </div>;
         })}</div>

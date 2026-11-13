@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { evaluateLoad } from '../src/agent/context/activation.js';
-import { setState, stateToolInstructions } from '../src/agent/tools/state-tool.js';
+import { evaluateLoad } from '../src/runtime/context/activation.js';
+import { setState, stateToolInstructions } from '../src/runtime/tools/state-tool.js';
 import type { AtomicStateDefinition } from '../src/domain/state/atomic-state.js';
 
 describe('content activation and direct state tool', () => {
@@ -31,7 +31,7 @@ describe('content activation and direct state tool', () => {
 });
 
 it('logs skipped state items without including paths or values', async()=>{
-  const {ToolExecutor}=await import('../src/agent/tools/tool-executor.js');
+  const {ToolExecutor}=await import('../src/runtime/tools/tool-executor.js');
   const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
   try {
     const workspace={hp:1};
@@ -49,7 +49,7 @@ it('logs skipped state items without including paths or values', async()=>{
 });
 
 it('batch update_state applies valid items in order and reports skipped items',async()=>{
-  const {ToolExecutor}=await import('../src/agent/tools/tool-executor.js');
+  const {ToolExecutor}=await import('../src/runtime/tools/tool-executor.js');
   const executor=new ToolExecutor();
   const workspace={hp:1,money:5};
   const modules={hp:{type:'number' as const,initial:1,min:0,max:10},money:{type:'number' as const,initial:5}};

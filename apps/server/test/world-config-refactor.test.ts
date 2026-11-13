@@ -1,10 +1,11 @@
+import { fakeMeasurement } from './fixtures/fake-gateway.js';
 import { afterEach, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, writeFileSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Api, AssistantMessageEvent, Model } from '@earendil-works/pi-ai';
-import type { ModelGateway } from '../src/agent/model/pi-gateway.js';
+import type { ModelGateway } from '../src/runtime/model/pi-gateway.js';
 import { openDatabase } from '../src/infrastructure/database/database.js';
 import { WorldFileStore } from '../src/infrastructure/world-files/world-file-store.js';
 import { createApp } from '../src/app.js';
@@ -179,7 +180,7 @@ it('uses session-selected model for each run even after world defaults change',a
   };
   const gateway:ModelGateway={
     resolve:(_provider,id)=>({...model,id}),
-    toolVerified:()=>true,
+    measure:fakeMeasurement,supportsDirect:()=>true,toolVerified:()=>true,
     stream:(selected)=>({
       async *[Symbol.asyncIterator]() {
         calls.push(selected.id);
