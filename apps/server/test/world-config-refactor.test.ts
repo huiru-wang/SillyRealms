@@ -1,4 +1,3 @@
-import { fakeMeasurement } from './fixtures/fake-gateway.js';
 import { afterEach, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, writeFileSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -175,12 +174,12 @@ it('uses session-selected model for each run even after world defaults change',a
   const calls:string[]=[];
   const model:Model<Api>={
     id:'m',name:'Fake',provider:'fake',api:'openai-completions',baseUrl:'http://localhost',
-    reasoning:false,input:['text'],contextWindow:32768,maxTokens:4096,
+    reasoning:false,input:['text'],contextWindow:65536,maxTokens:4096,
     cost:{input:0,output:0,cacheRead:0,cacheWrite:0},
   };
   const gateway:ModelGateway={
     resolve:(_provider,id)=>({...model,id}),
-    measure:fakeMeasurement,supportsDirect:()=>true,toolVerified:()=>true,
+    supportsDirect:()=>true,toolVerified:()=>true,
     stream:(selected)=>({
       async *[Symbol.asyncIterator]() {
         calls.push(selected.id);

@@ -34,7 +34,7 @@ export function providerRoutes(db: DatabaseSync, credentials: CredentialStore, g
           db.prepare('UPDATE app_settings SET default_api_model_config_id=?,updated_at=? WHERE id=1 AND default_api_model_config_id IS NULL')
             .run(id,now);
         });
-      } catch { await credentials.delete(id); throw new Error(ErrorCodes.CONFIG_SAVE_FAILED); }
+      } catch { credentials.deleteSync(id); throw new Error(ErrorCodes.CONFIG_SAVE_FAILED); }
       return c.json({ item: await publicRow(get(id)!) }, 201);
     } catch { return c.json(failure(ErrorCodes.CONFIG_SAVE_FAILED),422); }
   });
@@ -61,18 +61,24 @@ export function providerRoutes(db: DatabaseSync, credentials: CredentialStore, g
       if (body.apiKey !== undefined) await credentials.set(ref, body.apiKey);
       try { db.prepare('UPDATE api_model_configs SET name=?, provider_id=?, model_id=?, updated_at=? WHERE id=?').run(body.name ?? String(row.name), provider, model, Date.now(), String(row.id)); }
       catch (err) {
-        if (body.apiKey !== undefined) { if (previous === null) await credentials.delete(ref); else await credentials.set(ref,previous); }
+        if (body.apiKey !== undefined) { if (previous === null) credentials.deleteSync(ref); else await credentials.set(ref,previous); }
         throw err;
       }
       return c.json({ item: await publicRow(get(String(row.id))!) });
     } catch { return c.json(failure(ErrorCodes.CONFIG_UPDATE_FAILED),422); }
   });
-  configs.delete('/:id', async c => {
+  configs.delete('/:id', c => {
     const row = get(c.req.param('id'));
     if (!row) return c.json(failure(ErrorCodes.API_MODEL_CONFIG_NOT_FOUND),404);
     const refs=referenceCounts(db,'model',String(row.id));
     if(refs.total>0) return c.json(failure(ErrorCodes.CONFIG_IN_USE, `当前有 ${refs.total} 处引用`, { counts: refs }),409);
-    try { await credentials.delete(String(row.credential_ref)); db.prepare('DELETE FROM api_model_configs WHERE id=?').run(String(row.id)); return c.json({ ok: true }); }
+    try {
+      transaction(db, () => {
+        db.prepare('DELETE FROM api_model_configs WHERE id=?').run(String(row.id));
+        credentials.deleteSync(String(row.credential_ref));
+      });
+      return c.json({ ok: true });
+    }
     catch { return c.json(failure(ErrorCodes.CREDENTIAL_DELETE_FAILED),500); }
   });
   return { providers, configs };

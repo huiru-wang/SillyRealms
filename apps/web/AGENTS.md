@@ -12,3 +12,5 @@
 - Validate real browser rendering and interactions for visual changes; typecheck/build alone is not Visual QA.
 - Before completion run Web typecheck and build; run root checks when cross-package behavior changes.
 - Do not commit or push unless explicitly requested.
+
+- Reconnect publishes `run.snapshot` through the public SDK event contract, including unfinished narrative content. WorldStory merges snapshots/deltas by stable IDs and UTF-16 offsets, repairs gaps through public history reads, and never resurrects a terminal Run. Keep history rows memoized and React portal slots stable during DOM reconciliation.

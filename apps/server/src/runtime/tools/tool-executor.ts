@@ -1,3 +1,4 @@
+import { warnLog } from '../../common/debug.js';
 import type { ToolCall, ToolResultMessage } from '@earendil-works/pi-ai';
 import { ErrorCodes, normalizeError } from '../../common/error-codes.js';
 import type { Json } from '../../domain/state/state.js';
@@ -29,7 +30,7 @@ export class ToolExecutor {
         } catch (error) {
           const code = normalizeError(error, ErrorCodes.INVALID_STATE_UPDATE).errorCode;
           skipped.push({ index, code });
-          console.warn('SR_STATE_UPDATE_SKIPPED', { toolCallId: call.id, index, code });
+          warnLog('STATE SKIPPED', { toolCallId: call.id, index, code });
         }
       }
       result = skipped.length ? { ok: false, code: skipped[0]!.code, updated, skipped } : { ok: true, updated };

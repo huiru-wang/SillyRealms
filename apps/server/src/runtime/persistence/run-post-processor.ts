@@ -4,9 +4,11 @@ import type { UsageStore, RunAccounting } from './usage-store.js';
 export class RunPostProcessor {
   constructor(private usage: UsageStore, private onSettled: (sessionId: string, runId: string) => void) {}
 
-  process(context: RunAccounting, outcome: 'completed' | 'failed' | 'stopped'): void {
-    if (this.usage.settleRun(context.sessionId, context.runId, outcome, context.durationMs())) {
+  process(context: RunAccounting, outcome: 'completed' | 'failed' | 'stopped', terminal?: Record<string, unknown>): boolean {
+    if (this.usage.settleRun(context.sessionId, context.runId, outcome, context.durationMs(), terminal)) {
       this.onSettled(context.sessionId, context.runId);
+      return true;
     }
+    return false;
   }
 }

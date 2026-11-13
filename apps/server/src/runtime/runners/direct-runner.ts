@@ -19,7 +19,7 @@ export class DirectRunner {
   async execute(args: RunnerArgs): Promise<RunnerResult> {
     const { sessionId, runId, prepared, task, runContext } = args;
     const { config, execution } = prepared;
-    const writer = createStoryWriter(args, this.store, this.usage, this.emit);
+    const writer = createStoryWriter(args, this.usage, this.emit);
     const splitter = new ExtensionStreamSplitter();
     let extensions = initialExtensions(config.extensions, execution.state.active);
     let workspace = structuredClone(execution.state.baseline) as typeof prepared.workspace;
@@ -79,6 +79,7 @@ export class DirectRunner {
       const clean: AssistantMessage = { ...final, content: [{ type: 'text', text: writer.text }] };
       const savedId = this.store.completeAssistant(sessionId, runId, clean, writer.text, writer.id, writer.text);
       execution.progress.latestEntryId = savedId;
+      task.liveMessage = undefined;
       try { this.usage.attachEntry(sessionId, runId, meta.requestId, savedId); }
       catch (error) { debugLog('用量关联失败', { runId, errorCode: normalizeError(error).errorCode }); }
       if (state.result.status === 'failed') return { outcome: 'failed',

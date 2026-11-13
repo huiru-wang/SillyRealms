@@ -21,7 +21,7 @@ function legacy(path:string,explicit=false){
   db.prepare('UPDATE presets SET config_json=?').run(JSON.stringify(preset));
   db.prepare('INSERT INTO tags VALUES(?,?,?,?,?,?)').run('tag','world','KEEP_TAG',1,1,1);
   if(!explicit)db.exec('ALTER TABLE sessions DROP COLUMN execution_mode;');
-  db.exec('ALTER TABLE sessions DROP COLUMN capability_overrides_json;ALTER TABLE sessions DROP COLUMN capability_revision;PRAGMA user_version=1;');
+  db.exec('DROP TABLE run_preparations;ALTER TABLE sessions DROP COLUMN capability_overrides_json;ALTER TABLE sessions DROP COLUMN capability_revision;PRAGMA user_version=1;');
   return db;
 }
 it('backs up v1 before additive mode inference and preserves all source content and references',()=>{
@@ -33,13 +33,13 @@ it('backs up v1 before additive mode inference and preserves all source content 
     const snapshots=Object.fromEntries(['worlds','entries','tags','api_model_configs','app_settings'].map(table=>[table,before.prepare('SELECT * FROM '+table).all()]));
     before.close();const bytes=readFileSync(source);
     const db=openDatabase(path);
-    expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(2);
+    expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
     expect(db.prepare('SELECT id,execution_mode FROM sessions ORDER BY id').all()).toEqual([{id:'d',execution_mode:'direct'},{id:'s',execution_mode:'agent'}]);
     for(const [table,rows] of Object.entries(snapshots))expect(db.prepare('SELECT * FROM '+table).all()).toEqual(rows);
     const afterPreset=JSON.parse(String(db.prepare('SELECT config_json FROM presets').get()!.config_json));delete afterPreset.capabilities;
     expect(afterPreset).toEqual(JSON.parse(preset));
     expect(readFileSync(source)).toEqual(bytes);
-    expect(db.prepare('SELECT count(*) AS count FROM sqlite_master WHERE type=?').get('table')!.count).toBe(8);
+    expect(db.prepare('SELECT count(*) AS count FROM sqlite_master WHERE type=?').get('table')!.count).toBe(9);
     db.prepare("UPDATE sessions SET execution_mode='direct',capability_revision=7,capability_overrides_json='{\"state_update\":false}' WHERE id='s'").run();
     db.close();
     const backups=readdirSync(folder).filter(name=>name.includes('.backup-v1-'));expect(backups).toHaveLength(1);
@@ -71,7 +71,7 @@ it('rolls back every new column and preset change when v2 migration validation f
     expect(db.prepare('SELECT count(*) AS count FROM entries').get()!.count).toBe(2);db.close();
   }finally{rmSync(folder,{recursive:true,force:true});}
 });
-it.each([0,3])('rejects unsupported source schema version %s without rewriting data',version=>{
+it.each([0,4])('rejects unsupported source schema version %s without rewriting data',version=>{
   const folder=mkdtempSync(join(tmpdir(),'sr-schema-guard-')),path=join(folder,'db.sqlite');
   try{const before=legacy(path);before.exec('PRAGMA user_version='+version);before.close();const bytes=readFileSync(path);
     expect(()=>openDatabase(path)).toThrow();expect(readFileSync(path)).toEqual(bytes);
@@ -90,4 +90,35 @@ it('normalizes interrupted Direct pending extensions without publishing hidden d
     expect(result).toMatchObject({status:'failed',phase:'finalized',errorCode:'RUN_INTERRUPTED',extensions:{stateUpdate:{status:'failed'},actionSuggestions:{status:'blocked'}}});
     expect(JSON.stringify(result)).not.toContain('PRIVATE_REASON');expect(JSON.stringify(result)).not.toContain('NEVER_PUBLIC');
   }finally{db.close();}
+});
+it('backs up v2 and adds preparation storage without rewriting existing rows',()=>{
+  const folder=mkdtempSync(join(tmpdir(),'sr-v3-')),path=join(folder,'db.sqlite');
+  try{
+    const old=openDatabase(path);seedWorld(old,'w');seedSession(old,'s','w','sr-default-preset','p','e',null,'{}',1,2,'test-model','direct');
+    old.exec('DROP TABLE run_preparations;PRAGMA user_version=2;');
+    const tables=['worlds','sessions','entries','presets','api_model_configs','app_settings','tags','tag_assignments'];
+    const rows=tables.map(table=>old.prepare('SELECT * FROM '+table).all());old.close();
+    const upgraded=openDatabase(path);
+    tables.forEach((table,i)=>expect(upgraded.prepare('SELECT * FROM '+table).all()).toEqual(rows[i]));
+    expect(upgraded.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
+    upgraded.prepare('INSERT INTO run_preparations(run_id,session_id,request_id,expected_tip_entry_id,input_text,status,created_at,result_json) VALUES(?,?,?,?,?,?,?,?)')
+      .run('run','s','request','e','saved','preparing',1,'{}');
+    expect(()=>upgraded.prepare('INSERT INTO run_preparations(run_id,session_id,request_id,expected_tip_entry_id,input_text,status,created_at,result_json) VALUES(?,?,?,?,?,?,?,?)')
+      .run('duplicate','s','request','e','saved','preparing',1,'{}')).toThrow();
+    upgraded.prepare('DELETE FROM sessions WHERE id=?').run('s');
+    expect(upgraded.prepare('SELECT count(*) AS n FROM run_preparations').get()!.n).toBe(0);upgraded.close();
+    const backups=readdirSync(folder).filter(name=>name.includes('.backup-v2-'));expect(backups).toHaveLength(1);
+    const backup=new DatabaseSync(join(folder,backups[0]!));
+    expect(backup.prepare('PRAGMA user_version').get()!.user_version).toBe(2);
+    expect(backup.prepare("SELECT name FROM sqlite_master WHERE name='run_preparations'").get()).toBeUndefined();backup.close();
+  }finally{rmSync(folder,{recursive:true,force:true});}
+});
+it('rejects an incomplete v3 preparation table without changing schema',()=>{
+  const folder=mkdtempSync(join(tmpdir(),'sr-v3-invalid-')),path=join(folder,'db.sqlite');
+  try{
+    const old=openDatabase(path);old.exec('ALTER TABLE run_preparations DROP COLUMN metrics_json;');old.close();
+    expect(()=>openDatabase(path)).toThrow('DATABASE_SCHEMA_VERSION_MISMATCH');
+    const db=new DatabaseSync(path);expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
+    expect(db.prepare("SELECT name FROM pragma_table_info('run_preparations') WHERE name='metrics_json'").get()).toBeUndefined();db.close();
+  }finally{rmSync(folder,{recursive:true,force:true});}
 });

@@ -1,3 +1,5 @@
+import { historyRuns } from '../domain/session/history-runs.js';
+import { runFailure, type FailureStage } from '../domain/session/run-failure.js';
 import { isDeepStrictEqual } from 'node:util';
 import { validateSnapshot } from '../domain/state/state.js';
 import { resolveRuntimeConfig, publicCapabilities } from './config.js';
@@ -5,8 +7,8 @@ import { initialExtensions, rejectExtensions } from './narrative/extension-contr
 import { DirectRunner } from './runners/direct-runner.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { ErrorCodes, normalizeError } from '../common/error-codes.js';
-import { debugLog } from '../common/debug.js';
+import { ErrorCodes, isErrorCode, normalizeError } from '../common/error-codes.js';
+import { debugEnabled, debugLog, withDebugContext } from '../common/debug.js';
 import type { CredentialStore } from '../infrastructure/credentials/store.js';
 import type { ModelGateway } from './model/pi-gateway.js';
 import { RuntimeError } from './shared/errors.js';
@@ -36,7 +38,7 @@ export class SRRuntime {
   private usage: UsageStore;
   private postProcessor: RunPostProcessor;
 
-  constructor(db: DatabaseSync, credentials: CredentialStore, gateway: ModelGateway) {
+  constructor(private db: DatabaseSync, credentials: CredentialStore, gateway: ModelGateway) {
     this.store = new RunStore(db);
     this.usage = new UsageStore(db);
     this.postProcessor = new RunPostProcessor(this.usage, (sessionId, runId) =>
@@ -50,7 +52,9 @@ export class SRRuntime {
   }
   onEvent(listener: RunEvent) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   emit(sessionId: string, event: string, payload: Record<string, unknown>) {
-    if (event !== 'message.delta') debugLog('会话 SSE', { sessionId, event, runId: payload.runId });
+    if (event !== 'message.delta') debugLog('EVENT', { sessionId, event, runId: payload.runId, status: payload.status, phase: payload.phase,
+      errorCode: payload.errorCode, messageId: payload.messageId, offset: payload.offset,
+      ...(typeof payload.text === 'string' ? { textLength: payload.text.length } : {}) });
     for (const listener of this.listeners) {
       try { listener(sessionId, event, payload); }
       catch { /* Notifications cannot roll back committed state or retain a run lock. */ }
@@ -119,11 +123,41 @@ export class SRRuntime {
   status(sessionId: string, runId: string) {
     const stored = this.store.status(sessionId, runId);
     const task = this.active.get(sessionId);
-    if (stored) return task?.runId === runId && stored.status === 'running' ? { ...stored, phase: task.phase } : stored;
-    return task?.runId === runId ? { runId, status: task.status, phase: task.phase ?? 'preparing', executionMode: task.config?.execution.mode, capabilities: task.capabilities } : null;
+    if (stored) return task?.runId === runId && ['preparing', 'running'].includes(stored.status) ? { ...stored, messages: [...(stored.messages ?? []), ...(task.liveMessage ? [{ ...task.liveMessage }] : [])], phase: task.phase ?? 'preparing', executionMode: task.config?.execution.mode, capabilities: task.capabilities } : stored;
+    return task?.runId === runId ? { runId, messages: task.liveMessage ? [{ ...task.liveMessage }] : [], status: task.status, phase: task.phase ?? 'preparing', executionMode: task.config?.execution.mode, capabilities: task.capabilities } : null;
   }
 
-  async prepare(sessionId: string, input: string, requestId: string, expectedTip: string, clientSignal?: AbortSignal):
+  history(sessionId: string, tip: string, limit: number, cursor?: string) {
+    const page = historyRuns(this.db, sessionId, tip, limit, cursor);
+    const task = this.active.get(sessionId);
+    if (!cursor && task) {
+      const current = this.status(sessionId, task.runId);
+      if (current) {
+        const { input: _input, ...snapshot } = current as Record<string, any>;
+        const run = { ...snapshot, status: String(current.status), id: task.runId, messages: current.messages ?? [] };
+        const index = page.runs.findIndex(item => item.id === task.runId);
+        if (index >= 0) page.runs[index] = run;
+        else page.runs.push(run);
+      }
+    }
+    return page;
+  }
+
+  prepare(sessionId: string, input: string, requestId: string, expectedTip: string, clientSignal?: AbortSignal) {
+    const runId = randomUUID();
+    return withDebugContext({ sessionId, runId }, () => this.prepareRun(runId, sessionId, input, requestId, expectedTip, clientSignal));
+  }
+
+  private logRunEnd(sessionId: string, runId: string, runContext: RunAccounting): void {
+    if (!debugEnabled()) return;
+    try {
+      const result = this.store.status(sessionId, runId);
+      debugLog('RUN END', { sessionId, runId, status: result?.status ?? 'unpersisted',
+        errorCode: result?.errorCode, durationMs: runContext.durationMs() });
+    } catch { debugLog('RUN END', { sessionId, runId, status: 'unpersisted', durationMs: runContext.durationMs() }); }
+  }
+
+  private async prepareRun(runId: string, sessionId: string, input: string, requestId: string, expectedTip: string, clientSignal?: AbortSignal):
     Promise<{ runId: string; stream: ReadableStream<Uint8Array> }> {
     if (this.deleting.has(sessionId)) throw new RuntimeError(ErrorCodes.SESSION_BUSY);
     const running = this.active.get(sessionId);
@@ -135,7 +169,7 @@ export class SRRuntime {
     if (!worldId) throw new RuntimeError(ErrorCodes.SESSION_NOT_FOUND);
     if (this.worldRuns.has(worldId) || this.deletingWorlds.has(worldId)) throw new RuntimeError(ErrorCodes.WORLD_BUSY);
 
-    const runId = randomUUID(), controller = new AbortController();
+    const controller = new AbortController();
     const session = this.store.session(sessionId);
     // Preserve existing run preflight semantics; don't create a pending journal for a rejected request.
     if (this.store.duplicate(sessionId, requestId)) throw new RuntimeError(ErrorCodes.REQUEST_ALREADY_EXISTS);
@@ -157,12 +191,16 @@ export class SRRuntime {
       task.finish();
     };
 
+    let accepted = false;
     try {
-      this.usage.beginRun(sessionId, runId, requestId);
+      this.store.beginPreparation({ sessionId, runId, requestId, expectedTip, input }, () => this.usage.beginRun(sessionId, runId, requestId));
+      accepted = true;
+      debugLog('RUN BEGIN', { sessionId, runId, requestId, expectedTipEntryId: expectedTip });
       if (task.stopped) throw new RuntimeError(ErrorCodes.RUN_STOPPED);
       const config = resolveRuntimeConfig(this.store, this.client, sessionId);
       task.config = config;
       task.capabilities = publicCapabilities(config);
+      this.store.updatePreparation(runId, { executionMode: config.execution.mode, capabilities: task.capabilities });
       const prepared = await this.context.prepare({
         sessionId, input, runId, requestId, expectedTip, signal: controller.signal, runContext, config,
       });
@@ -178,12 +216,11 @@ export class SRRuntime {
           presetHash: config.preset.hash, modelId: config.model.definition.id, configId: config.model.configId,
           contextPolicy: config.contextPolicy, capabilityRevision: config.capabilityRevision,
           extensions: config.extensions, baselineHash: prepared.execution.state.baselineHash,
-          active: [...prepared.active], budget: prepared.execution.request?.report },
+          active: [...prepared.active], preparation: prepared.execution.progress.preparationReport },
       });
       try { this.usage.attachCompaction(sessionId, runId); }
       catch (error) { debugLog('摘要统计关联失败', { sessionId, runId, errorCode: normalizeError(error).errorCode }); }
       prepared.execution.progress.latestEntryId = userId;
-      prepared.execution.progress.pendingSummary = undefined;
       task.status = 'running';
       task.phase = prepared.execution.progress.phase = 'narrative';
       task.capabilities = publicCapabilities(config, prepared.active);
@@ -201,12 +238,22 @@ export class SRRuntime {
       });
       return { runId, stream };
     } catch (error) {
-      try { this.postProcessor.process(runContext, task.stopped ? 'stopped' : 'failed'); }
+      // A persisted acceptance can report even an immediate configuration failure as an asynchronous Run terminal.
+      if (accepted) await Promise.resolve();
+      const failure = normalizeError(error);
+      const causeCode = error instanceof RuntimeError ? error.details?.causeCode : undefined;
+      const terminal = { runId, status: task.stopped ? 'stopped' : 'failed', phase: 'finalized',
+        executionMode: task.config?.execution.mode, capabilities: task.capabilities,
+        ...(task.stopped ? { recovery: { inputSaved: accepted, action: 'resubmit' } } : {
+          ...failure, ...runFailure(failure.errorCode, 'preparation', accepted, causeCode) }) };
+      let settled = false;
+      try { if (accepted) settled = this.postProcessor.process(runContext, task.stopped ? 'stopped' : 'failed', {
+        ...terminal, ...(isErrorCode(causeCode) ? { diagnostics: { causeCode } } : {}),
+      }); }
       catch (postError) { debugLog('Run 后置处理失败', { sessionId, runId, errorCode: normalizeError(postError).errorCode }); }
       finally { release(); }
-      this.emit(sessionId, 'run.updated', { runId, status: task.stopped ? 'stopped' : 'failed',
-        phase: 'finalized', executionMode: task.config?.execution.mode, capabilities: task.capabilities,
-        ...(!task.stopped ? normalizeError(error) : {}) });
+      if (settled) this.emit(sessionId, 'run.updated', terminal);
+      if (accepted) this.logRunEnd(sessionId, runId, runContext);
       if (task.stopped) throw new RuntimeError(ErrorCodes.RUN_STOPPED);
       throw error;
     }
@@ -225,6 +272,7 @@ export class SRRuntime {
     finally {
       try { args.streamController.close(); } catch { /* consumer disconnected */ }
       release();
+      this.logRunEnd(args.sessionId, args.runId, args.runContext);
     }
   }
 
@@ -238,7 +286,8 @@ export class SRRuntime {
     let allowState = config.execution.mode === 'agent' ? result.outcome !== 'failed'
       : result.outcome === 'completed' && !!result.extensions &&
         ['applied', 'unchanged', 'partial'].includes(result.extensions.stateUpdate.status);
-    const publicFields = () => ({ executionMode: config.execution.mode, phase: 'finalized',
+    let failureStage: FailureStage = execution.progress.modelPhase ?? 'generation';
+    const publicFields = () => ({ ...(result.failure ? runFailure(result.failure.errorCode, failureStage, true) : {}), executionMode: config.execution.mode, phase: 'finalized',
       capabilities: task.capabilities, ...(result.extensions ? { extensions: result.extensions } : {}) });
     let committed = false;
     let stage: 'validation' | 'commit' = 'validation';
@@ -247,17 +296,21 @@ export class SRRuntime {
       stage = 'commit';
       committed = this.store.finalize(sessionId, userId, result.partialId, result.outcome, result.workspace, result.failure, {
         expectedTip: execution.progress.latestEntryId, baselineHash: execution.state.baselineHash,
-        allowState, publicRun: publicFields(), diagnostics: { extensions: result.diagnostics, budgetReports: execution.progress.budgetReports, summaryCalls: execution.progress.summaryCalls },
-        summary: result.outcome === 'stopped' ? undefined : execution.progress.pendingSummary,
+        allowState, pendingMessage: task.liveMessage, publicRun: publicFields(), diagnostics: { extensions: result.diagnostics, preparation: execution.progress.preparationReport, summaryCalls: execution.progress.summaryCalls },
       });
       if (!committed) return; // The stored terminal result already won; never notify or settle twice.
     } catch (error) {
-      allowState = false;
+      allowState = false; failureStage = 'commit';
       const failure = normalizeError(error, stage === 'validation' ? ErrorCodes.INVALID_STATE_UPDATE : ErrorCodes.STATE_COMMIT_FAILED);
       result = { ...result, outcome: 'failed', failure,
         ...(result.extensions ? { extensions: rejectExtensions(result.extensions, false, failure.errorCode) } : {}) };
-      try { if (!this.store.markCommitFailed(userId, failure, publicFields())) debugLog('终态未持久化，等待中断恢复', { sessionId, runId }); }
-      catch { debugLog('终态持久化失败，等待中断恢复', { sessionId, runId, errorCode: failure.errorCode }); }
+      let saved = false;
+      try { saved = this.store.markCommitFailed(userId, failure, publicFields()); }
+      catch { /* Preserve the journal for interruption recovery. */ }
+      if (!saved) {
+        debugLog('终态未持久化，等待中断恢复', { sessionId, runId, errorCode: failure.errorCode });
+        return;
+      }
     }
     task.phase = execution.progress.phase = 'finalized';
     if (result.partialId) this.emit(sessionId, 'message.final', { runId, messageId: result.partialId, status: result.outcome });

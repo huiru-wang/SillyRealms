@@ -135,3 +135,12 @@ export const presetFixtures: StudioPreset[] = [
     customNodes:[],
   },
 ];
+
+for(const [id,name,description] of [
+  ['adventure','冒险旅途','以探索和未知事件推进故事。'],
+  ['quiet','静谧时光','以舒缓节奏关注人物与日常。'],
+  ['dramatic','戏剧叙事','通过人物抉择与冲突推动情节。'],
+] as const){
+  const base=presetFixtures.find(preset=>preset.id==='general')!;
+  presetFixtures.push({...base,id,name,description,style:{...base.style},customNodes:base.customNodes.map(node=>({...node,id:id+'-'+node.id}))});
+}

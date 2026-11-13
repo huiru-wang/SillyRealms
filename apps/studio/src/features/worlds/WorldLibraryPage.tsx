@@ -15,7 +15,7 @@ export function WorldLibraryPage(){
   const {page,loading,error,more,retry}=usePaged(category,(cursor,signal)=>listWorlds(category,cursor,signal));
   useEffect(()=>{const c=new AbortController();setTagsError(false);listTags(c.signal).then(data=>setTags(data.items)).catch(()=>{if(!c.signal.aborted)setTagsError(true);});return()=>c.abort();},[tagRevision]);
   return <div className={styles.page}>
-    <header className={styles.header}><h1>世界卡</h1></header>
+    <header className={styles.header}><h1>世界卡</h1>{import.meta.env.VITE_STUDIO_MOCK_DATA==='1'&&<span className={styles.mockLabel}>模拟数据</span>}</header>
     <div className={styles.body}>
       <nav className={styles.categories} aria-label="世界分类">
         {[{id:'',name:'全部'},...tags].map(tag=><button className={[styles.category,category===tag.id?styles.categoryActive:''].join(' ')} key={tag.id} onClick={()=>setCategory(tag.id)} aria-pressed={category===tag.id}>{tag.name}</button>)}

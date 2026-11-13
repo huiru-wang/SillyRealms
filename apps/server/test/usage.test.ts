@@ -1,4 +1,3 @@
-import { fakeMeasurement } from './fixtures/fake-gateway.js';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, it } from 'vitest';
@@ -138,9 +137,10 @@ it.each([
     append(db, assistant, `run-${i}`, 3 + i * 2, 'assistant', 'message', user);
     parent = assistant;
   }
+  db.prepare("UPDATE presets SET config_json=json_set(config_json,'$.budget',json(?))").run(JSON.stringify({strategy:'rolling_summary',max_context_tokens:12000,max_output_tokens:64}));
   // Current input measurement controls compaction, independent of the preceding request's usage.
   db.prepare('UPDATE entries SET payload=? WHERE id=?').run(
-    JSON.stringify({message:{role:'assistant',content:'故事'.repeat(compress?16_000:20)}}), 'assistant-0');
+    JSON.stringify({message:{role:'assistant',content:'故事'.repeat(compress?7000:20)}}), 'assistant-0');
   if (input !== null && output !== null) {
     const row = db.prepare('SELECT usage_json FROM sessions WHERE id=?').get('session')!;
     const usage = JSON.parse(String(row.usage_json));
@@ -150,7 +150,7 @@ it.each([
   }
   let calls = 0;
   const gateway: ModelGateway = {
-    resolve: () => model, measure:async(m,c)=>{const measured=await fakeMeasurement(m,c);return {...measured,tokens:measured.tokens!*4};},supportsDirect:()=>true,toolVerified: () => true,
+    resolve: () => model, supportsDirect:()=>true,toolVerified: () => true,
     stream: () => ({async *[Symbol.asyncIterator]() {
       calls++;
       yield {type:'text_delta',delta:'response',contentIndex:0,partial:{} as never} as AssistantMessageEvent;
@@ -158,7 +158,7 @@ it.each([
         api:'openai-completions',provider:'fake',model:'fake',usage:tokenUsage(100,20),stopReason:'stop',timestamp:Date.now()}} as AssistantMessageEvent;
     }}),
   };
-  const credentials: CredentialStore = { async get() { return 'test'; }, async set() {}, async delete() {} };
+  const credentials: CredentialStore = { async get() { return 'test'; }, async set() {}, deleteSync() {} };
   const { SRRuntime } = await import('../src/runtime/sr-runtime.js');
   const runtime = new SRRuntime(db, credentials, gateway);
   const {runId,stream} = await runtime.prepare('session','continue',randomUUID(),parent);
@@ -174,7 +174,7 @@ it('serves two Session dimensions through the server route and records real mode
   const db = seed();
   const gateway: ModelGateway = {
     resolve: () => model,
-    measure:fakeMeasurement,supportsDirect:()=>true,toolVerified: () => true,
+    supportsDirect:()=>true,toolVerified: () => true,
     stream: () => ({
       async *[Symbol.asyncIterator]() {
         yield { type: 'text_delta', delta: 'response', contentIndex: 0, partial: {} as never } as AssistantMessageEvent;
@@ -186,7 +186,8 @@ it('serves two Session dimensions through the server route and records real mode
       },
     }),
   };
-  const credentials: CredentialStore = { async get() { return 'test'; }, async set() {}, async delete() {} };
+  const credentials: CredentialStore = { async get() { return 'test'; }, async set() {}, deleteSync() {} };
+  db.prepare("UPDATE presets SET config_json=json_set(config_json,'$.budget.max_context_tokens',16000) WHERE id='sr-default-preset'").run();
   const app = createApp(db, credentials, gateway);
   expect((await app.request('/api/v1/sessions/unknown/usage')).status).toBe(404);
   const start = await app.request('/api/v1/sessions/session/runs', {
@@ -202,6 +203,7 @@ it('serves two Session dimensions through the server route and records real mode
   }
   const response = await app.request('/api/v1/sessions/session/usage');
   expect(response.status).toBe(200);
+  expect(response.headers.get('cache-control')).toBe('no-store');
   expect((await response.json() as {data:unknown}).data).toMatchObject({
     cumulative: {
       inputTokens: 1600, outputTokens: 80, totalTokens: 1680,
@@ -266,11 +268,11 @@ it('counts every request in the tool loop and uses the last continuation context
       } } },
     },
   });
-  const credentials: CredentialStore = { async get() { return 'test'; }, async set() {}, async delete() {} };
+  const credentials: CredentialStore = { async get() { return 'test'; }, async set() {}, deleteSync() {} };
   let callCount = 0;
   const gateway: ModelGateway = {
     resolve: () => model,
-    measure:fakeMeasurement,supportsDirect:()=>true,toolVerified: () => true,
+    supportsDirect:()=>true,toolVerified: () => true,
     stream: () => ({
       async *[Symbol.asyncIterator]() {
         const first = ++callCount === 1;
@@ -285,6 +287,7 @@ it('counts every request in the tool loop and uses the last continuation context
       },
     }),
   };
+  db.prepare("UPDATE presets SET config_json=json_set(config_json,'$.budget.max_context_tokens',16000) WHERE id='sr-default-preset'").run();
   const app = createApp(db, credentials, gateway);
   const create = await app.request('/api/v1/sessions', {
     method: 'POST', headers: { 'content-type': 'application/json' },

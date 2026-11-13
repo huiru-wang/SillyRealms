@@ -150,7 +150,7 @@ export async function checkPresets({send,evaluate,until,viewport,click,screensho
       description:(element.querySelector('[data-preset-description]')??element.lastElementChild).textContent
     }));
   });
-  assert(initial.length===7,'Expected seven preset fixtures, got '+initial.length);
+  assert(initial.length===10,'Expected ten preset fixtures, got '+initial.length);
   const first=initial[0],second=initial[1],ensemble=initial.find(entry=>entry.title.includes('群像'));
   assert(ensemble,'Missing long-form ensemble fixture for scroll regression');
   const twoColumns=await metrics();
@@ -410,7 +410,7 @@ export async function checkPresets({send,evaluate,until,viewport,click,screensho
   await save();
 
   await pointerClick('button[aria-label="新建预设"]');
-  await until('document.querySelectorAll("[data-preset-item]").length===8');
+  await until('document.querySelectorAll("[data-preset-item]").length===11');
   const createdId=await evaluate('document.querySelector("[data-preset-item][aria-pressed=true]").dataset.presetItem');
   assert(!initial.some(entry=>entry.id===createdId),'New preset should have a unique identity');
   await fill(fieldName,'回归新建预设');
@@ -422,11 +422,11 @@ export async function checkPresets({send,evaluate,until,viewport,click,screensho
   await pointerClick('button[aria-label="更多预设操作"]');
   await buttonText('删除预设','[data-preset-menu]');
   await buttonText('删除预设','[role="dialog"]');
-  await until('document.querySelectorAll("[data-preset-item]").length===7 && !document.querySelector("[role=dialog]")');
+  await until('document.querySelectorAll("[data-preset-item]").length===10 && !document.querySelector("[role=dialog]")');
   await select(first.id);
   await send('Page.reload');
   await until('!!document.querySelector("[data-preset-workspace]") && document.querySelector('+json(fieldName)+')?.value==='+json(originalName));
-  assert(await evaluate('document.querySelectorAll("[data-preset-item]").length')===7,'Reload should restore static fixtures, not persist local test edits');
+  assert(await evaluate('document.querySelectorAll("[data-preset-item]").length')===10,'Reload should restore static fixtures, not persist local test edits');
   console.log('PASS: presets use independent list/editor scrolling, two-line ellipsis, draft retention and save/revert, prompt guard/focus trap, real node switches, keyboard moves, pointer drag, and creation/deletion.');
 
   await viewport(1280,800);

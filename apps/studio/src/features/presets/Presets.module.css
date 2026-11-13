@@ -188,3 +188,10 @@
  .promptMeta{font-size:11px}
  .toast{bottom:16px}
 }
+@media(max-width:760px){.pageHeader{padding-left:0}}
+@media(max-width:760px){
+ .page[data-detail="false"]{height:auto;min-height:100%;overflow:visible}
+ .page[data-detail="false"] .workspace{flex:none}
+ .page[data-detail="false"] .library{height:auto}
+ .page[data-detail="false"] .presetList{overflow:visible}
+}

@@ -69,6 +69,17 @@ export async function verifyRuntime(call,pause){
   await evaluate('(()=>{const e=document.querySelector(".host-capability-settings select");e.value="false";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await pause(80);
   await evaluate('document.querySelector(".host-settings-dialog-footer .primary").click()');await pause(120);
   assert(await evaluate('__runtimeTest.calls.some(c=>c.path.endsWith("/capabilities")&&c.body.overrides.state_update===false)'),'capability overrides can be saved while busy for the next Run');
+  await frameEval('window.__oldParagraph=document.querySelector(".sr-rich p")');
+  await evaluate('__runtimeTest.stream("稳定段落。\\n\\n正在")');await pause(100);
+  await frameEval(`window.__liveParagraph=document.querySelector('[data-message-id="a2"] .sr-rich p')`);
+  await evaluate('__runtimeTest.stream("生成正文。");__runtimeTest.duplicate()');await pause(100);
+  assert(await frameEval(`document.querySelector('[data-message-id="a2"]').innerText.includes("正在生成正文。")`),'stream appends text without duplicating overlapping deltas');
+  assert(await frameEval('document.querySelector(".sr-rich p")===window.__oldParagraph'),'streaming preserves historical DOM identity');
+  assert(await frameEval(`document.querySelector('[data-message-id="a2"] .sr-rich p')===window.__liveParagraph`),'streaming preserves the active message paragraph');
+  await evaluate('__runtimeTest.disconnect();__runtimeTest.stream("断线期间的正文",false);__runtimeTest.reconnect()');await pause(250);
+  assert(await frameEval(`document.querySelector('[data-message-id="a2"]').innerText.includes("断线期间的正文")`),'reconnection restores an unfinished narrative snapshot');
+  await evaluate('__runtimeTest.stream("缺失片段",false);__runtimeTest.stream("后续片段")');await pause(250);
+  assert(await frameEval(`document.querySelector('[data-message-id="a2"]').innerText.includes("缺失片段后续片段")`),'an offset gap triggers snapshot repair');
   await evaluate('__runtimeTest.disconnect();__runtimeTest.finishOffline();__runtimeTest.reconnect()');await pause(250);
   assert(await frameEval('document.body.innerText.includes("书房门开了。")'),'reconnection restores a missed terminal response');
   await evaluate('__runtimeTest.late()');await pause(120);

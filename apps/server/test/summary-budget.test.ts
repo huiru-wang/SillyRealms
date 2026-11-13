@@ -1,27 +1,18 @@
 import { expect,it } from 'vitest';
 import type { AssistantMessageEvent,Message } from '@earendil-works/pi-ai';
-import { summarizeInBudget } from '../src/runtime/context/history-compactor.js';
-import { evaluateBudget,type PreparedRequest } from '../src/runtime/context/budget.js';
-import { testModel,response } from './fixtures/runtime-v2.js';
-import type { ContextPolicy } from '../src/runtime/types.js';
-const policy:ContextPolicy={windowPreset:'standard',measurement:'current_request',safetyMarginTokens:100,
-  summary:{inputRatio:.75,maxOutputTokens:100},overflow:{strategy:'summarize_history',keepRecentTurns:5,maxPassesPerRequest:2,maxSummaryCallsPerRun:8}};
-async function prepare(messages:Message[]):Promise<PreparedRequest>{
-  const model={...testModel,contextWindow:4000},context={messages},tokens=Array.from(JSON.stringify(context)).length;
-  const report=evaluateBudget({model,context,output:100,mode:'direct',purpose:'summary',policy,measurement:{tokens,quality:'estimated',method:'fixture',version:'1'}});
-  return {mode:'direct',purpose:'summary',model,context,output:100,fingerprint:report.fingerprint,report};
-}
-it('budgets the previous summary, instructions, gaps, wrapper and each unicode-safe chunk',async()=>{
-  const calls:PreparedRequest[]=[];
-  const text=await summarizeInBudget({previous:'previous',chunks:[{id:'old',role:'assistant',text:'中文😀'.repeat(2500),gap:'stopped:cancelled'}]},{
-    prompt:'summary instructions',gaps:['stopped:cancelled'],signal:new AbortController().signal,prepare,
-    generate:async request=>{calls.push(request);return {async *[Symbol.asyncIterator](){yield {type:'done',reason:'stop',message:response('short summary')} as AssistantMessageEvent;}};},
-  });
-  expect(text).toBe('short summary');expect(calls.length).toBeGreaterThan(1);expect(calls.every(c=>c.report.fits&&c.report.inputAllowance===3000)).toBe(true);
-  const chunks=calls.flatMap(c=>JSON.parse(String(c.context.messages[1]!.content)).messages);
-  expect(chunks.map(c=>c.text).join('')).toBe('中文😀'.repeat(2500));
-  expect(chunks.every(c=>c.gap==='stopped:cancelled')).toBe(true);
-  expect(JSON.parse(String(calls[1]!.context.messages[1]!.content)).previous).toBe('short summary');
+import { generateSummary } from '../src/runtime/context/compaction/summary-generator.js';
+import { response } from './fixtures/runtime-v2.js';
+it('sends all selected unicode text, instructions, gaps and previous summary in exactly one request', async () => {
+  const calls: Message[][] = [];
+  const history = [{ id: 'old', role: 'assistant' as const, text: '中文😀'.repeat(2500), gap: 'stopped:cancelled' }];
+  const text = await generateSummary({ previous: 'previous', history, prompt: 'instructions', gaps: ['stopped:cancelled'],
+    limit: 30000, signal: new AbortController().signal, generate: async messages => {
+      calls.push(messages); return { async *[Symbol.asyncIterator]() { yield { type: 'done', reason: 'stop', message: response('short summary') } as AssistantMessageEvent; } };
+    } });
+  expect(text).toBe('short summary'); expect(calls).toHaveLength(1);
+  const request = JSON.parse(String(calls[0]![1]!.content));
+  expect(request.previous).toBe('previous'); expect(request.messages[0].text).toBe(history[0]!.text);
+  expect(request.messages[0].gap).toBe('stopped:cancelled');
 });
 it.each(['length','empty','duplicate','late','mismatch','tool','error'] as const)('rejects abnormal summary result %s',async variant=>{
   const done={type:'done',reason:'stop',message:response('summary')} as AssistantMessageEvent;
@@ -32,16 +23,30 @@ it.each(['length','empty','duplicate','late','mismatch','tool','error'] as const
     variant==='mismatch'?[{type:'text_delta',delta:'different',contentIndex:0,partial:{} as never},done]:
     variant==='tool'?[{type:'done',reason:'toolUse',message:{...response(''),stopReason:'toolUse',content:[{type:'toolCall',id:'x',name:'x',arguments:{}}]}} as AssistantMessageEvent]:
     [{type:'error',reason:'error',error:{...response(''),stopReason:'error'}} as AssistantMessageEvent];
-  await expect(summarizeInBudget({previous:null,chunks:[{id:'x',role:'assistant',text:'facts'}]},{
-    prompt:'instructions',gaps:[],signal:new AbortController().signal,prepare,
+  await expect(generateSummary({previous:null,history:[{id:'x',role:'assistant',text:'facts'}],limit:10000,
+    prompt:'instructions',gaps:[],signal:new AbortController().signal,
     generate:async()=>({async *[Symbol.asyncIterator](){yield* events;}}),
-  })).rejects.toMatchObject({code:'SUMMARY_FAILED'});
+  })).rejects.toMatchObject({code:variant==='empty'?'SUMMARY_EMPTY':'SUMMARY_FAILED'});
 });
 it('does not recursively summarize when fixed instructions/previous summary consume the budget',async()=>{
   let calls=0;
-  await expect(summarizeInBudget({previous:'x'.repeat(5000),chunks:[{id:'x',role:'assistant',text:'facts'}]},{
-    prompt:'instructions',gaps:[],signal:new AbortController().signal,prepare,
+  await expect(generateSummary({previous:'x'.repeat(5000),history:[{id:'x',role:'assistant',text:'facts'}],limit:1000,
+    prompt:'instructions',gaps:[],signal:new AbortController().signal,
     generate:async()=>{calls++;return {async *[Symbol.asyncIterator](){}};},
-  })).rejects.toMatchObject({code:'CONTEXT_BUDGET_EXCEEDED'});
+  })).rejects.toMatchObject({code:'SUMMARY_CAPACITY_EXCEEDED'});
   expect(calls).toBe(0);
+});
+it.each([32768,131072,262144,524288])('summarizes a complete long source once at model window %s',async window=>{
+  const {summaryInputLimit}=await import('../src/runtime/context/budget.js');
+  const {testModel}=await import('./fixtures/runtime-v2.js');
+  const model={...testModel,contextWindow:window};
+  const policy={budget:{strategy:'rolling_summary' as const,max_context_tokens:Math.floor(window*.8),max_output_tokens:128},
+    safetyMarginTokens:1024,keepRecentTurns:5,summary:{inputRatio:.75,maxOutputTokens:2048}};
+  const source='中'.repeat(window/2);let calls=0;
+  const result=await generateSummary({previous:'old',history:[{id:'prefix',role:'assistant',text:source}],prompt:'summarize',gaps:[],
+    limit:summaryInputLimit(model,policy),signal:new AbortController().signal,generate:async messages=>{
+      calls++;expect(JSON.parse(String(messages[1]!.content)).messages[0].text).toBe(source);
+      return {async *[Symbol.asyncIterator](){yield {type:'done' as const,reason:'stop' as const,message:response('complete summary')};}};
+    }});
+  expect(result).toBe('complete summary');expect(calls).toBe(1);
 });

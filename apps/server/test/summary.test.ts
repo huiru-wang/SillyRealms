@@ -1,27 +1,24 @@
 import { expect, it } from 'vitest';
-import { compressHistory } from '../src/runtime/context/history-compactor.js';
-
-it('summarizes the oldest messages in order without discarding the tail', async () => {
-  const history = Array.from({length:40}, (_, i) => ({ id:`e${i}`, role:'user' as const, text:`message ${i}` }));
-  const consumed:string[] = [];
-  const result = await compressHistory({ history, shouldCompact:true, summarize: async request => { consumed.push(...request.chunks.map(c => c.id)); return 'summary'; } });
-  expect(consumed).toEqual(history.slice(0,35).map(x => x.id));
-  expect(result.summary?.coveredThroughEntryId).toBe('e34');
-  expect(result.history.slice(1).map(x => x.id)).toEqual(history.slice(35).map(x => x.id));
-});
-
-it('keeps complete turns, carries forward the old summary, and leaves short histories untouched', async () => {
-  const history = Array.from({length:6}, (_, i) => [
-    {id:`u${i}`,role:'user' as const,text:'user'},
-    {id:`a${i}`,role:'assistant' as const,text:'assistant'},
-  ]).flat();
+import { rollingSummary } from '../src/runtime/context/compaction/rolling-summary.js';
+import { selectSuffix } from '../src/runtime/context/compaction/sliding-window.js';
+import { historyGroups } from '../src/runtime/context/compaction/history.js';
+import type { CompactionInput } from '../src/runtime/context/compaction/types.js';
+const history = Array.from({ length: 6 }, (_, i) => [
+  { id: `u${i}`, role: 'user' as const, text: 'user' }, { id: `a${i}`, role: 'assistant' as const, text: 'assistant' },
+]).flat();
+it('summarizes a continuous prefix once, with the previous summary and five protected turns', async () => {
   const requests: unknown[] = [];
-  const summarize = async (request: unknown) => { requests.push(request); return 'combined'; };
-  const oldSummary = {text:'old',coveredThroughEntryId:'old-entry'};
-  expect((await compressHistory({history,oldSummary,shouldCompact:false,summarize})).summary).toBeUndefined();
-  expect((await compressHistory({history:history.slice(2),oldSummary,shouldCompact:true,summarize})).summary).toBeUndefined();
-  const result = await compressHistory({history,oldSummary,shouldCompact:true,summarize});
-  expect(requests).toEqual([{previous:'old',chunks:history.slice(0,2)}]);
-  expect(result.summary?.coveredThroughEntryId).toBe('a0');
-  expect(result.history.slice(1)).toEqual(history.slice(2));
+  const input = { history, oldSummary: { text: 'previous', coveredThroughEntryId: 'prior' }, policy: { keepRecentTurns: 5 },
+    summarize: async (previous: string | null, chunks: unknown) => { requests.push({ previous, chunks }); return 'combined'; } } as CompactionInput;
+  const result = await rollingSummary(input, history, 0);
+  expect(requests).toEqual([{ previous: 'previous', chunks: history.slice(0, 2) }]);
+  expect(result?.summary.coveredThroughEntryId).toBe('a0');
+  expect(result?.kept).toEqual(history.slice(2));
+  expect(await rollingSummary(input, history.slice(2), 0)).toBeUndefined();
+});
+it('keeps an opening as a separate group and never skips a neighboring oversized turn', () => {
+  const opening = { id: 'opening', role: 'assistant' as const, text: 'opening' };
+  expect(historyGroups([opening, ...history])).toHaveLength(7);
+  const selected = selectSuffix([opening, ...history, { id: 'big', role: 'user', text: 'x'.repeat(10000) }], 100);
+  expect(selected.kept).toEqual([]);
 });

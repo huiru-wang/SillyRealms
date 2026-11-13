@@ -7,7 +7,7 @@ import '../../src/design-system/studio.css';
 import '../../src/features/sessions/composer/roleplay-composer.css';
 
 let stream: FakeEventSource; let calls: unknown[] = []; let counter=0; let lastRunId='';
-let failNextRunPost=false; let delayNextRunPost=false; let resolveDelayedPost: (()=>void)|null=null;let usageRequests=0;
+let failNextRunPost=false; let delayNextRunPost=false; let resolveDelayedPost: (()=>void)|null=null;let usageRequests=0;let usageInput=9800;let usageTotal=282000;let failUsage=false;
 class FakeEventSource {
   onopen: (()=>void)|null=null; onerror: (()=>void)|null=null;
   listeners:Record<string,(e:MessageEvent)=>void>={};
@@ -25,7 +25,7 @@ window.fetch=async(input, init)=>{
   if(path.startsWith('/api/v1/presets?')) data={items:[],hasMore:false};
   else if(path==='/api/v1/api-model-configs') data={items:[]};
   else if(path==='/api/v1/sessions/test') data={tipEntryId:'tip',worldId:'world',title:'测试',presetId:null,apiModelConfigId:null};
-  else if(path==='/api/v1/sessions/test/usage'){usageRequests++;data={cumulative:{inputTokens:250000,outputTokens:32000,totalTokens:282000,cacheReadTokens:80000,cacheWriteTokens:15000,cacheHitRate:.32,complete:true,unknownCount:0},latestContext:{inputTokens:9800,contextWindowTokens:128000,ratio:9800/128000,modelId:'fake',stale:false,contextComposition:{systemBytes:1000,summaryBytes:500,historyBytes:3000}}};}
+  else if(path==='/api/v1/sessions/test/usage'){usageRequests++;assert(init?.cache==='no-store','usage requests must bypass cached snapshots');if(failUsage)throw new Error('offline');data={cumulative:{inputTokens:usageTotal-32000,outputTokens:32000,totalTokens:usageTotal,cacheReadTokens:80000,cacheWriteTokens:15000,cacheHitRate:.32,complete:true,unknownCount:0},latestContext:{inputTokens:usageInput,contextWindowTokens:128000,ratio:usageInput/128000,modelId:'fake',stale:false,contextComposition:{systemBytes:1000,summaryBytes:500,historyBytes:3000}}};}
   else if(path==='/api/v1/worlds/world') data={item:{data:{ui:{type:'react',source:"import React from 'react'; export default function Story(){return <div>Story</div>}"}}}};
   else if(path==='/api/v1/sessions/test/state') data={global:{},session:{},message:{}};
   else if(path.startsWith('/api/v1/sessions/test/runs?')) data={runs:[],nextCursor:null,hasMore:false};
@@ -53,9 +53,29 @@ void (async()=>{
     for(let i=0;i<100&&!document.querySelector('.host-usage-context .host-usage-segment');i++)await wait(20);
     const segments=Array.from(document.querySelectorAll('.host-usage-context .host-usage-segment')).map(node=>node.classList.contains('system')?'system':node.classList.contains('summary')?'summary':node.classList.contains('history')?'history':'unknown');
     assert(segments.join(',')==='system,summary,history','incorrect context segment order: '+segments.join(','));
-    assert(document.querySelector('.host-usage-cumulative')?.textContent?.includes('282K'),'cumulative total is missing');
-    const before=usageRequests;stream.emitUsage();for(let i=0;i<100&&usageRequests===before;i++)await wait(10);
-    assert(usageRequests>before,'usage.updated did not refresh the usage endpoint');
+    assert(document.querySelector('.host-usage-cumulative')?.textContent?.includes('282,000'),'cumulative total is missing');
+    assert(usageRequests>=2,'first SSE connection did not close the initial read/subscription gap');
+    const before=usageRequests;
+    for(let turn=1;turn<=3;turn++){
+      usageInput++;usageTotal+=31;stream.emitUsage();
+      for(let i=0;i<100&&!document.querySelector('.host-usage-cumulative')?.textContent?.includes(usageTotal.toLocaleString('en'));i++)await wait(10);
+      assert(document.querySelector('.host-usage-cumulative')?.textContent?.includes(usageTotal.toLocaleString('en')),'cumulative value did not update after turn '+turn);
+      assert(document.querySelector('.host-usage-context-total')?.textContent?.includes(usageInput.toLocaleString('en')),'context value did not update after turn '+turn);
+    }
+    assert(usageRequests>=before+3,'usage.updated did not refresh each round');
+    failUsage=true;stream.emitUsage();
+    for(let i=0;i<100&&!document.querySelector('.host-usage-error');i++)await wait(10);
+    assert(document.querySelector('.host-usage-error')?.textContent?.includes('刷新失败'),'failed refresh silently displays old statistics');
+    failUsage=false;usageInput++;usageTotal+=31;
+    document.querySelector<HTMLButtonElement>('.host-usage-error button')!.click();
+    for(let i=0;i<100&&!document.querySelector('.host-usage-cumulative')?.textContent?.includes(usageTotal.toLocaleString('en'));i++)await wait(10);
+    assert(document.querySelector('.host-usage-cumulative')?.textContent?.includes(usageTotal.toLocaleString('en')),'retry did not update statistics');
+    assert(!document.querySelector('.host-usage-error'),'successful retry did not clear error');
+    usageInput=42991;usageTotal=1925043;
+    const beforeOpen=usageRequests;stream.onopen?.();
+    for(let i=0;i<100&&!document.querySelector('.host-usage-cumulative')?.textContent?.includes('1,925,043');i++)await wait(10);
+    assert(usageRequests>beforeOpen,'SSE connection did not refresh usage');
+    assert(document.querySelector('.host-usage-cumulative')?.textContent?.includes('1,925,043'),'reconnection did not recover the latest total');
   });
   await test('settings use a modal and font preview can be cancelled',async()=>{
     document.querySelector<HTMLButtonElement>('.host-settings-button')!.click();await wait(80);

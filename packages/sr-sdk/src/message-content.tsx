@@ -6,6 +6,7 @@ import {renderWorldDocument} from './world-document/render.js';
 import {useStoryConfiguration,type MessageComponentProps,type MessageMatch} from './story-context.js';
 import type {ChatMessage} from './run-contract.js';
 import {canShowLiteralPlaceholder,protectedRanges,selectMessageMatches} from './message-ranges.js';
+import {updateMessageDOM} from './message-dom.js';
 
 function substitute(template:string,match:MessageMatch){
   return template.replace(/\$([$&]|\d{1,2}|<[^>]+>)/g,(whole,token:string)=>{
@@ -21,7 +22,7 @@ class ComponentBoundary extends React.Component<{children:React.ReactNode;fallba
   state={failed:false};static getDerivedStateFromError(){return {failed:true};}
   render(){return this.state.failed?<span>{this.props.fallback} <small role="status">组件显示失败，已保留原文</small></span>:this.props.children;}
 }
-export function MessageContent({message,runId}:{message:ChatMessage;runId:string}){
+export const MessageContent = React.memo(function MessageContent({message,runId}:{message:ChatMessage;runId:string}){
   const config=useStoryConfiguration();
   const [matches,setMatches]=useState<MessageMatch[]>([]),[targets,setTargets]=useState<Element[]>([]),[failed,setFailed]=useState(false),[warning,setWarning]=useState(false);
   const ref=useRef<HTMLDivElement>(null),nonce=useRef(Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join(''));
@@ -85,21 +86,17 @@ export function MessageContent({message,runId}:{message:ChatMessage;runId:string
     }
     raw+=plain(cursor,message.text.length);
     return {html:renderWorldDocument(raw,{profile:'message',slots:new Set(portals.map(portal=>portal.key))}).html,portals,structuralWarning,missingComponent,instructions:parsed.instructionText};
-  },[message,matches,config,runId,failed]);
+  },[message.id,message.role,message.text,matches,config,runId,failed]);
   useLayoutEffect(()=>{
     const container=ref.current;if(!container)return;
-    const existing=new Map(Array.from(container.querySelectorAll('[data-sr-slot]')).map(node=>[node.getAttribute('data-sr-slot'),node]));
     const template=document.createElement('template');template.innerHTML=rendered.html;
     applyRoleplayMarkers(template.content,nonce.current);
-    for(const slot of template.content.querySelectorAll('[data-sr-slot]')){
-      const previous=existing.get(slot.getAttribute('data-sr-slot'));
-      if(previous&&previous.tagName===slot.tagName)slot.replaceWith(previous);
-    }
-    container.replaceChildren(template.content);
+    updateMessageDOM(container,template.content);
     setTargets(Array.from(container.querySelectorAll('[data-sr-slot]')));
   },[rendered]);
   return <div className="sr-rich"><div ref={ref}/>{rendered.instructions.length>0&&<div className="sr-rp-instruction-panel"><span>叙事指令</span>{rendered.instructions.map((text,index)=><p key={index}>{text}</p>)}</div>}{failed&&<small role="status">消息展示规则处理失败，已显示原文</small>}{(warning||rendered.structuralWarning)&&<small role="status">部分消息展示规则无效，已保留原文</small>}{rendered.missingComponent&&<small role="status">消息组件不可用，已保留原文</small>}{rendered.portals.map(portal=>{
     const target=targets.find(node=>node.getAttribute('data-sr-slot')===portal.key);if(!target)return null;
     const Component=portal.component;return createPortal(<ComponentBoundary fallback={portal.props.match}><Component {...portal.props}/></ComponentBoundary>,target,portal.key);
   })}</div>;
-}
+}, (previous,next) => previous.runId===next.runId && previous.message.id===next.message.id &&
+  previous.message.role===next.message.role && previous.message.text===next.message.text);

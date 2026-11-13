@@ -1,3 +1,4 @@
+import { LEGACY_WINDOWS } from '../src/domain/preset-budget.js';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/infrastructure/database/database.js';
@@ -7,21 +8,21 @@ class MemoryCredentials implements CredentialStore {
   data = new Map<string, string>();
   async set(id: string, key: string) { this.data.set(id, key); }
   async get(id: string) { return this.data.get(id) ?? null; }
-  async delete(id: string) { this.data.delete(id); }
+  deleteSync(id: string) { this.data.delete(id); }
 }
 const ids = ['main','personaInfo','characterInfo','worldState','chatHistory','userInput','postHistory'];
 const preset = { name: 'Test', budget: { context_strategy:'standard', max_output_tokens: 100 }, summary_prompt: 'summary', nodes: ids.map(id => ({ id, name: id, kind: 'system', source: id, role: id === 'chatHistory' ? 'auto' : id === 'userInput' ? 'user' : 'system', enabled: true, ...(id === 'main' ? { content: 'old' } : {}) })) };
 describe('preset and model configuration', () => {
-  it('accepts the three strategies and rejects old numeric budgets and invalid strategies', async () => {
+  it('normalizes legacy tiers and accepts numeric budgets while rejecting mixed fields', async () => {
     const db=openDatabase(':memory:'),app=createApp(db,new MemoryCredentials());
     try {
       for (const strategy of ['compact','standard','extended']) {
         const input={...preset,name:strategy,budget:{context_strategy:strategy,max_output_tokens:100}};
         const response=await app.request('/api/v1/presets',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});
         expect(response.status).toBe(201);
-        expect((await response.json() as {data:{item:{budget:unknown}}}).data.item.budget).toEqual(input.budget);
+        expect((await response.json() as {data:{item:{budget:unknown}}}).data.item.budget).toEqual({strategy:'rolling_summary',max_context_tokens:LEGACY_WINDOWS[strategy as keyof typeof LEGACY_WINDOWS]-1124,max_output_tokens:100});
       }
-      for (const budget of [{max_output_tokens:100,max_context_tokens:32000},{context_strategy:'large',max_output_tokens:100}]) {
+      for (const budget of [{max_output_tokens:100,max_context_tokens:32000,context_strategy:'standard'},{context_strategy:'large',max_output_tokens:100}]) {
         const response=await app.request('/api/v1/presets/import',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...preset,budget})});
         expect(response.status).toBe(422);
       }
@@ -78,4 +79,22 @@ describe('preset and model configuration', () => {
     expect(list).not.toContain('secret-');
     db.close();
   });
+});
+it('round-trips numeric budgets and keeps output-only PATCH independent of the input quota',async()=>{
+  const db=openDatabase(':memory:'),app=createApp(db,new MemoryCredentials());
+  const request=(method:string,body:unknown)=>({method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  try{
+    const budget={strategy:'sliding_window',max_context_tokens:12345,max_output_tokens:678};
+    const created=await app.request('/api/v1/presets',request('POST',{...preset,budget}));
+    const id=(await created.json() as any).data.item.id,path='/api/v1/presets/'+id;
+    const patched=await app.request(path,request('PATCH',{budget:{max_output_tokens:999}}));
+    expect((await patched.json() as any).data.item.budget).toEqual({...budget,max_output_tokens:999});
+    const exported=await (await app.request(path+'/export')).json() as any;
+    expect(exported.budget).toEqual({...budget,max_output_tokens:999});
+    expect(JSON.stringify(exported)).not.toContain('context_strategy');expect(JSON.stringify(exported)).not.toContain('legacyWindow');
+    const imported=await app.request('/api/v1/presets/import',request('POST',exported));
+    expect((await imported.json() as any).data.item.budget).toEqual(exported.budget);
+    expect((await app.request(path,request('PATCH',{budget:{legacyWindow:131072}}))).status).toBe(422);
+    expect((await app.request('/api/v1/presets/import',request('POST',{...exported,budget:{...budget,legacyWindow:131072}}))).status).toBe(422);
+  }finally{db.close();}
 });

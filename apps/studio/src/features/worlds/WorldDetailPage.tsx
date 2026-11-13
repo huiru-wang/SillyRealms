@@ -1,6 +1,6 @@
 import {useEffect,useLayoutEffect,useRef,useState,type CSSProperties,type KeyboardEvent,type RefObject,type TouchEvent as ReactTouchEvent,type UIEvent,type WheelEvent as ReactWheelEvent} from 'react';
 import {Link,useParams} from 'react-router-dom';
-import {BookOpen,BookText,ChevronDown,ChevronRight,ChevronUp,Compass,Ellipsis,MessageCircle,Settings2,SlidersHorizontal} from 'lucide-react';
+import {ArrowLeft,BookOpen,BookText,ChevronDown,ChevronRight,ChevronUp,Compass,Ellipsis,MessageCircle,Settings2,SlidersHorizontal} from 'lucide-react';
 import {WorldDocumentRenderer} from '@sillyrealms/sdk';
 import {Modal} from '../../components/ui/Modal';
 import {getWorld,listSessions,safeImage,type WorldDetail} from './api/worlds';
@@ -93,7 +93,7 @@ function SectionContent({section,world}:{section:Section;world:WorldDetail}){
     touch.current=null;
   };
   if(section==='会话')return <SessionSection worldId={world.id}/>;
-  if(section==='世界书')return data.lorebook?.entries.length?<div className={styles.loreList}>{data.lorebook.entries.map(entry=><section key={entry.id} className={styles.loreItem}><button className={styles.loreToggle} aria-expanded={expandedLore.has(entry.id)} onClick={()=>setExpandedLore(previous=>{const next=new Set(previous);next.has(entry.id)?next.delete(entry.id):next.add(entry.id);return next;})}><span>{entry.title||'未命名条目'}</span><ChevronRight size={17} className={expandedLore.has(entry.id)?styles.loreChevronOpen:''}/></button>{expandedLore.has(entry.id)&&<div className={styles.loreContent}><WorldDocumentRenderer title={entry.title||'世界书条目'} content={entry.content}/></div>}</section>)}</div>:<p>这个世界还没有世界书条目。</p>;
+  if(section==='世界书')return data.lorebook?.entries.length?<div className={styles.loreList}>{data.lorebook.entries.map(entry=><section key={entry.id} className={styles.loreItem}><button className={styles.loreToggle} aria-expanded={expandedLore.has(entry.id)} onClick={()=>setExpandedLore(previous=>{const next=new Set(previous);next.has(entry.id)?next.delete(entry.id):next.add(entry.id);return next;})}><span>{entry.title||'未命名条目'}</span><ChevronRight size={17} className={expandedLore.has(entry.id)?styles.loreChevronOpen:''}/></button>{expandedLore.has(entry.id)&&<div className={styles.loreContent}><WorldDocumentRenderer showStyleWarning={false} title={entry.title||'世界书条目'} content={entry.content}/></div>}</section>)}</div>:<p>这个世界还没有世界书条目。</p>;
   if(section==='世界状态')return <WorldState scopes={data.state?.scopes??{}}/>;
   if(section==='开局')return opening?<><div onTouchStart={event=>{touch.current=event.touches[0]?.clientX??null;}} onTouchEnd={event=>finishSwipe(event.changedTouches[0]?.clientX)} onLoadCapture={event=>{
     if(!(event.target instanceof HTMLIFrameElement))return;
@@ -104,10 +104,10 @@ function SectionContent({section,world}:{section:Section;world:WorldDetail}){
     frameCleanup.current=()=>{doc.removeEventListener('touchstart',start);doc.removeEventListener('touchend',end);};
   }}>
     <div className={styles.openingToolbar}><div className={styles.openingNav}><button className={styles.actionButton} disabled={openingIndex===0} onClick={()=>setOpeningIndex(i=>i-1)} aria-label="上一个开局">‹</button><span>{openingIndex+1} / {data.openings.length}</span><button className={styles.actionButton} disabled={openingIndex===data.openings.length-1} onClick={()=>setOpeningIndex(i=>i+1)} aria-label="下一个开局">›</button></div><button className={styles.stateButton} onClick={()=>setStateOpen(true)}>查看初始状态</button></div>
-    <h3>{opening.name}</h3><WorldDocumentRenderer title={opening.name} content={opening.content}/>
+    <h3>{opening.name}</h3><WorldDocumentRenderer showStyleWarning={false} title={opening.name} content={opening.content}/>
   </div>{stateOpen&&<Modal title="开局初始状态" size="editor" onClose={()=>setStateOpen(false)}><p className={styles.stateIntro}>“{opening.name}”开始时的消息状态，仅供查看。</p>{Object.keys(data.state?.scopes?.message??{}).length?<StateItems items={data.state?.scopes?.message??{}} overrides={opening.initial_state??{}}/>:<p>这个世界没有声明消息状态。</p>}</Modal>}</>:<p>这个世界没有开局。</p>;
   if(section==='运行配置')return <><div className={styles.setting}><span>默认预设</span><strong>{world.defaultPresetId?'已设置':'未设置'}</strong></div><div className={styles.setting}><span>默认模型</span><strong>{world.defaultApiModelConfigId?'已设置':'未设置'}</strong></div></>;
-  return data.description?<WorldDocumentRenderer title="世界介绍" content={data.description}/>:<p>{data.summary||'这个世界还没有介绍。'}</p>;
+  return data.description?<WorldDocumentRenderer showStyleWarning={false} title="世界介绍" content={data.description}/>:<p>{data.summary||'这个世界还没有介绍。'}</p>;
 }
 
 export function WorldDetailPage(){
@@ -366,6 +366,7 @@ function WorldDetailView({world}:{world:WorldDetail}){
     <div ref={viewport} className={styles.viewport} data-world-viewport>
       <section className={styles.overview} aria-label="世界概览" data-world-overview>
         <div className={styles.overviewToolbar}>
+          <Link className={styles.mobileBack} to="/worlds" aria-label="返回世界卡列表"><ArrowLeft size={20}/></Link>
           <button ref={overviewToggle} className={styles.overviewToggle} onClick={()=>scrollOverview(!isCompact)} aria-label={isCompact?'展开世界概览':'收起世界概览'} title={isCompact?'展开世界概览':'收起世界概览'} aria-expanded={!isCompact}>
             {isCompact?<ChevronDown size={17}/>:<ChevronUp size={17}/>}
           </button>
@@ -376,7 +377,7 @@ function WorldDetailView({world}:{world:WorldDetail}){
             <h1 title={world.data.name}>{world.data.name}</h1>
             <div className={styles.summary} aria-hidden={reducedMotion?progress>=.5:progress>=.35}>
               <p>{world.data.summary||''}</p>
-              <div className={styles.tags}>{world.data.tags?.map(c=><span key={c}>{c}</span>)}<span className={styles.worldFacts}>{names.length} 位角色</span></div>
+              <div className={styles.tags}>{import.meta.env.VITE_STUDIO_MOCK_DATA==='1'&&<span>模拟数据</span>}{world.data.tags?.map(c=><span key={c}>{c}</span>)}<span className={styles.worldFacts}>{names.length} 位角色</span></div>
             </div>
           </div>
         </div>
@@ -396,6 +397,6 @@ function WorldDetailView({world}:{world:WorldDetail}){
         </article>
       </div>
     </div>
-    {roleDialog!==null&&world.data.characters[roleDialog]&&<Modal title={world.data.characters[roleDialog].name} onClose={()=>setRoleDialog(null)}>{world.data.characters[roleDialog].description?<WorldDocumentRenderer title="角色介绍" content={world.data.characters[roleDialog].description!}/>:<p>该角色暂无介绍。</p>}</Modal>}
+    {roleDialog!==null&&world.data.characters[roleDialog]&&<Modal title={world.data.characters[roleDialog].name} onClose={()=>setRoleDialog(null)}>{world.data.characters[roleDialog].description?<WorldDocumentRenderer showStyleWarning={false} title="角色介绍" content={world.data.characters[roleDialog].description!}/>:<p>该角色暂无介绍。</p>}</Modal>}
   </div>;
 }

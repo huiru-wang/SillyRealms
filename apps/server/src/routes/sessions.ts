@@ -1,11 +1,11 @@
+import { readRunPage } from '../domain/session/history-page.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { pageByUpdated } from '../common/pagination.js';
 import { readAncestors } from '../domain/session/ancestors.js';
-import { historyRuns } from '../domain/session/history-runs.js';
-import { ok, failure } from '../common/http-response.js';
+import { failure } from '../common/http-response.js';
 import { effectiveCapabilities, capabilityOverridesSchema } from '../runtime/config.js';
 import { publicRunResult } from '../domain/session/run-result.js';
 import { ErrorCodes } from '../common/error-codes.js';
@@ -59,17 +59,6 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
         .run(JSON.stringify(overrides),Date.now(),id);
       return c.json(capabilityView(id));
     });
-  });
-  app.get('/:id/runs', c => {
-    const id=c.req.param('id');
-    const row=db.prepare('SELECT tip_entry_id FROM sessions WHERE id=?').get(id);
-    if (!row) return c.json(failure(ErrorCodes.SESSION_NOT_FOUND),404);
-    const limit=Number(c.req.query('limit') ?? 20);
-    try { return c.json(ok(historyRuns(db,id,String(row.tip_entry_id),limit,c.req.query('cursor')))); }
-    catch (error) {
-      if (error instanceof Error && error.message === 'INVALID_CURSOR') return c.json(failure(ErrorCodes.INVALID_CURSOR),400);
-      return c.json(failure(ErrorCodes.INVALID_PARENT_CHAIN),422);
-    }
   });
   app.post('/', async c => {
     try {
@@ -147,16 +136,13 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
     const rawLimit = c.req.query('limit'); const limit = rawLimit === undefined ? 10 : Number(rawLimit);
     const cursor = c.req.query('cursor');
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) return c.json(failure(ErrorCodes.INVALID_CURSOR, '分页大小无效'),400);
-    let before = Number.MAX_SAFE_INTEGER;
-    if (cursor) {
-      try { const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')); if (parsed.sessionId !== id || !Number.isSafeInteger(parsed.before) || parsed.before < 1) throw new Error(); before = parsed.before; }
-      catch { return c.json(failure(ErrorCodes.INVALID_CURSOR, '游标无效'),400); }
+    let page: ReturnType<typeof readRunPage>;
+    try { page = readRunPage(db, id, String(session.tip_entry_id), limit, cursor); }
+    catch (error) {
+      if (error instanceof Error && error.message === ErrorCodes.INVALID_CURSOR) return c.json(failure(ErrorCodes.INVALID_CURSOR),400);
+      return c.json(failure(ErrorCodes.INVALID_PARENT_CHAIN),500);
     }
-    let rows:Record<string,any>[];
-    try { rows=readAncestors(db,id,String(session.tip_entry_id)); } catch { return c.json(failure(ErrorCodes.INVALID_PARENT_CHAIN),500); }
-    const groups = new Map<string, typeof rows>();
-    for (const row of rows) { const key = String(row.run_id); const group = groups.get(key) ?? []; group.push(row); groups.set(key, group); }
-    const selected = [...groups.entries()].map(([runId, entries]) => ({ runId, entries, start: Number(entries[0]?.seq) })).filter(g => g.start < before).sort((a,b) => b.start-a.start);
+    const selected = [...page.groups].reverse().map(group => ({ runId: group.id, entries: group.rows }));
     const runs = selected.slice(0, limit).map(group => ({ ...publicRunResult(group.entries.map(e=>JSON.parse(String(e.ext_data)).run).find(Boolean)??{}), runId: group.runId, status: publicRunResult(group.entries.map(e => JSON.parse(String(e.ext_data)).run).find(Boolean)??{status:'completed'}).status, entries: group.entries.flatMap(entry => {
       if (entry.type !== 'message' || !['user','assistant'].includes(String(entry.role))) return [];
       const ext = JSON.parse(String(entry.ext_data)); if (ext.nonNarrative) return [];
@@ -165,8 +151,7 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
       const text = typeof message.content === 'string' ? message.content : Array.isArray(message.content) ? message.content.filter((part: {type:string}) => part.type === 'text').map((part: {text:string}) => part.text).join('') : '';
       return text ? [{ id: entry.id, role: entry.role, text, branchCount: entry.branch_count }] : [];
     }) }));
-    const last = selected[Math.min(limit, selected.length)-1];
-    return c.json({ runs, hasMore: selected.length > limit, nextCursor: selected.length > limit && last ? Buffer.from(JSON.stringify({ sessionId: id, before: last.start })).toString('base64url') : null });
+    return c.json({ runs, hasMore: page.hasMore, nextCursor: page.nextCursor });
   });
   app.get('/:id/state', c => {
     const session = db.prepare('SELECT * FROM sessions WHERE id=?').get(c.req.param('id'));

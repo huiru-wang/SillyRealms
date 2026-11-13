@@ -72,10 +72,11 @@ describe('Pi SDK contract PoC', () => {
       for await (const event of gateway.stream(selected!,{messages:[{role:'user',content:'hello',timestamp:0}],tools:[stateTool]},{apiKey:'fake',signal:new AbortController().signal,maxTokens:20,toolChoice:requiredToolChoice(selected!)})) events.push(event.type);
       expect(wasCalled).toBe(true); expect(events).toContain('text_delta'); expect(events).toContain('done');
       expect(sentBody).toMatchObject({tool_choice:'required'});
-      const output=String(log.mock.calls[0]?.[0]); const logged=JSON.parse(output.slice(output.indexOf('{'),output.lastIndexOf('\n└─')));
+      const output=String(log.mock.calls[0]?.[0]); const logged=JSON.parse(output.split(' | ')[1]!);
       expect(logged).toMatchObject({provider:'deepseek',model:'deepseek-flash',fingerprint:expect.any(String)});
-      expect(logged).not.toHaveProperty('payload');
-      expect(JSON.stringify(logged)).not.toContain('hello');
+      expect(logged.payload).toEqual(sentBody);
+      expect(logged.payload.messages).toEqual(expect.arrayContaining([expect.objectContaining({role:'user',content:'hello'})]));
+      expect(output).not.toMatch(/[\r\n]/);
       expect(JSON.stringify(logged)).not.toContain('fake');
     } finally { if(oldDebug===undefined)delete process.env.SILLYREALMS_DEBUG;else process.env.SILLYREALMS_DEBUG=oldDebug;log.mockRestore(); vi.unstubAllGlobals(); }
   });

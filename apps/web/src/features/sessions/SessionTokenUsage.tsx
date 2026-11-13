@@ -36,7 +36,7 @@ export function SessionTokenUsage({sessionId,refreshKey}:{sessionId:string;refre
   useEffect(()=>{
     const controller=new AbortController();let live=true;
     setLoading(true);setError(false);
-    void api('v1/sessions/'+encodeURIComponent(sessionId)+'/usage',{signal:controller.signal})
+    void api('v1/sessions/'+encodeURIComponent(sessionId)+'/usage',{signal:controller.signal,cache:'no-store'})
       .then(value=>{if(live){setUsage(value as UsageView);setError(false);}})
       .catch(()=>{if(live&&!controller.signal.aborted)setError(true);})
       .finally(()=>{if(live)setLoading(false);});
@@ -69,8 +69,8 @@ export function SessionTokenUsage({sessionId,refreshKey}:{sessionId:string;refre
   },[cumulative]);
 
   const summary=loading&&!usage?'正在读取 Token 用量':usage
-    ?'累计 '+compact(usage.cumulative.totalTokens)+' · 上下文 '+(usage.latestContext
-      ?compact(usage.latestContext.inputTokens)+' / '+compact(usage.latestContext.contextWindowTokens)
+    ?(error?'刷新失败 · ':'')+'累计 '+full(usage.cumulative.totalTokens)+' · 上下文 '+(usage.latestContext
+      ?full(usage.latestContext.inputTokens)+' / '+compact(usage.latestContext.contextWindowTokens)
       +(usage.latestContext.ratio===null?'':' · '+percent(usage.latestContext.ratio))
       :'暂无')
     :'Token 统计暂不可用';
@@ -84,12 +84,13 @@ export function SessionTokenUsage({sessionId,refreshKey}:{sessionId:string;refre
       {mobile&&<span className="host-usage-toggle-icon">{expanded?<ChevronUp size={15}/>:<ChevronDown size={15}/>}</span>}
     </button>
     {expanded&&<div className="host-usage-body">
-      {loading&&!usage?<div className="host-usage-loading">正在读取用量…</div>:error&&!usage?<div className="host-usage-error" role="status">统计暂不可用 <button type="button" onClick={()=>setRetry(value=>value+1)} aria-label="重试读取 Token 用量"><RefreshCw size={13}/></button></div>:usage&&<>
+      {error&&<div className="host-usage-error" role="status">{usage?'刷新失败，当前显示上次统计':'统计暂不可用'} <button type="button" onClick={()=>setRetry(value=>value+1)} aria-label="重试读取 Token 用量"><RefreshCw size={13}/></button></div>}
+      {loading&&!usage?<div className="host-usage-loading">正在读取用量…</div>:usage&&<>
         <section className="host-usage-context" aria-label="最近上下文组成">
           <div className="host-usage-heading">
             <strong>模型上下文</strong>
             <span className="host-usage-context-total">
-              {usage.latestContext?compact(usage.latestContext.inputTokens)+' / '+compact(usage.latestContext.contextWindowTokens)
+              {usage.latestContext?full(usage.latestContext.inputTokens)+' / '+compact(usage.latestContext.contextWindowTokens)
                 +(usage.latestContext.ratio===null?'':' · '+percent(usage.latestContext.ratio)):'暂无请求记录'}
               {usage.latestContext?.stale&&<em>旧快照</em>}
             </span>
@@ -105,7 +106,7 @@ export function SessionTokenUsage({sessionId,refreshKey}:{sessionId:string;refre
         <section className="host-usage-cumulative" aria-label="会话累计 Token 消耗">
           <div className="host-usage-heading">
             <strong>会话累计</strong>
-            <span className="host-usage-context-total"><b>{compact(cumulative!.totalTokens)}</b> Tokens</span>
+            <span className="host-usage-context-total"><b>{full(cumulative!.totalTokens)}</b> Tokens</span>
           </div>
           <div className="host-usage-bar cumulative" role="img" aria-label={'累计输入 '+full(cumulative!.inputTokens)+'，输出 '+full(cumulative!.outputTokens)+'，缓存读取 '+full(cumulative!.cacheReadTokens)+'，缓存写入 '+full(cumulative!.cacheWriteTokens)}>
             {cumulativeParts.map(item=><span key={item.key} className={'host-usage-segment '+item.key} style={{width:(item.ratio*100)+'%'}} title={item.label+' '+full(item.value)}/>)}

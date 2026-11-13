@@ -1,3 +1,4 @@
+import { budgetInputSchema, storedBudgetSchema, budgetPatchSchema, mergeBudget, publicBudget } from '../domain/preset-budget.js';
 import { failure } from '../common/http-response.js';
 import { capabilitiesSchema, normalizeCapabilities, mergeCapabilities } from '../runtime/config.js';
 import { ErrorCodes, normalizeError } from '../common/error-codes.js';
@@ -10,7 +11,7 @@ import { referenceCounts } from '../repositories/config-references.js';
 
 const ids = ['main', 'personaInfo', 'characterInfo', 'worldState', 'chatHistory', 'userInput', 'postHistory'];
 const node = z.object({ id: z.string().min(1), kind: z.enum(['system', 'text']), name: z.string(), source: z.string().optional(), role: z.enum(['system', 'user', 'assistant', 'auto']), enabled: z.boolean(), content: z.string().optional() }).strict();
-const preset = z.object({ capabilities: capabilitiesSchema.optional(), name: z.string().trim().min(1), description: z.string().optional(), model_parameters: z.object({temperature:z.number().min(0).max(2).optional()}).strict().optional(), budget: z.object({ context_strategy: z.enum(['compact','standard','extended']), max_output_tokens: z.number().int().positive() }).strict(), summary_prompt: z.string(), nodes: z.array(node) }).strict().superRefine((p, ctx) => {
+const preset = z.object({ capabilities: capabilitiesSchema.optional(), name: z.string().trim().min(1), description: z.string().optional(), model_parameters: z.object({temperature:z.number().min(0).max(2).optional()}).strict().optional(), budget: storedBudgetSchema, summary_prompt: z.string(), nodes: z.array(node) }).strict().superRefine((p, ctx) => {
   if ('state_update_mode' in p) ctx.addIssue({code:'custom',message:'state_update_mode is unsupported; use capabilities and the session execution mode'});
   const nodeIds = p.nodes.map(n => n.id);
   if (new Set(nodeIds).size !== nodeIds.length) ctx.addIssue({ code: 'custom', message: 'Duplicate node ID' });
@@ -21,12 +22,12 @@ const preset = z.object({ capabilities: capabilitiesSchema.optional(), name: z.s
   for (const n of p.nodes) if (n.kind === 'system' && n.id !== 'postHistory' && !n.enabled) ctx.addIssue({ code:'custom', message:`Node ${n.id} must be enabled` });
   for (const n of p.nodes) if ((n.id === 'chatHistory' && n.role !== 'auto') || (n.id === 'userInput' && n.role !== 'user') || (n.id !== 'chatHistory' && n.role === 'auto') || (n.kind === 'text' && n.source !== undefined)) ctx.addIssue({ code: 'custom', message: `Invalid role or source for ${n.id}` });
 });
-const normalizeStored = (value: any) => ({...value,capabilities:normalizeCapabilities(value.capabilities),nodes:value.nodes.map((n: {id:string;name?:string})=>({
+const normalizeStored = (value: any) => ({...value,budget:storedBudgetSchema.parse(value.budget),capabilities:normalizeCapabilities(value.capabilities),nodes:value.nodes.map((n: {id:string;name?:string})=>({
   ...n,...(n.id!=='postHistory' && (n as {kind?:string}).kind==='system'?{enabled:true}:{}),
   ...(n.id==='main' && (!n.name || n.name==='main' || n.name==='主要提示')?{name:'叙事风格'}:{}),
 }))});
 const nodePatch = node.partial().extend({ id: z.string().min(1) }).strict();
-const patch = z.object({ capabilities: capabilitiesSchema.optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), model_parameters: z.object({temperature:z.number().min(0).max(2).optional()}).strict().optional(), budget: z.object({ context_strategy: z.enum(['compact','standard','extended']).optional(), max_output_tokens: z.number().int().positive().optional() }).strict().optional(), summary_prompt: z.string().optional(), nodes: z.array(nodePatch).optional(), add_nodes: z.array(node).optional(), remove_node_ids: z.array(z.string()).optional(), nodes_order: z.array(z.string()).optional() }).strict();
+const patch = z.object({ capabilities: capabilitiesSchema.optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), model_parameters: z.object({temperature:z.number().min(0).max(2).optional()}).strict().optional(), budget: budgetPatchSchema.optional(), summary_prompt: z.string().optional(), nodes: z.array(nodePatch).optional(), add_nodes: z.array(node).optional(), remove_node_ids: z.array(z.string()).optional(), nodes_order: z.array(z.string()).optional() }).strict();
 
 function compatibilityWarnings(value: { nodes: Array<{id:string;enabled:boolean;content?:string}> }) {
   const warnings: Array<{code:string;mode:'direct';message:string}> = [];
@@ -49,6 +50,7 @@ export function presetRoutes(db: DatabaseSync): Hono {
       const input=z.record(z.string(),z.unknown()).parse(await c.req.json());
       const names=z.array(z.string().trim().min(1)).default([]).parse(input.tags);
       delete input.tags;
+      input.budget = budgetInputSchema.parse(input.budget);
       const value=preset.parse(normalizeStored(input));
       const id=randomUUID(), now=Date.now();
       transaction(db,()=>{
@@ -58,7 +60,7 @@ export function presetRoutes(db: DatabaseSync): Hono {
         db.prepare('INSERT INTO presets(id,name,config_json,created_at,updated_at) VALUES(?,?,?,?,?)').run(id,value.name,JSON.stringify(value),now,now);
         importTags(db,'preset',id,names);
       });
-      return c.json({item:{id,...value,tags:tagNames(db,'preset',id)},warnings:compatibilityWarnings(value)},201);
+      return c.json({item:{id,...value,budget:publicBudget(value.budget),tags:tagNames(db,'preset',id)},warnings:compatibilityWarnings(value)},201);
     } catch(error) {return c.json(failure(normalizeError(error,ErrorCodes.INVALID_PRESET).errorCode),422);}
   };
   app.post('/',c=>create(c));
@@ -68,13 +70,13 @@ export function presetRoutes(db: DatabaseSync): Hono {
     if(!row) return c.json(missing,404);
     const value=preset.parse(normalizeStored(JSON.parse(String(row.config_json))));
     const {name,description,budget,model_parameters,summary_prompt,nodes,capabilities}=value;
-    return c.json({name,description,budget,model_parameters,summary_prompt,nodes,capabilities,tags:tagNames(db,'preset',id)});
+    return c.json({name,description,budget:publicBudget(budget),model_parameters,summary_prompt,nodes,capabilities,tags:tagNames(db,'preset',id)});
   });
   app.get('/:id',c=>{
     const id=c.req.param('id'), row=read(id);
     if(!row)return c.json(missing,404);
     const value=normalizeStored(JSON.parse(String(row.config_json)));
-    return c.json({item:{id,...value,tags:tagNames(db,'preset',id)},warnings:compatibilityWarnings(value)});
+    return c.json({item:{id,...value,budget:publicBudget(value.budget),tags:tagNames(db,'preset',id)},warnings:compatibilityWarnings(value)});
   });
   app.delete('/:id',c=>{
     const id=c.req.param('id');
@@ -96,7 +98,7 @@ export function presetRoutes(db: DatabaseSync): Hono {
       if (!row) return c.json(failure(ErrorCodes.PRESET_NOT_FOUND),404);
       const current = normalizeStored(JSON.parse(String(row.config_json)));
       const { nodes, add_nodes, remove_node_ids, nodes_order, budget, capabilities, ...fields } = changes;
-      const next = { ...current, ...fields, capabilities: mergeCapabilities(current.capabilities, capabilities), budget: { ...current.budget, ...budget }, nodes: [...current.nodes] };
+      const next = { ...current, ...fields, capabilities: mergeCapabilities(current.capabilities, capabilities), budget: mergeBudget(current.budget, budget), nodes: [...current.nodes] };
       if (next.description === null) delete next.description;
       if (nodes) {
         if (new Set(nodes.map(n => n.id)).size !== nodes.length) throw new Error('Duplicate node patch');
@@ -120,7 +122,7 @@ export function presetRoutes(db: DatabaseSync): Hono {
       const validated = preset.parse(next);
       if(db.prepare('SELECT 1 FROM presets WHERE name=? AND id<>?').get(validated.name,String(row.id))) return c.json(failure(ErrorCodes.PRESET_NAME_CONFLICT),409);
       db.prepare('UPDATE presets SET name=?, config_json=?, updated_at=? WHERE id=?').run(validated.name, JSON.stringify(validated), Date.now(), row.id as string);
-      return c.json({ item: { id: row.id, ...validated }, warnings:compatibilityWarnings(validated) });
+      return c.json({ item: { id: row.id, ...validated, budget: publicBudget(validated.budget) }, warnings:compatibilityWarnings(validated) });
     } catch(error) { return c.json(failure(normalizeError(error,ErrorCodes.INVALID_PRESET).errorCode),422); }
   });
   return app;

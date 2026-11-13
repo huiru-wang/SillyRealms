@@ -3,7 +3,6 @@ import { Hono } from 'hono';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { SRRuntime } from '../runtime/index.js';
-import { historyRuns } from '../domain/session/history-runs.js';
 import { ErrorCodes, errorInfo, isErrorCode, normalizeError, type ErrorCode } from '../common/error-codes.js';
 import { failure, ok } from '../common/http-response.js';
 import { UsageStore } from '../runtime/persistence/usage-store.js';
@@ -16,9 +15,19 @@ export function sessionRuntimeRoutes(db:DatabaseSync,runtime:SRRuntime):Hono {
   const session=(id:string)=>db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
   const usage = new UsageStore(db);
   app.get('/:id/usage', c => {
+    c.header('Cache-Control','no-store');
     const id = c.req.param('id');
     if (!session(id)) return c.json(failure(ErrorCodes.SESSION_NOT_FOUND),404);
     return c.json(ok(usage.view(id)));
+  });
+  app.get('/:id/runs', c => {
+    const id=c.req.param('id'), row=session(id);
+    if (!row) return c.json(failure(ErrorCodes.SESSION_NOT_FOUND),404);
+    try { return c.json(ok(runtime.history(id,String(row.tip_entry_id),Number(c.req.query('limit') ?? 20),c.req.query('cursor')))); }
+    catch (error) {
+      if (error instanceof Error && error.message === ErrorCodes.INVALID_CURSOR) return c.json(failure(ErrorCodes.INVALID_CURSOR),400);
+      return c.json(failure(ErrorCodes.INVALID_PARENT_CHAIN),422);
+    }
   });
   app.post('/:id/runs',async c=>{
     const input=runRequest.safeParse(await c.req.json().catch(()=>null));
@@ -46,16 +55,19 @@ export function sessionRuntimeRoutes(db:DatabaseSync,runtime:SRRuntime):Hono {
     const stream=new ReadableStream<Uint8Array>({start(controller){
       let closed=false;
       const send=(event:string,data:unknown)=>{if(closed)return;try{if((controller.desiredSize??1)<-128){closed=true;dispose();clearInterval(timer);controller.close();return;}controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));}catch{closed=true;dispose();clearInterval(timer);}};
-      const messages=(runId:string)=>{try{const row=session(id);if(!row?.tip_entry_id)return [];return historyRuns(db,id,String(row.tip_entry_id),20).runs.find(run=>run.id===runId)?.messages??[];}catch{return [];}};
+      const messages=(runId:string)=>runtime.status(id,runId)?.messages??[];
       dispose=runtime.onEvent((target,event,payload)=>{
         if(target!==id)return;
         const runId=String(payload.runId??'');
-        const publicResult=()=>runtime.status(id,runId)??publicRunResult({...payload,runId});
+        const publicResult=()=>{
+          const { input: _input, ...result } = (runtime.status(id,runId)??publicRunResult({...payload,runId})) as Record<string, unknown>;
+          return result;
+        };
         if(event==='message.created') {
           const message=payload.message as {id:string;role:string;text:string}|undefined;
           if(message?.role==='user')send('run.created',{...publicResult(),runId,messages:[{id:message.id,role:'user',text:message.text}]});
-          else if(message?.role==='assistant' && message.text)send('run.delta',{runId,messageId:message.id,text:message.text});
-        } else if(event==='message.delta') send('run.delta',{runId,messageId:payload.messageId,text:payload.text});
+          else if(message?.role==='assistant' && message.text)send('run.delta',{runId,messageId:message.id,offset:0,text:message.text});
+        } else if(event==='message.delta') send('run.delta',{runId,messageId:payload.messageId,offset:payload.offset,text:payload.text});
         else if(event==='run.updated' && payload.status==='completed')send('run.completed',{...publicResult(),runId,messages:messages(runId)});
         else if(event==='run.updated' && payload.status==='failed') {
           const code = isErrorCode(payload.errorCode) ? payload.errorCode : ErrorCodes.INTERNAL_ERROR;

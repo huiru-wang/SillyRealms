@@ -1,11 +1,12 @@
 # SillyRealms Studio
 
-新一代 SR 平台 UI 设计验证工程。只包含静态 React 页面、本地 fixture 和视图状态，**不连接 SR Server**，不修改现有 apps/web。
+新一代 SR 平台 UI 工程。世界卡列表与详情默认只读连接 SR Server；预设和会话目前仍使用本地 fixture 与视图状态。
 
 ## 运行
 
 - `pnpm install`（仓库根目录）
 - `pnpm --filter @sillyrealms/studio dev`
+- `pnpm dev:studio:mock`：使用 20 张模拟世界卡、20 个会话和 10 个预设；模拟世界不会写入 Server。需先停止占用 5174 端口的 Studio 开发服务。
 - 打开 http://localhost:5174/worlds
 - `pnpm --filter @sillyrealms/studio typecheck`
 - `pnpm --filter @sillyrealms/studio build`
@@ -23,11 +24,11 @@
 ## 预设工作区
 
 - 路由：`/presets`、`/presets/:presetId`。全局侧栏快捷项与工作区共享预设名称及默认项。
-- 无标签；列表只有标题、单行省略描述，可搜索、新建、复制、删除、设为默认。
+- 无标签；列表只有标题、单行省略描述，可新建、复制、删除、设为默认。
 - 编辑名称、描述、上下文策略、输出预算、压缩提示词与温度；叙事风格和自定义节点在宽弹窗内编辑。
 - 自定义节点可增删、切换消息角色、启停，并通过手柄拖动、方向键或上移/下移菜单排序。固定消息骨架按已批准的状态尾块目标展示来源说明。
 - 弹窗“应用”写入当前预设草稿，页面“保存预设”更新内存快照；切换预设或 Studio 路由保留各自草稿，“放弃更改”恢复当前预设快照。
-- **保存仅用于静态交互验证，不写入 SR Server 或持久存储。刷新后恢复 7 个 fixture。** 存在未保存页面草稿或未应用弹窗内容时，关闭/刷新提供浏览器提示。
+- **保存仅用于静态交互验证，不写入 SR Server 或持久存储。刷新后恢复 10 个 fixture。** 存在未保存页面草稿或未应用弹窗内容时，关闭/刷新提供浏览器提示。
 - 主工作区宽度不足 780px 时切换为列表/编辑两级视图，左右滚动独立。群像长篇提供 16 个自定义节点用于长编排检查。
 - `pnpm --filter @sillyrealms/studio test:visual` 包含预设操作、真实指针排序、草稿与弹窗、5 个视口，以及原有世界页回归。
 

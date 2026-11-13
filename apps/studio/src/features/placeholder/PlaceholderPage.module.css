@@ -5,3 +5,5 @@
 .panel p{font-size:14px;line-height:1.75;margin:0 0 16px}
 .panel a{display:flex;align-items:center;gap:8px;color:var(--accent)}
 @media(max-width:760px){.page{padding:84px 20px 35px}.panel{padding:36px 24px}}
+.mobileBack{display:none}
+@media(max-width:760px){.page{padding-top:22px}.mobileBack{display:grid;place-items:center;width:44px;height:44px;margin-left:-12px;color:var(--text-secondary)}.desktopReturn{display:none}}

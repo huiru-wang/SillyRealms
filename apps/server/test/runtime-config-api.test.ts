@@ -47,8 +47,8 @@ it('rechecks busy after awaited credential validation before changing mode',asyn
 });
 it('exposes preparing via session GET, freezes this run, and permits next-run capability overrides while busy',async()=>{
   const gateway=textGateway('story'+tail());let release!:()=>void,entered!:()=>void;
-  const ready=new Promise<void>(r=>entered=r),gate=new Promise<void>(r=>release=r),measure=gateway.measure!;
-  gateway.measure=async(...args)=>{entered();await gate;return measure(...args);};
+  const ready=new Promise<void>(r=>entered=r),gate=new Promise<void>(r=>release=r);
+  gateway.preview=async()=>{entered();await gate;return undefined;};
   const {db}=runtimeFixture(gateway),app=createApp(db,fakeCredentials,gateway);
   try {
     const res=await app.request('/api/v1/sessions/session/runs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:'go',requestId:crypto.randomUUID(),expectedTipEntryId:'opening'})});

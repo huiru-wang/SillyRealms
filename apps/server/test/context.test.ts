@@ -1,17 +1,17 @@
 import { expect, it } from 'vitest';
-import { contextTriggerThreshold } from '../src/runtime/context/context-manager.js';
+import { resolveBudget } from '../src/domain/preset-budget.js';
 
-it('maps strategies to model-limited thresholds with output and input reserves', () => {
-  expect(contextTriggerThreshold('compact', 1_000_000, 4096)).toBe(131_072 - 4096 - 1024 - 2048);
-  expect(contextTriggerThreshold('standard', 1_000_000, 4096)).toBe(262_144 - 4096 - 1024 - 2048);
-  expect(contextTriggerThreshold('extended', 1_000_000, 4096)).toBe(524_288 - 4096 - 1024 - 2048);
-  expect(contextTriggerThreshold('extended', 32_768, 4096)).toBe(32_768 - 4096 - 1024 - 2048);
-  expect(contextTriggerThreshold('compact', 1_000_000, 2048)).toBeGreaterThan(42_538);
+it('caps explicit input budgets at eighty percent and reserves output separately', () => {
+  const model = { contextWindow: 200000, maxTokens: 100000 };
+  expect(resolveBudget({ max_context_tokens: 160000, max_output_tokens: 4096 }, model).max_context_tokens).toBe(160000);
+  expect(() => resolveBudget({ max_context_tokens: 160001, max_output_tokens: 4096 }, model)).toThrow();
+  expect(() => resolveBudget({ max_context_tokens: 160000, max_output_tokens: 50000 }, model)).toThrow();
+  expect(resolveBudget({ context_strategy: 'extended', max_output_tokens: 4096 }, model).max_context_tokens).toBe(160000);
 });
 import { buildContext } from '../src/runtime/context/prompt-builder.js';
 import { estimateContextComposition } from '../src/runtime/context/context-manager.js';
 
-it('uses literal content and freezes activation before history changes', () => {
+it('builds literal content against its supplied activation snapshot', () => {
   const world = { characters:[{id:'player',player_selectable:true,prompt:'{{user}}'},{id:'npc',prompt:'NPC',load:{mode:'on_mention',keywords:['forest']}}], lorebook:{entries:[{id:'entry',content:'LITERAL <% danger %>',load:{mode:'on_mention',keywords:['forest'],anchor:'characterInfo',position:'before'}}]} };
   const views = { global:{}, session:{}, message:{} };
   const nodes = [{id:'personaInfo',kind:'system' as const,role:'system' as const,enabled:true},{id:'characterInfo',kind:'system' as const,role:'system' as const,enabled:true},{id:'chatHistory',kind:'system' as const,role:'auto' as const,enabled:true},{id:'userInput',kind:'system' as const,role:'user' as const,enabled:true}];
@@ -56,9 +56,10 @@ it('logs each dynamic load in one line only when debugging is enabled',async()=>
     expect(lines.every(line=>!line.includes('\n'))).toBe(true);
     expect(lines.join(' ')).not.toContain('forest');
     expect(lines.join(' ')).not.toContain('hero.hp');
-    expect(lines.some(line=>line.includes('角色')&&line.includes('关键词')&&line.includes('when=')&&line.includes('命中=是'))).toBe(true);
+    const records=lines.map(line=>JSON.parse(line.split(' | ')[1]!));
+    expect(records).toContainEqual(expect.objectContaining({category:'角色',keywordCount:1,when:true,active:true}));
     expect(lines.some(line=>line.includes('世界书')&&line.includes('always'))).toBe(true);
-    expect(lines.some(line=>line.includes('状态')&&line.includes('never')&&line.includes('命中=否'))).toBe(true);
+    expect(records).toContainEqual(expect.objectContaining({category:'状态',mode:'never',active:false}));
     log.mockClear(); delete process.env.SILLYREALMS_DEBUG;
     buildContext(world,[],'p',{global:{},session:{},message:{hero:{hp:1}}},[],'forest');
     expect(log).not.toHaveBeenCalled();

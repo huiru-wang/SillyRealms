@@ -18,5 +18,5 @@
 - Animate the shell track and dependent world-page spacing together. Keep sidebar content mounted; fade labels/list with inert and aria-hidden while collapsed.
 - Selected + Hover must NOT override selected colors; Hover feedback belongs to nonselected items. Keep focus-visible for keyboard users.
 - Use the shared Motion Tokens for navigation and overlays, with no ornamental bounce; respect prefers-reduced-motion including zero delay.
-- Mobile Drawer must show labels and data regardless of persisted desktop collapsed state.
+- Mobile top-level lists use the bottom navigation; world, session, preset and model detail views hide it and provide a back control. Desktop sidebar collapse preferences do not affect mobile navigation.
 - Extend the CDP visual regression whenever navigation behavior, selected state or responsive transitions change.

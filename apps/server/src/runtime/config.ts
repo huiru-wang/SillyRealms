@@ -1,3 +1,4 @@
+import { resolveBudget } from '../domain/preset-budget.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { Api, Model } from '@earendil-works/pi-ai';
@@ -8,7 +9,6 @@ import type { ModelClient } from './model/model-client.js';
 import type { CapabilityConfig, CapabilityOverrides, PublicCapabilities } from './narrative/extension-contract.js';
 import type { RuntimeConfig } from './types.js';
 
-export const CONTEXT_WINDOWS = { compact: 131_072, standard: 262_144, extended: 524_288 } as const;
 const prompt = z.string().refine(value => Array.from(value).length <= 2000);
 const stateCapability = z.object({ enabled: z.boolean().optional(), prompt: prompt.optional() }).strict();
 const suggestionsCapability = z.object({
@@ -81,10 +81,8 @@ export function resolveRuntimeConfig(store: RunStore, client: ModelClient, sessi
   const resolved = client.resolve(String(modelRow.provider_id), String(modelRow.model_id));
   if (!resolved) throw new RuntimeError(ErrorCodes.MODEL_NOT_FOUND);
   const model: Model<Api> = structuredClone(resolved);
-  const output = preset.budget?.max_output_tokens;
-  const strategy = preset.budget?.context_strategy;
-  if (!Number.isInteger(output) || output <= 0 || !Object.hasOwn(CONTEXT_WINDOWS, strategy))
-    throw new RuntimeError(ErrorCodes.INVALID_PRESET_BUDGET);
+  const budget = resolveBudget(preset.budget, model);
+  const output = budget.max_output_tokens;
   const temperature = preset.model_parameters?.temperature;
   if (temperature !== undefined && (!Number.isFinite(temperature) || temperature < 0 || temperature > 2))
     throw new RuntimeError(ErrorCodes.INVALID_MODEL_PARAMETERS);
@@ -98,9 +96,8 @@ export function resolveRuntimeConfig(store: RunStore, client: ModelClient, sessi
     model: { configId: String(session.api_model_config_id), credentialRef: String(modelRow.credential_ref), definition: model },
     generation: { maxOutputTokens: output, temperature },
     preset: { id: String(session.preset_id), hash: fingerprint(preset), nodes: structuredClone(preset.nodes), summaryPrompt: String(preset.summary_prompt ?? '') },
-    contextPolicy: { windowPreset: strategy, measurement: 'current_request', safetyMarginTokens: 1024,
-      summary: { inputRatio: 0.75, maxOutputTokens: Math.min(2048, model.maxTokens) },
-      overflow: { strategy: 'summarize_history', keepRecentTurns: 5, maxPassesPerRequest: 2, maxSummaryCallsPerRun: 8 } },
+    contextPolicy: { budget, safetyMarginTokens: 1024,
+      summary: { inputRatio: 0.75, maxOutputTokens: Math.min(2048, model.maxTokens) }, keepRecentTurns: 5 },
     extensions: effectiveCapabilities(preset.capabilities, overrides.data),
     capabilityRevision: Number(session.capability_revision ?? 0),
     agentPolicy: { allowedTools: ['update_state'] },

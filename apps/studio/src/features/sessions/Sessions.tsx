@@ -1,6 +1,6 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {Link,useParams} from 'react-router-dom';
-import {ArrowDown,ArrowRight,ChevronDown,ChevronUp,Info,Send,Settings2} from 'lucide-react';
+import {ArrowDown,ArrowLeft,ArrowRight,ChevronDown,ChevronUp,Info,Send,Settings2} from 'lucide-react';
 import {Modal} from '../../components/ui/Modal';
 import {Button} from '../../components/ui/Button';
 import {sessionSamples as samples} from '../../fixtures/sessions';
@@ -85,6 +85,7 @@ export function SessionDetailPage(){
   };
   return <section className={styles.detail} data-session-detail={id}>
     <header className={styles.topbar}>
+      <Link to="/sessions" className={styles.mobileBack} aria-label="返回会话列表"><ArrowLeft size={20}/></Link>
       <div className={styles.identity}><h1 title={sample.title}>{sample.title}</h1><span>{sample.world}</span></div>
       <div className={styles.topActions}><ContextBar/><span className={styles.divider}/><span className={styles.status} title="静态演示"><i/>演示</span><button className={styles.iconButton} type="button" aria-label="会话设置" onClick={()=>setSettings(true)}><Settings2 size={18}/></button></div>
     </header>

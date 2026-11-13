@@ -20,7 +20,7 @@ export async function checkSessions({send,evaluate,until,viewport,click,screensh
   await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
   await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
   assert(await evaluate('document.activeElement?.textContent')==='跳转到主要内容','Skip link should be the first keyboard stop');
-  assert(await evaluate('document.querySelectorAll("main a[href^=\\"/sessions/\\"]").length')===2,'Session list should have two samples');
+  assert(await evaluate('document.querySelectorAll("main a[href^=\\"/sessions/\\"]").length')===20,'Session list should have twenty samples');
   await screenshot('sessions-list-1536');
   await click('main a[href="/sessions/changan"]');
   await until('!!document.querySelector("[data-session-detail=changan]")');
@@ -85,11 +85,13 @@ export async function checkSessions({send,evaluate,until,viewport,click,screensh
   const previous=await evaluate('performance.timeOrigin');
   await send('Page.navigate',{url:base+'/sessions/changan?sidebar=collapsed&theme=dark'});
   await until('performance.timeOrigin!=='+previous+' && !!document.querySelector("[data-session-detail=changan]")');
-  await click('[aria-label="打开导航"]');
-  assert(await evaluate('document.querySelector('+JSON.stringify(sessionShortcut)+').getAttribute("aria-current")')==='page','Mobile drawer should show the current shortcut even with collapsed desktop preference');
-  assert(await evaluate('document.querySelector("#sessions-heading a").hasAttribute("aria-current")')===false,'Mobile drawer should not select both heading and shortcut');
-  await screenshot('sidebar-session-selected-mobile-390');
-  await click('[aria-label="关闭导航"]');
+  assert(await evaluate(`!document.querySelector('[aria-label="手机主导航"]')`),'Session detail must not show mobile navigation');
+  assert(await evaluate(`!!document.querySelector('[aria-label="返回会话列表"]')`),'Session detail should expose a back control');
+  await click('[aria-label="返回会话列表"]');
+  await until('location.pathname==="/sessions"');
+  assert(await evaluate(`document.querySelector('[aria-label="手机主导航"] [aria-label="会话"]').getAttribute("aria-current")==="page"`),'Session list should select its mobile navigation item');
+  await click('main a[href="/sessions/changan"]');
+  await until('!!document.querySelector("[data-session-detail=changan]")');
   await evaluate('document.documentElement.dataset.theme="light"');
   await screenshot('session-changan-light-390');
   console.log('PASS: session list, both visual samples, context/settings, local draft and preview, responsive layout.');

@@ -1,3 +1,6 @@
+import { errorInfo, ErrorCodes } from '../../common/error-codes.js';
+import { runFailure } from '../../domain/session/run-failure.js';
+import type { InputIdentity, InputBaseline } from '../context/compaction/estimator.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Usage } from '@earendil-works/pi-ai';
@@ -6,8 +9,8 @@ import { readAncestors } from '../../domain/session/ancestors.js';
 export type ModelPhase = 'summary' | 'generation' | 'continuation' | 'state_review';
 export type ContextComposition = { systemBytes: number; summaryBytes: number; historyBytes: number };
 export type RequestMeta = {
-  sessionId: string; runId: string; requestId: string;
-  phase: ModelPhase; apiModelConfigId?: string; contextComposition?: ContextComposition;
+  sessionId: string; runId: string; requestId: string; requestIndex?: number;
+  phase: ModelPhase; inputIdentity?: InputIdentity; apiModelConfigId?: string; contextComposition?: ContextComposition;
 };
 export type TokenTotals = {
   inputTokens: number; outputTokens: number; totalTokens: number;
@@ -31,7 +34,7 @@ export type SessionUsage = {
   latestContext: null | {
     inputTokens: number; outputTokens?: number; contextWindowTokens: number; modelId: string;
     apiModelConfigId?: string; runId: string; requestId: string; finishedAt: number;
-    contextComposition?: ContextComposition;
+    contextComposition?: ContextComposition; baseline?: InputBaseline;
   };
   pendingRun: PendingRun | null;
   // Only when a provider used tokens before a User Entry could be created.
@@ -163,11 +166,15 @@ export class UsageStore {
    * Seal exactly once. Entries provide per-message detail, pendingRun retains
    * requests with no Entry (including failed preparation or provider errors).
    */
-  settleRun(sessionId: string, runId: string, status: string, durationMs?: number): boolean {
-    this.db.exec('BEGIN IMMEDIATE');
+  settleRun(sessionId: string, runId: string, status: string, durationMs?: number, terminal?: Record<string, unknown>): boolean {
+    const ownsTransaction = !this.db.isTransaction;
+    if (ownsTransaction) this.db.exec('BEGIN IMMEDIATE');
     try {
-      const session = this.load(sessionId), pending = session.pendingRun;
-      if (!pending || pending.runId !== runId) { this.db.exec('COMMIT'); return false; }
+      const session = this.load(sessionId);
+      const prep = this.db.prepare('SELECT * FROM run_preparations WHERE session_id=? AND run_id=?').get(sessionId, runId);
+      const pending = session.pendingRun?.runId === runId ? session.pendingRun : prep?.status === 'preparing'
+        ? { runId, requestId: String(prep.request_id), startedAt: Number(prep.created_at), requests: [] as RequestMetrics[], firstVisibleTextMs: undefined } : null;
+      if (!pending) { if (ownsTransaction) this.db.exec('COMMIT'); return false; }
       const entries = this.db.prepare('SELECT id,type,role,metrics_json FROM entries WHERE session_id=? AND run_id=? ORDER BY seq')
         .all(sessionId, runId);
       const requests = new Map<string, RequestMetrics>();
@@ -202,6 +209,7 @@ export class UsageStore {
           contextWindowTokens: latestNarrative.contextWindowTokens, modelId: latestNarrative.modelId,
           apiModelConfigId: latestNarrative.apiModelConfigId, runId, requestId: latestNarrative.requestId,
           finishedAt: latestNarrative.finishedAt,
+          ...(latestNarrative.status === 'completed' && latestNarrative.inputIdentity ? { baseline: { ...latestNarrative.inputIdentity, inputTokens: latestNarrative.usage.inputTokens } } : {}),
           ...(latestNarrative.contextComposition ? { contextComposition: latestNarrative.contextComposition } : {}),
         };
       }
@@ -225,15 +233,24 @@ export class UsageStore {
         unmatched.unknownCount += unknownCount;
         session.unattachedTotals = unmatched;
       }
+      if (!user && status !== 'completed') {
+        const saved = prep ? JSON.parse(String(prep.result_json)) : {};
+        const result = { ...saved, ...terminal, runId, status, phase: 'finalized',
+          ...(status === 'interrupted' ? { ...errorInfo(ErrorCodes.RUN_INTERRUPTED), ...runFailure(ErrorCodes.RUN_INTERRUPTED, 'preparation', prep?.input_text != null) } : {}) };
+        if (prep) this.db.prepare("UPDATE run_preparations SET status=?,finished_at=?,result_json=?,metrics_json=?,accounted=1 WHERE run_id=? AND status='preparing'")
+          .run(status, Date.now(), JSON.stringify(result), JSON.stringify({ requests: [...requests.values()], totals }), runId);
+        else this.db.prepare('INSERT INTO run_preparations(run_id,session_id,request_id,expected_tip_entry_id,input_text,status,created_at,finished_at,result_json,metrics_json,accounted) VALUES(?,?,?,?,NULL,?,?,?,?,?,1)')
+          .run(runId, sessionId, pending.requestId, '', status, pending.startedAt, Date.now(), JSON.stringify(result), JSON.stringify({ requests: [...requests.values()], totals }));
+      }
       mergeTotals(session.cumulative, totals);
       session.cumulative.reportedCount += reportedCount;
       session.cumulative.unknownCount += unknownCount;
       if (latestNarrative) session.latestContext = latest;
-      session.pendingRun = null;
+      if (session.pendingRun?.runId === runId) session.pendingRun = null;
       this.save(sessionId, session);
-      this.db.exec('COMMIT');
+      if (ownsTransaction) this.db.exec('COMMIT');
       return true;
-    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    } catch (error) { if (ownsTransaction) this.db.exec('ROLLBACK'); throw error; }
   }
 
   /** Works only for the two persisted dimensions; doesn't alter the active Run. */
@@ -258,6 +275,7 @@ export class UsageStore {
       }
       latestContext = {
         ...snapshot,
+        baseline: undefined,
         ratio: snapshot.contextWindowTokens > 0 ? snapshot.inputTokens / snapshot.contextWindowTokens : null,
         stale: branchStale || (snapshot.apiModelConfigId !== undefined && snapshot.apiModelConfigId !== session?.api_model_config_id),
       };
@@ -283,7 +301,7 @@ export class RunAccounting {
 
   request(phase: ModelPhase, contextComposition?: ContextComposition): RequestMeta {
     this.nextRequestIndex++;
-    return { sessionId: this.sessionId, runId: this.runId, requestId: randomUUID(),
+    return { sessionId: this.sessionId, runId: this.runId, requestId: randomUUID(), requestIndex: this.nextRequestIndex,
       phase, apiModelConfigId: this.apiModelConfigId, ...(contextComposition ? { contextComposition } : {}) };
   }
   firstVisible(usage: UsageStore): void {

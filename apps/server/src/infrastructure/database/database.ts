@@ -8,19 +8,25 @@ export function openDatabase(path: string): DatabaseSync {
   const db = new DatabaseSync(path);
   const existed = !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='worlds'").get();
   const version = Number(db.prepare('PRAGMA user_version').get()?.user_version ?? 0);
-  if (version > 2 || (existed && version < 1)) {
+  if (version > 3 || (existed && version < 1)) {
     db.close();
-    throw new Error(version > 2 ? 'DATABASE_VERSION_UNSUPPORTED' : 'OLD_DATABASE_UNSUPPORTED: 旧数据库需要独立迁移，未改动任何数据');
+    throw new Error(version > 3 ? 'DATABASE_VERSION_UNSUPPORTED' : 'OLD_DATABASE_UNSUPPORTED: 旧数据库需要独立迁移，未改动任何数据');
   }
-  if (existed && version === 2) {
+  if (existed && version >= 2) {
     const columns = db.prepare("SELECT name FROM pragma_table_info('sessions')").all().map(row => row.name);
     if (!['execution_mode', 'capability_overrides_json', 'capability_revision'].every(name => columns.includes(name))) {
       db.close(); throw new Error('DATABASE_SCHEMA_VERSION_MISMATCH');
     }
   }
+  if (existed && version === 3) {
+    const columns = db.prepare("SELECT name FROM pragma_table_info('run_preparations')").all().map(row => row.name);
+    if (!['run_id', 'session_id', 'request_id', 'expected_tip_entry_id', 'input_text', 'status', 'created_at', 'finished_at', 'result_json', 'metrics_json', 'accounted'].every(name => columns.includes(name))) {
+      db.close(); throw new Error('DATABASE_SCHEMA_VERSION_MISMATCH');
+    }
+  }
   // SQLite snapshots committed WAL pages before any upgrade.
-  if (existed && version === 1 && path !== ':memory:') {
-    try { db.prepare('VACUUM INTO ?').run(path + '.backup-v1-' + Date.now()); }
+  if (existed && version < 3 && path !== ':memory:') {
+    try { db.prepare('VACUUM INTO ?').run(path + '.backup-v' + version + '-' + Date.now()); }
     catch (error) { db.close(); throw error; }
   }
   if (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='worlds'").get() &&
@@ -89,6 +95,15 @@ export function openDatabase(path: string): DatabaseSync {
         CHECK(json_valid(usage_json) AND json_type(usage_json)='object'),
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS run_preparations (
+      run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      request_id TEXT NOT NULL, expected_tip_entry_id TEXT NOT NULL, input_text TEXT,
+      status TEXT NOT NULL CHECK(status IN ('preparing','failed','stopped','interrupted')),
+      created_at INTEGER NOT NULL, finished_at INTEGER,
+      result_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(result_json)),
+      metrics_json TEXT CHECK(metrics_json IS NULL OR json_valid(metrics_json)),
+      accounted INTEGER NOT NULL DEFAULT 0 CHECK(accounted IN (0,1)), UNIQUE(session_id,request_id)
+    );
     CREATE TABLE IF NOT EXISTS entries (
       id TEXT PRIMARY KEY, session_id TEXT NOT NULL, parent_id TEXT, run_id TEXT NOT NULL,
       seq INTEGER NOT NULL, type TEXT NOT NULL CHECK(type IN ('message','compaction','branch_summary')),
@@ -137,7 +152,7 @@ export function openDatabase(path: string): DatabaseSync {
     .map(id=>({id,name:builtinNames[id]!,kind:'system',source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true,
       ...(['main','postHistory'].includes(id)?{content:''}:{})}));
   const defaultPreset = {
-    name:'标准叙事', capabilities: normalizeCapabilities(undefined), budget:{context_strategy:'standard',max_output_tokens:2048},
+    name:'标准叙事', capabilities: normalizeCapabilities(undefined), budget:{strategy:'rolling_summary',max_context_tokens:32768,max_output_tokens:2048},
     summary_prompt:'概述故事迄今发生的关键事件、角色、状态和未解决的线索，保持准确简洁。',
     nodes:defaultNodes,
   };
@@ -161,6 +176,7 @@ export function openDatabase(path: string): DatabaseSync {
       }
       db.exec('PRAGMA user_version = 2');
     }
+  if (version < 3) db.exec('PRAGMA user_version = 3');
   db.prepare('INSERT OR IGNORE INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,?,?,?,?)')
     .run('sr-default-preset',null,now,now);
   db.exec('COMMIT');
@@ -177,6 +193,8 @@ export function recoverInterrupted(db: DatabaseSync): void {
     const pending = JSON.parse(String(row.usage_json)).pendingRun as {runId:string};
     usage.settleRun(String(row.id), pending.runId, 'interrupted');
   }
+  for (const row of db.prepare("SELECT session_id,run_id FROM run_preparations WHERE status='preparing'").all())
+    usage.settleRun(String(row.session_id), String(row.run_id), 'interrupted');
   db.exec(`
     UPDATE entries SET ext_data = json_set(ext_data,
       '$.run.extensions.stateUpdate.status', CASE

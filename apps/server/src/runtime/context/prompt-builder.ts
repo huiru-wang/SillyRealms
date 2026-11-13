@@ -1,6 +1,6 @@
 import { ErrorCodes } from '../../common/error-codes.js';
 import type { Message } from '@earendil-works/pi-ai';
-import { debugEnabled } from '../../common/debug.js';
+import { debugEnabled, debugLog } from '../../common/debug.js';
 import { evaluateLoad } from './activation.js';
 import { stateToolInstructions } from '../tools/state-tool.js';
 import { narrativeForActivation } from '@sillyrealms/roleplay';
@@ -14,17 +14,17 @@ type PresetNode = { id:string; name?:string; kind:'system'|'text'; role:'system'
 type World = { characters:Source[]; lorebook?:{entries?:Source[]}; state?:{scopes?:Record<string,Record<string,any>>} };
 
 /** Render author text separately from runtime state, history and user input. */
-export function buildContext(world: World, nodes: PresetNode[], playerId: string, views: Views, history: Narrative[], input: string, options: { mode?: 'direct' | 'agent'; capabilities?: CapabilityConfig; gaps?: string[] } = {}) {
+export function buildContext(world: World, nodes: PresetNode[], playerId: string, views: Views, history: Narrative[], input: string, options: { mode?: 'direct' | 'agent'; capabilities?: CapabilityConfig; gaps?: string[]; preview?: boolean } = {}) {
   const scan = [...history.map(m => narrativeForActivation(m.text, m.role)), narrativeForActivation(input, 'user')];
   const diagnostics: Array<{id:string;reason:string;path:string}> = [];
   const active = (source: Source,path:string,category:'角色'|'世界书'|'状态') => {
     const rule=source.load ?? {};
     const result=source.enabled === false ? {active:false,reason:'disabled'} : evaluateLoad(rule, scan, views);
-    if (debugEnabled()) {
+    if (!options.preview && debugEnabled()) {
       const mode=['always','never','on_mention'].includes(rule.mode??'always')?rule.mode??'always':'invalid';
       const keywordCount=Array.isArray(rule.keywords)?rule.keywords.length:0;
       const excludedCount=Array.isArray(rule.exclude_keywords)?rule.exclude_keywords.length:0;
-      console.log(`[加载] ${category} | 模式=${mode} | 关键词数=${keywordCount} | 排除数=${excludedCount} | when=${rule.when?'已配置':'无'} | 命中=${result.active?'是':'否'} | 原因=${result.reason}`);
+      debugLog('CONTEXT LOAD', { category, mode, keywordCount, excludedCount, when: !!rule.when, active: result.active, reason: result.reason });
     }
     if (result.reason === 'invalid_rule' || result.reason === 'when_evaluation_failed') {
       diagnostics.push({id:source.id,reason:result.reason,path:result.reason==='when_evaluation_failed'?path+'.when':path});

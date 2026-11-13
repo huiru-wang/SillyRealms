@@ -491,6 +491,7 @@ body{background:var(--canvas);color:var(--text-primary);font-size:var(--type-sm)
 .sr-shell .host-usage-caption.incomplete{color:var(--status-warn)}
 .sr-shell .host-usage-no-breakdown,.sr-shell .host-usage-loading,.sr-shell .host-usage-error{min-height:23px;display:flex;align-items:center;gap:8px;color:var(--text-muted);font-size:10px}
 .sr-shell .host-usage-error button{width:24px;height:24px;display:grid;place-items:center;border:1px solid var(--border-default);border-radius:6px;background:var(--surface);color:var(--text-secondary)}
+.sr-shell .host-usage-error{grid-column:1/-1}
 .sr-shell{--usage-system:#64748b;--usage-summary:#8b5cf6;--usage-history:#d97706;--usage-input:#64748b;--usage-cache-read:#0d9488;--usage-cache-write:#d97706;--usage-output:#8b5cf6}
 :root[data-theme="dark"] .sr-shell{--usage-system:#718096;--usage-summary:#9b78ee;--usage-history:#dc9144;--usage-input:#718096;--usage-cache-read:#28a99c;--usage-cache-write:#dca34c;--usage-output:#a78bfa}
 .sr-shell .host-settings-dialog{width:min(480px,calc(100% - 32px));max-width:none;max-height:min(86dvh,760px);margin:auto;padding:0;overflow:auto;border:1px solid var(--border-default);border-radius:16px;background:var(--surface-raised);color:var(--text-primary);box-shadow:var(--shadow-xl)}

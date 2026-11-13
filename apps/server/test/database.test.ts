@@ -4,13 +4,13 @@ import { openDatabase } from '../src/infrastructure/database/database.js';
 import { seedSession, seedWorld } from './fixtures/db-seed.js';
 
 describe('database initialization', () => {
-  it('creates eight tables with restrictive foreign keys and can be repeated', () => {
+  it('creates nine tables with restrictive foreign keys and can be repeated', () => {
     const db = openDatabase(':memory:');
     const rows = db.prepare("SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
-    expect(rows).toHaveLength(8);
+    expect(rows).toHaveLength(9);
     expect(rows.some(row=>String(row.sql).includes('REFERENCES presets'))).toBe(true);
     expect(db.prepare('PRAGMA foreign_keys').get()?.foreign_keys).toBe(1);
-    expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(2);
+    expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(3);
     db.close();
   });
   it('allows only configured LAN origins in addition to local origins', async () => {
@@ -51,7 +51,7 @@ it('preserves v1 presets, sessions, history, worlds and model settings during ad
     const after=openDatabase(path);
     expect(after.prepare('SELECT id FROM presets ORDER BY id').all()).toEqual([{id:'custom'},{id:'sr-default-preset'}]);
     const preset=JSON.parse(String(after.prepare('SELECT config_json FROM presets WHERE id=\'sr-default-preset\'').get()?.config_json));
-    expect(preset.budget).toEqual({context_strategy:'standard',max_output_tokens:2048});
+    expect(preset.budget).toEqual({strategy:'rolling_summary',max_context_tokens:32768,max_output_tokens:2048});
     expect(after.prepare("SELECT preset_id,title,api_model_config_id FROM sessions WHERE id='session'").get()).toMatchObject({preset_id:'custom',title:'保留',api_model_config_id:'model'});
     expect(JSON.parse(String(after.prepare("SELECT usage_json FROM sessions WHERE id='session'").get()?.usage_json)).latestContext).toEqual({inputTokens:5});
     expect(after.prepare("SELECT payload FROM entries WHERE id='entry'").get()?.payload).toContain('保留故事');

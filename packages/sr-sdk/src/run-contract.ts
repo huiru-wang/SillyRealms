@@ -28,8 +28,9 @@ export type Run = RunMetadata & {
   id: string; status: 'preparing' | 'running' | 'completed' | 'failed' | 'stopped'; messages: ChatMessage[];
 };
 export type RunEvent =
+  | { event: 'run.snapshot'; data: RunMetadata & { runId: string; status: Run['status']; messages: ChatMessage[] } }
   | { event: 'run.created'; data: RunMetadata & { runId: string; messages: ChatMessage[] } }
-  | { event: 'run.delta'; data: { runId: string; messageId: string; text: string } }
+  | { event: 'run.delta'; data: { runId: string; messageId: string; text: string; offset?: number } }
   | { event: 'run.completed'; data: RunMetadata & { runId: string; messages: ChatMessage[] } }
   | { event: 'run.failed'; data: RunMetadata & { runId: string; messages: ChatMessage[]; errorCode: string; errorMessage: string } }
   | { event: 'run.stopped'; data: RunMetadata & { runId: string; messages: ChatMessage[] } };

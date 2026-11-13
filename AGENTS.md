@@ -1,8 +1,9 @@
 # SillyRealms — Codex Project Instructions
 
 - Treat a session as one continuous history for new work; do not add world-branch logic unless explicitly requested. Explain product flows before technical details.
-- Context compaction measures the complete current request before every generation/continuation, then rebuilds and remeasures after bounded old-history summarization. Unknown measurement fails explicitly; see `docs/technical/context-compaction.md` and `docs/technical/runtime-context-v2.md`.
-- Preset context strategies are compact (128K), standard (256K), and extended (512K), capped by the model context window.
+- Context compaction runs once during Run preparation. Estimate the complete input; trigger at 100% of max_context_tokens and target 60%. Rolling summary makes at most one complete summary call (no batching/retry); sliding window selects a continuous suffix. Agent continuations do not estimate or compact. See `docs/technical/context-compaction.md` and `docs/technical/runtime-context-v2.md`.
+- Preset budget uses strategy (rolling_summary/sliding_window), max_context_tokens and max_output_tokens. Explicit input quota is capped at min(80% of model window, window-output-1024); legacy context_strategy is input compatibility only. Legal requests above the soft target continue; Provider overflow fails normally.
+- Freeze sources before awaits; determine and freeze activation/write permissions only from the final summary, retained history and current input. Persist accepted input before 202 in run_preparations (schema v3); preparation failure preserves it without a narrative user Entry. Summary/user/record handoff and failure settlement are atomic. This rollout has no frontend or SDK work.
 - Implemented Direct narrative path: one bare model request emits plain story plus a `<sr_extensions>` tail containing enabled `state_update` and `action_suggestions` blocks. Narrative does not register tools, require tool calls, enter a tool loop, or send results back to the model. Architecture and execution scope follow `plan/sr-runtime-context-architecture-v2.md`; the extension failure matrix follows `plan/sr-narrative-extensions-v2.md`. Independent character-mention UI items are outside this architecture rollout. Earlier standalone state-tail documents are historical.
 - Keep `update_state`, ToolExecutor and the general model/tool loop as separate capabilities. Run lifecycle, locks, streaming, validation, persistence, Usage and cancellation remain runtime responsibilities; do not describe the new narrative path as an Agent loop.
 - A complete bounded extension envelope, trustworthy child framing and normal model termination are prerequisites to narrative state updates. Apply valid state items in order, skip/report invalid items, and process repeated paths in order. Short reasons are non-blocking diagnostics. Missing/invalid required state preserves story but fails the Run without state changes; a suggestion-only failure does not discard valid state. Partial/failed state blocks suggestion publication. Stop before commit discards candidates. Follow the v2 plan's failure matrix; generic tool-loop behavior remains separate.
@@ -32,7 +33,7 @@ Some design documents describe target/future behavior, not implemented behavior.
 - Start substantial tasks by inspecting repository structure, relevant docs, tests, and `git status`.
 - The worktree may contain user changes. Never discard, reset, checkout, clean, overwrite, or reformat unrelated changes.
 - Do not commit, push, deploy, delete user data, run destructive DB operations, or use real paid Provider calls unless explicitly requested.
-- Never expose API keys, credentials, cookies, private prompts, or user content in logs.
+- Never expose API keys, credentials or cookies in logs. The user-authorized `SILLYREALMS_DEBUG=1` mode may print complete model messages and unparsed output with credential redaction; ordinary diagnostics must not include private prompts or user content. See `docs/technical/debug-logging.md`.
 - Before changing a public API, data model, session semantics, creator SDK contract, or iframe security boundary, inspect all consumers and tests and document compatibility impact.
 - Prefer small, reviewable changes. Avoid speculative abstractions, premature cross-platform packages, new dependencies, and broad rewrites without rationale.
 - Keep product decisions, architecture decisions, and implementation details separate. Record durable decisions in `docs/decisions/`.
@@ -49,7 +50,7 @@ Some design documents describe target/future behavior, not implemented behavior.
 - Creator-facing runtime contract is based on `SRSessionAPI` and `SRStateAPI`; do not revive a public `SRSessionEventHub` API without explicit approval.
 - Official `<SR.WorldStory />` must use the same public creator SDK contract as custom creator UI.
 - Keep raw model/tool entries, user-visible narrative projection, and persisted state distinct.
-- Event notifications must represent committed/authoritative state; do not invent delivery/replay guarantees.
+- Terminal Run and state notifications must represent committed/authoritative state. Narrative deltas and running snapshots are explicitly provisional in-memory content, persisted at response end/stop/failure; process death can lose that unfinished text. Do not invent delivery/replay guarantees.
 - Do not weaken iframe sandboxing, CSP, import allowlists, API authorization, or state validation to make a demo work.
 
 ## Single-agent working rule
@@ -104,3 +105,5 @@ Inspect package scripts before relying on a check; report exactly what ran.
 - Atomic SDK/Host/Server V1 and `SR.WorldStory` use the creator SDK and isolated iframe boundary; legacy state schemas and V2 routes are not compatible. Message rendering rules are display-only; platform input and draft are Host-owned. See `docs/technical/worldstory-runtime-v1.md` and `docs/data-formats/worldstory-message-render-v1.md`.
 
 - World-card prose uses `WorldDocumentRenderer`: static world/character/opening/lore content stays in a scriptless isolated document; message content shares parsing and sanitization but stays inline inside the existing session iframe for Portal and streaming compatibility. Opening state preview is read-only and reflects message-scope whole-item overrides. See `docs/technical/worldstory-runtime-v1.md` and `docs/data-formats/worldstory-message-render-v1.md`.
+
+- `SR.WorldStory` merges paged history, UTF-16-offset deltas and Host recovery snapshots through one reducer. Preserve stable message IDs, terminal authority, memoized historical rendering and keyed React portal slots. No durable SSE replay or list virtualization is implied.

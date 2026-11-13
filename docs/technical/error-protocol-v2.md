@@ -46,8 +46,26 @@ Known errors are preserved through Agent Runtime, Runner and tools. Unknown
 exceptions map to a safe registered code, and gateway exceptions use
 `PROVIDER_ERROR`. Run failures after the user entry is committed are also
 written to `ext_data.run.errorCode/errorMessage` and returned by Run status
-queries. Asynchronous preflight errors can send SSE failure notifications
-without creating a persisted Run, consistent with the existing run lifecycle.
+queries. Accepted preparation is durable before HTTP 202: run_preparations stores the input
+and its terminal result. Failed preparation emits an event only after settlement
+commits. It does not append a narrative user Entry or advance history.
+
+Run results may include `failure: {stage, type}` and
+`recovery: {inputSaved, action}`. Stage is preparation/generation/continuation/commit;
+it remains distinct from phase=finalized. Types and recovery actions are defined in
+[runtime-v2-contract.md](../data-formats/runtime-v2-contract.md). A known Run query
+can return `input: {text}` for preparation recovery; terminal SSE never adds that
+field, and preparation messages stay empty. Stopped results may offer recovery
+without a failure object. Restart recovery maps interrupted to failed/RUN_INTERRUPTED.
+
+SUMMARY_CAPACITY_EXCEEDED means the complete single summary request failed its
+local input budget with zero model calls. SUMMARY_FAILED/SUMMARY_EMPTY stop
+preparation without retry or partial-summary commit. Known structured Provider
+window errors map to PROVIDER_CONTEXT_WINDOW_EXCEEDED; unknown errors remain
+PROVIDER_ERROR. Summary failures retain only a safe internal causeCode. Actual
+usage is settled even on failure, and missing usage remains unknown.
+
+This Server-only rollout does not add frontend recovery controls or SDK methods.
 
 ## Web and creator SDK
 
@@ -63,9 +81,11 @@ updates inside `data` fail independently. Each item reports
 `success/errorCode/errorMessage` using the same success/failure conventions.
 State commits and notifications retain their existing per-item semantics.
 
-## Narrative state-tail contract (approved, pending implementation)
+## Historical narrative state-tail proposal
 
-The [new narrative runtime](narrative-state-tail-runtime.md) supplies no tools and emits no fabricated tool.failed event. Complete JSON arrays use ordered per-item validation: valid items commit, invalid items are reported in the persisted Run stateUpdate result. A successfully committed array with skipped items completes the Run with a partial-sync notice.
+The standalone proposal below is historical and has been superseded by the implemented sr_extensions/v1 contract in [runtime-context-v2.md](runtime-context-v2.md). It does not describe the current compaction rollout.
+
+The [historical narrative runtime](narrative-state-tail-runtime.md) supplies no tools and emits no fabricated tool.failed event. Complete JSON arrays use ordered per-item validation: valid items commit, invalid items are reported in the persisted Run stateUpdate result. A successfully committed array with skipped items completes the Run with a partial-sync notice.
 
 Missing, truncated, malformed, oversized or repeated tails preserve confirmed story, leave state unchanged and fail the Run with registered state-tail errorCode/errorMessage. The planned codes and result shape are defined in the [plan](../../plan/sr-narrative-state-tail-protocol-v1.md). Provider and persistence errors retain their own safe codes. No retry or repair model request is introduced.
 

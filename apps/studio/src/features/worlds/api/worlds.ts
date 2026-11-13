@@ -1,3 +1,6 @@
+import {mockWorlds,defaultRoleNames,categories} from '../../../fixtures/worlds';
+import {sessionSamples} from '../../../fixtures/sessions';
+
 export type Page<T>={items:T[];hasMore:boolean;nextCursor:string|null};
 export type Tag={id:string;name:string};
 export type WorldListItem={id:string;name:string;cover:string|null;tags:Tag[];sessionCount:number};
@@ -18,6 +21,11 @@ async function get<T>(path:string,signal:AbortSignal):Promise<T>{
   return envelope.data;
 }
 export function listWorlds(tagId:string, cursor:string|null,signal:AbortSignal){
+  if(import.meta.env.VITE_STUDIO_MOCK_DATA==='1'){
+    if(signal.aborted)return Promise.reject(new DOMException('Aborted','AbortError'));
+    const items=mockWorlds.filter(world=>!tagId||world.categories.includes(tagId as typeof categories[number])).map(world=>({id:world.id,name:world.title,cover:world.cover,tags:world.categories.map(name=>({id:name,name})),sessionCount:sessionSamples.filter(session=>session.worldId===world.id).length}));
+    return Promise.resolve({items:cursor?[]:items,hasMore:false,nextCursor:null});
+  }
   const query=new URLSearchParams({limit:'24'});if(tagId)query.set('tagId',tagId);if(cursor)query.set('cursor',cursor);
   return get<Page<WorldListItem>>('worlds?'+query,signal).then(checkPage);
 }
@@ -25,9 +33,17 @@ function checkPage<T>(page:Page<T>):Page<T>{
   if(!page||!Array.isArray(page.items)||typeof page.hasMore!=='boolean'||!(page.nextCursor===null||typeof page.nextCursor==='string'))throw new ApiError('INVALID_RESPONSE','服务端返回了无法识别的数据');
   return page;
 }
-export function listTags(signal:AbortSignal){return get<{items:Tag[]}>('tags?type=world',signal).then(data=>{if(!data||!Array.isArray(data.items))throw new ApiError('INVALID_RESPONSE','服务端返回了无法识别的数据');return data;});}
-export function getWorld(id:string,signal:AbortSignal){return get<{item:WorldDetail;warnings:unknown[]}>('worlds/'+encodeURIComponent(id),signal).then(data=>{if(!data?.item?.data||!Array.isArray(data.item.data.characters)||!Array.isArray(data.item.data.openings))throw new ApiError('INVALID_RESPONSE','服务端返回了无法识别的数据');return data;});}
+export function listTags(signal:AbortSignal){if(import.meta.env.VITE_STUDIO_MOCK_DATA==='1')return Promise.resolve({items:categories.map(name=>({id:name,name}))});return get<{items:Tag[]}>('tags?type=world',signal).then(data=>{if(!data||!Array.isArray(data.items))throw new ApiError('INVALID_RESPONSE','服务端返回了无法识别的数据');return data;});}
+export function getWorld(id:string,signal:AbortSignal){
+  if(import.meta.env.VITE_STUDIO_MOCK_DATA==='1'){
+    const world=mockWorlds.find(item=>item.id===id);
+    if(!world)return Promise.reject(new ApiError('WORLD_NOT_FOUND','世界卡不存在'));
+    return Promise.resolve({item:{id:world.id,data:{name:world.title,summary:world.description,description:world.description,cover:world.cover,tags:world.categories,characters:(world.roleNames??defaultRoleNames).map((name,i)=>({id:String(i),name})),openings:[{id:'opening',name:'故事开始',content:'一段新的故事，即将展开。'}]},defaultPresetId:null,defaultApiModelConfigId:null},warnings:[]});
+  }
+  return get<{item:WorldDetail;warnings:unknown[]}>('worlds/'+encodeURIComponent(id),signal).then(data=>{if(!data?.item?.data||!Array.isArray(data.item.data.characters)||!Array.isArray(data.item.data.openings))throw new ApiError('INVALID_RESPONSE','服务端返回了无法识别的数据');return data;});
+}
 export function listSessions(id:string,cursor:string|null,signal:AbortSignal){
+  if(import.meta.env.VITE_STUDIO_MOCK_DATA==='1')return Promise.resolve({items:cursor?[]:sessionSamples.filter(session=>session.worldId===id).map((session,index)=>({id:session.id,title:session.title,updatedAt:Date.UTC(2026,0,20-index),cover:session.cover})),hasMore:false,nextCursor:null});
   const query=new URLSearchParams({worldId:id,limit:'20'});if(cursor)query.set('cursor',cursor);
   return get<Page<Session>>('sessions?'+query,signal).then(checkPage);
 }

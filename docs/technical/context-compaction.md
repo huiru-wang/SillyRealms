@@ -1,60 +1,101 @@
-# 当前请求预算与历史压缩
+# Run 准备期上下文整理
 
-更新：2026-11-13。SRRuntime v2 的 Direct 首次 generation 与 Agent 每次 generation/continuation 都使用 `current_request`。旧的“上一轮 reported input + output 触发压缩”仅保留纯函数回归证据，不参与生产降级。前端 latestContext 继续表示最后一次真实模型请求的用量，不能用它代替本次准备的测量。
+更新：2026-11-13。已实现 [上下文策略方案](../../plan/sr-context-compaction-strategies-v1.md)。本次交付仅含 Server、测试与文档；前端数值配置、失败提醒和重试操作尚未接入。
 
-## 一次请求的预算
+## 用户流程
 
-1. 冻结配置、内容来源、状态基准和激活权限。
-2. 编排完整消息；Agent 的工具 schema、toolChoice、当前工具往返在测量前进入请求。
-3. 使用模型适配器预览真实发送 payload，生成含 method、quality、version、fingerprint 的报告。
-4. 仅当输入测量 + 本次输出预留 + 1,024 安全余量不超过有效窗口，才生成不可变 PreparedRequest。
-5. 发送前再次验证请求 fingerprint；最终 SDK payload 与预览不一致时阻止发送。
+接受请求时先保存输入，返回 202。准备阶段读取当前有效祖先链、冻结配置与状态来源，选择可用历史，最后匹配角色、世界书和状态模块。准备成功后，摘要与当前 user Entry 同事务写入，才开始主生成。
 
-有效窗口为预设档位与模型 contextWindow 的较小值。compact / standard / extended 分别为 131,072 / 262,144 / 524,288。当前输入已经包含在测量里，不再扣除旧的 2,048“下一轮输入”额度。输出不得超过模型上限。
+准备失败、停止或中断时，输入保存在 `run_preparations`，不进入叙事历史、不推进 tip。已知 Run ID 可查询输入、失败分类与恢复建议。用户用新 requestId 和当前 tip 重新提交，原失败记录保留。没有自动重试、分批摘要、后台补救或 SSE 重放。
 
-生产计量仅支持官方 DeepSeek V4.1 Flash 文本适配，采用真实 BPE 加包装估算，标记 estimated；其他路径 unknown 明确失败。详细支持范围见 [Runtime 实现状态](runtime-context-v2.md)。测量不新增网络计数调用，不计入 Usage，不冒充供应商报告。
+## 配置与额度
 
-## 超限后的闭环
-
-只有完整请求超限才尝试 summarize_history。保留最近五个旧 user turn；当前输入、平台约束、状态权限、当前 Agent 工具调用和结果始终受保护。只压缩更旧的净叙事及既有摘要，原始 entries 从不删除或改写。
-
-候选生成后重建完整请求并重测；测量没有下降、覆盖边界不合法、仅剩不可压缩内容、达到每请求最多两次变换或每 Run 最多八次摘要调用时明确失败。预算仍不满足，不发送 generation/continuation；没有自动 Provider 溢出重试、递归摘要或改模式回退。每次 continuation 都重新走同一流程，不能在计量后追加工具结果。
-
-激活规则只按压缩前的固定来源执行一次。摘要不能启用新状态根、替换本轮配置或执行任意工具。
-
-## 摘要本身也有预算
-
-设有效窗口为 W、摘要输入比例为 R、摘要独立输出上限为 O、安全余量为 S：
-
-```text
-summaryInputLimit = min(floor(W × R), W − O − S)
-R = 0.75
-O = min(2048, model.maxTokens)
-S = 1024
+```ts
+budget: {
+  strategy: 'rolling_summary' | 'sliding_window';
+  max_context_tokens: number; // C：完整输入的软触发额度
+  max_output_tokens: number;  // O：每次主请求的最大输出
+}
 ```
 
-R 必须有限且满足 0 < R <= 1。每个完整摘要请求包含旧摘要、摘要指令、缺口信息、来源包装和本批正文；选片段后重测完整请求。按 Unicode codepoint 切分。12,000 字符上限仅为辅助资源边界，不作为 token 换算。
+新建默认 rolling_summary / 32768 / 2048。两个 token 参数为正安全整数，且 60% 目标必须大于零。按实际模型校验：
 
-0.75 已通过预算数学、分块、固定输入耗尽及小模型窗口的离线边界测试，作为本次内部初始值。它不是“摘要输出压缩到原文 75%”，也不是经过付费模型质量/成本调优的最优比例。没有新增必填 UI 参数。
+```text
+W = model.contextWindow
+C <= min(floor(W × 80%), W − O − 1024)
+O <= model.maxTokens
+触发：E_before >= C
+目标：floor(C × 60%)
+```
 
-摘要必须正常 stop、非空、没有工具调用；错误、length、取消、重复终态、终态后文本或 delta/final 不一致都不合格。每 Run 最多八次 summary 请求，第九次在 Provider 调用之前被拒绝。已发生请求的实际 Usage 仍结算，不能因准备失败清零。
+80% 为配置上限，100% 为触发比例，60% 为整理后完整输入的占用目标。C 包含提示词、条目、状态/能力规则、工具 schema、历史/摘要、当前输入及包装。只有旧历史被摘要或裁剪，系统提示、当前输入和权威规则不会被摘要替换。
 
-## 提交时机与缺口
+显式配置超上限会失败；合法配置下，保护内容或最终激活使输入仍超目标/C 时继续主生成并记录诊断。Provider 硬窗口拒绝则正常失败。剩余 20% 不保证足以容纳任意工具往返。
 
-| 候选 | 落库时机 | 停止行为 |
+兼容旧 context_strategy 输入：compact / standard / extended 对应旧总窗口 131072 / 262144 / 524288，转换为旧窗口减输出减 1024，并在运行时按模型上限夹紧。规范读取和导出只返回数值结构；私有来源标记不接受外部注入。显式更新 C 后不再按旧档位夹紧。详细兼容边界见 [公开契约](../data-formats/runtime-v2-contract.md)。
+
+## 模块和处理顺序
+
+```mermaid
+flowchart TD
+  R[SRRuntime 保存准备输入] --> C[ContextManager 冻结来源]
+  C --> P[compaction/index 一次触发判断]
+  P --> E[estimator 完整输入估算]
+  P --> S{策略}
+  S --> W[sliding-window 连续后缀]
+  S --> H[rolling-summary 选连续前缀]
+  H --> G[summary-generator 至多一次调用]
+  G --> M[ModelClient / PiGateway]
+  W --> A[最终上下文匹配与权限冻结]
+  G --> A
+  A --> T[RunStore 原子提交摘要和 user]
+  T --> N[DirectRunner / AgentRunner]
+  N --> M
+  M --> U[UsageStore 请求 journal]
+```
+
+先用初始投影做无副作用的预算预览，得到触发估算和固定非历史预留。策略按固定预留选择历史，最终按**选定摘要＋保留原文＋当前输入**重新匹配。被裁原文、被加载条目自身的 prompt、系统私有文本不会参与递归激活。never、when 和玩家规则不变；when 使用冻结的权威状态基准。
+
+仅最终匹配结果决定本 Run 的 active 集合、状态可写根、工具和扩展要求，Run 内不再改变。未激活的状态值不删除、不重置。Agent continuation 仅组装原冻结上下文与本 Run 的 assistant/tool 往返，不再估算、检查额度或压缩；仍检查请求身份和支持适配器的 wire payload。
+
+## 两种策略
+
+| 策略 | 初始历史 | 触发后的行为 |
 |---|---|---|
-| 初次准备的合格摘要 | 与本轮 user Entry 在 startRun 同一事务提交 | startRun 前停止丢弃；已经提交的不回滚 |
-| Agent 续轮的合格摘要 | 非 stopped 最终化事务中提交，包括生成随后 failed | stopped 丢弃尚未提交的候选 |
-| 不合格或预算仍不满足的候选 | 不提交 | 不改变原历史/覆盖边界 |
+| rolling_summary | 有效旧摘要＋未覆盖原文 | 固定预留扣除新摘要输出和包装后，选择最大连续后缀；至少保护五个旧 user 回合；一次摘要后缀之前的连续前缀及旧摘要 |
+| sliding_window | 完整原始净叙事，忽略旧摘要 | 按固定预留选最大连续后缀，可为零；不调用摘要、不记录永久裁剪水位 |
 
-所有 coveredThroughEntryId 必须属于此前净叙事；续轮摘要的覆盖 seq 必须早于本轮 user。既有摘要再使用时重验 parent chain 与覆盖边界。
+开场 assistant 是独立最早历史组。其余按完整 user 回合分组，不跳过相邻的大回合去拼接更早小回合。原始 entries 不删除或改写，扩大额度或切换策略可重新使用完整来源。旧摘要覆盖边界无效但原始链完整时，退回原文投影。
 
-stopped、failed、interrupted 和状态 disabled/partial/failed/cancelled 的受控缺口被传入摘要，并保留有界去重标记（最多 32 项）。摘要 prompt 不得把未完成或未同步情节描述成已成功修复；sr_instruction 文本不作为摘要事实。状态权限与权威值始终来自基准快照。
+滚动摘要无可整理前缀时继续；候选没有降低完整输入估算时使用原投影。候选有收益但仍超目标时提交并继续。不会因此再次摘要。覆盖边界、第一条保留消息和全来源指纹在 startRun 事务内重验。
 
-## 用量与诊断
+## 摘要独立预算与失败
 
-summary、generation、continuation 分开记入共享 ModelClient/UsageStore 的真实请求 journal。准备期失败且没有 user Entry 的用量进入 sessions.usage_json 的 unattachedTotals。崩溃恢复把已开始但无报告的请求标记 unknown，不伪造成零。
+```text
+summaryOutput = min(2048, model.maxTokens)
+summaryInputLimit = min(floor(W × 75%), W − summaryOutput − 1024)
+```
 
-预算报告、调用次数和私有诊断保存在 ext_data.runtime；公开 DTO 不包含原始 Prompt、reason、key 或尾块。用量面板的 system/summary/history 字节比例仍只是结构示意，不参与计费或预算判定。
+W 为真实模型窗口。完整请求一次包含摘要指令、summary_prompt、旧摘要、缺口、来源包装及全部选中正文。超预算时以 SUMMARY_CAPACITY_EXCEEDED 零调用失败。不存在旧版 12000 codepoint 切片、分批或八次调用额度。
 
-验证：budget-v2、summary-budget、compaction-lifecycle、usage、runtime 等测试；所有数据为临时 SQLite / fake Provider，实际 payload 验证使用离线 mock transport。
+每 Run 的真实摘要调用只能为 0 或 1。结果必须正常 stop、非空、无工具调用，delta/final 一致；错误、length、取消、重复终态及终态后文本均失败，不提交部分摘要。Provider 错误映射 SUMMARY_FAILED 并保留受控 causeCode；空摘要为 SUMMARY_EMPTY。已发生的真实用量照常结算，容量失败不承诺原样重试能恢复。
+
+stopped、failed、interrupted 及状态关闭/未同步的受控 gaps 最多保留 32 项。摘要不得把未完成事件写成成功；sr_instruction 不作为摘要事实。摘要不构造权威状态。
+
+## 估算、请求身份与真实用量
+
+固定版本 `fixed-text/1`：ASCII 每字符 1/3，汉字/日假名/韩文每字符 1，其他 Unicode 按 UTF-8 字节数；消息包装 16、请求 64、每工具 32 加序列化文本。非文本图片等不支持内容明确失败。估算不调用远程计数、不需要模型专用 tokenizer、不写入真实计费统计。
+
+只有正常结束且确有 Provider usage 的主请求才可建立基线。模型/模式/策略/system/tools/toolChoice 及全部消息原样相同、仅纯追加时，使用 reported input 加新消息估算；否则全量估算。身份只存哈希，不存私有 prompt。缓存读写输入只计一次；不把上一轮输出、隐藏尾块或 thinking 无条件加入基线。明确 reported 零值与 SDK 默认零对象不同；没有报告的请求为 unknown。
+
+PreparedRequest 的 fingerprint 与额度判断分离；发送前校验模型/消息/工具/输出参数。Pi 的可离线预览适配器还核验最终 wire payload，一旦变化则阻止发送。旧 DeepSeek BPE 资源、计量接口及依赖已删除；payload 预览与消息顺序校验独立保留。
+
+准备诊断记录估算 before/after、固定预留 before/after、阈值、目标、方法及原因；不冒充真实 Usage。准备失败明细在 run_preparations.metrics_json，实际累计量在 sessions.usage_json；成功 Run 继续使用 entries.metrics_json。准备输入不进入 Usage API 或额外 SSE 字段。
+
+## 存储与验证
+
+输入与 pending usage journal 同事务创建；摘要、user Entry、删除 preparing 记录同事务交接；准备终态、用量结算和清 pending 同事务完成。失败记录不按 64 条淘汰，随所属会话显式删除而级联清理。未持久化的终态不发布，保留已有 journal 供中断恢复。
+
+数据库 v3 的增量升级、备份与人工回滚见 [存储契约](../data-formats/runtime-v2-contract.md)。开发验证只使用临时 SQLite、fake Provider 和离线 mock transport，不打开真实用户库、不发付费请求。
+
+测试重点：compaction-strategies、compaction-lifecycle、run-preparation、model-usage-evidence、summary-budget、runtime-migration、budget-v2 及原有全量回归。本期没有前端改动，未执行或宣称新配置/恢复 UI 的浏览器验收。

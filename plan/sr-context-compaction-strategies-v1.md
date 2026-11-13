@@ -1,619 +1,524 @@
 # SR 上下文压缩策略模块方案 v1
 
-> 日期：2026-11-13
+> 更新：2026-11-13。状态：Server 已实施并完成离线验收。
 >
-> 状态：设计方案，待实施。本次修订计划并提交推送，不修改运行时代码或数据库。
+> 用户已授权执行本方案。已完成 Server、测试与现状文档；本期没有前端/SDK 工作，未迁移真实数据库、调用付费模型或提交／推送。
 >
-> 代码基线：`ca50e88`（SRRuntime v2）；本版修订 `fe61355` 中的上下文策略计划。
+> 代码参考基线：`ca50e88`（SRRuntime v2）；替代 `21a4bd7` 中的配置、激活与准备失败设计。
 >
-> 最新决定：在 `context/compaction/` 下采用策略模式；每个 Run 首次主生成前只做一次触发决策，Run 内不检查上下文预算、不压缩。策略预算是整理目标，Provider 的硬窗口拒绝按普通失败处理，由用户重试。
+> 最新用户决定：删除规范配置中的 `context_strategy`；两策略统一使用 `max_context_tokens`、`max_output_tokens`。上下文额度不超过模型窗口的 **80%**，达到额度的 **100%** 时触发，整理目标为额度的 **60%**。每 Run 只准备一次，摘要最多调用一次，不分批、不重试，失败即结束准备；Run 内不检查预算／压缩。激活范围是压缩后最终可用上下文。准备失败必须保存输入，由用户重试；本期不涉及前端。
 
 ## 1. 产品行为与范围
 
-### 1.1 一个 Run 只准备一次上下文
+### 1.1 一次准备与一次用户重试
 
-这里的 Run 指一次用户提交对应的完整执行，包括 Agent 内全部模型／工具往返。准备阶段属于该 Run 的生命周期，但发生在首次主生成之前；摘要模型调用也发生在准备阶段。
+1. 完成同步请求校验、幂等及占用检查，取得锁。接受 Run 时先持久保存输入和准备记录，再返回接受结果；此时不创建叙事 user Entry，也不推进历史 tip。
+2. 冻结模型、预设、世界定义、原始历史来源及权威状态基准。这里冻结的是数据快照，**不是最终激活集合或可写状态权限**。
+3. 构造初始历史投影和完整请求的只读预算预览，决定一次是否触发所选整理策略。
+4. 如触发，按 60% 目标整理历史；滚动摘要一次提交旧摘要和全部选中的待摘要历史，最多调用一次模型；滑窗不调用模型。未触发则使用初始投影。
+5. 基于最终选定的可用上下文匹配角色、世界书、状态模块等条目，生成工具／能力规则，冻结本轮激活集合和权限。估算最终输入仅作报告，不开启第二轮整理。
+6. 校验来源及候选，在同一事务提交完整摘要（如有）和当前 user Entry，并完成准备记录到正式 Run 的交接，再开始主生成。
+7. Agent continuation 只追加本 Run 的合法 assistant／tool 往返，不再估算、检查预算或压缩。Direct 仍只有一次主模型请求及既有扩展尾块。
+8. 准备失败时保留输入、终态、失败类型及实际用量；先持久化，再发布失败事件。用户主动重新提交时使用新 requestId／runId，重新读取配置和当前 tip；不自动重试、不改写原失败记录。
 
-1. Runtime 接受请求、取得锁、建立运行 journal，冻结本轮配置、模型、权限及上下文来源。
-2. ContextManager 按选定策略建立初始历史投影，估算完整输入；**只在这里决定一次是否触发压缩**。
-3. 未超过阈值，直接使用初始投影；超过阈值，执行一次所选策略。滚动摘要内部可以顺序分批。
-4. Runtime 接受结果，保存完整摘要候选及边界（如有），开始 Direct 或 Agent 主生成。
-5. 主生成开始后，Agent 只按正常流程追加 assistant／tool 消息、构造下一请求；不再估算占用、不检查策略预算、不调用压缩。
-6. Provider 拒绝硬窗口超限时，本 Run 失败，保存错误原因、触发现有失败事件；用户重试时建立新 Run，再执行一次准备。
+准备阶段属于 Run 生命周期。一次触发决策不限制策略内部的确定性选界、单次摘要请求预算检查及诊断计算，但禁止分批、递归启动压缩或在主生成中建立预算检查点。
 
-“一次检测”限定触发决策的次数。为选择滑窗范围、安排摘要批次和记录整理后占用，准备阶段内部可以使用固定估算器；这些计算不能启动第二轮压缩，也不能成为主生成的预算准入检查。
+### 1.2 范围与结果
 
-### 1.2 三类结果必须分开
-
-| 结果 | 处理 |
+| 情况 | 行为 |
 |---|---|
-| 未达到触发阈值 | 原投影继续生成 |
-| 已整理但仍超过策略目标，或没有可整理旧历史 | 保留必要内容，继续生成；记录整理结果 |
-| 摘要执行、边界校验或持久化失败 | 结束本 Run，保存 failed 状态和原因，触发失败事件；不继续生成 |
-| Provider 硬窗口拒绝 | 正常失败；不自动压缩、重试或重放工具 |
+| 输入估算小于触发线 | 使用初始投影 |
+| 已整理但仍超目标／触发线，或没有可整理前缀 | 保留必要内容，继续主生成，报告原因 |
+| 摘要执行／边界校验／准备持久化失败 | 不主生成，保存输入和失败原因；持久化不可用时保留已提交 journal，不伪报保存成功 |
+| Provider 硬窗口拒绝 | 正常 failed，不自动压缩、重试或重放工具 |
+| 用户停止 | stopped；未提交摘要丢弃，已提交摘要保留，准备输入仍可恢复 |
+| 进程中断 | 保留输入和已知用量，恢复为 interrupted，公开映射 failed + RUN_INTERRUPTED |
 
-用户主动停止仍是 `stopped`，进程中断仍按 `interrupted` 恢复，不伪装成摘要失败。没有收到用户停止信号的 Provider 异常中止属于失败。
+原始 entries、权威状态、Direct 扩展完整性、Agent 工具执行／提交规则和 iframe 安全边界不改变。历史可恢复不代表全历史都参与激活。
 
-策略只改变模型看到的历史。原始 entries、权威状态、本轮权限和既有 Direct 扩展／Agent 工具语义继续保留。本文替代前版的 Run 内检查、续轮压缩、自动校准、二次更短摘要及“最终必须放得下才生成”的要求。
+本期后续实施只涉及 Server、API 契约及相应测试／文档；不修改 Web、Studio、Host、iframe 或 SDK，不实现重试按钮、提醒界面或预设表单。事件／查询为以后前端接入提供依据，不宣称现有前端已经能恢复输入或操作新配置。
 
-首期不引入独立 CompactionRunner、Pi AgentSession、动态策略插件、自动策略切换、多模态估算或新的任务服务。摘要继续使用 SR 提示词及共享 ModelClient。历史计划中的会话清空、预设删除和路由回退不属于本次范围。
+不引入独立 CompactionRunner、Pi AgentSession、动态插件、独立摘要模型、自动策略切换或后台任务服务。不执行历史会话清理、预设删除或原始世界文件改写。
 
-## 2. 触发阈值与策略目标
+## 2. 统一预算与百分比规则
 
-### 2.1 共用公式
-
-```text
-configuredWindow:
-  rolling_summary:
-    compact  = 131072
-    standard = 262144
-    extended = 524288
-  sliding_window:
-    budget.max_context_tokens
-
-W = min(configuredWindow, model.contextWindow)
-O = budget.max_output_tokens
-S = 1024
-T = W - O - S
-
-E = 首次主生成完整输入的估算 token 数
-trigger = E > T
-```
-
-`E` 包含当前实际发送的 system／自定义提示、角色与世界书、状态与能力规则、历史／摘要、当前用户输入、tools 及相关包装。当前输入已经计入，不额外扣“下一轮用户输入预留”。等于 `T` 时不触发。
-
-`T` 同时是 Run 前的触发线和希望达到的输入目标，**不是每次模型调用的硬限制**。输出预留用于准备阶段计算；`max_output_tokens` 仍会传给每一次主模型请求。Run 内增长超过 `T` 时继续。
-
-例：滑窗配置 32768、主输出 4096、模型窗口不少于 32768 时，`T = 27648`。Run 开始前估算超过 27648 才裁剪；开始生成后即使增长超过该值也不再次处理。
-
-配置有效性与内容超额分开：token 配置必须是正的安全整数；模型窗口有效，`O <= model.maxTokens`，有效 `T > 0`。不满足这些条件是配置错误，在主模型调用前拒绝；**内容的 `E > T` 不是配置错误**。未绑定模型的预设保存时检查自身预算关系，运行时再按实际模型检查。配置窗口大于模型窗口时以模型窗口计算；不静默缩小用户的主输出配置。
-
-### 2.2 各策略的触发、目标与超额处理
-
-| 项目 | 滚动摘要 `rolling_summary` | 滑动窗口裁剪 `sliding_window` |
-|---|---|---|
-| 初始投影 | 有效旧摘要 + 所有未覆盖历史 + 必要内容 | 全部原始净叙事 + 必要内容，不注入旧摘要 |
-| 触发 | Run 前 `E > T` | Run 前 `E > T` |
-| 范围 | 旧摘要与最近 5 个完整旧回合之前的连续历史 | 可选旧历史的早期完整回合 |
-| 目标 | 用一份新摘要替换旧前缀，保留最近 5 个完整旧回合及必要内容；希望总输入不超过 `T` | 在必要内容之外，保留固定估算下能够放入 `T` 的最大完整连续历史后缀 |
-| 没有可处理旧历史 | 原投影继续，记录 `no_eligible_history` | 保留必要内容继续 |
-| 整理后仍超目标 | 继续，不追加压缩，不缩减保留回合 | 必要内容自身超额时保留 0 个可选旧回合，继续 |
-| 模型调用 | 只在触发且有旧前缀时调用摘要模型 | 不调用摘要模型 |
-| 持久化 | 成功且有缩减收益时保存完整摘要及覆盖／保留边界 | 只保存本次选择诊断，不建立永久裁剪水位 |
-
-“必要内容”包括本轮固定提示、状态／权限、工具定义、当前用户输入及协议必需消息。滚动摘要还固定保留最近 5 个已结束旧用户回合；不足 5 个全部保留。已结束包括 completed、failed、stopped、interrupted，其合法正文和缺口语义按现有规则参与投影。
-
-“完整回合”从一个 user 开始，到下一个 user 之前，包含参与模型投影的关联消息。不得拆开 toolCall 与对应 toolResults，不跳过中间大回合去挑更早的小回合。
-
-两种策略互斥；不隐式改用另一策略。没有达到软目标不是摘要执行失败，未完成的摘要批次也不能按“软目标”放行。
-
-## 3. 用户配置
-
-### 3.1 配置契约
-
-沿用预设 `budget`，增加算法判别字段 `strategy`。旧 `context_strategy` 继续表示滚动摘要的窗口档位。
+### 2.1 配置语义
 
 ```ts
-type PresetBudget =
-  | {
-      strategy: "rolling_summary";
-      context_strategy: "compact" | "standard" | "extended";
-      max_output_tokens: number;
-    }
-  | {
-      strategy: "sliding_window";
-      max_context_tokens: number;
-      max_output_tokens: number;
-    };
+type PresetBudget = {
+  strategy: "rolling_summary" | "sliding_window";
+  max_context_tokens: number;
+  max_output_tokens: number;
+};
 ```
 
-| 用户配置 | 滚动摘要 | 滑动窗口 | 语义／默认值 |
-|---|---|---|---|
-| `budget.strategy` | 必填 | 必填 | 新建预设默认 `rolling_summary` |
-| `budget.context_strategy` | 必填 | 不允许 | compact / standard / extended；新建默认 standard |
-| `budget.max_context_tokens` | 不允许 | 必填 | 输入与输出预留合计的策略窗口；切换到滑窗时表单初值 32768 |
-| `budget.max_output_tokens` | 必填 | 必填 | 每次主生成／continuation 的输出上限；新建默认 2048 |
-| `summary_prompt` | 生效，可编辑 | 保留但不发送 | 沿用既有摘要提示词 |
+`strategy` 仅区分摘要与滑窗算法，继续保留；删除的是旧容量档位 `context_strategy`。两策略的 token 字段和含义完全一致。
 
-滚动摘要示例：
+- `max_context_tokens`：完整**输入**的整理触发额度，包含 system、自定义提示、激活条目、权威状态／能力规则、摘要／历史、当前用户输入、工具及包装；不包含本次最大输出。
+- `max_output_tokens`：每次主 generation／continuation 的输出上限，原样传给模型；不是整个 Run 的累计额度，也不是摘要输出长度。
+- `summary_prompt`：滚动摘要使用；滑窗保留配置但不发送。
+- 两个 token 字段均为正安全整数。新建默认 rolling_summary、上下文额度 32768、输出 2048；预设不绑定模型，实际是否可运行须按选定模型校验。
 
 ```json
 {
   "budget": {
     "strategy": "rolling_summary",
-    "context_strategy": "standard",
+    "max_context_tokens": 65536,
     "max_output_tokens": 4096
   },
   "summary_prompt": "概括已发生的事件、人物关系与未解决的线索。"
 }
 ```
 
-滑动窗口示例：
-
-```json
-{
-  "budget": {
-    "strategy": "sliding_window",
-    "max_context_tokens": 32768,
-    "max_output_tokens": 4096
-  },
-  "summary_prompt": "保留原配置，切回滚动摘要时继续使用。"
-}
-```
-
-`max_context_tokens` 不是累计消耗额度，也不是 Run 内持续执行的硬门槛。`max_output_tokens` 是每次主模型请求的参数，不是整个 Run 的总输出额度，也不是摘要输出长度。
-
-### 3.2 首期固定的内部规则
-
-| 内部规则 | 首期值 |
-|---|---|
-| 安全余量 | 1024 tokens |
-| 滚动摘要保留旧回合 | 最近 5 个完整回合 |
-| 摘要输出上限 | `min(2048, model.maxTokens)` |
-| 摘要输入占窗口比例 | 0.75，另扣摘要输出及安全余量 |
-| 一次准备最多摘要请求 | 8 次，顺序分批共用；不是重试次数 |
-| 单批辅助文本上限 | 12000 个 Unicode codepoint，不作为 token 换算 |
-| 粗估规则 | 固定版本、固定系数，见第 5 节 |
-
-这些不是首期用户可配置项。不增加自动校准、重试次数、Run 内压缩开关或独立摘要模型选择器。主输出配置与内部摘要输出预算分开。
-
-### 3.3 配置界面
-
-Studio 预设的“上下文”区域提供：
-
-- “历史处理方式”：滚动摘要／滑动窗口裁剪。
-- 两者均显示“最大输出长度（tokens）”。
-- 滚动摘要显示原三档窗口、“摘要提示词”入口，说明保留近期完整对话并整理早期历史。
-- 滑窗显示“上下文上限（tokens）”，说明只发送能够容纳的近期完整历史，不生成摘要。
-- 两者共同说明：每次开始生成前检查一次；生成过程中可能继续增长，服务商超限时本次失败，可调整配置后重试。
-
-切换策略保留用户现有主输出值；滑窗窗口初值 32768，保存时必须提交明确数值。草稿可保留两个分支的输入，提交时只包含当前分支字段。滑窗隐藏不生效的摘要入口，但不删除 `summary_prompt`。修改配置仅影响下一个 Run。
-
-Studio 目前仍使用 fixture 与本地 store，本次后续实现须同步类型、校验和本地存储兼容，不扩大为完整 Studio 预设 API 接入。Web 现有预设页做同契约的最小适配；导入、导出、编辑往返不能丢字段。
-
-## 4. 模块与职责
-
-### 4.1 目录
-
-在 `apps/server/src/runtime/context/compaction/` 下新增：
-
-| 文件 | 职责 |
-|---|---|
-| `index.ts` | `prepareForRun` 公共入口、静态策略注册、一次触发决策 |
-| `types.ts` | 配置、快照、估算基准、候选与准备报告 |
-| `estimator.ts` | 适用 usage 基准 + 新增粗估，或全量固定粗估 |
-| `history.ts` | 完整净叙事、回合分组、必要内容和边界验证 |
-| `rolling-summary.ts` | 连续前缀选择、滚动摘要与候选构造 |
-| `sliding-window.ts` | 最大完整连续后缀选择 |
-| `summary-generator.ts` | 独立预算、顺序分批、结果校验 |
-
-`context/budget.ts` 保留窗口数学及请求一致性能力，移除主生成依赖 `report.fits` 的发送门槛。旧 `history-compactor.ts` 中可复用的摘要分批、提示与边界逻辑迁入模块后删除旧生产入口。
-
-### 4.2 调用关系
-
-| 组件 | 职责 |
-|---|---|
-| Runtime | 锁、运行 journal、冻结配置、候选接受、取消、事务、失败终态、事件和用量结算 |
-| ContextManager | 构建初始上下文；每 Run 调用一次 `prepareForRun`；之后只构造 continuation 请求 |
-| compaction 模块 | 准备期估算、一次触发判断、执行选定策略、返回候选与诊断 |
-| 策略实现 | 变换历史投影，不直接写 SQL、执行工具或修改权威状态 |
-| ModelClient / UsageStore | 模型请求、取消、真实 usage 记录及失败归类 |
-
-压缩不作为 runner 注册。DirectRunner 与 AgentRunner 共享一次准备结果。Agent 的后续请求构造入口应明确命名为 `buildContinuationRequest` 或等价纯组装入口，不再复用包含估算／压缩的 `prepareRequest`。
-
-即使后续工具结果、动态消息或工具选择改变请求，也只按正常执行语义组装并记录真实 usage，不触发预算管理。冻结配置、权限、消息协议和请求发送前的一致性检查仍然执行；它们不检查策略预算。
-
-### 4.3 接口示意
-
-```ts
-interface ContextCompactionStrategy {
-  readonly kind: PresetBudget["strategy"];
-  project(snapshot: ContextSnapshot): ContextProjection;
-  reduce(input: StrategyInput, services: CompactionServices):
-    Promise<StrategyCandidate>;
-}
-
-type ContextChange =
-  | { kind: "none" }
-  | { kind: "rolling_summary"; update: SummaryCandidate }
-  | {
-      kind: "sliding_window";
-      firstKeptEntryId: string | null;
-      omittedTurnCount: number;
-    };
-
-type PreparedContext = {
-  context: Context;
-  sourceFingerprint: string;
-  change: ContextChange;
-  report: {
-    method: "usage_plus_estimate" | "full_estimate";
-    estimatedInputBefore: number;
-    estimatedInputAfter?: number;
-    threshold: number;
-    triggered: boolean;
-    outcome: "unchanged" | "summarized" | "trimmed" | "skipped";
-    reason?: "no_eligible_history" | "no_reduction" | "protected_over_target";
-    targetExceeded: boolean;
-  };
-};
-```
-
-以上复用既有 Context、RuntimeError 等类型，非新的外部 API。完整报告还记录窗口、输出预留、安全余量、估算器版本和基准失效原因；无 prompt 全文。
-
-公共入口：初始投影 → 估算并决定触发 → 最多一次策略执行 → 返回候选。未触发不调用 `reduce`；策略内部的批次不递归调用该入口。整理后的全量粗估只用于结果和诊断，不构造必须满足的 `fits` 凭证。
-
-### 4.4 快照与历史来源
-
-快照包含当前祖先链的完整原始净叙事及稳定 Entry ID、已有摘要与边界、已结束回合、当前输入、冻结提示与状态／权限、实际工具定义、模型／API／序列化标识、可用 usage 基准、source/tip 指纹及 AbortSignal。
-
-读取层不能先按旧摘要覆盖边界截断原始历史，否则滑窗、窗口扩大和策略切换无法正确恢复。净叙事沿用既有过滤：Direct 扩展尾块、思考和私有内容不进入叙事；确实进入上下文的工具关联必须完整。
-
-纯重建函数只替换历史区域，保留消息角色、顺序、能力规则及本轮激活结果。压缩不重新激活角色、世界书或状态模块。当前 Run 尚无新工具往返；开始主生成后产生的消息全部由正常执行流程追加并保留。
-
-## 5. 简单估算：usage 基准或全量粗估
-
-### 5.1 适用基准
-
-每个 Run 准备时，优先检查最近一条有真实 usage 的主生成／continuation 请求。摘要及其他独立请求不能作为主上下文的基准。只读取已完成请求中适用的基准；本 Run 的后续请求只记录用量，供下一 Run 判断。
-
-基准至少关联模型／Provider／API／序列化方式、模式、完整输入身份、历史投影及覆盖位置。直接复用请求 fingerprint、Entry ID 和现有 `latestContext` 元数据；不建立自动校准服务。
-
-以下条件全部成立才复用：
-
-1. 服务商确实报告了合法 usage；SDK 默认初始化对象不能算真实报告。
-2. 基准请求的有效输入在当前投影中原样保留，变化仅为其后的实际回填／追加内容。
-3. system（含中途 system）、自定义提示、状态、工具定义、模型、历史及摘要等没有改变基准覆盖内容。
-4. 能确定新增内容的边界；请求本身正常完成，未失败或取消。
+### 2.2 模型上限、触发与目标
 
 ```text
-E = lastReportedInputTokens
-  + fixedEstimate(该次输入之后实际进入本次上下文的内容)
+W = model.contextWindow
+C = budget.max_context_tokens
+O = budget.max_output_tokens
+S = 1024
 
-基准不可用：
-E = fixedEstimate(当前完整输入)
+configurationCap = min(floor(W * 0.80), W - O - S)
+要求：0 < C <= configurationCap，0 < O <= model.maxTokens
+
+triggerThreshold = C
+reductionTarget = floor(C * 0.60)
+要求：reductionTarget > 0
+
+E_before = 初始完整请求预算预览的输入估算
+trigger = E_before >= triggerThreshold
 ```
 
-优先使用真实 **input tokens**，不是无条件使用最近一次 `totalTokens`。当时输入中的 system／tools 已包含在该 input usage 中，不再重复相加；上一回复只粗估实际回填部分，未回填的 thinking、Direct 扩展尾块等不进入上下文占用。
+**100% 是触发比例，60% 是整理后占用目标，80% 是相对模型窗口的配置上限。** 不是“压掉 60%”，也不是“摘要正文长度为原文 60%”。三者不能混用。
 
-Pi 归一化输入口径为 `input + cacheRead + cacheWrite`；SR 的 `inputTokens` 已包含这些输入，不能再次加缓存。`totalTokens`、整个会话累计消耗或多条请求 usage 的和，都不能直接作为当前上下文长度。
+例：`W=200000, C=160000, O=4096`，输入达到 160000 触发，目标 96000；额度设到模型允许的 80% 时，目标相当于模型窗口的 48%。若 O 较大，`W-O-S` 可比 80% 更严格。不得静默降低用户输出。
 
-### 5.2 失效即全量粗估
+配置无效与内容超额分开。显式数值配置在运行时超过上限，返回受控配置失败并保存已接受的输入；不得把非法配置当软目标放行。合法配置下，最终实际输入仍超过 C／目标时继续，不能伪造 fits 凭证，也不能把估算超额标为 Provider 硬窗口错误。
 
-下列变化导致旧基准失效：压缩、裁剪、恢复被省略的历史、历史编辑／重生成、摘要替换、策略切换、system／状态／tools 变化、模型／API／序列化变化，以及缺少关联元数据。
+所有比例运算向下取整、验证结果为安全整数；实现宜用整数比例运算避免边界浮点误差。模型窗口缺失或无效明确失败。未绑定模型的预设保存只验证结构及数值，模型相关上限在 Run 准备中检查。
 
-这里的“历史变化”指追加以外的变换；能够证明为纯追加的部分走上一节。不能证明输入覆盖关系时，直接全量粗估，不做复杂的节点增减差额修补。
+### 2.3 80% 上限的合理性与业界做法
 
-这也解决下一轮 system prompt 变动的问题：不能拿上一请求的输入或 totalTokens 原样当作新一轮占用；system 变化就使基准失效。Direct 的布局经常变化时，频繁回退全量粗估是允许的。
+2026-11-13 核对的第一方资料没有统一的“所有模型只能使用某个固定百分比”的规则：
 
-压缩后的投影重新使用固定规则全量估算。新的真实主生成 usage 可成为后续 Run 的候选基准；这只是更换基准，**不是自动校准**。
+| 来源 | 文档中的做法 | 对 SR 的启示 |
+|---|---|---|
+| [Pi 官方压缩文档](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/compaction.md) | 以窗口减 reserveTokens 触发，文档默认 reserveTokens=16384；按 keepRecentTokens 保留近期内容，默认 20000；支持 Run 内检查和溢出恢复 | 触发、近期保留和输出预算应分开；SR 不继承其自动恢复 |
+| [Claude API 阈值压缩](https://platform.claude.com/docs/en/build-with-claude/compaction-threshold) | 可配置输入 token 阈值，默认 150000，最低 50000；不是统一百分比 | 可以把整理阈值作为产品参数，而不是等同模型硬窗口 |
+| [LangChain Summarization](https://docs.langchain.com/oss/python/langchain/middleware/built-in#summarization) | trigger 与 keep 独立，支持 token／消息数／窗口比例；文档给出 0.8 触发、0.3 保留的示例，非通用默认最优值 | 使用高触发线和低整理目标，避免每轮都摘要 |
 
-### 5.3 固定文本规则
+评估结论：对 SR 的固定粗估和 Run 内不再压缩政策，80% 是可解释的保守工程上限，比原提议 60% 更充分利用窗口；**不是有实测证明的最优值，也不能保证 Run 内无限工具往返不超限**。剩余窗口还需容纳输出、工具结果和估算误差，不能把 20% 全部当成工具额度。
 
-首期固定采用以下规则，集中常量并标识内部版本：
+100% 触发／60% 目标是本项目用户决定，不宣称来自上述产品的统一规范。应以离线场景评估触发频率、保留历史与摘要调用次数，付费模型质量／成本调优另行授权。
 
-- ASCII 字符按 1/3 token；Han、Hiragana、Katakana、Hangul 字符按 1 token。
-- 其他 Unicode 字符按 UTF-8 字节数估算。
-- 每条消息额外 16 tokens，请求级额外 64 tokens。
-- 工具名称、描述、schema 按实际序列化文本估算，每个工具再加 32 tokens。
-- 文本／工具声明只统计一次；追加估算不重复加入基准已有的请求级包装。
-- 合计向上取整并检查安全整数；未支持的多模态内容明确拒绝，不能记成零。
+## 3. 历史来源与压缩后激活
 
-这些是固定工程启发式，不是精确 tokenizer 或误差上界。首期不保存、学习或更新校准系数，不按实际 usage 调整字符规则；后续规则变更需显式修改版本。
+### 3.1 三份数据的边界
 
-已有 DeepSeek BPE 能力可用于离线比较，不作为主准备路径的额外计数要求。普通文本模型使用同一固定规则；缺少专用 tokenizer 不阻断生成。
+| 数据 | 用途 | 是否参与最终关键词匹配 |
+|---|---|---|
+| 当前有效祖先链的完整原始净叙事 | 恢复、策略切换、选择连续前缀／后缀、验证覆盖 | 不能直接作为最终扫描范围 |
+| 策略输出的可用历史 | 滚动摘要为有效摘要＋保留的原生历史；滑窗为保留的原生历史 | 是 |
+| 当前用户输入 | 本轮意图；按既有 roleplay 过滤规则参与激活 | 是，只计一次 |
 
-### 5.4 估算与计费彻底分开
+完整读取仅指当前会话有效祖先链，不含其他会话、非祖先记录、失败准备输入或被撤销的记录。Direct 尾块、thinking、私有内容和 nonNarrative 记录按现有规则过滤。
 
-估算只进入准备报告，不能补写真实 usage。Run 内各主生成／continuation／摘要请求仍照常记账，但记账不触发占用估算、阈值判断或压缩。
+开场 assistant 消息没有前置 user，作为独立的最早历史组处理：未整理时保留；摘要可覆盖该组；滑窗可作为最早可选组裁掉，不能无规则消失。其他完整回合从 user 到下一 user 之前，保留参与投影的全部关联消息。工具调用及结果不能被拆成孤立协议消息；不新增历史工具回放。
 
-每次摘要批次按独立请求 ID 记录实际 input、output、cache、费用及状态；无 usage 保持 unavailable，不能用估算填零或补齐。真实报告的零值如实保存；没有报告证据的全零 SDK 对象不标记为 reported，也不作为占用基准。
+### 3.2 激活扫描范围
 
-## 6. 滚动摘要
+最终扫描文本严格来自：**最终摘要（若有）＋最终保留的历史＋当前用户输入**，统一调用既有 `narrativeForActivation` 等过滤规则。
 
-### 6.1 范围与一次处理
+- 仅存在于被摘要覆盖原文、且未出现在摘要／保留历史／当前输入中的关键词，不再触发条目；摘要中仍存在的关键词可以触发。
+- 被滑窗裁掉的关键词、排除关键词均不参与最终匹配。
+- `always`／`never`、enabled、when、用户选定玩家等原有规则保持。`when` 读取冻结的权威状态基准，不从摘要推导权威值。
+- 不扫描条目自身 prompt、被加载世界书正文或私有系统文本来递归激活更多条目。
+- 角色、世界书、状态模块使用同一最终扫描范围；角色 description 仍不进入模型上下文，只有 prompt 按规则注入。
+- 被取消激活的状态项不被删除或重置，仅不属于本轮动态注入／可写集合。Server 仍验证完整权威状态的结构和合法性。
+- 只有在最终投影选定后，才创建不可变 active 集合、状态可写根、工具定义和扩展要求。本 Run 工具返回或主模型新输出不重新激活条目。
 
-1. 初始投影使用有效旧摘要和全部未覆盖净叙事。旧摘要来源／边界无效时不使用；可安全恢复完整原始净叙事则重新投影，无法还原则准备失败。
-2. 仅在 `E > T` 时选择范围：保留最近 5 个完整旧回合及必要内容。
-3. 将有效旧摘要与更早的连续历史作为一次逻辑摘要任务。覆盖只能连续推进，不能漏掉中间片段。
-4. 没有新的可摘要前缀时返回原投影，记录 `no_eligible_history`；不为压缩已有摘要单独启动一次调用。
-5. 全部批次成功后生成一份候选摘要；只替换历史区域。
+“冻结激活结果”现在仅表示最后一步结果在本 Run 内不再变化，**不表示压缩前激活后一直沿用**。
 
-用户指令不能被摘要误记为已经发生的故事事实。沿用 SR 提示词、指令过滤和既有有界 gaps，表达失败／停止／状态未同步的缺口；摘要不替代权威状态。
+### 3.3 预算预览与实际激活的顺序
 
-### 6.2 独立预算与顺序分批
+完整输入大小依赖条目匹配，而条目匹配又依赖最终保留历史。采用无副作用的预算预览解决该依赖，不把压缩前匹配当成本轮权限：
 
-摘要使用当前配置的主模型，不注册业务工具，独立设置输入／输出预算：
+1. 对初始历史投影调用纯 `previewContext`，临时计算匹配及完整请求估算；不发布激活事件、不写 active、不赋予工具权限。
+2. 用该预览决定唯一一次触发，并记录非历史部分预留 `B_before`（含当前输入、平台／自定义提示、临时条目／状态／工具及包装）。
+3. 在固定的 `B_before` 预留下按目标选择历史；摘要另预留 summaryOutput 及摘要消息包装。策略只变换历史，不执行条目逻辑或状态写入。
+4. 对最终候选历史重新做纯预览；摘要无收益被放弃时，以原投影作为最终候选。只有这一最终选择的匹配结果进入执行上下文。
+5. 记录 `E_after`、实际非历史占用及偏差；正式冻结 active／权限后不再整理。
+
+因此压缩前匹配只服务估算，最终激活始终来自压缩后实际发送的可用历史。已裁掉条目的费用预留不能让它继续获得权限。
+
+关键词／排除词可能使非历史占用非单调变化。所称“最大连续后缀”是**固定预留下**的选界结果，不宣称对所有可能的激活组合求全局最优。最终激活使输入超目标时报告 `activation_over_target` 后继续；不反复裁剪／激活形成循环。首次模型发送必须使用最终预览对应的消息和权限。
+
+```mermaid
+flowchart TD
+  A[保存准备输入并冻结来源快照] --> B[建立初始历史投影]
+  B --> C[只读预算预览]
+  C --> D{估算达到 C}
+  D -- 否 --> F[选定最终可用历史]
+  D -- 是 --> E[按 0.6C 目标摘要或裁剪]
+  E --> F
+  F --> G[仅按最终摘要、保留历史、当前输入匹配条目]
+  G --> H[冻结激活集合、状态权限与实际请求]
+  H --> I[提交摘要与 user Entry]
+  I --> J[主生成及正常 continuation]
+```
+
+## 4. 策略与百分比选界
+
+### 4.1 共同行为
+
+两策略互斥，共用 C、O、触发比例和目标比例。当前输入、固定规则、权限约束及协议必需内容不可丢弃。结束回合包括 completed、failed、stopped、interrupted；合法正文与受控 gaps 沿用原语义，不把失败或指令改写为已完成故事事实。
+
+目标是完整输入的 60%，选界用目标扣除 `B_before` 及策略预留得到历史额度。若必要内容超目标，仍保留并继续；报告目标未达到，不擅自删权限规则。滑窗允许零旧回合，滚动摘要保留最近五个完整旧用户回合作为保护下限；五轮过大时允许超目标，不宣称一定能达到 60%。
+
+### 4.2 滚动摘要
+
+1. 初始投影为有效旧摘要＋全部未覆盖历史。旧摘要无效但原始来源完整可还原时重新投影；无法还原则失败。
+2. 仅触发时选择边界。先为非历史部分及新摘要预留空间，从最新回合向前选取能够容纳的完整连续后缀，至少保护最近五轮；不足五轮全部保护。
+3. 将该后缀之前的连续前缀和旧摘要组成一次逻辑摘要任务。这替代“每次把最近五轮之前所有历史全部摘要”的固定切点，尽可能保留近期原文。
+4. 没有新的可摘要前缀则返回 `no_eligible_history`；不单独反复缩写已有摘要。
+5. 单次摘要请求正常完成并产出有效结果后生成候选，验证边界、来源及 gaps，再根据候选最终激活组装请求。
+6. 原投影与候选都使用同一固定全量估算比较完整输入收益；无收益则保留原投影、记录 `no_reduction`，费用仍结算，不再请求另一份摘要。
+7. 有收益但仍超目标／C 时继续，完整摘要与 user Entry 原子提交。候选包含 text、coveredThroughEntryId、firstKeptEntryId、来源指纹、gaps 和模型请求 ID。
+
+### 4.3 单次摘要请求与失败边界
 
 ```text
 summaryOutput = min(2048, model.maxTokens)
-summaryInputLimit = min(
-  floor(W * 0.75),
-  W - summaryOutput - S
-)
+summaryInputLimit = min(floor(W * 0.75), W - summaryOutput - S)
 ```
 
-完整摘要请求包含平台约束、`summary_prompt`、旧摘要／上一批摘要、缺口标记、来源包装及本批正文，全部按固定规则估算后安排批次。这里的预算用于限制摘要任务自身，是准备阶段内部工作，不是 Run 内主生成检查。
+此处 W 是真实模型窗口；C 是主生成的整理额度，不再次作为摘要模型的窗口上限。完整摘要请求一次包含平台约束、渲染后的 summary_prompt、有效旧摘要、来源包装、gaps 和全部选中的待摘要历史正文。
 
-顺序处理选中的全部前缀：上一批摘要加入下一批，直至全部来源处理完成。总共最多 8 次真实摘要请求；不能在失败后再次请求，不能递归调用压缩入口。
+不分批、不切片、不递归摘要，不保留旧版 12000 codepoint 限制或八次调用额度。选中来源一次完整发送，不为使摘要请求放得下而静默截断正文、遗漏历史或重新缩小覆盖范围；覆盖边界仍须落在完整历史组边界。
 
-超长纯文本可按 Unicode codepoint 拆片供内部摘要使用，保存来源与偏移；摘要完成后的覆盖边界只推进到完整消息组边界。工具关联不得作为孤立协议消息发给摘要模型，应在摘要输入中保持关联标识；对外保留历史不拆组。
+每 Run 最多一次真实摘要调用，无自动重试。完整摘要请求按固定规则估算超过 summaryInputLimit 时，直接以 `SUMMARY_CAPACITY_EXCEEDED` 结束准备，零摘要调用；估算允许发送但 Provider 拒绝时，按摘要调用失败处理并保留安全 causeCode。两者都不分批补救、不切换策略、不发送主生成。保存输入、失败原因和实际已知用量，由用户决定调整配置或重新提交；不承诺原样重试能解决容量问题。
 
-固定摘要指令和前一摘要已耗尽输入预算、无法容纳任何新片段，或 8 次调用内无法处理完整范围，属于摘要任务失败。单批 12000 codepoint 只是辅助资源上限；达到任一输入限制均需分批，不把字符数等同 token 数。
+结果必须正常 stop、非空、无工具调用、delta／final 一致。length、异常流、重复终态、无用户停止信号的 aborted 等失败立即结束，不再发起摘要或主生成。部分摘要不得成为有效历史或推进覆盖边界。
 
-每批结果必须正常 stop、非空、无工具调用，且流与最终结果一致。length／截断、Provider error、无用户停止信号的 aborted、重复终态等立即失败。失败后不继续后面的批次，不发送主生成；SDK／网关包装层也不能自动重试已失败的摘要请求。
+### 4.4 滑动窗口
 
-### 6.3 成功后的候选处理
+从完整原始净叙事投影开始，忽略但保留已有摘要。未触发则使用全部初始历史；触发后以 `max(0, floor(0.6C)-B_before)` 为历史额度，从最新完整回合向前选取连续后缀，遇到相邻大回合放不下即停止，不跳过它选择更早的小回合。最新回合也放不下时可保留零旧回合。
 
-完整摘要成功后，重建输入并全量粗估，做两项不同的判断：
+最终再按实际后缀和当前输入激活条目。无摘要调用，无 compaction Entry，不建立永久裁剪水位；firstKeptEntryId 仅作本 Run 诊断。
 
-- **结构与覆盖校验必须通过**：无遗漏、无重复，保留范围完整，来源未变化；失败结束 Run。
-- **容量目标只用于报告**：即使仍 `> T` 也继续，不再生成更短摘要，不减少保留回合。
+### 4.5 策略切换
 
-若完整有效摘要没有缩减收益，则保留原投影，记录 `no_reduction`，继续生成；摘要费用仍记录。收益比较使用原投影与新投影的同一固定全量估算，不混用 usage 基准值和新粗估值。这属于有效摘要未带来收益，不是摘要调用失败。
-
-有收益的 SummaryCandidate 包含摘要、`coveredThroughEntryId`、`firstKeptEntryId`、来源指纹、受控 gaps 及摘要请求 ID。Runtime 接受前只存在内存中；不得把部分批次写入有效历史，也不写入覆盖边界。
-
-## 7. 滑动窗口裁剪
-
-### 7.1 触发后选择连续后缀
-
-滑窗从完整原始净叙事开始，忽略已有滚动摘要及覆盖水位。未触发则完整发送该初始投影。
-
-触发时使用固定粗估完成一次选择：
-
-1. 先计入全部必要内容。
-2. 必要内容已超过 `T` 时，保留 0 个可选旧回合，记录 `protected_over_target`，继续主生成。
-3. 否则从最新完整旧回合向前加入，直到再加相邻旧回合会超出 `T`。
-4. 保留这一最大完整连续后缀；最新旧回合也放不下时允许保留 0 个。
-5. 按原角色和原顺序重建，校验边界；最终全量粗估仅作诊断。
-
-使用各组固定估算累计，准备复杂度保持线性；无模型调用，无重试循环。估算同实际投影保持一致；若最终报告仍超目标，记录后继续，不进行第二轮处理。
-
-### 7.2 保留与恢复
-
-裁剪仅影响本次 Run 初始模型上下文；原始记录完整保存。没有新的 compaction Entry，也不推进摘要覆盖边界。
-
-下次 Run 再从完整合法历史建立投影，窗口扩大后可以重新包含此前省略的历史。`firstKeptEntryId` 和省略回合数只作本次诊断，不能作为后续读取历史的永久起点。
-
-## 8. 策略切换与摘要兼容
-
-| 切换 | 下一个 Run 初始投影 |
+| 变化 | 下一个 Run |
 |---|---|
-| 滚动摘要 → 滑窗 | 忽略旧摘要，从完整原始净叙事选择；旧摘要记录保留 |
-| 滑窗 → 滚动摘要 | 恢复仍有效的旧摘要 + 其边界之后的全部历史，包括滑窗曾省略的部分 |
-| 滑窗窗口扩大 | 从完整历史重新选择，允许恢复早期回合 |
-| 滚动窗口档位变化 | 使用合法摘要投影，按新阈值决定一次是否整理 |
+| rolling → sliding | 忽略摘要，从完整原始净叙事选后缀 |
+| sliding → rolling | 使用仍有效的旧摘要＋全部未覆盖历史，重新按百分比选界 |
+| C 扩大 | 滑窗可恢复此前裁掉的历史；滚动摘要不自动逆向展开已有效覆盖的摘要 |
+| 策略、C、O 或模型变化 | 重做新 Run 准备；旧 usage 基准按身份关系判断失效 |
 
-摘要的覆盖有效性与 usage 基准有效性不同。策略切换使旧 usage 基准失效，不等于必须删除仍有效的摘要。任何策略都不得把滑窗保留起点误当成摘要覆盖边界。
+策略切换不删除旧摘要／原文，不把滑窗起点当摘要覆盖边界；最终激活每次都按本 Run 实际可用上下文计算。
 
-原始历史、失败／停止留下的合法正文和必要缺口按同一投影规则处理。无法证明来源链或覆盖完整时明确失败，不猜测边界。
+## 5. 估算、用量与请求一致性
 
-## 9. Runtime 生命周期、失败和保存
+### 5.1 固定估算
 
-### 9.1 准备成功到开始生成
+保留简单、版本化的规则：ASCII 1/3 token；Han／Hiragana／Katakana／Hangul 每字符 1 token；其他 Unicode 按 UTF-8 字节数。每条消息另加 16 tokens，请求级 64，每个工具另加 32；工具文本／schema 按实际序列化统计一次。合计向上取整并验证安全整数，多模态不支持则明确拒绝。
 
-Runtime 沿用现有锁、expected tip、幂等与冻结配置机制。先建立 `pendingRun`，再进行一次 ContextManager 准备。
+规则不是精确 tokenizer 或误差上界，不自动校准。按后续清理决定，删除旧 DeepSeek BPE 资源及计量接口；普通文本使用固定估算，Direct Provider 消息顺序支持限制独立保留。
 
-如果有完整摘要候选，在现有 `RunStore.startRun` 事务中先验证并保存摘要，再保存当前 user Entry；无候选只写 user Entry。最后一次取消检查到同步事务提交之间不 await。提交使用稳定候选身份防重，覆盖范围必须早于当前 user Entry。
+### 5.2 usage 基准
 
-提交后才开始主生成。摘要已提交后，主生成失败或用户停止不回滚该摘要；后续正常终态仍按既有 Direct／Agent 规则处理状态。
+只复用已正常完成、确有真实 reported usage 的主 generation／continuation 输入，并能证明本次初始预览原样保留其全部有效输入、仅纯追加：
 
-取消前未提交的摘要全部丢弃；tip 冲突、来源不匹配或保存失败不得发送主生成。权限、协议、来源完整性检查不受软预算规则影响。
+```text
+E_before = lastReportedInputTokens + fixedEstimate(实际新增内容)
+否则 E_before = fixedEstimate(初始完整请求预览)
+```
 
-### 9.2 Run 内执行
+基准关联模型／Provider／API／序列化版本、输入身份、历史覆盖及激活／工具／状态身份。不能仅凭整请求 hash 或 Entry ID 推断纯追加；无法证明时全量粗估。动态 system、激活集合、状态、工具、摘要、非追加历史、模式或策略变化均重新验证。
 
-首次主生成消费准备好的上下文。Agent continuation 只在该视图后追加本 Run 完整往返，按冻结主输出参数构造请求。删除现有实现中的对应路径，并撤销前版计划中的以下设计：
+Pi 的 SR inputTokens 口径已含 input + cacheRead + cacheWrite，不能再加缓存；不使用累计用量或最近 totalTokens 代替上下文长度。只计实际回填的回复，不计丢弃的 thinking／Direct 尾块。SDK 初始化零对象与真实报告零值区分，缺报告保持 unknown。
 
-- continuation 中的预算估算、阈值判断及压缩。
-- 主生成或 continuation 因 `BudgetReport.fits === false` 被拒绝发送的逻辑。
-- Run 内摘要检查点、续轮候选及 finalize 再次提交摘要。
-- 自动校准、二次更短摘要、硬窗口拒绝后的自动压缩／重试。
+最终候选、收益比较和诊断使用全量固定估算；真实 usage 仅记账及供以后 Run 使用。摘要和主请求每次独立 ID 结算一次，失败／停止也结算，不用估算补写真实用量。
 
-保留请求身份／实际 payload 一致性校验，验证的是本次构造的请求；不得使用 Run 前的旧 fingerprint 检查追加后的新请求。继续记录每次真实 usage，不产生 continuation 预算报告。
+### 5.3 PreparedRequest
 
-### 9.3 准备失败必须有持久终态
+PreparedRequest 表达已组装、冻结、身份及权限一致的请求，不再要求主请求附带 fits=true。保留请求／实际 Provider payload fingerprint 检查，与计数解耦。continuation 使用自身新 fingerprint，不复用准备期请求身份，也不伪造预算报告。
 
-当前代码的准备失败发生在 user Entry 创建前：结算主要写 `unattachedTotals` 并清掉 `pendingRun`，随后发送失败通知；`RunStore.status/duplicate` 只查 user Entry，因而无法持久查询该失败 Run。后续实现需补齐，而不能只增加一条错误日志。
+## 6. 准备输入保存、失败类型与用户重试
 
-明确使用既有 `sessions.usage_json` 增加内部 `preparationRuns`，作为未创建 user Entry 的终态归档，不新建表或叙事 Entry。保留最近 64 个记录：
+### 6.1 输入与历史分离
 
-- runId、用户 requestId、起止时间、expectedTipEntryId。
-- failed／stopped／interrupted、finalized 阶段及已解析的公开运行元数据。
-- 受控 errorCode；准备／摘要阶段、失败批次和安全 causeCode。
-- 已封账的 RequestMetrics 与实际 totals，不包含用户输入、候选摘要、prompt 或原始 Provider 异常。
+撤销前版“在 usage_json 中仅保留最近 64 个无输入准备终态”的设计。输入是用户内容，必须可持久恢复，不能随计费诊断环形淘汰。
 
-在现有结算事务中：核对 pending → 按模型请求 ID 去重结算 → 写准备终态（即使零模型调用）→ 更新累计数据 → 清 pending。重复封账不得重复计费。先保存终态，再通知失败；保存失败不得伪报已持久完成，保留可恢复 journal 并走既有持久化错误处理。
+计划新增内部 `run_preparations` 表，复用既有 RunStore 管理，不创建新任务服务：
 
-`RunStore.status` 和 `duplicate` 先查询原 user Entry，再查准备终态。复用既有公开 Run 投影，准备失败返回 `messages: []` 和当前 tip，不扩展公开 Run 字段。准备终态不混入叙事 ancestry 分页，不改变历史 tip。
+- run_id 主键，session_id 外键；(session_id, request_id) 唯一；expected_tip_entry_id。
+- input_text 原始已接受输入；created_at／finished_at。
+- preparing／failed／stopped／interrupted 状态，公开元数据、受控错误／恢复分类。
+- 已结算的模型请求指标及 accounted 标记；不保存候选摘要、完整 prompt、凭据或原始 Provider 异常。
 
-已有 user Entry 的去重范围不缩短。准备终态的查询／去重只保证最近 64 个；淘汰明细不扣减 cumulative／unattachedTotals，过期 run 查询返回既有 RUN_NOT_FOUND。用户主动重试使用新的 requestId／runId，原失败记录不改成成功。
+接受 Run 时，在同一短事务创建准备记录并建立 pending usage journal，成功后才返回 202／开始异步准备。同步参数错误、锁冲突、tip 冲突等未接受请求不伪造 Run。记录落库失败不得宣称请求已接受或输入已保存。
 
-中断恢复沿用 pending journal：无 user Entry 的 pending 归档为 interrupted，再清理；公开投影仍按现有 failed + RUN_INTERRUPTED 语义。有 user Entry 的恢复沿用原流程。
+准备成功时，在 startRun 同一事务中验证来源／tip、保存摘要、保存 user Entry，并移除对应 preparing 记录；输入及幂等身份已由 user Entry 接管。交接失败整体回滚，原准备输入仍在。准备失败／停止则保留终态记录，不创建 user Entry、不改变 tip、不进入叙事 ancestry 或激活扫描。
 
-### 9.4 失败事件与错误原因
+准备终态输入不按 64 条自动淘汰；随用户明确删除所属会话／世界的既有流程清理。查询与去重覆盖全部保留记录。历史版本已丢失的准备输入无法反推，不制造内容。
 
-沿用内部 `run.updated` 的 failed 终态，由现有会话事件路由转换为 SDK 已有的 `run.failed`，不新增同义事件。失败事件和 GET Run 使用相同的 `errorCode/errorMessage`；准备失败尚未创建正文流，通过既有会话 SSE 发布失败。
+### 6.2 最终化与恢复
 
-| 情况 | 终态／错误 | 历史与后续行为 |
+准备失败事务：核对 preparing／pending → 去重汇总真实请求 → 保存终态及恢复分类 → 更新 cumulative／unattachedTotals → 清 pending。零模型调用也必须保存终态；重复封账不重复费用或通知。指标可用于诊断，不能在读取时再次累加。
+
+RunStore.status／duplicate 先查正式 user Entry，再查准备记录；成功交接和准备终态不能同时成为同一 Run 的两个权威结果。重启扫描 preparing 记录，即使 pending 不完整也归档 interrupted；已有 user Entry 则沿用正式 Run 恢复路径。
+
+持久化失败时不发布“已持久完成”的终态事件；保留已提交的准备记录和 pending 以供恢复，按现有持久化错误处理释放／恢复占用。禁止先清 journal 再保存失败。
+
+### 6.3 Server 查询与事件契约
+
+保留现有 errorCode／errorMessage、run.updated → run.failed 通道。增加可选公开字段，GET Run 和终态 SSE 使用同一投影：
+
+```ts
+type RunFailure = {
+  stage: "preparation" | "generation" | "continuation" | "commit";
+  type: "configuration" | "summary" | "context_window" |
+    "context_integrity" | "provider" | "persistence" | "interrupted";
+};
+type RunRecovery = {
+  inputSaved: boolean;
+  action: "resubmit" | "adjust_configuration" | "inspect";
+};
+```
+
+准备失败的 GET 返回既有 Run 字段、`messages: []`、`failure`、`recovery`，另在授权 Run 查询中返回 `input: { text: string }` 供恢复。事件仅携带分类、inputSaved 和建议操作，不广播额外输入全文。输入不得出现在错误消息、debug 日志或 Usage API 中。
+
+`stage` 保留失败发生阶段，不能被最终 phase=finalized 覆盖；`type` 供前端判断失败类别，errorCode 保留具体原因；action 是建议操作，不承诺重试必然成功。stopped 可提供 recovery，但没有 failure，也不发 run.failed。
+
+| 情况 | errorCode／分类 | recovery.action |
 |---|---|---|
-| 摘要调用失败、空结果、截断、分批预算不可满足或次数耗尽 | failed；沿用 SUMMARY_FAILED／SUMMARY_EMPTY，记录安全原因及失败批次 | 丢弃全部本次候选，不写 user／摘要，不主生成，用户重试 |
-| 完整摘要仍超软目标、没有可整理前缀、无缩减收益 | 继续生成，诊断标注原因 | 不重复压缩 |
-| 必要内容自身超软目标 | 继续生成 | 保留必要内容，不因估算超额失败 |
-| 主生成／continuation 被 Provider 硬窗口拒绝 | failed；新增明确的 `PROVIDER_CONTEXT_WINDOW_EXCEEDED` | 沿用正常失败最终化，不自动恢复或重放工具 |
-| 其他 Provider 错误 | 现有正常失败分类 | 沿用正常失败流程 |
-| 用户主动停止 | stopped | 未提交候选丢弃，已提交摘要保留 |
-| 进程中断 | 按既有 interrupted 恢复并公开为失败 | 已有真实 usage 保留，未知仍未知 |
+| C 超过模型配置上限、O 无效等 | INVALID_PRESET_BUDGET；configuration | adjust_configuration |
+| 摘要返回空／截断／异常流 | SUMMARY_EMPTY／SUMMARY_FAILED；summary | resubmit |
+| 完整摘要请求估算超过摘要输入预算 | 新增 SUMMARY_CAPACITY_EXCEEDED；summary | adjust_configuration |
+| Provider 硬窗口拒绝 | 新增 PROVIDER_CONTEXT_WINDOW_EXCEEDED；context_window | adjust_configuration |
+| 已知凭据／模型配置错误 | 对应受控错误；configuration | adjust_configuration |
+| 其他 Provider 错误 | 既有受控错误；provider | resubmit |
+| 来源、摘要边界或历史链无效 | 对应受控错误；context_integrity | inspect |
+| 保存失败 | 既有持久化错误；persistence | inspect |
+| 进程中断恢复 | RUN_INTERRUPTED；interrupted | resubmit |
 
-硬窗口错误由统一模型错误适配识别已知 Provider 错误码／结构，映射到受控新码；不把本地 `E > T` 映射为此错误。未能明确识别的错误保留通用 Provider 分类，不假定为窗口拒绝。各 runner 不得再次把明确分类降为泛化 PROVIDER_ERROR。
+摘要内部发生 Provider 错误，公开阶段仍为 preparation、类别为 summary；内部保存安全 causeCode，已知窗口／配置原因的操作建议为 adjust_configuration。不泄露原始异常。硬窗口识别依赖统一模型适配器的明确错误结构，未知错误不强行归类。
 
-摘要中的 Provider 硬窗口拒绝，公开保持 SUMMARY_FAILED，内部记 causeCode=PROVIDER_CONTEXT_WINDOW_EXCEEDED；其他原因同样保留可追踪的安全分类。对外不增加通用 detail 字段，不泄露原始请求。
+### 6.4 用户重试语义与无前端边界
 
-任何实际发生的摘要请求，无论整次准备成功、失败还是停止，都照实结算。成功提交后关联 compaction／Run；准备失败保存在 preparationRuns 与现有 unattachedTotals。返回候选中的 usage 仅供关联，不重复累加。
+不新增自动重试器。本期沿用现有提交 API：调用方读取失败 Run 的 input，用户决定后使用**新 requestId、当前 expectedTipEntryId 和保存的 text**提交新 Run。配置取当前值、激活重新计算；旧失败记录及费用保持不变。相同 requestId 重发仍幂等拒绝，不再次调用模型。
 
-## 10. 配置迁移与 API
+失败准备输入从未成为历史，因此重新提交不会在模型历史中重复出现。主生成已经创建 user Entry 的失败维持既有历史语义，不借准备重试功能删除／改写原回合。
 
-新增共用 `apps/server/src/domain/preset-budget.ts`，路由、Runtime、默认预设及导入导出共用。
+现有 Host／SDK 可能忽略新字段；本期只交付 Server 能力和离线契约证据。前端后续负责选择提醒、恢复草稿或提供操作，并处理用户已写新草稿的冲突；本方案不实施这些 UI。
 
-- 当前合法旧格式只有 `context_strategy + max_output_tokens` 时，归一化为 rolling_summary，保留原值。
-- 新写入、规范化响应和导出显式包含 strategy。
-- 两种分支严格校验；不允许同时出现 context_strategy 与 max_context_tokens，未知算法或缺少输出上限拒绝。
-- 无 strategy 且只有旧数值 max_context_tokens 的更早格式不猜成滑窗；不属于本次认可的当前旧格式。
-- 同策略 PATCH 可局部更新，合并后完整校验；跨策略必须提交目标分支的完整 budget，原子替换。
-- 不直接沿用 `{ ...current.budget, ...patch.budget }` 处理策略切换，避免混入旧分支字段。
-- summary_prompt、其他能力、旧预设及 session/world 引用保留；读取规范化，正常保存时写新格式，不做数据清空。
-- 已开始 Run 使用冻结配置；新的配置在下一个 Run 生效。
+## 7. 配置兼容与非破坏性迁移
 
-JSON 扩展采用向后兼容读取。旧 usage 没有基准关联信息时回退全量粗估；旧 session 缺少 preparationRuns 按空处理。任何必要迁移只允许非破坏性增量。
+### 7.1 规范格式与旧入口
 
-## 11. 与现行代码的差异及实施范围
+新增共用 `domain/preset-budget.ts`，Server 的路由、默认预设、导入导出及 Runtime 统一使用规范结构。规范响应／导出不再输出 context_strategy；两策略切换只改变 strategy，不重置两个数值字段或 summary_prompt。PATCH 可局部更新，合并后完整校验。
 
-当前 `context-manager.ts` 在首次和 continuation 的 `prepareRequest` 中执行 measure／压缩循环；`budget.ts` 的发送检查还要求 `report.fits`。仅移动旧文件无法达到本方案，必须同时改变调用链与 PreparedRequest 的含义。
+旧格式只在兼容读取／旧写入适配器中接受：compact／standard／extended 映射原窗口 131072／262144／524288；无 strategy 的当前旧格式默认 rolling_summary。旧档位曾表示输入＋输出窗口，因此转换为数值输入额度时扣除 O 和 1024，再按实际模型的 configurationCap 收紧。预设未绑定模型时只能得到未收紧的规范数值候选。
 
-主生成的 PreparedRequest 只表达已组装、冻结且身份一致的请求，不再要求附带一份“预算通过”的报告。Run 前报告属于 Run 准备结果；continuation 不伪造 `fits: true` 或无限窗口来绕过旧检查。wire fingerprint 如需保留，应与 token 计数解耦。
+为避免原有预设一夜全部因 80% 上限失败，兼容来源在首次正常规范化保存前保留服务端内部来源标记：旧档位 Run 使用上述模型感知转换并记录 effective C；显式新数值配置按 §2 严格校验，不能假借 legacy 标记绕过上限。切到明确数值时清除旧来源标记；用户原存储值不批量覆盖。
 
-| 路径 | 后续实施变更 |
+旧客户端 PATCH 只有 context_strategy 时按兼容格式处理；只更新 O／其他字段且没有显式新 C 时保留正确的 legacy 来源或规范 C。混合提供 context_strategy 与 max_context_tokens 明确拒绝，不猜测优先级，避免旧表单误覆盖新数值。无 strategy 的数值新格式可默认 rolling_summary；明确 strategy 时严格枚举，未知字段／非法数字拒绝。
+
+导出使用规范数值及 strategy，不导出内部来源标记；在未绑定模型时导出的候选额度可能超过目标模型上限，运行前明确要求调整，不能承诺跨模型自动适配。将旧的总窗口改成输入额度属于有意的配置语义变更，必须在契约中标明。
+
+### 7.2 不修改前端的兼容限制
+
+Web 当前读取／编辑 context_strategy，Studio 使用本地 fixture。删除规范字段后，现有三档控件无法正确表示任意新数值；本期不实现伪造档位回显或让服务端猜测用户意图。Server 保留旧格式入口、保护规范数据，但**新数值配置及策略选择以 API／导入导出为验收入口，旧 UI 新配置编辑不在交付承诺内**。混合字段被拒绝时现有通用错误展示可以显示信息，不等同新交互已经接入。
+
+### 7.3 数据库迁移
+
+新增 run_preparations 采用增量 schema 迁移，升级数据库版本并沿用升级前 SQLite 快照备份。迁移、结构校验及版本写入在事务内完成；失败回滚。保留 sessions、entries、presets、worlds/state、models、credentials、tags、app settings 和源文件。
+
+旧 pending 有真实模型 usage 但无输入的，只保留可证实的指标／中断信息，inputSaved=false；不声称能恢复已经丢失的文本。新版本接受的 Run 必须保证输入先落库。
+
+回滚使用升级前备份；回滚前须另行保留升级后的数据库，避免丢失新准备记录。旧程序不得直接写新版本数据库，不执行降级删表。测试仅用临时 SQLite，文档修订不启动服务、不迁移真实库。
+
+## 8. 模块边界与实施路径
+
+### 8.1 High-level 模块关系
+
+产品主链路：接受并保存输入 → 准备可用上下文 → 按最终上下文激活条目 → 原子提交 → 生成故事 → 保存终态／通知。整理失败停在准备阶段，输入和失败记录保留，不进入主生成。
+
+```mermaid
+flowchart TD
+  API[Session API：提交、查询、停止、SSE] --> RT[SRRuntime：Run 生命周期与调度]
+  RT --> CFG[Config：冻结配置与模型预算]
+  RT --> CM[ContextManager：一次准备与后续请求组装]
+  CM --> PB[PromptBuilder / Activation：只读预览与最终匹配]
+  CM --> CP[Compaction：触发判断与历史策略]
+  CP --> RS[RollingSummary：选择旧前缀]
+  CP --> SW[SlidingWindow：选择近期后缀]
+  RS --> SG[SummaryGenerator：单次摘要请求]
+  SG --> MC[ModelClient / PiGateway：模型调用]
+  RT --> RUN[DirectRunner / AgentRunner：主生成]
+  RUN --> MC
+  RT --> STORE[RunStore：准备输入、历史与 Run 终态]
+  RT --> POST[RunPostProcessor：最终用量结算]
+  POST --> US[UsageStore：请求 journal 与真实用量]
+  MC --> US
+```
+
+图中箭头表示职责调用关系，不代表所有组件都要新增类或服务。复用现有 Runtime、ModelClient、RunStore 等实例；策略以静态函数／模块实现即可，不引入插件注册框架。
+
+| 模块 | 输入／输出边界 | 不承担的职责 |
+|---|---|---|
+| SRRuntime | 接受请求；准备完成后接受候选并调度 Runner；提交后发事件 | 不实现 token 估算、摘要选界或 SQL |
+| ContextManager | 消费冻结来源；返回最终 PreparedRequest、active／权限、可选摘要候选和诊断 | 不自行提交历史／状态，不在 continuation 压缩 |
+| PromptBuilder / Activation | 按给定历史投影纯匹配并组装；最终投影的结果才进入本轮权限 | 不读取全库寻找激活词，不从条目正文递归加载 |
+| Compaction | 消费历史投影、预算和估算服务；返回所选历史及可选摘要候选 | 不写数据库、不决定 Run 终态、不修改状态权限 |
+| SummaryGenerator | 接收选定旧前缀、旧摘要和摘要指令；返回一份完整有效摘要或错误 | 不分批、不重试、不裁掉来源补救、不调用业务工具 |
+| ModelClient / PiGateway | 单次模型请求、取消、Provider 适配、usage 和受控错误 | 不决定何时压缩，不重新发起失败摘要 |
+| RunStore / UsageStore | 权威数据、准备输入和原子交接；真实用量 journal／结算 | 不生成摘要，不以估算冒充真实用量 |
+
+`prepareForRun` 是整理模块唯一生产入口，由 ContextManager 每 Run 调用一次；`buildContinuationRequest` 仅追加合法本轮往返并组装新请求。SummaryGenerator 通过注入的窄模型调用能力复用 ModelClient，不反向调用 Runtime，也不持有 RunStore。
+
+整理模块返回的 SummaryCandidate 只是待接受结果。Runtime 调用持久化层完成摘要＋user Entry＋准备记录交接；错误时通过同一持久化层保存准备终态及结算。跨 RunStore／UsageStore 的原子操作复用同一数据库事务，内部步骤不各自开启嵌套事务。
+
+### 8.2 目标目录结构
+
+以下路径相对仓库根目录；仅列本方案相关文件，其他已有文件继续保留。标注“新增”的文件为计划新增，目录树不表示已经实现。
+
+```text
+apps/server/src/
+├── routes/
+│   ├── session-runtime.ts         # 提交／查询／停止／事件与恢复元数据
+│   └── presets.ts                 # 数值预算与旧格式入口
+├── domain/
+│   ├── preset-budget.ts           # 新增：统一 schema、兼容转换与 PATCH
+│   └── session/
+│       └── run-result.ts          # GET／SSE 共用公开结果投影
+├── common/
+│   └── error-codes.ts             # 受控失败码
+├── infrastructure/database/
+│   └── database.ts                # 增量 schema、备份与中断恢复
+└── runtime/
+    ├── sr-runtime.ts              # 生命周期、锁、取消、调度与提交后事件
+    ├── config.ts                  # 本轮配置／模型冻结与预算校验
+    ├── types.ts                   # Run、执行上下文与跨模块结果类型
+    ├── context/
+    │   ├── context-manager.ts     # prepareForRun 编排；continuation 纯组装
+    │   ├── prompt-builder.ts      # 只读预算预览与最终 Prompt 编排
+    │   ├── activation.ts          # 给定可用上下文上的匹配规则
+    │   ├── budget.ts              # 窗口数学与 PreparedRequest 身份校验
+    │   ├── system-main.ts         # 既有平台提示与摘要约束
+    │   └── compaction/            # 新增：仅上下文历史整理
+    │       ├── index.ts           # prepareForRun：一次触发与静态策略选择
+    │       ├── types.ts           # 投影、候选、估算基准及整理报告
+    │       ├── estimator.ts       # 固定粗估／可证明的 usage 基准复用
+    │       ├── history.ts         # 净叙事分组、原始来源及覆盖边界校验
+    │       ├── rolling-summary.ts # 百分比选界与候选摘要投影
+    │       ├── sliding-window.ts  # 连续后缀选择，无模型调用
+    │       └── summary-generator.ts # 单次完整摘要、结果完整性校验
+    ├── model/
+    │   ├── model-client.ts        # 共用模型调用、取消及 usage journal
+    │   └── pi-gateway.ts          # Provider／Pi 适配与明确错误归类
+    ├── persistence/
+    │   ├── run-store.ts           # 准备输入、entries、状态与原子交接
+    │   ├── usage-store.ts         # 真实用量与幂等结算
+    │   └── run-post-processor.ts  # 既有结算编排
+    ├── runners/
+    │   ├── direct-runner.ts       # 一次主生成及扩展处理
+    │   └── agent-runner.ts        # 既有工具循环，续轮不管理预算
+    ├── narrative/                 # 既有 Direct 扩展解析／验证
+    └── tools/                     # 既有 Agent 工具执行／状态校验
+```
+
+旧 `context/history-compactor.ts` 的来源过滤和有效摘要结果校验迁入 history.ts／summary-generator.ts；分批实现及旧生产入口移除，更新所有消费者与测试，不并存两条压缩入口。新 run_preparations 表仍由 RunStore 管理，不另建 PreparationService、CompactionRunner 或计费服务。
+
+通用数值窗口规则放 budget.ts；preset-budget.ts 只负责配置结构／兼容；estimator.ts 只负责估算；compaction/index.ts 使用规则作一次触发和选择，不在各策略重复维护阈值常量。
+
+### 8.3 文件变更与实施范围
+
+| 路径／组件 | 后续实施职责 |
 |---|---|
-| `apps/server/src/runtime/context/compaction/*` | 新增策略入口、固定估算、历史边界和摘要模块 |
-| `apps/server/src/runtime/context/context-manager.ts` | 每 Run 只调用一次策略入口；continuation 只组装请求 |
-| `apps/server/src/runtime/context/history-compactor.ts` | 迁移可复用逻辑后移除旧生产入口 |
-| `apps/server/src/runtime/context/budget.ts` | 共用阈值数学；解耦 PreparedRequest 与预算报告，移除主发送 fits 门槛 |
-| `apps/server/src/runtime/config.ts`、`types.ts` | 预算联合、固定策略规则、候选和 Run 前报告；移除逐请求压缩循环配置，不增加校准字段 |
-| `apps/server/src/domain/preset-budget.ts` | 共用 schema、legacy normalizer 和分支 PATCH 规则 |
-| `apps/server/src/routes/presets.ts` | 预设读写／导入导出兼容及策略切换替换 |
-| `apps/server/src/infrastructure/database/database.ts` | 规范默认预设、准备期 pending 中断恢复；不清理用户配置或历史 |
-| `apps/server/src/runtime/model/model-client.ts`、`pi-gateway.ts` | 真实 usage 来源和基准关联、明确硬窗口错误分类、摘要失败不重试；移除主计量强依赖 |
-| `apps/server/src/runtime/persistence/usage-store.ts` | 真实用量与下个 Run 基准；准备终态归档、一次结算，不保存校准系数 |
-| `apps/server/src/runtime/persistence/run-store.ts` | 保留初始摘要与 user 原子提交；状态／去重支持准备终态 fallback；移除续轮摘要提交 |
-| `apps/server/src/runtime/sr-runtime.ts` | 一次准备、候选接受、持久失败与事件；不建立 Run 内压缩检查点 |
-| `apps/server/src/runtime/persistence/run-post-processor.ts` | 传递准备终态与安全错误原因，避免先清 pending 再记录失败 |
-| `apps/server/src/runtime/runners/agent-runner.ts` | 后续请求纯组装、正常工具循环，不调用预算或压缩 |
-| `apps/server/src/runtime/runners/direct-runner.ts` | 消费一次准备结果，保留单次主生成及扩展协议 |
-| `apps/server/src/common/error-codes.ts`、公开错误投影 | 增加 PROVIDER_CONTEXT_WINDOW_EXCEEDED，GET／SSE 保持一致 |
-| `apps/server/src/routes/session-runtime.ts` | 复用 run.failed 契约，验证准备失败的查询与事件投影 |
-| `apps/studio/src/fixtures/presets.ts`、`features/presets/PresetStore.tsx`、`PresetLibraryPage.tsx` | 策略配置、条件字段、本地存储兼容 |
-| `apps/web/src/features/presets/PresetPage.tsx` | 现有服务端预设编辑器最小适配 |
-| 相关既有测试 | 更换逐请求强预算预期，验证一次准备、软目标及失败持久化 |
-| `docs/technical/context-compaction.md`、`runtime-context-v2.md`、配置契约与 `AGENTS.md` | 实现完成后更新现状，此次不提前改写 |
+| context/compaction/index.ts、types.ts | 统一策略入口、一次触发、C／目标及准备报告 |
+| estimator.ts、history.ts | 固定估算、usage 覆盖证明、完整原始来源与原子组 |
+| rolling-summary.ts、sliding-window.ts、summary-generator.ts | 百分比选界、单次完整摘要、无永久滑窗水位 |
+| context/context-manager.ts、prompt-builder.ts、activation.ts | 分离只读预览与最终激活；最终匹配后冻结权限；continuation 纯组装 |
+| context/budget.ts、runtime/config.ts、types.ts | 数值预算、80% 校验、请求身份与计数解耦 |
+| domain/preset-budget.ts、routes/presets.ts | 新旧格式适配、规范 PATCH／导入导出 |
+| runtime/persistence/run-store.ts | 准备输入、状态查询、幂等、摘要＋user＋准备记录原子交接 |
+| usage-store.ts、run-post-processor.ts | journal、一次结算、准备终态原子持久化；不把输入放入 usage_json |
+| infrastructure/database/database.ts | 增量迁移、备份、结构校验与中断恢复 |
+| runtime/sr-runtime.ts | 接受前保存输入、生命周期、取消、提交后事件 |
+| model/model-client.ts、pi-gateway.ts | 真实 usage 来源、Provider 错误分类、摘要不自动重试 |
+| runners/direct-runner.ts、agent-runner.ts | 消费最终请求；移除 continuation 预算／摘要路径 |
+| common/error-codes.ts、domain/session/run-result.ts、routes/session-runtime.ts | 受控 failure／recovery、GET／SSE 一致、输入查询 |
+| Server tests | 配置、估算、策略、激活、事务、错误与恢复契约 |
 
-现行 Direct Provider 消息顺序能力、状态提交权限、扩展终止完整性、Run 幂等及锁等规则继续成立。通用估算不能被理解为任意 Provider 都已支持 Direct 协议。
+没有 Web／Studio／SDK 代码任务。任务超过五项，具体顺序、依赖、文件边界及验收单列于 [实施任务](sr-context-compaction-strategies-v1-tasks.md)，由同一 agent 顺序实施及独立复核。
 
-## 12. 实施顺序
+正式文档与 AGENTS.md 中“每次请求测量”“三档窗口”“压缩前冻结激活”等现状在实现通过验收后更新；本次仅在 plan 中定义未来行为，不提前改写现状。
 
-### P1：配置和请求契约
+## 9. 验收标准
 
-- [ ] 实现 budget 判别联合、旧格式规范化和 PATCH 分支规则。
-- [ ] 固定主输出配置来源；验证其实际进入每次模型请求。
-- [ ] 拆开 Run 前估算报告与 PreparedRequest 身份校验，删除主模型 fits 门槛。
-- [ ] 更新默认预设及导入／导出，保留旧值和引用。
+### 9.1 配置与百分比
 
-完成标准：新旧配置可确定性解析，非法配置明确拒绝，合法但内容超软目标可发送。
+- [x] 两策略规范配置仅含 strategy、max_context_tokens、max_output_tokens；无 context_strategy。
+- [x] C 等于 floor(0.8W) 且满足输出余量时合法，多 1 拒绝；O 更大导致 W-O-S 收紧时正确拒绝。
+- [x] E_before < C 不触发；E_before == C、> C 触发；目标为 floor(0.6C)。合法内容超目标不本地失败。
+- [x] 新旧格式转换、legacy 来源、仅更新 O、策略切换、混合字段拒绝、数值导入导出均有确定结果。
+- [x] 每次主请求实际 maxTokens 等于 O；摘要输出独立。窗口／计数缺失和整数边界明确处理。
 
-### P2：一次准备与固定估算
+### 9.2 历史与激活
 
-- [ ] 建立完整历史投影、原子回合、必要内容及纯重建函数。
-- [ ] 实现适用 usage + 实际新增粗估；其余全量固定粗估。
-- [ ] 覆盖动态 system、缓存输入、非回填输出、历史恢复和策略切换。
-- [ ] ContextManager 在准备阶段统一调用一次；Agent continuation 改为纯请求组装。
-- [ ] 采用固定规则，不增加自动校准；移除主模型专用计量门槛；usage 记录只服务计费及后续 Run 基准。
+- [x] 只读完整原始祖先链；窗口扩大及策略切换可恢复合法历史，准备失败输入不进入历史。
+- [x] 仅被裁掉／被摘要原文中的关键词或排除词不影响最终激活；摘要／保留原文／当前输入中存在的仍影响。
+- [x] 角色、世界书、状态统一作用域；when 用权威状态，never 不加载，description 不进入模型上下文。
+- [x] 预算预览没有权限副作用；最终 active、工具、状态可写根、扩展 required 与实际 Provider 请求一致。
+- [x] 激活导致最终超目标只报告不重压缩；条目正文不递归激活，Run 内不变更激活集合。
+- [x] 开场 assistant、五轮保护、大单轮、失败／停止正文、gaps 及工具关联均不丢失或拆坏。
 
-完成标准：首次主生成开始后，没有预算估算、检查或压缩调用。
+### 9.3 策略与摘要容量
 
-### P3：两种策略
+- [x] 100% 触发后按 60% 目标选连续前缀／后缀；保护内容超额有明确诊断。
+- [x] 32K／128K／256K／512K 模型窗口下，完整摘要请求在独立预算内且结果有效时一次成功；不受旧字符天花板阻塞。
+- [x] 长历史切回摘要时，完整请求估算超过独立预算则零调用失败，输入保留；不分批、不截断、不缩小覆盖范围补救。
+- [x] 每 Run 摘要请求数只能为 0 或 1；Provider 窗口拒绝、空结果、截断和异常流均直接失败，无第二次摘要或主生成，无部分边界提交。
+- [x] 有效摘要无收益使用原投影及其最终激活；目标未达仍继续；真实费用保留。
+- [x] 滑窗零模型调用、不创建摘要／水位，保留固定预留下的最大连续后缀。
 
-- [ ] 滚动摘要：连续前缀、旧摘要、五轮保留、独立预算、顺序分批及严格结果校验。
-- [ ] 保留最多 8 次摘要请求的上限；任一失败立即结束，不自动重试。
-- [ ] 摘要后全量估算只作诊断；无收益原投影继续，目标未达不拦截。
-- [ ] 滑窗：最大完整连续后缀、必要内容超额仍继续、零摘要调用。
-- [ ] 实现策略切换与窗口扩大恢复；无原始历史删除和永久裁剪水位。
+### 9.4 保存、错误和用户重试
 
-完成标准：触发、目标及超目标行为确定，边界无遗漏、无重复。
+- [x] 202 前输入和准备 journal 已落库；零调用失败、摘要失败、停止、重启均可查询已接受输入。
+- [x] 正式 user Entry 与摘要及准备记录交接原子化；事务失败保持原 tip 和准备输入。
+- [x] 第 65 次及更多准备失败不淘汰先前输入／幂等身份；会话删除按既有明确删除语义清理。
+- [x] GET 与 run.failed 的 errorCode、failure、recovery 一致；事件不附加输入全文，Usage API／日志不泄露输入。
+- [x] 用户用读取的输入、新 requestId 和当前 tip 发起新 Run；旧记录不改写、同 requestId 不重复执行。
+- [x] interrupted 保留输入，inputSaved 如实反映旧版不可恢复情况；持久化失败不发布虚假已保存终态。
+- [x] 用量精确结算一次，summary／主请求分开；未知保留未知，取消不抹去真实已发生费用。
+- [x] Direct／Agent 都仅准备一次，continuation 无估算／压缩；已知 Provider 硬窗口拒绝分类不被 runner 泛化。
 
-### P4：保存、失败与真实用量
+## 10. 验证与交付
 
-- [ ] 沿用初次摘要与 user Entry 原子提交，移除续轮候选／检查点。
-- [ ] preparationRuns 补齐无 user Entry 的失败、停止、中断终态及查询／去重。
-- [ ] 使用现有 run.updated → run.failed 通道，终态和原因先落库。
-- [ ] 增加 Provider 硬窗口错误分类，直接正常失败；不自动恢复。
-- [ ] 每批摘要真实 usage 只结算一次，失败／停止／零调用和中断均可追踪。
+后续实现使用临时 SQLite、fake Provider 和离线 SDK transport；不默认调用付费模型。重点测试 presets、budget-v2、summary-budget、compaction-lifecycle、usage、runtime、activation／context 及 Server API 契约；补充准备输入、迁移与最终激活场景。
 
-完成标准：摘要失败不进入主生成，既不损坏历史，也不丢失终态与已发生费用。
+实现阶段按实际脚本执行 Server typecheck、lint、tests，并检查未改前端下的既有契约兼容；本期没有浏览器／视觉验收，不把前端提示与操作算已完成。正式文档需要同步 context-compaction、runtime-context-v2、runtime-v2-contract、error-protocol-v2 和 AGENTS.md。
 
-### P5：界面与现状文档
+本次文档修订只验证链接、示例 JSON、规则一致性和 diff，不执行代码任务／数据库迁移／付费请求。
 
-- [ ] Studio 增加策略选择、滑窗窗口、两者主输出及条件摘要入口。
-- [ ] 本地旧草稿兼容、切换字段保留、当前分支严格保存。
-- [ ] Web／导入／导出往返不丢配置。
-- [ ] 验证必要 UI 状态及错误展示；不扩大为 Studio API 全量接入。
-- [ ] 更新正式文档与 AGENTS 中“每次生成前测量”的旧现状说明。
+依据：本轮用户最新决定优先于旧计划；[当前上下文实现](../docs/technical/context-compaction.md)、[Runtime v2](../docs/technical/runtime-context-v2.md)、[错误协议](../docs/technical/error-protocol-v2.md)与源码作为现状证据。外部资料仅作为策略比较，main／latest 不作为本项目依赖版本。
 
-## 13. 验收场景
+## 10. 实施与验收记录
 
-### 13.1 调度与软目标
+2026-11-13：T1–T8 完成。代码落在 `apps/server/src/domain/preset-budget.ts`、`runtime/context/compaction/` 及既有 Runtime/存储/路由；旧 history-compactor 生产链已移除。数据库 v3 的迁移只在临时库验证。
 
-- [ ] Direct 和多次 tool continuation 的 Agent 均只调用一次 Run 前入口。
-- [ ] `E < T` 和 `E == T` 不触发；`E > T` 触发所选策略。
-- [ ] Run 内超出 `T` 仍发送下一主请求；估算器、预算检查器、策略均无 Run 内调用。
-- [ ] 整理后仍超 `T`、没有可处理历史、必要内容超额，都不产生本地预算失败。
-- [ ] Provider 硬窗口拒绝直接 failed；没有新的摘要、重试请求或工具重放。
-- [ ] 用户重试使用新 Run，再检查一次；已失败 Run 的状态和费用不被覆盖。
-- [ ] PreparedRequest 不因缺预算报告或 fits=false 拒绝主请求；实际消息被构造外修改、权限或工具协议错误仍被拒绝。
+- 根 `pnpm typecheck`（Server + Web）、`pnpm lint`、`pnpm test`、`pnpm build` 通过；最后一次 Server typecheck/lint/test 复验通过，46 个测试文件、244 项测试。
+- Web build 成功，保留已有的大于 500 kB chunk 提示；本期未修改 Web，也未执行新 UI 的浏览器/视觉验收。
+- 实际 Pi 离线 mock transport 验证顺序、wire fingerprint、reported 零值与默认零/输出单项报告的区分、结构化 HTTP 窗口错误；无网络付费调用。
+- 独立复核补齐：旧摘要回合边界验证、来源变化交接拒绝、准备和正式终态持久化失败不发布虚假终态、摘要安全 causeCode 内部保存、continuation 失败阶段、保护内容超目标诊断。
+- 原有 Studio/设计文档并行修改保持原样。本期未改 Web/Studio/Host/iframe/SDK，未 commit/push。
 
-### 13.2 配置与估算
+现状说明：[上下文整理](../docs/technical/context-compaction.md)、[API 与存储](../docs/data-formats/runtime-v2-contract.md)、[耐久决定](../docs/decisions/2026-11-13-context-compaction-strategies.md)。旧前端档位表单不能表示任意数值；失败输入恢复与重试 UI 另期接入。
 
-- [ ] 两策略都要求主输出；滑窗另要求显式窗口。未知、混合、零／负／小数／不安全整数配置拒绝。
-- [ ] 新旧配置、同策略部分 PATCH、跨策略完整替换、导入导出及旧本地草稿均符合契约。
-- [ ] 模型窗口收紧、输出上限、`T > 0` 的配置校验与内容超额放行分别验证。
-- [ ] 每次主模型实际 maxTokens 等于 budget.max_output_tokens；摘要另用内部值。
-- [ ] 纯追加时复用真实 input + 实际回填／新增粗估；summary usage 和累计 usage 不能作为上下文长度。
-- [ ] system／状态／工具／历史／摘要／策略／模型／序列化变化时全量粗估，包含本轮实际新 system。
-- [ ] 未回填 thinking／扩展尾块不计入新增；缓存输入只计一次。
-- [ ] SDK 默认 usage 与真实报告零值区分；未报告保持未知，不污染估算基准。
-- [ ] 中英文、JSON、emoji、工具 schema、请求包装使用确定性固定规则；无自动校准字段或更新路径。
-- [ ] 原投影与摘要候选比较收益时使用同一全量固定估算。
+### 后续清理：旧 tokenizer 路径
 
-### 13.3 滚动摘要与滑窗
+按用户追加指令，删除 model/tokenizers 的词表/许可证/说明、@huggingface/tokenizers 依赖与锁文件记录、旧 BPE measure 接口、Measurement/BudgetReport/fits 检查及 fakeMeasurement 测试桩。保留摘要独立预算、请求身份与离线 payload 预览；DeepSeek 消息顺序适配移至 PiGateway 独立判断。相关回归直接验证 preview/发送一致性和 Direct 顺序。
 
-- [ ] 摘要覆盖完整连续前缀，保留最近 5 个完整旧回合和必要内容；旧摘要迭代无遗漏／重复。
-- [ ] toolCall／toolResults、失败／停止的合法正文及 gaps 不被拆散或错误改写为已完成事实。
-- [ ] 长历史顺序分批，单批完整请求符合独立预算；超过 8 次才能覆盖全部范围时失败。
-- [ ] 第一个或后续摘要批次 error／empty／length／异常流即失败，不继续下一批，不主生成。
-- [ ] 固定摘要输入无法容纳新片段时失败；不递归压缩提示词或上一批摘要。
-- [ ] 有效摘要超软目标仍继续；无收益保留原投影，既不提交摘要也不重试，费用照实。
-- [ ] 滑窗保留最大完整连续后缀，不跳过邻近大回合；必要内容过大时保留 0 个旧回合继续。
-- [ ] 滑窗不创建 summary 请求或 compaction Entry；窗口扩大恢复原始历史。
-- [ ] rolling → sliding 忽略但保留摘要；切回时恢复摘要及全部未覆盖历史。
-
-### 13.4 保存、失败、取消和恢复
-
-- [ ] 摘要全部成功后与 user Entry 同事务提交；未提交阶段失败／取消，tip 和原历史不变。
-- [ ] 摘要提交后主生成失败／停止，摘要保留，世界状态按原终态规则处理。
-- [ ] 无 user Entry 的摘要失败和零模型调用准备失败都有可查询终态、错误原因及一次失败通知。
-- [ ] GET Run 与 run.failed 终态／错误一致；准备失败 messages 为空，记录不混入叙事历史。
-- [ ] 第 N 批失败时前面请求的真实费用保留，未报告用量仍未知；重复封账不重复累加。
-- [ ] 准备期 pending 在重启后归档为中断；不是先清 journal 再丢失原因。
-- [ ] 最近 64 个准备终态支持查询／去重；淘汰仅影响明细，累计用量不变，已建 user 的去重范围不缩短。
-- [ ] 候选来源不符、tip 冲突、重复接受及提交失败不会重复摘要、误推进边界或发送主生成。
-
-### 13.5 验证范围
-
-后续实现使用临时 SQLite、fake Provider 和离线 SDK transport；不默认调用付费模型。优先更新：
-
-- `apps/server/test/presets.test.ts`
-- `apps/server/test/budget-v2.test.ts`
-- `apps/server/test/summary-budget.test.ts`
-- `apps/server/test/compaction-lifecycle.test.ts`
-- `apps/server/test/usage.test.ts`
-- `apps/server/test/runtime.test.ts`
-
-按行为补充估算、滑窗、策略切换、一次准备及准备失败查询用例。涉及 UI 时验证两种表单、保存往返、旧草稿和失败展示。文档修订阶段只检查方案一致性、Markdown／JSON／链接及 diff，不运行全套代码或浏览器回归。
-
-## 14. 依据与交付边界
-
-- 本轮用户决定优先：每 Run 前一次触发决策，Run 内无预算管理；超过策略预算继续；摘要失败或 Provider 硬窗口拒绝正常失败，由用户重试。
-- 配置与模块决定：context 内策略模式，滚动摘要／滑动窗口，两者配置最大输出，滑窗显式配置上下文上限。
-- 继续遵循：估算和计费分开、原始历史保留、权威状态及权限不变、关联边界完整、Runtime 接受候选并负责生命周期。
-- 当前实现参考：[上下文压缩](../docs/technical/context-compaction.md)、[Runtime v2](../docs/technical/runtime-context-v2.md)、[Runtime 架构计划](sr-runtime-context-architecture-v2.md)及第 11 节源码。
-- 历史背景：[滞后式压缩 v1](sr-context-budget-and-lagged-compaction-v1.md)。其中清理数据、旧容量和仅看上一轮 totalTokens 的规则不作为实施要求。
-- 外部参考：[Pi 压缩说明](https://pi.dev/docs/latest/compaction)、[Pi 压缩实现](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/compaction/compaction.ts)。借鉴阈值判断、连续前缀摘要与 usage 加尾部估算思路；SR 的一次准备、固定保留规则、失败处理和用户配置以本文为准，不继承 Pi 的 Run 内检查或 overflow 自动恢复。前序已对照 1.5.0 发布包，本次也核对官方说明；main/latest 仅用于定位，不作为运行时依赖版本。
-- 本文定义未来实施及验收。此次只修订本计划，不执行 P1–P5，不宣称当前运行时代码已具备上述行为。
+清理后根 typecheck、lint、test、build 通过；46 个文件、239 项测试通过（移除已删除计量接口的 5 个参数化结果检查）。独立复核确认生产/测试无旧接口残留，锁文件仅删除 tokenizer 记录；未改前端、SDK 或真实数据。

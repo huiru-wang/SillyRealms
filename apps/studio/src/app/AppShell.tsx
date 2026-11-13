@@ -1,6 +1,6 @@
 import {useCallback,useEffect,useState} from 'react';
 import {Link,NavLink,Outlet,useLocation,useMatch,useNavigate} from 'react-router-dom';
-import {BookOpen,Box,Layers3,Menu,MessageCircle,Moon,PanelLeftClose,PanelLeftOpen,Settings,Sun,X} from 'lucide-react';
+import {BookOpen,Box,Ellipsis,Layers3,Menu,MessageCircle,Moon,PanelLeftClose,PanelLeftOpen,Settings,Sun,X} from 'lucide-react';
 import {Modal} from '../components/ui/Modal';
 import {useTheme} from '../hooks/useTheme';
 import {usePresetStore} from '../features/presets/PresetStore';
@@ -8,6 +8,12 @@ import styles from './AppShell.module.css';
 
 const NAV=[
   {title:'世界卡',path:'/worlds',Icon:BookOpen}
+] as const;
+const MOBILE_NAV=[
+  {path:'/worlds',label:'世界卡',Icon:BookOpen},
+  {path:'/sessions',label:'会话',Icon:MessageCircle},
+  {path:'/presets',label:'预设',Icon:Layers3},
+  {path:'/more',label:'更多',Icon:Ellipsis}
 ] as const;
 
 function getCollapse(){
@@ -25,6 +31,7 @@ export function AppShell(){
   const nav=useNavigate();
   const location=useLocation();
   const isWorldDetail=Boolean(useMatch('/worlds/:worldId'));
+  const showMobileNav=['/worlds','/sessions','/presets','/more'].includes(location.pathname.replace(/\/+$/,'')||'/');
   const {presets,defaultPresetId}=usePresetStore();
   const presetShortcuts=[...presets.filter(preset=>preset.id===defaultPresetId),...presets.filter(preset=>preset.id!==defaultPresetId)].slice(0,2);
   const toggleCollapsed=()=>{
@@ -105,7 +112,10 @@ export function AppShell(){
         </div>
       </div>
     </aside>
-    <main className={[styles.main,isWorldDetail?styles.worldDetailMain:''].join(' ')} id="main-content" tabIndex={-1}><Outlet/></main>
+    <main className={[styles.main,isWorldDetail?styles.worldDetailMain:'',showMobileNav?styles.mobileListMain:''].join(' ')} id="main-content" tabIndex={-1}><Outlet context={{theme,toggleTheme}}/></main>
+    {showMobileNav&&<nav className={styles.mobileNav} aria-label="手机主导航">
+      {MOBILE_NAV.map(({path,label,Icon})=><NavLink key={path} to={path} end aria-label={label} className={({isActive})=>[styles.mobileNavItem,isActive?styles.mobileNavSelected:''].join(' ')}><Icon size={20} strokeWidth={1.8} aria-hidden="true"/><span>{label}</span></NavLink>)}
+    </nav>}
     {showSettings&&<Modal title="外观设置" onClose={closeSettings}>
       <p>这里用于验证 SillyRealms 新平台的设置弹窗和主题交互，不会修改现有 SR 配置。</p>
       <div className={styles.settingRow}><span>当前主题</span><button onClick={toggleTheme}>{theme==='dark'?'深色':'浅色'} · 点击切换</button></div>

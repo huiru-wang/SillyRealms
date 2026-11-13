@@ -1,8 +1,7 @@
 import { afterEach,expect,it,vi } from 'vitest';
-import { runtimeFixture,textGateway,tail,drain,testModel } from './fixtures/runtime-v2.js';
+import { runtimeFixture,textGateway,tail,drain } from './fixtures/runtime-v2.js';
 import { UsageStore } from '../src/runtime/persistence/usage-store.js';
 import { RunStore } from '../src/runtime/persistence/run-store.js';
-import type { ModelGateway } from '../src/runtime/model/pi-gateway.js';
 import { fakeCredentials } from './fixtures/db-seed.js';
 
 afterEach(()=>vi.restoreAllMocks());
@@ -87,23 +86,23 @@ it('rolls back state and result atomically when the final state write fails',asy
     expect(runtime.busy('session')).toBe(false);
   }finally{db.close();}
 });
-it('rejects unsupported adapters and unknown measurement before a generation request',async()=>{
+it('rejects unsupported Direct ordering but allows a model without a dedicated tokenizer',async()=>{
   for(const unsupported of [false,true]){
     let calls=0;
-    const gateway:ModelGateway={resolve:()=>testModel,toolVerified:()=>true,supportsDirect:()=>!unsupported,
-      measure:async()=>({tokens:null,quality:'unknown',method:'unsupported',version:'1'}),
-      stream:()=>{calls++;throw Error('must not run');}};
+    const gateway=textGateway('story'+tail());gateway.supportsDirect=()=>!unsupported;
+    const stream=gateway.stream;gateway.stream=(...args)=>{calls++;return stream(...args);};
     const {db,runtime}=runtimeFixture(gateway);
     try {
-      await expect(runtime.prepare('session','go','request','opening')).rejects.toMatchObject({code:unsupported?'NARRATIVE_SYSTEM_ORDER_UNSUPPORTED':'CONTEXT_MEASUREMENT_UNSUPPORTED'});
-      expect(calls).toBe(0);expect(runtime.busy('session')).toBe(false);
+      if(unsupported)await expect(runtime.prepare('session','go','request','opening')).rejects.toMatchObject({code:'NARRATIVE_SYSTEM_ORDER_UNSUPPORTED'});
+      else {const run=await runtime.prepare('session','go','request','opening');await drain(run.stream);expect(runtime.status('session',run.runId)?.status).toBe('completed');}
+      expect(calls).toBe(unsupported?0:1);expect(runtime.busy('session')).toBe(false);
     }finally{db.close();}
   }
 });
-it('keeps configuration frozen across asynchronous measurement and permits idempotent finalization only once',async()=>{
+it('keeps configuration frozen across asynchronous payload preview and permits idempotent finalization only once',async()=>{
   let entered!:()=>void,release!:()=>void;const ready=new Promise<void>(r=>entered=r),gate=new Promise<void>(r=>release=r);
-  const gateway=textGateway('story'+tail());const measure=gateway.measure!;
-  gateway.measure=async(m,c,o)=>{entered();await gate;return measure(m,c,o);};
+  const gateway=textGateway('story'+tail());
+  gateway.preview=async()=>{entered();await gate;return undefined;};
   const {db,runtime,preset}=runtimeFixture(gateway);
   try {
     const preparing=runtime.prepare('session','go','request','opening');await ready;

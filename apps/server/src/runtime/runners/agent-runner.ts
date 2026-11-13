@@ -17,11 +17,12 @@ export class AgentRunner {
   async execute(args: RunnerArgs): Promise<RunnerResult> {
     const { sessionId, runId, prepared, task, runContext } = args;
     const { model, config, execution, workspace, modules, active } = prepared;
-    const writer = createStoryWriter(args, this.store, this.usage, this.emit);
+    const writer = createStoryWriter(args, this.usage, this.emit);
     let first = true, stateToolCalled = false, high = '';
     try {
       while (!task.stopped) {
-        const request = first ? execution.request! : await this.context.prepareContinuation(prepared,
+        execution.progress.modelPhase = first ? 'generation' : 'continuation';
+        const request = first ? execution.request! : await this.context.buildContinuationRequest(prepared,
           active.size && !stateToolCalled ? requiredToolChoice(model) : undefined);
         const meta = runContext.request(first ? 'generation' : 'continuation', first ? prepared.contextComposition : undefined);
         first = false;
@@ -47,6 +48,7 @@ export class AgentRunner {
         const text = final.content.filter(part => part.type === 'text').map(part => part.text).join('');
         const savedId = this.store.completeAssistant(sessionId, runId, final, text, writer.id, writer.text);
         execution.progress.latestEntryId = savedId;
+        task.liveMessage = undefined;
         try { this.usage.attachEntry(sessionId, runId, meta.requestId, savedId); }
         catch (error) { debugLog('用量关联失败', { runId, errorCode: normalizeError(error).errorCode }); }
         if (!writer.id && text) this.emit(sessionId, 'message.created', {

@@ -4,7 +4,6 @@ import { SRRuntime } from '../../src/runtime/sr-runtime.js';
 import type { ModelGateway } from '../../src/runtime/model/pi-gateway.js';
 import type { CredentialStore } from '../../src/infrastructure/credentials/store.js';
 import { seedWorld, seedSession, fakeCredentials } from './db-seed.js';
-import { fakeMeasurement } from './fake-gateway.js';
 export const testModel: Model<Api> = {
   id:'fake',name:'fake',provider:'fake',api:'openai-completions',baseUrl:'http://localhost',
   reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:32768,maxTokens:4096,
@@ -15,7 +14,7 @@ export function response(text:string,stopReason:AssistantMessage['stopReason']='
     stopReason,timestamp:1};
 }
 export function textGateway(text:string,opts:{chunks?:string[];reason?:AssistantMessage['stopReason'];finalOnly?:boolean}={}):ModelGateway {
-  return {resolve:()=>testModel,measure:fakeMeasurement,supportsDirect:()=>true,toolVerified:()=>true,
+  return {resolve:()=>testModel,supportsDirect:()=>true,toolVerified:()=>true,
     stream:()=>({async *[Symbol.asyncIterator](){
       if(!opts.finalOnly)for(const delta of opts.chunks??[text])yield {type:'text_delta',delta,contentIndex:0,partial:{} as never} as AssistantMessageEvent;
       const message=response(text,opts.reason);
@@ -31,7 +30,7 @@ export function runtimeFixture(gateway:ModelGateway,mode:'direct'|'agent'='direc
   }});
   const preset=JSON.parse(String(db.prepare('SELECT config_json FROM presets WHERE id=?').get('sr-default-preset')!.config_json));
   preset.capabilities={state_update:{enabled:true,prompt:''},action_suggestions:{enabled:true,count:3,prompt:''}};
-  preset.budget.max_output_tokens=128;
+  preset.budget={strategy:'rolling_summary',max_context_tokens:Math.min(16000,Math.floor(gateway.resolve('fake','fake')!.contextWindow*.8)),max_output_tokens:128};
   db.prepare('UPDATE presets SET config_json=? WHERE id=?').run(JSON.stringify(preset),'sr-default-preset');
   seedSession(db,'session','world','sr-default-preset','p','opening',null,'{}',1,1,'test-model',mode);
   db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,state,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')

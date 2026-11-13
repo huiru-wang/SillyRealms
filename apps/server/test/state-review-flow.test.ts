@@ -1,4 +1,3 @@
-import { fakeMeasurement } from './fixtures/fake-gateway.js';
 import {expect,it} from 'vitest';
 import type {Api,AssistantMessageEvent,Model,ToolChoice} from '@earendil-works/pi-ai';
 import type {ModelGateway} from '../src/runtime/model/pi-gateway.js';
@@ -13,8 +12,9 @@ const post=(body:unknown)=>({method:'POST',headers:{'content-type':'application/
 
 async function exercise(stateEnabled:boolean, updates:Array<{path:string,value:unknown}>,omitTool=false,override?:unknown[], later?:unknown[][]) {
   const db=openDatabase(':memory:');
+  db.prepare("UPDATE presets SET config_json=json_set(config_json,'$.budget.max_context_tokens',16000)").run();
   const calls:Array<{choice?:ToolChoice,tools:string[],payload:string}>=[];
-  const gateway:ModelGateway={resolve:()=>model,measure:fakeMeasurement,supportsDirect:()=>true,toolVerified:()=>true,stream:(_m,context,opts)=>({
+  const gateway:ModelGateway={resolve:()=>model,supportsDirect:()=>true,toolVerified:()=>true,stream:(_m,context,opts)=>({
     async *[Symbol.asyncIterator]() {
       const tools=context.tools?.map(t=>t.name)??[];
       calls.push({choice:opts.toolChoice,tools,payload:JSON.stringify(context.messages)});

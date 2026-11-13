@@ -11,6 +11,7 @@
     "build": "pnpm --filter @sillyrealms/web build",
     "test:browser": "node apps/web/test/composer/run.mjs && SR_BROWSER_ONLY=worldstory-font node apps/web/test/composer/run.mjs",
     "dev:studio": "pnpm --filter @sillyrealms/studio dev",
+    "dev:studio:mock": "pnpm --filter @sillyrealms/studio dev:mock",
     "build:studio": "pnpm --filter @sillyrealms/studio build",
     "test:studio:visual": "pnpm --filter @sillyrealms/studio test:visual"
   }

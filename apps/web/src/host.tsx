@@ -55,7 +55,6 @@ export function SessionHost({id}:{id:string}) {
   const ready=useRef(false),connected=useRef(false),mountedRef=useRef(false),fatalRef=useRef(false),activeRef=useRef<string|null>(null),sendingRef=useRef(false);
   const renderRef=useRef<{code:string|null;messageCode:string|null;rules:unknown[];state:unknown}>({code:null,messageCode:null,rules:[],state:{}}),loadedRef=useRef(false);
   const terminal=useRef(new Set<string>());
-  const eventSourceOpened=useRef(false);
   const nonce=useMemo(()=>randomId(),[id]);
   const updateDraft=useCallback((value:string)=>{draftRevision.current++;draftRef.current=value;setDraft(value);setDraftUndo(null);},[]);
   const base=`v1/sessions/${id}`;
@@ -97,21 +96,24 @@ export function SessionHost({id}:{id:string}) {
 
   // Install the trusted handshake before a cached iframe can emit sr-ready.
   useLayoutEffect(()=>{
-    ready.current=false;connected.current=false;mountedRef.current=false;fatalRef.current=false;activeRef.current=null;eventSourceOpened.current=false;
+    ready.current=false;connected.current=false;mountedRef.current=false;fatalRef.current=false;activeRef.current=null;
     draftRevision.current++;setDraft('');setExpanded(true);setFatal(false);setMounted(false);setLoaded(false);setOnline(false);setActiveRun(null);setNotice('');setSettingsOpen(false);setSettingsError('');setPresets([]);setModelConfigs([]);setModelConfig(null);setCapabilities(null);setDraftUndo(null);loadedRef.current=false;renderRef.current={code:null,messageCode:null,rules:[],state:{}};terminal.current.clear();
     const stream=new EventSource(`/api/${base}/events`);
     const matcher=new MessageMatcher();
     let recoverySequence=0;
     const restoreRun=(result:any)=>{
       if(!result||typeof result.runId!=='string')return;
+      const {input:_input,...publicResult}=result;
       if(['completed','failed','stopped'].includes(result.status)){
         terminal.current.add(result.runId);
         if(activeRef.current===result.runId){activeRef.current=null;setActiveRun(null);}
-        port.current?.postMessage({type:'event',event:{event:'run.'+result.status,data:{...result,messages:result.messages??[]}}});
+        port.current?.postMessage({type:'event',event:{event:'run.'+result.status,data:{...publicResult,messages:result.messages??[]}}});
       }else if(!terminal.current.has(result.runId)){
         activeRef.current=result.runId;setActiveRun(result.runId);
         phaseRef.current=result.phase??'preparing';setPhase(phaseRef.current);
-        port.current?.postMessage({type:'event',event:{event:'run.phase',data:{runId:result.runId,phase:phaseRef.current}}});
+        port.current?.postMessage({type:'event',event:{event:'run.snapshot',data:{runId:result.runId,
+          status:result.status??'preparing',messages:result.messages??[],phase:phaseRef.current,
+          executionMode:result.executionMode,capabilities:result.capabilities,extensions:result.extensions}}});
       }
     };
     const recover=async()=>{
@@ -137,7 +139,7 @@ export function SessionHost({id}:{id:string}) {
         }
       }catch{if(!gone)setNotice('运行状态恢复失败，请重新连接后重试');}
     };
-    stream.onopen=()=>{connected.current=true;void recover();setOnline(true);if(eventSourceOpened.current)setUsageRevision(value=>value+1);eventSourceOpened.current=true;if(ready.current)port.current?.postMessage({type:'connected'});};
+    stream.onopen=()=>{connected.current=true;void recover();setOnline(true);setUsageRevision(value=>value+1);if(ready.current)port.current?.postMessage({type:'connected'});};
     stream.onerror=()=>{connected.current=false;setOnline(false);};
     stream.addEventListener('usage.updated',()=>setUsageRevision(value=>value+1));
     for(const name of ['run.created','run.phase','run.delta','run.completed','run.failed','run.stopped','state.changed'])stream.addEventListener(name,(event:MessageEvent)=>{

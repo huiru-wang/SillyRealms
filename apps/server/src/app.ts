@@ -22,7 +22,7 @@ export function createApp(db: DatabaseSync, credentials: CredentialStore = new M
   app.use('*', responseEnvelope);
   app.onError((_error,c)=>c.json(failure(ErrorCodes.INTERNAL_ERROR),500));
   app.notFound(c=>c.req.path.startsWith('/api/')?c.json(failure(ErrorCodes.NOT_FOUND),404):c.text('Not Found',404));
-  app.use('/api/*', async (c,next)=>{const start=Date.now();try{await next();}finally{debugLog('会话 API',{method:c.req.method,path:c.req.path,query:c.req.query(),status:c.res.status,durationMs:Date.now()-start});}});
+  app.use('*', async (c,next)=>{const start=Date.now();try{await next();}finally{debugLog('HTTP',{method:c.req.method,path:c.req.path,query:c.req.query(),status:c.res.status,durationMs:Date.now()-start});}});
   app.use('*', async (c, next) => {
     const origin = c.req.header('origin');
     if (origin && !(origin === 'null' && c.req.method === 'GET' && !c.req.path.startsWith('/api/'))) {

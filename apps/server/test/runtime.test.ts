@@ -1,4 +1,3 @@
-import { fakeMeasurement } from './fixtures/fake-gateway.js';
 import { seedWorld, seedSession } from './fixtures/db-seed.js';
 import { expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
@@ -8,7 +7,7 @@ import type { ModelGateway } from '../src/runtime/model/pi-gateway.js';
 import type { Api, AssistantMessageEvent, Model } from '@earendil-works/pi-ai';
 
 const model:Model<Api> = { id:'fake',name:'fake',provider:'fake',api:'openai-completions',baseUrl:'http://localhost',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:32768,maxTokens:1024 };
-class MemoryCredentials implements CredentialStore { async set(){} async get(){return 'dummy';} async delete(){} }
+class MemoryCredentials implements CredentialStore { async set(){} async get(){return 'dummy';} deleteSync(){} }
 function setup(gateway:ModelGateway) {
   const db = openDatabase(':memory:'), now = Date.now();
   const world = { spec:'world_card',spec_version:'0.1',data:{name:'test',characters:[{id:'player',name:'player',player_selectable:true,description:'{{user}}'}],openings:[{id:'opening',name:'start',content:'opening'}]} };
@@ -24,7 +23,7 @@ function setup(gateway:ModelGateway) {
 
 it('V1 runs survive an event disconnect and lock all sessions in their world',async()=>{
  let release!:()=>void;let started!:()=>void;const ready=new Promise<void>(r=>{started=r;});const gate=new Promise<void>(r=>{release=r;});
- const gateway:ModelGateway={resolve:()=>model,measure:fakeMeasurement,supportsDirect:()=>true,toolVerified:()=>true,stream:()=>({async *[Symbol.asyncIterator](){yield {type:'text_delta',delta:'one',contentIndex:0,partial:{} as never} as AssistantMessageEvent;started();await gate;yield {type:'text_delta',delta:'two',contentIndex:0,partial:{} as never} as AssistantMessageEvent;yield {type:'done',reason:'stop',message:{role:'assistant',content:[{type:'text',text:'onetwo'}],api:'openai-completions',provider:'fake',model:'fake',usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:0}} as AssistantMessageEvent;}})};
+ const gateway:ModelGateway={resolve:()=>model,supportsDirect:()=>true,toolVerified:()=>true,stream:()=>({async *[Symbol.asyncIterator](){yield {type:'text_delta',delta:'one',contentIndex:0,partial:{} as never} as AssistantMessageEvent;started();await gate;yield {type:'text_delta',delta:'two',contentIndex:0,partial:{} as never} as AssistantMessageEvent;yield {type:'done',reason:'stop',message:{role:'assistant',content:[{type:'text',text:'onetwo'}],api:'openai-completions',provider:'fake',model:'fake',usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:0}} as AssistantMessageEvent;}})};
  const {db,app}=setup(gateway);const now=Date.now();seedSession(db,'other','world','preset','player','other-entry',null,'{}',now,now,'model-config');db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,state,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('other-entry','other',null,'other-open',1,'message','assistant',0,now,JSON.stringify({message:{role:'assistant',content:'opening'}}),'[]','{}');
  const event=await app.request('/api/v1/sessions/session/events');const reader=event.body!.getReader();
  const send=(sid:string,tip:string)=>app.request('/api/v1/sessions/'+sid+'/runs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:'go',requestId:crypto.randomUUID(),expectedTipEntryId:tip})});
@@ -37,7 +36,7 @@ it('V1 runs survive an event disconnect and lock all sessions in their world',as
 it('stops a Run while a continuation is waiting for the model',async()=>{
   let started!:()=>void;const ready=new Promise<void>(resolve=>{started=resolve;});
   let calls=0;
-  const gateway:ModelGateway={resolve:()=>model,measure:fakeMeasurement,supportsDirect:()=>true,toolVerified:()=>true,stream:(_m,_context,opts)=>({async *[Symbol.asyncIterator](){
+  const gateway:ModelGateway={resolve:()=>model,supportsDirect:()=>true,toolVerified:()=>true,stream:(_m,_context,opts)=>({async *[Symbol.asyncIterator](){
     calls++;
     if(calls===1){
       yield {type:'done',reason:'toolUse',message:{role:'assistant',content:[{type:'toolCall',id:'tool',name:'unknown',arguments:{}}],api:'openai-completions',provider:'fake',model:'fake',usage:{input:5,output:1,cacheRead:0,cacheWrite:0,totalTokens:6,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'toolUse',timestamp:Date.now()}} as AssistantMessageEvent;
@@ -66,7 +65,7 @@ it.each([
 ])('$label in SSE and persisted run status', async ({ thrown, expected, message }) => {
   const gateway: ModelGateway = {
     resolve: () => model,
-    measure:fakeMeasurement,supportsDirect:()=>true,toolVerified: () => true,
+    supportsDirect:()=>true,toolVerified: () => true,
     stream: () => ({ async *[Symbol.asyncIterator]() { throw thrown; } }),
   };
   const { db, app } = setup(gateway);
@@ -101,7 +100,7 @@ it.each([
 it('reports asynchronous preflight failures through the same SSE fields', async () => {
   const limited: Model<Api> = { ...model, maxTokens: 32 };
   const gateway: ModelGateway = {
-    resolve: () => limited, measure:fakeMeasurement,supportsDirect:()=>true,toolVerified: () => true,
+    resolve: () => limited, supportsDirect:()=>true,toolVerified: () => true,
     stream: () => ({ async *[Symbol.asyncIterator]() { throw Error('should not call model'); } }),
   };
   const { db, app } = setup(gateway);
@@ -120,7 +119,7 @@ it('reports asynchronous preflight failures through the same SSE fields', async 
     }
     const failed=/event: run.failed\ndata: ([^\n]+)/.exec(output);
     expect(JSON.parse(failed![1]!)).toMatchObject({
-      errorCode:'CONTEXT_BUDGET_EXCEEDED',errorMessage:'上下文超出模型允许范围',
+      errorCode:'INVALID_PRESET_BUDGET',errorMessage:'预设上下文预算无效',
     });
   } finally { await reader.cancel(); db.close(); }
 });

@@ -37,7 +37,7 @@ import type { CredentialStore } from '../../src/infrastructure/credentials/store
 export const fakeCredentials: CredentialStore = {
   async get(){ return 'fake-key'; },
   async set(){},
-  async delete(){},
+  deleteSync(){},
 };
 export function configureWorldModel(db:DatabaseSync, worldId:string, modelId='test-model') {
   seedModel(db,modelId);

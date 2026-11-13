@@ -1,4 +1,3 @@
-import { fakeMeasurement } from './fixtures/fake-gateway.js';
 import { expect, it } from 'vitest';
 import type { Api, AssistantMessageEvent, Model } from '@earendil-works/pi-ai';
 import { ModelClient } from '../src/runtime/model/model-client.js';
@@ -15,7 +14,7 @@ it('stops waiting for an uncooperative provider without consuming late responses
   let release!: () => void;
   const gateway: ModelGateway = {
     resolve: () => model,
-    measure:fakeMeasurement,supportsDirect:()=>true,toolVerified: () => true,
+    supportsDirect:()=>true,toolVerified: () => true,
     stream: () => ({
       [Symbol.asyncIterator]() {
         let nextCount = 0;

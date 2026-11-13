@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest';
-import {applyRunEvent,displayMessages,mergeInitial} from '../../../packages/sr-sdk/src/story-history.js';
+import {applyRunEvent,displayMessages,hasDeltaGap,mergeHistory,mergeInitial} from '../../../packages/sr-sdk/src/story-history.js';
 import type {Run,RunEvent} from '../../../packages/sr-sdk/src/run-contract.js';
 
 it('does not duplicate deltas already in the initial history and keeps terminal messages',()=>{
@@ -27,4 +27,25 @@ it('keeps terminal results authoritative over late preparation, delta and create
   expect(applyRunEvent(done,{event:'run.delta',data:{runId:'r',messageId:'a',text:'late'}})).toBe(done);
   expect(applyRunEvent(done,{event:'run.created',data:{runId:'r',messages:[]}})).toBe(done);
   expect(mergeInitial(done,[{event:'run.phase',data:{runId:'r',phase:'narrative'}}])).toEqual(done);
+});
+
+it('merges overlapping UTF-16 deltas and initial snapshots without losing newer suffixes',()=>{
+  const runs:Run[]=[{id:'r',status:'running',messages:[{id:'m',role:'assistant',text:'A😀'}]}];
+  const delta:RunEvent={event:'run.delta',data:{runId:'r',messageId:'m',offset:1,text:'😀BC'}};
+  const merged=mergeInitial(runs,[delta]);
+  expect(merged[0]!.messages[0]!.text).toBe('A😀BC');
+  expect(applyRunEvent(merged,delta)).toBe(merged);
+  expect(mergeHistory(merged,runs)[0]!.messages[0]!.text).toBe('A😀BC');
+  expect(applyRunEvent(merged,{event:'run.snapshot',data:{runId:'r',status:'preparing',phase:'preparing',messages:[]}})[0]!.phase).toBe('narrative');
+  expect(hasDeltaGap(runs,{event:'run.delta',data:{runId:'r',messageId:'m',offset:4,text:'C'}})).toBe(true);
+  expect(hasDeltaGap(runs,{event:'run.delta',data:{runId:'r',messageId:'m',offset:0,text:'wrong'}})).toBe(true);
+});
+
+it('recovers running messages from snapshots, preserves historical identities, and clears uncommitted text on terminal failure',()=>{
+  const old:Run={id:'old',status:'completed',messages:[{id:'old-m',role:'assistant',text:'history'}]};
+  const live=applyRunEvent([old],{event:'run.snapshot',data:{runId:'r',status:'running',phase:'narrative',messages:[{id:'m',role:'assistant',text:'live'}]}});
+  expect(live[0]).toBe(old);
+  const done=applyRunEvent(live,{event:'run.failed',data:{runId:'r',messages:[],errorCode:'STATE_COMMIT_FAILED',errorMessage:'failed'}});
+  expect(done[1]!.messages).toEqual([]);
+  expect(applyRunEvent(done,{event:'run.snapshot',data:{runId:'r',status:'running',messages:[{id:'m',role:'assistant',text:'late'}]}})).toBe(done);
 });

@@ -2,7 +2,7 @@ import React,{useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import {renderWorldDocument} from './render.js';
 
 const baseStyle=`html,body{margin:0;min-height:0;background:var(--sr-document-background,#fff)}body{font:15px/1.7 system-ui,sans-serif;color:var(--sr-document-ink,#20212a);overflow-wrap:anywhere}img{max-width:100%;height:auto}pre{overflow-x:auto}table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse}th,td{border:1px solid #8886;padding:.35em .6em}a{color:inherit;text-decoration:underline}blockquote{margin:1em 0;padding-left:1em;border-left:3px solid #8886}p,ul,ol,pre,blockquote{margin:.7em 0}h1,h2,h3,h4{line-height:1.3;margin:1.1em 0 .5em}body>:first-child{margin-top:0}body>:last-child{margin-bottom:0}`;
-export function WorldDocumentRenderer({content,title='文档',presentation='isolated',density='reading',className=''}:{content:string;title?:string;presentation?:'isolated'|'inline';density?:'reading'|'chat';className?:string}){
+export function WorldDocumentRenderer({content,title='文档',presentation='isolated',density='reading',className='',showStyleWarning=true}:{content:string;title?:string;presentation?:'isolated'|'inline';density?:'reading'|'chat';className?:string;showStyleWarning?:boolean}){
   const frame=useRef<HTMLIFrameElement>(null);
   const [themeVersion,setThemeVersion]=useState(0);
   const [background,setBackground]=useState('');
@@ -33,5 +33,5 @@ export function WorldDocumentRenderer({content,title='文档',presentation='isol
     return()=>{el.removeEventListener('load',setup);doc?.removeEventListener('load',update,true);observer?.disconnect();};
   },[srcDoc,presentation]);
   if(presentation==='inline')return <div className={`sr-rich ${className}`} data-density={density} dangerouslySetInnerHTML={{__html:rendered.html}}/>;
-  return <>{rendered.removedStyles&&<p role="status" style={{fontSize:"0.8rem",opacity:0.75}}>部分文档样式因安全限制未显示。</p>}<iframe ref={frame} title={title} className={`character-document ${className}`} sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcDoc={srcDoc} style={{display:'block',width:'100%',border:0}}/></>;
+  return <>{showStyleWarning&&rendered.removedStyles&&<p role="status" style={{fontSize:"0.8rem",opacity:0.75}}>部分文档样式因安全限制未显示。</p>}<iframe ref={frame} title={title} className={`character-document ${className}`} sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcDoc={srcDoc} style={{display:'block',width:'100%',border:0}}/></>;
 }

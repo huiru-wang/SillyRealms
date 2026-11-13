@@ -35,7 +35,7 @@ window.fetch=async(input,init)=>{
       availability:{applicable:mode==='direct'},activeRun:active};
   }else if(path==='/api/v1/worlds/world')data={item:{data:{characters:[],state:{scopes:{message:{score:{type:'number',initial:1}}}}}}};
   else if(path==='/api/v1/sessions/test/state')data={global:{},session:{},message:{score:1}};
-  else if(path.startsWith('/api/v1/sessions/test/runs?'))data={runs:history,nextCursor:null,hasMore:false};
+  else if(path.startsWith('/api/v1/sessions/test/runs?'))data={runs:[...history,...(active?.messages?[active]:[])],nextCursor:null,hasMore:false};
   else if(path.startsWith('/api/v1/sessions/test/runs/')){
     const runId=path.split('/').at(-1),found=active?.id===runId?active:history.find(run=>run.id===runId);
     if(!found)return new Response(JSON.stringify({success:false,errorCode:'RUN_NOT_FOUND',errorMessage:'运行不存在',data:null}),{status:404,headers:{'content-type':'application/json'}});
@@ -47,6 +47,13 @@ window.fetch=async(input,init)=>{
 (globalThis as any).__runtimeTest={
   calls,
   begin(){active={id:'run-2',status:'preparing',phase:'preparing',executionMode:'direct',capabilities:{revision:0,stateUpdate:{enabled:true,required:true},actionSuggestions:{enabled:true,count:3}}};source.emit('run.phase',{runId:'run-2',phase:'preparing'});},
+  stream(text:string,emit=true){
+    active.status='running';active.phase='narrative';
+    active.messages??=[{id:'u2',role:'user',text:'继续前进。'},{id:'a2',role:'assistant',text:''}];
+    const message=active.messages[1],offset=message.text.length;message.text+=text;
+    if(emit)source.emit('run.delta',{runId:active.id,messageId:message.id,offset,text});
+  },
+  duplicate(){source.emit('run.delta',{runId:active.id,messageId:'a2',offset:0,text:active.messages[1].text});},
   disconnect(){source.onerror?.();},
   finishOffline(){active=null;history.push({id:'run-2',executionMode:'direct',status:'completed',phase:'finalized',messages:[{id:'u2',role:'user',text:'继续前进。'},{id:'a2',role:'assistant',text:'书房门开了。'}]});},
   reconnect(){source.onopen?.();},

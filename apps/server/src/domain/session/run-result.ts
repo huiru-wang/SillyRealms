@@ -10,6 +10,11 @@ export function publicRunResult(raw: Record<string, any>): Record<string, any> {
     result.phase = interrupted ? 'finalized' : raw.phase;
   if (interrupted) Object.assign(result, errorInfo(ErrorCodes.RUN_INTERRUPTED), { phase: 'finalized' });
   else if (isErrorCode(raw.errorCode)) Object.assign(result, errorInfo(raw.errorCode));
+  if (raw.failure && ['preparation', 'generation', 'continuation', 'commit'].includes(raw.failure.stage) &&
+      ['configuration', 'summary', 'context_window', 'context_integrity', 'provider', 'persistence', 'interrupted'].includes(raw.failure.type))
+    result.failure = { stage: raw.failure.stage, type: interrupted ? 'interrupted' : raw.failure.type };
+  if (raw.recovery && ['resubmit', 'adjust_configuration', 'inspect'].includes(raw.recovery.action))
+    result.recovery = { inputSaved: raw.recovery.inputSaved === true, action: raw.recovery.action };
   if (raw.capabilities) result.capabilities = {
     revision: Number(raw.capabilities.revision ?? 0),
     stateUpdate: { enabled: raw.capabilities.stateUpdate?.enabled === true, required: raw.capabilities.stateUpdate?.required === true },

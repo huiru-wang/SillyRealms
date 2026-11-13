@@ -1,12 +1,12 @@
 import { ErrorCodes } from '../../common/error-codes.js';
 import { spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 
 export interface CredentialStore {
   set(id: string, key: string): Promise<void>;
   get(id: string): Promise<string | null>;
-  delete(id: string): Promise<void>;
+  deleteSync(id: string): void;
 }
 const exec = promisify(execFile);
 const service = 'SillyRealms.api-model';
@@ -34,9 +34,9 @@ export class MacKeychainStore implements CredentialStore {
     try { return (await exec('/usr/bin/security', ['find-generic-password', '-s', service, '-a', id, '-w', ...(this.keychainPath ? [this.keychainPath] : [])])).stdout.replace(/\r?\n$/, ''); }
     catch (err) { if ((err as { code?: number }).code === 44) return null; throw new Error(ErrorCodes.CREDENTIAL_STORE_ERROR); }
   }
-  async delete(id: string): Promise<void> {
+  deleteSync(id: string): void {
     if (process.platform !== 'darwin') throw new Error(ErrorCodes.CREDENTIAL_STORE_UNSUPPORTED);
-    try { await exec('/usr/bin/security', ['delete-generic-password', '-s', service, '-a', id, ...(this.keychainPath ? [this.keychainPath] : [])]); }
-    catch (err) { if ((err as { code?: number }).code !== 44) throw new Error(ErrorCodes.CREDENTIAL_STORE_ERROR); }
+    try { execFileSync('/usr/bin/security', ['delete-generic-password', '-s', service, '-a', id, ...(this.keychainPath ? [this.keychainPath] : [])], { stdio: 'ignore', timeout: 10_000 }); }
+    catch (err) { if ((err as { status?: number }).status !== 44) throw new Error(ErrorCodes.CREDENTIAL_STORE_ERROR); }
   }
 }

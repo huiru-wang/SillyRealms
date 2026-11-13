@@ -49,13 +49,13 @@
 }
 @media(max-width:760px){
  .page,:global([data-collapsed="true"]) .page{--page-inset:16px;padding-top:23px;padding-bottom:30px}
- .header{padding-left:50px;margin-bottom:27px;min-height:37px}
+ .header{padding-left:50px;margin-bottom:20px;min-height:37px}
  .header h1{font-size:23px}
  .header button{min-height:44px;padding:0 11px;font-size:13px}
  .body{display:block}
- .categories{flex-direction:row;gap:4px;overflow-x:auto;scrollbar-width:none;padding:0 0 15px;margin-bottom:9px}
+ .categories{flex-direction:row;gap:4px;overflow-x:auto;scrollbar-width:none;padding:0 0 6px;margin-bottom:4px}
  .categories::-webkit-scrollbar{display:none}
- .category{min-height:44px;padding:0 14px;font-size:13px}
+ .category{min-height:44px;padding:0 11px;font-size:13px}
  .gallery{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
  .cardText{padding:13px 12px}
  .cardTitle{font-size:14px}
@@ -66,3 +66,5 @@
 @media(max-width:390px){.gallery{gap:10px}}
 .loadMore{display:block;margin:24px auto 0;padding:10px 18px;border-radius:8px;background:var(--surface-hover);color:var(--text)}
 .loadMore:disabled{opacity:.6}
+@media(max-width:760px){.header{padding-left:0}}
+.mockLabel{font-size:12px;color:var(--text-muted)}

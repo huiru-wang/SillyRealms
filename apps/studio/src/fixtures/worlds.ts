@@ -24,3 +24,9 @@ export const worlds: World[] = [
   {id:'eden',title:'新伊甸',genre:'科幻 · 探索',description:'在未来文明的尽头寻找另一种可能。',cover:'/covers/eden.webp',categories:['多角色']},
   {id:'forest',title:'遗忘之森',genre:'奇幻 · 神秘',description:'密林深处，有些故事仍未被人记起。',cover:'/covers/forest.webp',categories:['多角色']},
 ];
+
+const extraWorldNames=['雾港来信','白昼列车','月下书院','深海档案','旧城灯火','雪原驿站','银河旅店','镜中花园','长夜电台','浮岛纪事','山海茶馆','远方灯塔'];
+export const mockWorlds:World[]=[...worlds,...extraWorldNames.map((title,index)=>{
+  const base=worlds[index%worlds.length];
+  return {...base,id:`mock-world-${index+1}`,title,description:`${title}的故事，等待新的旅人。`,roleNames:undefined};
+})];

@@ -38,3 +38,37 @@ it('serves the target V1 run history inside the common response envelope', async
     expect(await invalid.json()).toMatchObject({success:false,errorCode:'INVALID_CURSOR',data:null});
   } finally { db.close(); }
 });
+
+it('reads only the requested suffix and validates older links when that page is requested', () => {
+  const db = openDatabase(':memory:');
+  try {
+    const add = db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,payload,ext_data,timestamp) VALUES(?,?,?,?,?,\'message\',\'assistant\',?,\'{}\',1)');
+    const insert = (id: string, parent: string | null, run: string, seq: number) =>
+      add.run(id, 's', parent, run, seq, JSON.stringify({ message: { content: id } }));
+    insert('old', 'missing', 'r0', 1);
+    insert('middle', 'old', 'r1', 2);
+    insert('latest', 'middle', 'r2', 3);
+    const newest = historyRuns(db, 's', 'latest', 1);
+    expect(newest.runs.map(run => run.id)).toEqual(['r2']);
+    expect(newest.hasMore).toBe(true);
+    insert('new-tip', 'latest', 'r3', 4);
+    const older = historyRuns(db, 's', 'new-tip', 1, newest.nextCursor!);
+    expect(older.runs.map(run => run.id)).toEqual(['r1']);
+    expect(() => historyRuns(db, 's', 'new-tip', 1, older.nextCursor!)).toThrow('INVALID_PARENT_CHAIN');
+    insert('off-chain', null, 'other', 5);
+    const forged = Buffer.from(JSON.stringify({ sessionId: 's', before: 5 })).toString('base64url');
+    expect(() => historyRuns(db, 's', 'new-tip', 1, forged)).toThrow('INVALID_CURSOR');
+  } finally { db.close(); }
+});
+
+it('rejects cursors inside a Run and cyclic page ancestry', () => {
+  const db = openDatabase(':memory:');
+  try {
+    const add = db.prepare("INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,payload,timestamp) VALUES(?,'s',?,'run',?,'message','assistant','{}',1)");
+    add.run('a', null, 1); add.run('b', 'a', 2);
+    const cursor = Buffer.from(JSON.stringify({ sessionId: 's', before: 2 })).toString('base64url');
+    expect(() => historyRuns(db, 's', 'b', 1, cursor)).toThrow('INVALID_CURSOR');
+    db.prepare("UPDATE entries SET parent_id='b' WHERE id='a'").run();
+    expect(() => historyRuns(db, 's', 'b', 1)).toThrow('INVALID_PARENT_CHAIN');
+  } finally { db.close(); }
+});
