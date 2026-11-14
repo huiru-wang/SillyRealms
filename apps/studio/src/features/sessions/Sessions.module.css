@@ -14,14 +14,14 @@
 .listCopy span,.listCopy small{color:var(--text-muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .listCopy small{color:var(--text-secondary)}
 
-.detail{height:var(--session-viewport-height,100dvh);min-width:0;display:flex;flex-direction:column;position:relative;overflow:hidden}
+.detail{--session-toolbar-height:74px;--composer-glass-bg:rgba(35,32,44,.58);--composer-glass-edge:rgba(255,255,255,.3);--composer-glass-shadow:0 10px 30px rgba(0,0,0,.24),inset 0 1px 1px rgba(255,255,255,.3),inset 0 -1px 1px rgba(255,255,255,.1);height:var(--session-viewport-height,100dvh);min-width:0;display:flex;flex-direction:column;position:relative;overflow:hidden}
 .topbar{height:74px;min-height:74px;padding:0 34px;display:flex;align-items:center;justify-content:space-between;gap:20px;border-bottom:1px solid var(--stroke);z-index:1}
 .identity{min-width:0;display:flex;flex-direction:column;gap:4px}
 .identity h1{font-size:16px;font-weight:600;line-height:22px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .identity>span{font-size:11px;color:var(--text-muted)}
 .topActions{display:flex;align-items:center;gap:16px;flex-shrink:0}
 .contextButton{display:flex;align-items:center;gap:10px;min-height:40px;padding:0 6px;border-radius:8px;color:var(--text-muted);font-size:12px}
-.contextButton:hover,.iconButton:hover,.collapse:hover,.expand:hover{background:var(--surface-hover);color:var(--text)}
+.contextButton:hover,.iconButton:hover{background:var(--surface-hover);color:var(--text)}
 .contextBar,.contextDetailBar{display:flex;overflow:hidden;border-radius:9px;height:7px;width:128px;background:var(--surface-hover)}
 .contextBar i,.contextDetailBar i{display:block;height:100%}
 .contextBar i:first-child,.contextDetailBar i:first-child{width:36%;background:#9e93ad}
@@ -35,37 +35,41 @@
 .iconButton{display:grid;place-items:center;width:40px;height:40px;border-radius:8px;color:var(--text-secondary)}
 .mobileBack{display:none}
 
-/* The SDK owns reading scroll; the platform only supplies a bounded stage. */
+/* The stage extends behind the glass; the Host reports its real occluded height. */
 .stageSlot{flex:1;min-width:0;min-height:0;overflow:hidden;position:relative}
 .preview{width:100%;height:100%;min-width:0;min-height:0}
 .preview :global(iframe){display:block;width:100%;height:100%;border:0}
-.composerArea{flex:none;min-width:0;position:relative;padding:8px 24px max(22px,env(safe-area-inset-bottom));background:var(--canvas)}
-.composer{max-width:740px;margin:0 auto;border:1px solid var(--stroke-strong);border-radius:14px;background:var(--surface);box-shadow:0 4px 18px rgba(0,0,0,.06);overflow:hidden;transition:border-color var(--motion-fast)}
-.composer:focus-within{border-color:var(--focus)}
-.inputHeader{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 16px 2px;color:var(--text-muted);font-size:11px}
-.keyHint{color:var(--text-muted);font-size:10px}
-.editor{min-width:0}
+.composerArea{position:absolute;z-index:2;inset:auto 0 0;min-width:0;padding:10px 24px max(20px,env(safe-area-inset-bottom));pointer-events:none}
+.composer,.expand,.stopCollapsed{border:1px solid var(--composer-glass-edge);background:var(--composer-glass-bg);box-shadow:var(--composer-glass-shadow);-webkit-backdrop-filter:blur(16px) saturate(150%);backdrop-filter:blur(16px) saturate(150%);pointer-events:auto}
+:global([data-theme="light"]) .detail{--composer-glass-bg:rgba(244,240,248,.72);--composer-glass-edge:rgba(255,255,255,.75);--composer-glass-shadow:0 10px 30px rgba(52,35,64,.14),inset 0 1px 1px rgba(255,255,255,.8)}
+.composer{width:100%;max-width:740px;margin:0 auto;display:grid;grid-template-columns:44px minmax(0,1fr) 44px;align-items:end;gap:5px;padding:7px;border-radius:24px;transition:border-color var(--motion-fast),box-shadow var(--motion-fast)}
+.composer:focus-within{border-color:var(--focus);box-shadow:var(--composer-glass-shadow),0 0 0 1px color-mix(in srgb,var(--focus) 35%,transparent)}
+.editor{min-width:0;align-self:stretch}
 .editor :global(.sr-roleplay-composer){min-width:0;width:100%}
 .editor :global(.sr-composer-editor-wrap){position:relative}
-.editor :global(.sr-composer-editor){min-height:62px;max-height:170px;overflow-y:auto;overscroll-behavior:contain;padding:9px 16px 7px;background:transparent;border:0;outline:0;color:var(--text);font:inherit;font-size:15px;line-height:1.75;overflow-wrap:anywhere;white-space:pre-wrap;scrollbar-width:thin;scrollbar-color:var(--stroke-strong) transparent}
-.editor :global(.sr-composer-editor):focus-visible{outline:2px solid var(--focus);outline-offset:-3px;border-radius:7px}
-.editor :global(.sr-composer-editor p){margin:0;min-height:1.75em}
-.editor :global(.sr-composer-placeholder){position:absolute;top:9px;left:16px;right:16px;pointer-events:none;color:var(--text-muted);font-size:15px;line-height:1.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.editor :global(.sr-composer-editor){box-sizing:border-box;min-height:44px;max-height:min(184px,var(--composer-editor-room,184px),max(44px,calc((var(--session-viewport-height,100dvh) - var(--session-toolbar-height)) * .34)));overflow-y:auto;overscroll-behavior:contain;padding:10px 5px;background:transparent;border:0;outline:0;color:var(--text);font:inherit;font-size:15px;line-height:24px;overflow-wrap:anywhere;white-space:pre-wrap;scrollbar-width:thin;scrollbar-color:var(--stroke-strong) transparent}
+.editor :global(.sr-composer-editor):focus-visible{outline:none}
+.editor :global(.sr-composer-editor p){margin:0;min-height:24px}
+.editor :global(.sr-composer-placeholder){position:absolute;top:10px;left:5px;right:5px;pointer-events:none;color:var(--text-muted);font-size:15px;line-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .editor :global(.sr-composer-block){border-left:2px solid var(--accent);padding-left:10px}
 .editor :global(.sr-composer-block)::before{content:attr(data-label);margin-right:8px;color:var(--text-muted);font-size:11px}
 .editor :global(.sr-composer-instruction){color:var(--text-secondary)}
-.editor :global(.sr-composer-error){margin:4px 16px;font-size:12px;line-height:1.6;color:var(--text-secondary)}
-.composerFooter{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 9px 8px}
-.collapse,.expand,.stopCollapsed{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:36px;padding:0 9px;border-radius:7px;color:var(--text-muted);font-size:12px}
-.send{display:inline-flex;align-items:center;gap:6px;justify-content:center;min-height:36px;padding:0 14px;border-radius:8px;background:var(--accent-selected);color:var(--text);font-size:12px}
+.editor :global(.sr-composer-error){margin:4px 5px;font-size:12px;line-height:1.6;color:var(--text-secondary)}
+.collapse,.send,.expand,.stopCollapsed{display:grid;place-items:center;width:44px;height:44px;min-width:44px;min-height:44px;flex:none;padding:0;border-radius:17px;color:var(--text-secondary)}
+.collapse:hover{background:color-mix(in srgb,var(--text) 7%,transparent);color:var(--text)}
+.send{background:var(--accent-selected);color:var(--text)}
 .send:not(:disabled):hover{background:var(--surface-active)}
-.send:disabled{opacity:.45;cursor:default}
-.collapsedActions{display:flex;align-items:center;justify-content:center;gap:10px}
-.expand,.stopCollapsed{background:var(--surface);border:1px solid var(--stroke)}
-.draftUndo{max-width:740px;margin:0 auto 6px;display:flex;align-items:center;gap:8px;color:var(--text-secondary);font-size:12px}
-.draftUndo button{display:inline-flex;align-items:center;gap:5px;min-height:32px;padding:0 8px;border-radius:7px;color:var(--text)}
-.draftUndo button:hover{background:var(--surface-hover)}
-.previewNotice{max-width:740px;margin:0 auto 8px;font-size:11px;color:var(--text-muted);line-height:1.6}
+.send:disabled{opacity:.4;cursor:default}
+.collapsedActions{display:flex;align-items:center;justify-content:center;gap:8px;pointer-events:none}
+.expand,.stopCollapsed{border-radius:18px}
+.expand:hover,.stopCollapsed:hover{color:var(--text)}
+.previewError{box-sizing:border-box;width:fit-content;max-width:min(740px,100%);max-height:clamp(32px,calc(var(--session-viewport-height,100dvh) - var(--session-toolbar-height) - 180px),80px);overflow-y:auto;overscroll-behavior:contain;margin:0 auto 8px;padding:5px 12px;border:1px solid var(--stroke-strong);border-radius:12px;background:var(--surface);color:var(--text-secondary);font-size:12px;line-height:1.6;pointer-events:auto}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  .composer,.expand,.stopCollapsed{background:var(--sidebar-bg)}
+}
+@media(prefers-reduced-transparency:reduce){
+  .composer,.expand,.stopCollapsed{background:var(--sidebar-bg);backdrop-filter:none;-webkit-backdrop-filter:none}
+}
 
 .contextDetailBar{width:100%;height:10px;margin:22px 0 16px}
 .legend{display:flex;gap:20px;flex-wrap:wrap;color:var(--text-secondary);font-size:12px}
@@ -87,7 +91,6 @@
 .settingsActions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}
 .notFound{padding:80px 34px}
 .notFound a{color:var(--accent)}
-.srOnly{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 @media(max-width:1340px) and (min-width:1081px){
   .listPage{--page-inset:28px}
   :global([data-collapsed="true"]) .listPage{--page-inset:50px}
@@ -113,18 +116,11 @@
   .contextBar{width:48px;height:6px}
   .status{font-size:11px;gap:5px}
   .contextButton,.iconButton{min-width:44px;min-height:44px}
-  .composerArea{padding:7px 12px max(12px,env(safe-area-inset-bottom));display:flex;flex-direction:column;max-height:calc(var(--session-viewport-height,100dvh) - 68px);box-sizing:border-box}
-  .composer{border-radius:12px;width:100%;display:flex;flex-direction:column;min-height:0}
-  .inputHeader,.composerFooter,.draftUndo,.previewNotice,.collapsedActions{flex:none}
-  .editor{display:flex;flex:1 1 auto;min-height:0}
-  .editor :global(.sr-roleplay-composer){display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
-  .editor :global(.sr-composer-editor-wrap){display:flex;flex:1 1 auto;min-height:0}
-  .inputHeader{padding:11px 13px 0}
-  .keyHint{display:none}
-  .editor :global(.sr-composer-editor){padding:8px 13px 5px;font-size:16px;flex:1 1 auto;min-height:0;max-height:144px;overflow-y:auto}
-  .editor :global(.sr-composer-placeholder){top:8px;left:13px;right:13px;font-size:16px}
-  .collapse,.send,.expand,.stopCollapsed,.draftUndo button{min-height:44px}
-  .composerFooter{padding:2px 7px 6px}
+  .detail{--session-toolbar-height:68px}
+  .composerArea{padding:8px 12px max(12px,env(safe-area-inset-bottom))}
+  .composer{gap:3px;padding:5px;border-radius:22px}
+  .editor :global(.sr-composer-editor){font-size:16px;max-height:min(168px,var(--composer-editor-room,168px),max(44px,calc((var(--session-viewport-height,100dvh) - var(--session-toolbar-height)) * .34)))}
+  .editor :global(.sr-composer-placeholder){font-size:16px}
 }
 @media(prefers-reduced-motion:reduce){
   .listPage,.listItem,.composer{transition:none}

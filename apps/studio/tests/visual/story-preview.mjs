@@ -82,8 +82,8 @@ export async function checkStoryPreview(ctx){
   assert(await evaluate('document.querySelector("iframe[data-story-preview]").getAttribute("sandbox")')==='allow-scripts','Preview must retain an opaque origin');
   assert(await frame.evaluate('(()=>{try{return !!parent.document}catch{return false}})()')===false,'Preview cannot read the Host document');
   assert(await frame.evaluate('fetch("/api/worlds").then(()=>false,()=>true)'),'Frame CSP must reject direct API requests');
-  const style=await frame.evaluate('(()=>{const m=[...document.querySelectorAll(".sr-message")];return {sources:[...new Set(m.map(n=>n.querySelector(".sr-message-source").textContent))],left:m.map(n=>n.getBoundingClientRect().left),bubbles:m.some(n=>getComputedStyle(n).backgroundColor!=="rgba(0, 0, 0, 0)"||getComputedStyle(n.querySelector(".sr-story-content")).borderTopWidth!=="0px")}})()');
-  assert(style.sources.includes('我')&&style.sources.includes('故事')&&!style.bubbles&&Math.max(...style.left)-Math.min(...style.left)<1,'Both sources must share a plain reading axis');
+  const style=await frame.evaluate('(()=>{const m=[...document.querySelectorAll(".sr-message")],u=document.querySelector(".sr-message.user"),a=document.querySelector(".sr-message.assistant"),ur=u.getBoundingClientRect(),ar=a.getBoundingClientRect();return {sources:[...new Set(m.map(n=>n.querySelector(".sr-message-source").textContent))],userLeft:ur.left,userRight:ur.right,storyLeft:ar.left,storyRight:ar.right,bounded:m.every(n=>parseFloat(getComputedStyle(n).borderTopWidth)>=1&&getComputedStyle(n).backgroundColor!=="rgba(0, 0, 0, 0)"),textAlign:getComputedStyle(u).textAlign}})()');
+  assert(style.sources.includes('我')&&style.sources.includes('故事')&&style.bounded&&style.userLeft>style.storyLeft+12&&Math.abs(style.userRight-style.storyRight)<=2&&style.textAlign!=="right",'User messages align right and narrative aligns left with readable message boundaries: '+JSON.stringify(style));
   await frame.until('!!document.querySelector("[data-preview-clue]")');
   await frame.evaluate('window.__historyNode=document.querySelector(".sr-message");window.__clueNode=document.querySelector("[data-preview-clue]");void 0');
   await frame.click('[data-preview-clue] button');
@@ -117,6 +117,26 @@ export async function checkStoryPreview(ctx){
   await delay(300);
 
   before=await anchor();
+  const shortHeight=await evaluate('document.querySelector("[data-session-composer]").getBoundingClientRect().height');
+  await evaluate('window.__previewFrame=document.querySelector("iframe[data-story-preview]");void 0');
+  await draft(Array.from({length:6},(_,i)=>'自动增高的草稿 '+i).join('\n'));
+  await until('document.querySelector("[data-session-composer]").getBoundingClientRect().height>'+shortHeight+'+40');
+  await delay(180);
+  await assertAnchor(before,'Growing the glass composer preserves the reading anchor');
+  assert(await evaluate('document.querySelector("iframe[data-story-preview]")===window.__previewFrame'),'Composer resizing must not remount the iframe');
+  assert(await frame.evaluate('document.querySelector("[data-preview-clue]")===window.__clueNode'),'Composer resizing preserves Portal identity');
+  await screenshot('session-glass-multiline-1536');
+  await click('[aria-label="收起输入框"]');
+  await assertAnchor(before,'Collapsing the floating composer preserves the reading anchor');
+  await click('[aria-label="展开输入框"]');
+  await until('document.querySelector(".sr-composer-editor").innerText.includes("自动增高的草稿")');
+  await assertAnchor(before,'Expanding the floating composer preserves the reading anchor');
+  await draft('');
+  await until('document.querySelector("[data-session-composer]").getBoundingClientRect().height<='+shortHeight+'+1');
+  await delay(180);
+  await assertAnchor(before,'Clearing a multiline draft restores the single-line height and reading anchor');
+
+  before=await anchor();
   await click('[aria-label="会话设置"]');
   await evaluate('(()=>{const e=document.querySelector("#preview-reading-size");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(e,"20");e.dispatchEvent(new Event("input",{bubbles:true}))})()');
   await frame.until('getComputedStyle(document.querySelector(".sr-rich")).fontSize==="20px"');
@@ -131,6 +151,9 @@ export async function checkStoryPreview(ctx){
   await delay(350);
   await assertAnchor(before,'An image loading above the viewport preserves the reading anchor');
   assert(await frame.evaluate('!!document.querySelector(".sr-story-latest")'),'Reading older messages offers a return control');
+  const latestBottom=await frame.evaluate('document.querySelector(".sr-story-latest").getBoundingClientRect().bottom');
+  const latestHost=await evaluate('({frameTop:document.querySelector("iframe[data-story-preview]").getBoundingClientRect().top,overlayTop:document.querySelector("[data-composer-overlay]").getBoundingClientRect().top})');
+  assert(latestBottom+latestHost.frameTop<=latestHost.overlayTop,'Return-to-latest remains above the glass composer');
   await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
   await frame.click('.sr-story-latest button');
   await frame.until('(()=>{const c=document.querySelector(".sr-chat-messages");return c.scrollHeight-c.scrollTop-c.clientHeight<2})()');
@@ -140,11 +163,8 @@ export async function checkStoryPreview(ctx){
   await frame.click('.sr-suggestions button:not(:disabled)');
   await until('document.querySelector(".sr-composer-editor").innerText.includes("坐到窗边")');
   assert(await evaluate('document.querySelector("[data-session-detail]").dataset.previewActive')==='false','Choosing a suggestion only fills the draft');
-  await evaluate('[...document.querySelectorAll("button")].find(e=>e.textContent.trim()==="撤销").click()');
-  await until('document.querySelector(".sr-composer-editor").innerText==="保留原来的草稿"');
-  await frame.click('.sr-suggestions button:not(:disabled)');
+  assert(!await evaluate('document.querySelector("[data-composer-overlay]").innerText.includes("已填入草稿")||[...document.querySelectorAll("[data-composer-overlay] button")].some(e=>e.textContent.includes("撤销"))||!!document.querySelector("[data-preview-notice]")'),'Suggestions fill the draft silently without confirmation or undo chrome');
   await draft('本轮发送的正文');
-  assert(!await evaluate('[...document.querySelectorAll("button")].some(e=>e.textContent.trim()==="撤销")'),'Editing invalidates stale draft undo');
   await click('[aria-label="发送消息到本地预览"]');
   await until('document.querySelector("[data-session-detail]").dataset.previewActive==="true"');
   await draft('生成期间继续编辑的下一份草稿');
@@ -155,6 +175,8 @@ export async function checkStoryPreview(ctx){
   await screenshot('session-stream-completed-1536');
   await sendDraft('停止这次本地预览');
   await until('document.querySelector("[data-session-detail]").dataset.previewActive==="true"');
+  await click('[aria-label="收起输入框"]');
+  assert(!await evaluate('!!document.querySelector(".sr-composer-editor")'),'Active generation can keep the composer collapsed');
   await click('[aria-label="停止本地预览"]');
   await finish();
   await frame.until('document.body.innerText.includes("已停止生成")');
@@ -178,6 +200,9 @@ export async function checkStoryPreview(ctx){
   await frame.click('.sr-story-toolbar button');
   await frame.until('!!document.querySelector("dialog[open]")');
   assert(await frame.evaluate('document.activeElement.getAttribute("aria-label")')==='收起状态','State overlay focuses its close button');
+  const dialogBottom=await frame.evaluate('document.querySelector("dialog[open]").getBoundingClientRect().bottom');
+  const dialogHost=await evaluate('({frameTop:document.querySelector("iframe[data-story-preview]").getBoundingClientRect().top,overlayTop:document.querySelector("[data-composer-overlay]").getBoundingClientRect().top})');
+  assert(dialogHost.frameTop+dialogBottom<=dialogHost.overlayTop,'The iframe state dialog stays above the Host glass composer');
   for(let i=0;i<8;i++){
     await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
     await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
@@ -227,7 +252,7 @@ export async function checkStoryPreview(ctx){
   }
   await load('send-error');
   await sendDraft('发送失败时仍要保留');
-  await until('document.querySelector("[data-preview-notice]").textContent.includes("发送被拒绝")');
+  await until('document.querySelector("[data-preview-notice]")?.textContent.includes("发送被拒绝")');
   assert(await evaluate('document.querySelector(".sr-composer-editor").innerText')==='发送失败时仍要保留','A rejected send preserves the draft');
   for(const [scenario,feedback] of [['run-failed','本次生成失败'],['state-partial','部分状态更新'],['suggestion-failed','本轮行动建议不可用'],['snapshot',''],['gap','']]){
     await load(scenario);

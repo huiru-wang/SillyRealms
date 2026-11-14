@@ -1,6 +1,6 @@
 # Session Token Usage and Reading Settings
 
-Status: implemented 2026-11-09; Runtime v2 compatibility updated 2026-11-13; SDK surface and Studio preview scope clarified 2026-11-14.
+Status: implemented 2026-11-09; Runtime v2 compatibility updated 2026-11-13; SDK/Studio presentation updated 2026-11-14. The current UI and Studio acceptance are complete, with both builds passing. The supplemental Web font run passed 7/8; native End-to-bottom/following remains an unresolved verification limitation.
 
 ## Platform ownership
 
@@ -60,13 +60,17 @@ Host sends appearance {fontSize} over the existing MessageChannel. The frame val
 
 ## Shared SDK surface and Studio preview
 
-The frame build entry imports `@sillyrealms/sdk/world-story.css`. Web and Studio use this SDK subpath for the official `.sr-story` surface; Studio does not import legacy Web platform styles. The stylesheet keeps author-owned page layouts outside its scope and accepts the limited `--sr-story-*` appearance variables.
+The frame build entry imports `@sillyrealms/sdk/world-story.css`. Web and Studio share this scoped official surface. User messages form a narrower, lightly accented surface at the reading column's right edge; narrative messages use a wider, subtle surface on the left. Source labels, left-aligned body text, message identity and Portals remain. The stylesheet accepts limited `--sr-story-*` appearance variables while author-owned outer layouts retain their own styles.
 
 The official state panel uses the actual WorldStory container width: `clientWidth >= 960` enables docked mode, while smaller containers use an initially closed dialog. A narrow author column inside a wide iframe must still use dialog mode. `showState={false}` removes the official trigger, panel, and dialog.
 
 Studio sends validated appearance values to its opaque-origin local preview iframe. Font size still defaults to 16px, ranges from 13px to 21px, previews immediately, and returns to the previous value on Cancel. Studio saves this preview preference only in current-document memory; it does not write the production Web localStorage key or add another persistent namespace. Its context composition is explicitly illustrative, and fixture runs/state/history do not call Server or generate provider billing records. Refresh restores the fixture.
 
-The Host owns the composer in both applications. Studio reuses the existing Lexical component with local styles; normal Enter creates a newline, Enter in a semantic block exits the block, and Cmd/Ctrl+Enter sends. Removing the speech/instruction shortcuts preserves manual plain-text escaping and external formatted drafts. The input remains editable during active generation, and send responses may clear only the submitted draft revision. See [WorldStory runtime](worldstory-runtime-v1.md) for the complete input and preview boundary.
+The Host owns the composer in both applications. Studio uses one floating glass row, with collapse on the left, an initially single-line editor that grows with wrapping in the middle, and send/stop on the right. The stage extends behind it. The surface follows mobile navigation's translucency, blur and edge highlights, with readable reduced-transparency and unsupported-filter fallbacks. Top explanations, a separate footer, fill/undo notices and send-success notices are removed; actual send failures remain visible. The shared editor placeholder is “写下你的回应…”.
+
+The same Lexical four-prop interface, semantic nodes, HistoryPlugin, IME and serialization remain. Normal Enter creates a newline, Enter in a semantic block exits the block, and Cmd/Ctrl+Enter sends. Studio removes its independent setDraft undo status/UI; production Web's separate undo UI stays in its existing scope. Input remains editable during generation, and pending/draft revision protection prevents a late send response from clearing later edits. See [WorldStory runtime](worldstory-runtime-v1.md) for the complete boundary.
+
+Studio measures the floating composer's actual obstruction and sends a validated presentation value through the existing appearance channel as `--sr-story-bottom-inset`, defaulting to `0px`. ResizeObserver calculates editor room from stage height and measured non-editor chrome, including errors and margins, using a 96px stage-space budget and a 44px editor minimum. Long drafts scroll internally, and error height is capped for the available viewport so the state dialog's close control remains reachable. The budget is not an absolute 96px guarantee at arbitrarily short heights. Story scrolling, the latest control, docked state and the trusted composed sidebar reserve the measured inset; a modal state dialog reduces its bounds instead of also adding the same internal padding. This does not add a public business SDK operation, relax iframe permissions or force arbitrary author layouts to consume the variable.
 
 ## Font stability and scroll anchoring
 
@@ -79,6 +83,10 @@ Before an appearance change, WorldStory captures the first visible message and i
 The browser regression fixture renders 200 actual WorldStory messages, verifies stable computed font size at 5/50/200 message counts on desktop and mobile, checks middle-message anchor preservation, bottom anchoring, cancel behavior, and per-session persistence.
 
 ## Verification
+
+For the current glass/input-layout and message-boundary revision, Studio and Web builds (including typechecks) passed; Web retains its existing non-blocking large-chunk notice. Studio was rebuilt after the editor-room correction. The production session suite at `http://127.0.0.1:4174` completed with exit 0 and empty stderr (`session-dc8221be68d760aded383f7d`), covering history/Portal/anchors, state, drafts, streaming/stop, themes and security, six widths, the 390×280 short viewport, reduced transparency, and combined send-error/multiline/dialog cases. Desktop, mobile, multiline and short-error screenshots were inspected.
+
+The final working-tree rerun of the eight-case Web font regression used the original runner (`session-f16676fb009ab33281cb3073`) and exited 1 with seven PASS results. Native End-to-bottom/following was not reliable in the current Mac headless automation, and the post-End content-growth assertion did not execute after timeout. This is an unresolved verification item, with no established attribution to a pre-existing defect or the current CSS revision. Temporary runner/trace/CSS experiments were removed; `apps/web/test/composer/run.mjs` has no diff and SDK scroll TypeScript is unchanged. Do not report all gates green. First-phase evidence remains historical; current results and limitations are recorded in the design plan's section 11. No real Safari/Firefox or mobile-keyboard result is implied.
 
 Browser tests:
 - Host usage order and usage.updated refresh.

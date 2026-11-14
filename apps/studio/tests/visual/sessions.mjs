@@ -7,6 +7,26 @@ export async function checkSessions({send,evaluate,until,viewport,click,screensh
     await until('performance.timeOrigin!=='+previous+' && document.readyState==="complete" && location.pathname==='+JSON.stringify(path)+' && !!document.querySelector("main h1")');
     await delay(250);
   }
+  async function checkCompactComposerError(){
+    await viewport(390,280,true);
+    await open('/sessions/changan','send-error');
+    await until('document.querySelector("[data-session-detail]")?.dataset.previewReady==="true"');
+    await replacePreviewDraft({send,evaluate,delay},Array.from({length:12},(_,i)=>'发送失败后保留的多行草稿 '+i).join('\n'));
+    await click('[aria-label="发送消息到本地预览"]');
+    await until('document.querySelector("[data-preview-notice]")?.textContent.includes("发送被拒绝")');
+    assert(await evaluate('document.querySelector(".sr-composer-editor").innerText.includes("发送失败后保留")'),'Rejected sends preserve the multiline draft');
+    const frame=await createPreviewDriver({send,evaluate,delay});
+    const host=await evaluate('(()=>{const f=document.querySelector("iframe[data-story-preview]").getBoundingClientRect(),o=document.querySelector("[data-composer-overlay]").getBoundingClientRect(),e=document.querySelector(".sr-composer-editor").getBoundingClientRect(),n=document.querySelector("[data-preview-notice]").getBoundingClientRect();return {frameTop:f.top,overlayTop:o.top,editorHeight:e.height,errorHeight:n.height,inset:Math.ceil(f.bottom-o.top)}})()');
+    await frame.until('Math.abs(parseFloat(getComputedStyle(document.getElementById("root")).getPropertyValue("--sr-story-bottom-inset"))-'+host.inset+')<=1');
+    await frame.click('.sr-story-toolbar button');
+    await frame.until('!!document.querySelector("dialog[open]")&&document.querySelector("dialog[open]").getAnimations().every(animation=>animation.playState!=="running"&&!animation.pending)');
+    await frame.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))');
+    const panel=await frame.evaluate('(()=>{const d=document.querySelector("dialog[open]").getBoundingClientRect(),b=document.querySelector("dialog .sr-state-heading button").getBoundingClientRect();return {top:d.top,bottom:d.bottom,height:d.height,closeTop:b.top,closeBottom:b.bottom,closeHeight:b.height}})()');
+    await screenshot('session-glass-error-short-390');
+    assert(panel.top>=0&&panel.height>=68&&panel.closeHeight>=44&&panel.closeTop>=panel.top&&panel.closeBottom<=panel.bottom&&host.frameTop+panel.bottom<=host.overlayTop,'A rejected multiline draft in a short viewport keeps the state close control visible: '+JSON.stringify({host,panel}));
+    console.log('PASS: short viewport keeps multiline send errors and state controls accessible.');
+  }
+  if(process.env.STUDIO_COMPOSER_ERROR_ONLY==='1'){await checkCompactComposerError();return;}
   async function checkViewport(width,height,mobile){
     await viewport(width,height,mobile);
     for(const name of ['changan','neon']){
@@ -20,6 +40,14 @@ export async function checkSessions({send,evaluate,until,viewport,click,screensh
       assert(reading.scroll<=reading.width+1&&reading.body<=reading.height+1&&reading.scrolling,width+' '+name+' iframe geometry: '+JSON.stringify(reading));
       assert(reading.mode===(reading.container>=960?'docked':'overlay'),'State layout must depend on the actual component width');
       assert(!await evaluate('!!document.querySelector(".sr-composer-toolbar")'),'No obsolete composer shortcuts');
+      const glass=await evaluate('(()=>{const f=document.querySelector("iframe[data-story-preview]").getBoundingClientRect(),o=document.querySelector("[data-composer-overlay]").getBoundingClientRect(),form=document.querySelector("[data-session-composer]"),r=form.getBoundingClientRect(),e=form.querySelector(".sr-composer-editor").getBoundingClientRect(),buttons=[...form.querySelectorAll("button")].map(b=>b.getBoundingClientRect()),s=getComputedStyle(form);return {frameTop:f.top,frameBottom:f.bottom,formTop:r.top,formBottom:r.bottom,formHeight:r.height,editorHeight:e.height,editorLeft:e.left,editorRight:e.right,leftEnd:buttons[0].right,rightStart:buttons.at(-1).left,buttonHeights:buttons.map(b=>b.height),inset:Math.ceil(f.bottom-o.top),overlayTop:o.top,filter:s.backdropFilter,background:s.backgroundColor,text:form.innerText}})()');
+      assert(glass.formHeight<=62&&glass.editorHeight<=46&&glass.editorLeft>=glass.leftEnd&&glass.editorRight<=glass.rightStart&&glass.buttonHeights.every(h=>h>=44),width+' '+name+' compact one-row composer: '+JSON.stringify(glass));
+      assert(glass.frameBottom>glass.formBottom&&glass.frameTop<glass.formTop&&glass.filter.includes('blur(')&&glass.background.startsWith('rgba('),width+' '+name+' stage must extend behind a translucent glass composer: '+JSON.stringify(glass));
+      assert(glass.text.trim()==='写下你的回应…','The empty composer shows only its concise input placeholder');
+      await frame.until('Math.abs(parseFloat(getComputedStyle(document.getElementById("root")).getPropertyValue("--sr-story-bottom-inset"))-'+glass.inset+')<=1');
+      await frame.until('(()=>{const c=document.querySelector(".sr-chat-messages");return c.scrollHeight-c.scrollTop-c.clientHeight<2})()');
+      const tail=await frame.evaluate('document.querySelector(".sr-chat-messages").lastElementChild.getBoundingClientRect().bottom');
+      assert(glass.frameTop+tail<=glass.overlayTop+1,width+' '+name+' final content stays above the glass composer');
       await screenshot('session-'+name+'-'+width);
     }
   }
@@ -58,9 +86,9 @@ export async function checkSessions({send,evaluate,until,viewport,click,screensh
   await until('!document.querySelector("[role=dialog]")');
   await replacePreviewDraft({send,evaluate,delay},'保留的草稿');
   await until('document.querySelector(".sr-composer-editor").innerText==="保留的草稿"');
-  await click('button:has(svg.lucide-chevron-down)');
+  await click('[aria-label="收起输入框"]');
   assert(await evaluate('!document.querySelector(".sr-composer-editor")'),'Composer should collapse');
-  await click('button:has(svg.lucide-chevron-up)');
+  await click('[aria-label="展开输入框"]');
   assert(await evaluate('document.querySelector(".sr-composer-editor").innerText')==='保留的草稿','Collapsing composer lost draft');
   await click('aside button:has(img[src="/covers/neon.webp"])');
   await until('!!document.querySelector("[data-session-detail=neon]")');
@@ -68,7 +96,8 @@ export async function checkSessions({send,evaluate,until,viewport,click,screensh
   await until('!!document.querySelector("[data-session-detail=changan]") && document.querySelector(".sr-composer-editor").innerText==="保留的草稿"');
   await until('document.querySelector("[data-session-detail]").dataset.previewReady==="true"');
   await click('button[aria-label="发送消息到本地预览"]');
-  await until('document.querySelector("[data-preview-notice]")?.textContent.includes("本地预览") && document.querySelector(".sr-composer-editor").innerText.trim()===""');
+  await until('document.querySelector(".sr-composer-editor").innerText.trim()===""');
+  assert(!await evaluate('!!document.querySelector("[data-preview-notice]")'),'Accepted sends should not add a confirmation banner');
   assert(await evaluate('document.querySelector(".sr-composer-editor").getAttribute("contenteditable")')==='true','Active preview must allow editing the next draft');
   await open('/presets');
   assert(await evaluate('document.querySelector("#presets-heading a").getAttribute("aria-current")')==='page','Preset list should select its heading');
@@ -112,5 +141,21 @@ export async function checkSessions({send,evaluate,until,viewport,click,screensh
   const compact=await evaluate('(()=>{const e=document.querySelector(".sr-composer-editor").getBoundingClientRect(),b=document.querySelector("[aria-label=\\"发送消息到本地预览\\"]").getBoundingClientRect();return {height:innerHeight,editor:e.height,buttonTop:b.top,buttonBottom:b.bottom}})()');
   assert(compact.editor>15&&compact.buttonTop>=0&&compact.buttonBottom<=compact.height,'Short visual viewport keeps the editable area and send control visible: '+JSON.stringify(compact));
   await screenshot('session-keyboard-height-390');
+  const compactFrame=await createPreviewDriver({send,evaluate,delay});
+  await compactFrame.until('!!document.querySelector(".sr-story-toolbar button")');
+  await compactFrame.click('.sr-story-toolbar button');
+  await compactFrame.until('!!document.querySelector("dialog[open]")&&document.querySelector("dialog[open]").getAnimations().every(animation=>animation.playState!=="running"&&!animation.pending)');
+  await compactFrame.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))');
+  const compactDialog=await compactFrame.evaluate('(()=>{const d=document.querySelector("dialog[open]").getBoundingClientRect(),b=document.querySelector("dialog .sr-state-heading button").getBoundingClientRect();return {top:d.top,bottom:d.bottom,height:d.height,buttonTop:b.top,buttonBottom:b.bottom,buttonHeight:b.height,opacity:getComputedStyle(document.querySelector("dialog[open]")).opacity}})()');
+  const compactHost=await evaluate('({frameTop:document.querySelector("iframe[data-story-preview]").getBoundingClientRect().top,overlayTop:document.querySelector("[data-composer-overlay]").getBoundingClientRect().top})');
+  assert(compactDialog.top>=0&&compactDialog.height>=56&&compactDialog.opacity==='1'&&compactDialog.buttonTop>=compactDialog.top&&compactDialog.buttonHeight>=44&&compactDialog.bottom+compactHost.frameTop<=compactHost.overlayTop&&compactDialog.buttonBottom<=compactDialog.bottom,'Short viewport dialog stays accessible above the multiline composer: '+JSON.stringify({compactDialog,compactHost}));
+  console.log('PASS: short viewport state dialog remains visible above the glass:',JSON.stringify({compactDialog,compactHost}));
+  await screenshot('session-glass-dialog-short-390');
+  await compactFrame.click('dialog .sr-state-heading button');
+  await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-transparency',value:'reduce'}]});
+  assert(await evaluate('getComputedStyle(document.querySelector("[data-session-composer]")).backdropFilter==="none"'),'Reduced transparency provides a solid composer surface');
+  await screenshot('session-glass-reduced-transparency-390');
+  await send('Emulation.setEmulatedMedia',{features:[]});
+  await checkCompactComposerError();
   console.log('PASS: session list, SDK samples, context/settings, local draft and preview, responsive layout and short viewport.');
 }

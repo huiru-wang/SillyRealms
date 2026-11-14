@@ -17,6 +17,7 @@ type Props = {
   sessionId:string;
   kind:PreviewKind;
   fontSize:number;
+  bottomInset:number;
   onSetDraft:(text:string)=>void;
   onStatusChange:(value:PreviewStatus)=>void;
   className?:string;
@@ -28,20 +29,20 @@ const fallbackColors=['#1c1a24','#282530','#f6f3fa','#9993a4','#3b3643','#ad89d0
 function createNonce(){
   return Array.from(crypto.getRandomValues(new Uint8Array(18)),value=>value.toString(16).padStart(2,'0')).join('');
 }
-function appearance(fontSize:number):PreviewAppearance{
+function appearance(fontSize:number,bottomInset:number):PreviewAppearance{
   const root=document.documentElement;
   const style=getComputedStyle(root);
   const colors=Object.fromEntries(themeVariables.map((name,index)=>[
     name,style.getPropertyValue(sourceVariables[index]!).trim()||fallbackColors[index]!,
   ])) as PreviewAppearance['colors'];
-  return {theme:root.dataset.theme==='light'?'light':'dark',fontSize:Math.max(13,Math.min(21,Math.round(fontSize))),colors};
+  return {theme:root.dataset.theme==='light'?'light':'dark',fontSize:Math.max(13,Math.min(21,Math.round(fontSize))),bottomInset:Math.max(0,Math.min(800,Math.round(bottomInset))),colors};
 }
 function sameStatus(a:PreviewStatus,b:PreviewStatus){
   return a.ready===b.ready&&a.active===b.active&&a.phase===b.phase&&a.error===b.error;
 }
 
 export const StoryPreviewHost=forwardRef<StoryPreviewHandle,Props>(function StoryPreviewHost(props,ref){
-  const {sessionId,kind,fontSize,className}=props;
+  const {sessionId,kind,fontSize,bottomInset,className}=props;
   const callbacks=useRef(props);
   callbacks.current=props;
   const iframe=useRef<HTMLIFrameElement>(null);
@@ -127,7 +128,7 @@ export const StoryPreviewHost=forwardRef<StoryPreviewHandle,Props>(function Stor
         if(initialized)return;
         initialized=true;
         clearTimeout(handshakeTimer);
-        post({type:'init',kind,scenario,appearance:appearance(callbacks.current.fontSize)});
+        post({type:'init',kind,scenario,appearance:appearance(callbacks.current.fontSize,callbacks.current.bottomInset)});
         return;
       }
       if(!initialized)return;
@@ -170,7 +171,7 @@ export const StoryPreviewHost=forwardRef<StoryPreviewHandle,Props>(function Stor
     window.addEventListener('message',connect);
     let lastAppearance='';
     const syncAppearance=()=>{
-      const next=appearance(callbacks.current.fontSize);
+      const next=appearance(callbacks.current.fontSize,callbacks.current.bottomInset);
       const signature=JSON.stringify(next);
       if(lastAppearance===signature)return;
       lastAppearance=signature;
@@ -196,8 +197,8 @@ export const StoryPreviewHost=forwardRef<StoryPreviewHandle,Props>(function Stor
   },[sessionId,kind,scenario]);
 
   useEffect(()=>{
-    postRef.current?.({type:'appearance',appearance:appearance(fontSize)});
-  },[fontSize]);
+    postRef.current?.({type:'appearance',appearance:appearance(fontSize,bottomInset)});
+  },[fontSize,bottomInset]);
 
   return <iframe
     ref={iframe}

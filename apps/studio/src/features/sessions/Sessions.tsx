@@ -1,6 +1,6 @@
-import {useCallback,useEffect,useRef,useState,type FormEvent} from 'react';
+import {useCallback,useEffect,useLayoutEffect,useRef,useState,type FormEvent} from 'react';
 import {Link,useParams} from 'react-router-dom';
-import {ArrowLeft,ArrowRight,ChevronDown,ChevronUp,Info,Send,Settings2,Square,Undo2} from 'lucide-react';
+import {ArrowLeft,ArrowRight,ChevronDown,ChevronUp,Info,Send,Settings2,Square} from 'lucide-react';
 import {trimTrailingEmptyRoleplayLines} from '@sillyrealms/roleplay';
 import {RoleplayComposer} from '../../../../web/src/features/sessions/composer/RoleplayComposer';
 import {Modal} from '../../components/ui/Modal';
@@ -50,12 +50,12 @@ function SessionDetail({sample}:{sample:SessionSample}){
   const id=sample.id;
   const [draft,setDraft]=useState(()=>drafts[id]??'');
   const draftRef=useRef(draft),draftRevision=useRef(0);
-  const [draftUndo,setDraftUndo]=useState<{text:string;revision:number}|null>(null);
   const [expanded,setExpanded]=useState(true);
   const [settings,setSettings]=useState(false);
   const [fontSize,setFontSize]=useState(()=>readingSizes[id]??16);
   const fontBeforeSettings=useRef(fontSize);
-  const [notice,setNotice]=useState('');
+  const [sendError,setSendError]=useState('');
+  const [bottomInset,setBottomInset]=useState(0);
   const [status,setStatus]=useState<PreviewStatus>(initialStatus);
   const statusRef=useRef(status);
   const [sending,setSending]=useState(false);
@@ -63,6 +63,8 @@ function SessionDetail({sample}:{sample:SessionSample}){
   const stage=useRef<StoryPreviewHandle>(null);
   const detail=useRef<HTMLElement>(null);
   const composer=useRef<HTMLDivElement>(null);
+  const composerOverlay=useRef<HTMLDivElement>(null);
+  const stageViewport=useRef<HTMLDivElement>(null);
   const expandButton=useRef<HTMLButtonElement>(null);
   const focusFrame=useRef<number|undefined>(undefined);
 
@@ -88,19 +90,37 @@ function SessionDetail({sample}:{sample:SessionSample}){
     };
   },[]);
   useEffect(()=>{if(!expanded)expandButton.current?.focus();},[expanded]);
+  useLayoutEffect(()=>{
+    const overlay=composerOverlay.current,viewport=stageViewport.current;
+    if(!overlay||!viewport)return;
+    let frame:number|undefined;
+    const measure=()=>{
+      frame=undefined;
+      const bounds=viewport.getBoundingClientRect();
+      const input=composer.current?.querySelector<HTMLElement>('.sr-composer-editor');
+      if(input){
+        // Keep the state dialog's close control usable even with a send error
+        // and a mobile keyboard. Measure the chrome instead of assuming its height.
+        const chrome=overlay.getBoundingClientRect().height-input.getBoundingClientRect().height;
+        const room=Math.max(44,Math.floor(bounds.height-96-chrome))+'px';
+        if(overlay.style.getPropertyValue('--composer-editor-room')!==room)overlay.style.setProperty('--composer-editor-room',room);
+      }
+      const inset=Math.max(0,Math.min(800,bounds.height,Math.ceil(bounds.bottom-overlay.getBoundingClientRect().top)));
+      setBottomInset(previous=>previous===inset?previous:inset);
+    };
+    const observer=new ResizeObserver(()=>{if(frame===undefined)frame=requestAnimationFrame(measure);});
+    observer.observe(overlay);observer.observe(viewport);measure();
+    return()=>{observer.disconnect();if(frame!==undefined)cancelAnimationFrame(frame);};
+  },[]);
 
   const updateDraft=useCallback((value:string)=>{
     if(value===draftRef.current)return;
     draftRevision.current++;
-    draftRef.current=value;drafts[id]=value;setDraft(value);setDraftUndo(null);setNotice('');
+    draftRef.current=value;drafts[id]=value;setDraft(value);setSendError('');
   },[id]);
   const receiveDraft=useCallback((text:string)=>{
     if(!alive.current||text.length>100000)return;
-    const previous=draftRef.current;
-    if(previous!==text){
-      updateDraft(text);
-      setDraftUndo({text:previous,revision:draftRevision.current});
-    }
+    updateDraft(text);
     setExpanded(true);
   },[updateDraft]);
   const updateStatus=useCallback((value:PreviewStatus)=>{
@@ -118,14 +138,13 @@ function SessionDetail({sample}:{sample:SessionSample}){
     const text=trimTrailingEmptyRoleplayLines(value??draftRef.current);
     if(!text.trim()||text.length>100000)return;
     const revision=draftRevision.current;
-    pending.current=true;setSending(true);setNotice('');
+    pending.current=true;setSending(true);setSendError('');
     try{
       await stage.current.send(text);
       if(!alive.current)return;
       if(revision===draftRevision.current)updateDraft('');
-      setNotice('已发送到本地预览，刷新后恢复样例。');
     }catch(error){
-      if(alive.current)setNotice(error instanceof Error?error.message:'发送失败，请重试');
+      if(alive.current)setSendError(error instanceof Error?error.message:'发送失败，请重试');
     }finally{
       pending.current=false;
       if(alive.current)setSending(false);
@@ -158,27 +177,21 @@ function SessionDetail({sample}:{sample:SessionSample}){
         <button className={styles.iconButton} type="button" aria-label="会话设置" aria-haspopup="dialog" onClick={openSettings}><Settings2 size={18}/></button>
       </div>
     </header>
-    <div className={styles.stageSlot} aria-label="故事舞台">
-      <StoryPreviewHost ref={stage} sessionId={id} kind={sample.custom?'composed':'official'} fontSize={fontSize} onSetDraft={receiveDraft} onStatusChange={updateStatus} className={styles.preview}/>
+    <div ref={stageViewport} className={styles.stageSlot} aria-label="故事舞台">
+      <StoryPreviewHost ref={stage} sessionId={id} kind={sample.custom?'composed':'official'} fontSize={fontSize} bottomInset={bottomInset} onSetDraft={receiveDraft} onStatusChange={updateStatus} className={styles.preview}/>
     </div>
-    <div className={styles.composerArea}>
-      {draftUndo&&draftUndo.revision===draftRevision.current&&<div className={styles.draftUndo} role="status">
-        <span>已填入草稿</span><button type="button" onClick={()=>{if(draftUndo.revision===draftRevision.current)updateDraft(draftUndo.text);}}><Undo2 size={14}/>撤销</button>
-      </div>}
-      <p className={notice?styles.previewNotice:styles.srOnly} data-preview-notice role="status">{notice}</p>
-      {expanded?<form className={styles.composer} onSubmit={submitForm}>
-        <div className={styles.inputHeader}><span>你的回应</span><span className={styles.keyHint}>⌘ / Ctrl + Enter 发送</span></div>
+    <div ref={composerOverlay} className={styles.composerArea} data-composer-overlay>
+      {sendError&&<p className={styles.previewError} data-preview-notice role="alert">{sendError}</p>}
+      {expanded?<form className={styles.composer} data-session-composer aria-label="消息输入" onSubmit={submitForm}>
+        <button type="button" className={styles.collapse} aria-label="收起输入框" title="收起输入框" onClick={()=>setExpanded(false)}><ChevronDown size={19}/></button>
         <div ref={composer} className={styles.editor}>
           <RoleplayComposer value={draft} disabled={!!status.error} onChange={updateDraft} onSubmit={text=>void submit(text)}/>
         </div>
-        <div className={styles.composerFooter}>
-          <button type="button" className={styles.collapse} onClick={()=>setExpanded(false)}><ChevronDown size={16}/>收起输入框</button>
-          {status.active?<button className={styles.send} type="button" aria-label="停止本地预览" onClick={()=>stage.current?.stop()}><Square size={13}/><span>停止</span></button>:
-            <button className={styles.send} type="submit" disabled={disabledSend} aria-label="发送消息到本地预览"><Send size={16}/><span>{sending?'发送中':'发送'}</span></button>}
-        </div>
+        {status.active?<button className={styles.send} type="button" aria-label="停止本地预览" title="停止生成" onClick={()=>stage.current?.stop()}><Square size={16}/></button>:
+          <button className={styles.send} type="submit" disabled={disabledSend} aria-label="发送消息到本地预览" aria-busy={sending||undefined} title="发送（⌘ / Ctrl + Enter）"><Send size={18}/></button>}
       </form>:<div className={styles.collapsedActions}>
-        <button ref={expandButton} type="button" className={styles.expand} onClick={focusInput}><ChevronUp size={16}/>展开输入框</button>
-        {status.active&&<button className={styles.stopCollapsed} type="button" aria-label="停止本地预览" onClick={()=>stage.current?.stop()}><Square size={13}/>停止</button>}
+        <button ref={expandButton} type="button" className={styles.expand} aria-label="展开输入框" title="展开输入框" onClick={focusInput}><ChevronUp size={19}/></button>
+        {status.active&&<button className={styles.stopCollapsed} type="button" aria-label="停止本地预览" title="停止生成" onClick={()=>stage.current?.stop()}><Square size={16}/></button>}
       </div>}
     </div>
     {settings&&<Modal title="会话设置" onClose={cancelSettings}>

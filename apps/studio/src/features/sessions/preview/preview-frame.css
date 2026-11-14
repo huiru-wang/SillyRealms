@@ -24,7 +24,7 @@ button{font:inherit}
 .preview-composed-body{display:grid;grid-template-columns:minmax(0,1fr) 220px;flex:1;min-height:0;min-width:0}
 .preview-composed-story{min-height:0;min-width:0}
 .preview-composed-story .sr-story{background:transparent}
-.preview-scene-state{padding:28px 23px;border-left:1px solid var(--scene-edge);overflow:auto;overscroll-behavior:contain}
+.preview-scene-state{padding:28px 23px calc(28px + var(--sr-story-bottom-inset,0px));scroll-padding-bottom:calc(16px + var(--sr-story-bottom-inset,0px));border-left:1px solid var(--scene-edge);overflow:auto;overscroll-behavior:contain}
 .preview-scene-label{font-size:11px;letter-spacing:.12em;color:var(--scene-accent)}
 .preview-scene-state h3{font-size:15px;font-weight:550;line-height:1.7;margin:14px 0}
 .preview-scene-state p{font-size:13px;color:var(--scene-muted);line-height:1.85}

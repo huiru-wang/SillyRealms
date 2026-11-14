@@ -30,21 +30,23 @@
 
 ### 样式与阅读布局
 
-iframe 入口显式导入 `@sillyrealms/sdk/world-story.css`。该公开 CSS 子路径提供限定在 `.sr-story` 内的官方阅读表面；Web iframe 与 Studio 预览共用它，Studio 不复制 SDK 样式，也不导入旧 Web 页面 CSS/tokens。Host 可传递经过限制的 `--sr-story-*` 色彩与字号变量；作者外围页面继续由作者自己控制。
+iframe 入口显式导入 `@sillyrealms/sdk/world-story.css`。该公开 CSS 子路径提供限定在 `.sr-story` 内的官方阅读表面；Web iframe 与 Studio 预览共用它，Studio 不复制 SDK 样式，也不导入旧 Web 页面 CSS/tokens。用户消息在阅读列右侧，使用较窄的浅强调色表面；AI 叙事在左侧，以较宽的极淡表面和细边线区分消息。来源标签、自然左对齐正文、消息身份及 Portal 均保留。
 
 官方状态栏以 **WorldStory 实际容器宽度** 为依据：`.sr-story.clientWidth >= 960` 时采用内嵌侧栏，小于 960px 时采用默认关闭的弹层；不能按整个浏览器宽度判断。即使宽屏作者页面将故事放进窄列，也应使用窄布局。`showState={false}` 同时移除官方状态入口、面板和弹层。
 
-Host 只提供有界舞台槽位，正文由 SDK 内部阅读区滚动；输入区展开/收起、多行增长、字号调整或侧栏变化均需保留阅读锚点与底部跟随。手机使用可见视口高度，并保留键盘弹出后可操作的输入 footer。
+Host 提供有界舞台，玻璃输入浮层叠在其底部，舞台可以在浮层后方滚动。浮层参考移动导航的半透明、模糊和边缘高光，提供减少透明度与不支持 backdrop-filter 时的实色回退。Studio 实测浮层遮挡，经受限 appearance 消息设置 `--sr-story-bottom-inset`（默认 0）；SDK 正文、回到最新、内嵌状态和弹层，以及仓库组合样例的侧栏使用相应避让。ResizeObserver 结合舞台高度与实际错误/边距等非编辑区高度，按 96px 舞台预留预算计算编辑空间（最小 44px），超长稿内部滚动；错误块高度也受视口约束，以保留状态弹层的关闭操作。输入与字号变化继续保持阅读锚点和底部跟随。
 
 ### 输入与草稿
 
-直接复用 `apps/web/src/features/sessions/composer/RoleplayComposer.tsx` 的 `value`、`disabled`、`onChange`、`onSubmit` 四 props 接口，使用 Studio 局部样式并保持每个文档内单一 React/ReactDOM runtime。话语/叙事指令快捷按钮已移除；Lexical、语义节点、序列化、粘贴、撤销、IME 防护和 100000 字符限制仍保留。
+直接复用 `apps/web/src/features/sessions/composer/RoleplayComposer.tsx` 的 `value`、`disabled`、`onChange`、`onSubmit` 四 props 接口，使用 Studio 局部样式并保持每个文档内单一 React/ReactDOM runtime。展开时一行排列左侧收起、中间输入、右侧发送或停止；文本换行自动向上增高，到上限后编辑区内部滚动。删除顶部解释、独立 footer 与成功提示，placeholder 统一为“写下你的回应…”。Lexical、语义节点、序列化、粘贴、HistoryPlugin、IME 防护和 100000 字符限制仍保留。
 
 普通段落中手打或粘贴引号、整行 `sr_instruction` 标签仍按既有规则转义为普通内容；初值、外部 `value` 和 SDK `session.setDraft` 中的既有格式文本仍解析为语义块。保留既有解析和规范化，不承诺字节级原样发送。Enter/Shift+Enter 在普通段落中换行，语义块中 Enter 退出到旁白，Cmd/Ctrl+Enter 发送。
 
-草稿由 Host 统一管理；SDK 填入不自动发送，已有草稿可撤销，后续编辑使该撤销失效。生成期间仍可编辑下一份草稿；发送响应仅清空未被后续修改的 revision，拒绝发送保留当前草稿。字号默认 16px、范围 13–21px，即时预览、取消恢复；本地预览不新建持久化字号键。
+草稿由 Host 统一管理；SDK 填入不自动发送，Studio 直接更新编辑器内容，不显示“已填入草稿／撤销”或发送成功提示，并移除其独立 setDraft 撤销提示状态。实际发送失败仍可见。pending 与 draftRevision 保护保留：运行中可编辑下一份草稿，发送响应只清空未被后续修改的 revision，拒绝发送保留当前草稿。Lexical 编辑器撤销和正式 Web 的独立撤销 UI 保持原有范围。字号默认 16px、范围 13–21px，即时预览、取消恢复；本地预览不新建持久化字号键。
 
 ### 开发验收
+
+本轮界面完成，Studio/Web 构建（含类型检查）与编辑空间修正后的 Studio 重新构建通过；生产预览会话全套退出 0、stderr 空，覆盖 SDK/草稿/流式/状态、安全、六种宽度、390×280、减少透明度及发送错误＋多行＋弹层组合。桌面、手机、多行与短视口错误截图已检查。补充 Web 字号专项最终原版 runner 复跑 `session-f16676fb009ab33281cb3073` 退出 1，7/8 通过；原生 End 返回底部/恢复跟随在当前 Mac headless 自动化中未稳定通过，超时后的增长跟随断言未执行。该项保留为未解决验证限制，尚不能归因为既有问题或本轮 CSS 回归，不宣称全部门禁通过。完整证据见设计稿第 11 节。
 
 当前回归入口如下；均支持 `STUDIO_URL` 指向独立开发或生产预览服务：
 

@@ -45,7 +45,9 @@ function applyAppearance(value:unknown){
   if(!isRecord(value)||!isRecord(value.colors))return;
   if(value.theme!=='light'&&value.theme!=='dark')return;
   if(typeof value.fontSize!=='number'||!Number.isFinite(value.fontSize))return;
+  if(typeof value.bottomInset!=='number'||!Number.isFinite(value.bottomInset))return;
   const nextSize=Math.max(13,Math.min(21,Math.round(value.fontSize)));
+  const bottomInset=Math.max(0,Math.min(800,Math.round(value.bottomInset)));
   if(nextSize!==currentFontSize)window.dispatchEvent(new Event('sr:font-size-will-change'));
   document.documentElement.dataset.theme=value.theme;
   for(const name of themeVariables){
@@ -56,6 +58,7 @@ function applyAppearance(value:unknown){
     }
   }
   element.style.setProperty('--sr-story-font-size',nextSize+'px');
+  element.style.setProperty('--sr-story-bottom-inset',bottomInset+'px');
   if(nextSize!==currentFontSize){
     currentFontSize=nextSize;
     window.dispatchEvent(new Event('sr:font-size-changed'));

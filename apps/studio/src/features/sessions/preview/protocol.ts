@@ -7,6 +7,7 @@ export type ThemeVariable = typeof themeVariables[number];
 export type PreviewAppearance = {
   theme:'light'|'dark';
   fontSize:number;
+  bottomInset:number;
   colors:Record<ThemeVariable,string>;
 };
 export const requestMethods = ['session.history','session.send','state.read','state.write','message.match'] as const;

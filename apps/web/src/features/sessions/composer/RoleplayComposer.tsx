@@ -178,7 +178,7 @@ export function RoleplayComposer({value, disabled, onChange, onSubmit}: {
     <div className="sr-roleplay-composer">
       <Controls value={value} disabled={disabled} onChange={onChange} onSubmit={onSubmit}/>
       <div className="sr-composer-editor-wrap">
-        <RichTextPlugin contentEditable={<ContentEditable className="sr-composer-editor" role="textbox" aria-label="输入消息" aria-multiline="true" aria-placeholder="写下你的回应，Enter 换行，⌘ / Ctrl + Enter 发送…" placeholder={<span className="sr-composer-placeholder">写下你的回应，Enter 换行，⌘ / Ctrl + Enter 发送…</span>} />} ErrorBoundary={LexicalErrorBoundary}/>
+        <RichTextPlugin contentEditable={<ContentEditable className="sr-composer-editor" role="textbox" aria-label="输入消息" aria-multiline="true" aria-placeholder="写下你的回应…" placeholder={<span className="sr-composer-placeholder">写下你的回应…</span>} />} ErrorBoundary={LexicalErrorBoundary}/>
       </div>
       <HistoryPlugin />
     </div>
