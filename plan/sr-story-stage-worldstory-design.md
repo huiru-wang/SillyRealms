@@ -1,6 +1,6 @@
 # 故事舞台与新版 SR.WorldStory：阅读界面设计
 
-> 状态：设计目标保留；2026-11-14 已按用户后续明确授权实施 SDK 阅读表面、Host 输入精简和 Studio 隔离本地预览。本期必要工程验证与文档收尾完成，开发/生产会话、最终构建及世界/导航/预设回归通过；提交推送待执行，用户视觉验收仍未完成，不代表 Studio 已接入真实 Server 会话。评估时事实与当前结果见第 10 节。
+> 状态：设计目标保留；2026-11-14 已按用户后续明确授权实施 SDK 阅读表面、Host 输入精简和 Studio 隔离本地预览。本期必要工程验证与文档收尾完成，开发/生产会话、最终构建及世界/导航/预设回归通过；功能提交 `f6497df` 已推送到 `origin/main`，用户视觉验收仍未完成，不代表 Studio 已接入真实 Server 会话。评估时事实与当前结果见第 10 节。
 
 ## 1. 目标和范围
 
@@ -96,6 +96,6 @@
 
 最新开发环境 sessions-only 回归已完整退出 0、无 stderr，覆盖真实 SDK 历史与 Portal、阅读锚点、状态弹层 Tab/Shift+Tab/Escape、草稿、流式/停止/失败、主题、容器响应式和 390×280 短视口。生成的 `session-changan-*`、`session-neon-*`、`session-state-overlay-wide-column.png`、`session-keyboard-height-390.png` 等截图位于 `apps/studio/tests/visual/output/`，本轮已人工检查官方 1536/390、组合浅色 1536、宽屏窄列 dialog 及 390×280 截图，未见可见遮挡或溢出；它们是开发证据，尚不作为用户认可的视觉基准。锚点自动断言已收紧到原计划的 2px，生产 SDK helper 的全部锚点场景通过；不扩展为未测浏览器的保证。
 
-最终 Studio/Web 构建（含类型检查）及生产预览 world-api/mobile-nav 回归通过；首轮生产 sessions-only 的分页测试改为真实 Home 键与可观测顶部等待后，完整退出 0，含 2px 锚点、全部响应式与短视口；预设取消焦点测试保留原断言，等待触发器关闭与 rAF 恢复后，最终生产回归退出 0、stderr 空，完整交互、五视口与 Reduced Motion 通过。全范围 diff、测试语法检查及 36 个文件的预提交白名单核对也已通过，提交推送仍待实际执行。旧完整 `test:visual` 失败于固定 8 卡断言，且还依赖已废弃的世界会话跳转和手机抽屉；现行必要回归不是其动画、A/B 滚动与 20 角色锚点覆盖的等价迁移。具体命令、阶段证据和缺口见[实施方案第 9、11 节](sr-story-stage-worldstory-implementation-v1.md)及[任务表](sr-story-stage-worldstory-tasks.md)。
+最终 Studio/Web 构建（含类型检查）及生产预览 world-api/mobile-nav 回归通过；首轮生产 sessions-only 的分页测试改为真实 Home 键与可观测顶部等待后，完整退出 0，含 2px 锚点、全部响应式与短视口；预设取消焦点测试保留原断言，等待触发器关闭与 rAF 恢复后，最终生产回归退出 0、stderr 空，完整交互、五视口与 Reduced Motion 通过。全范围 diff、测试语法检查及 36 个文件的预提交白名单核对也已通过；功能提交 `f6497df6d07c45423cfc1b531c15271d10221a17` 已正常推送到 `origin/main`，16 项既有 plan 删除未纳入提交。旧完整 `test:visual` 失败于固定 8 卡断言，且还依赖已废弃的世界会话跳转和手机抽屉；现行必要回归不是其动画、A/B 滚动与 20 角色锚点覆盖的等价迁移。具体命令、阶段证据和缺口见[实施方案第 9、11 节](sr-story-stage-worldstory-implementation-v1.md)及[任务表](sr-story-stage-worldstory-tasks.md)。
 
 真 Safari/Firefox、真实软键盘和真实 Server 会话未测。本期不调用 Provider；模拟事件和用量不代表服务端持久化、真实网络恢复或计费结果。
