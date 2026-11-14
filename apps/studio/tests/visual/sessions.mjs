@@ -1,7 +1,9 @@
+import {createPreviewDriver,replacePreviewDraft,checkStoryPreview} from './story-preview.mjs';
+
 export async function checkSessions({send,evaluate,until,viewport,click,screenshot,delay,assert,base,hover,bg}){
-  async function open(path){
+  async function open(path,scenario=''){
     const previous=await evaluate('performance.timeOrigin');
-    await send('Page.navigate',{url:base+path+'?sidebar=expanded&theme=dark'});
+    await send('Page.navigate',{url:base+path+'?sidebar=expanded&theme=dark'+(scenario?'&previewScenario='+encodeURIComponent(scenario):'')});
     await until('performance.timeOrigin!=='+previous+' && document.readyState==="complete" && location.pathname==='+JSON.stringify(path)+' && !!document.querySelector("main h1")');
     await delay(250);
   }
@@ -10,8 +12,14 @@ export async function checkSessions({send,evaluate,until,viewport,click,screensh
     for(const name of ['changan','neon']){
       await open('/sessions/'+name);
       assert(await evaluate('document.querySelector("[data-session-detail]")?.dataset.sessionDetail')===name,'Session route failed: '+name);
-      const geometry=await evaluate(`(()=>{const d=document.querySelector('[data-session-detail]'),r=d.getBoundingClientRect(),t=d.querySelector('textarea').getBoundingClientRect(),h=d.querySelector('header').getBoundingClientRect();return {page:document.documentElement.scrollWidth,width:innerWidth,right:r.right,bottom:r.bottom,textarea:t.bottom,header:h.bottom}})()`);
+      const geometry=await evaluate(`(()=>{const d=document.querySelector('[data-session-detail]'),r=d.getBoundingClientRect(),t=d.querySelector('.sr-composer-editor').getBoundingClientRect(),h=d.querySelector('header').getBoundingClientRect();return {page:document.documentElement.scrollWidth,width:innerWidth,right:r.right,bottom:r.bottom,textarea:t.bottom,header:h.bottom}})()`);
       assert(geometry.page<=width+1&&geometry.right<=width+1&&geometry.bottom<=height+1&&geometry.textarea<=height,`${width} ${name} overflow: `+JSON.stringify(geometry));
+      const frame=await createPreviewDriver({send,evaluate,delay});
+      await frame.until('document.querySelectorAll(".sr-message").length===10 && !!document.querySelector("[data-preview-clue]")');
+      const reading=await frame.evaluate('(()=>{const s=document.querySelector(".sr-story"),c=document.querySelector(".sr-chat-messages");return {width:innerWidth,scroll:document.documentElement.scrollWidth,height:innerHeight,body:document.documentElement.scrollHeight,mode:s.dataset.stateMode,container:s.clientWidth,scrolling:c.scrollHeight>c.clientHeight}})()');
+      assert(reading.scroll<=reading.width+1&&reading.body<=reading.height+1&&reading.scrolling,width+' '+name+' iframe geometry: '+JSON.stringify(reading));
+      assert(reading.mode===(reading.container>=960?'docked':'overlay'),'State layout must depend on the actual component width');
+      assert(!await evaluate('!!document.querySelector(".sr-composer-toolbar")'),'No obsolete composer shortcuts');
       await screenshot('session-'+name+'-'+width);
     }
   }
@@ -27,6 +35,7 @@ export async function checkSessions({send,evaluate,until,viewport,click,screensh
   const sessionShortcut='aside button:has(img[src="/covers/changan.webp"])';
   assert(await evaluate('document.querySelector('+JSON.stringify(sessionShortcut)+').getAttribute("aria-current")')==='page','Current session shortcut should be selected');
   assert(await evaluate('document.querySelector("#sessions-heading a").hasAttribute("aria-current")')===false,'Session heading should not also be selected');
+  await until('document.querySelector('+JSON.stringify(sessionShortcut)+').getAnimations().every(a=>a.playState!=="running"&&!a.pending)');
   const selectedBackground=await bg(sessionShortcut);
   await hover(sessionShortcut);
   assert(await bg(sessionShortcut)===selectedBackground,'Selected session should keep its background on hover');
@@ -47,23 +56,26 @@ export async function checkSessions({send,evaluate,until,viewport,click,screensh
   assert(await evaluate('!!document.querySelector("[role=dialog]")'),'Session settings should open');
   await click('[role=dialog] button[aria-label="关闭弹窗"]');
   await until('!document.querySelector("[role=dialog]")');
-  await evaluate(`(()=>{const el=document.querySelector('textarea');const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;setter.call(el,'保留的草稿');el.dispatchEvent(new Event('input',{bubbles:true}));})()`);
-  await until('document.querySelector("textarea").value==="保留的草稿"');
+  await replacePreviewDraft({send,evaluate,delay},'保留的草稿');
+  await until('document.querySelector(".sr-composer-editor").innerText==="保留的草稿"');
   await click('button:has(svg.lucide-chevron-down)');
-  assert(await evaluate('!document.querySelector("textarea")'),'Composer should collapse');
+  assert(await evaluate('!document.querySelector(".sr-composer-editor")'),'Composer should collapse');
   await click('button:has(svg.lucide-chevron-up)');
-  assert(await evaluate('document.querySelector("textarea").value')==='保留的草稿','Collapsing composer lost draft');
+  assert(await evaluate('document.querySelector(".sr-composer-editor").innerText')==='保留的草稿','Collapsing composer lost draft');
   await click('aside button:has(img[src="/covers/neon.webp"])');
   await until('!!document.querySelector("[data-session-detail=neon]")');
   await click('aside button:has(img[src="/covers/changan.webp"])');
-  await until('!!document.querySelector("[data-session-detail=changan]") && document.querySelector("textarea").value==="保留的草稿"');
+  await until('!!document.querySelector("[data-session-detail=changan]") && document.querySelector(".sr-composer-editor").innerText==="保留的草稿"');
+  await until('document.querySelector("[data-session-detail]").dataset.previewReady==="true"');
   await click('button[aria-label="发送消息到本地预览"]');
-  assert(await evaluate('document.querySelector("[role=status]")?.textContent.includes("本地预览") && document.querySelector("textarea").value===""'),'Local preview must clearly report non-persistent send');
+  await until('document.querySelector("[data-preview-notice]")?.textContent.includes("本地预览") && document.querySelector(".sr-composer-editor").innerText.trim()===""');
+  assert(await evaluate('document.querySelector(".sr-composer-editor").getAttribute("contenteditable")')==='true','Active preview must allow editing the next draft');
   await open('/presets');
   assert(await evaluate('document.querySelector("#presets-heading a").getAttribute("aria-current")')==='page','Preset list should select its heading');
   await click('aside [data-preset-shortcut]');
   assert(await evaluate('!!document.querySelector("aside [data-preset-shortcut][aria-current=page]")&&!document.querySelector("#presets-heading a").hasAttribute("aria-current")'),'Preset detail should select only its shortcut');
   const presetSelected='aside [data-preset-shortcut][aria-current=page]';
+  await until('document.querySelector('+JSON.stringify(presetSelected)+').getAnimations().every(a=>a.playState!=="running"&&!a.pending)');
   const presetBackground=await bg(presetSelected);
   await hover(presetSelected);
   assert(await bg(presetSelected)===presetBackground,'Selected preset should keep its background on hover');
@@ -78,6 +90,7 @@ export async function checkSessions({send,evaluate,until,viewport,click,screensh
   assert(await evaluate('document.querySelector("#presets-heading a").getAttribute("aria-current")')==='location','Unlisted preset should select its parent location');
   await open('/sessions/missing');
   assert(await evaluate('document.querySelector("#sessions-heading a").getAttribute("aria-current")')==='location','Unlisted session should select its parent location');
+  await checkStoryPreview({send,evaluate,until,viewport,click,screenshot,delay,assert,base,open});
   for(const [width,height,mobile] of [[1280,800,false],[768,1024,false],[390,844,true],[375,812,true],[320,700,true]])await checkViewport(width,height,mobile);
   assert(await evaluate(`['button[aria-label="查看上下文占比示意"]','button[aria-label="发送消息到本地预览"]'].every(selector=>document.querySelector(selector).getBoundingClientRect().height>=44)`),'Mobile context and send controls should be at least 44px tall');
   assert(await evaluate(`(()=>{const e=[...document.querySelectorAll('span')].find(node=>node.textContent==='演示');return !!e&&parseFloat(getComputedStyle(e).fontSize)>0&&e.getBoundingClientRect().right<=innerWidth})()`),'Mobile demo status must remain visible');
@@ -94,5 +107,10 @@ export async function checkSessions({send,evaluate,until,viewport,click,screensh
   await until('!!document.querySelector("[data-session-detail=changan]")');
   await evaluate('document.documentElement.dataset.theme="light"');
   await screenshot('session-changan-light-390');
-  console.log('PASS: session list, both visual samples, context/settings, local draft and preview, responsive layout.');
+  await viewport(390,280,true);
+  await replacePreviewDraft({send,evaluate,delay},Array.from({length:12},(_,i)=>'多行草稿 '+i).join('\n'));
+  const compact=await evaluate('(()=>{const e=document.querySelector(".sr-composer-editor").getBoundingClientRect(),b=document.querySelector("[aria-label=\\"发送消息到本地预览\\"]").getBoundingClientRect();return {height:innerHeight,editor:e.height,buttonTop:b.top,buttonBottom:b.bottom}})()');
+  assert(compact.editor>15&&compact.buttonTop>=0&&compact.buttonBottom<=compact.height,'Short visual viewport keeps the editable area and send control visible: '+JSON.stringify(compact));
+  await screenshot('session-keyboard-height-390');
+  console.log('PASS: session list, SDK samples, context/settings, local draft and preview, responsive layout and short viewport.');
 }

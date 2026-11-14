@@ -27,6 +27,14 @@ export async function verifyRuntime(call,pause){
     if(result.exceptionDetails)throw Error(result.exceptionDetails.text);
     return result.result.value;
   };
+  const waitForFrame=async(expression,label)=>{
+    const deadline=Date.now()+5000;
+    do {
+      if(await frameEval(expression))return;
+      await pause(25);
+    }while(Date.now()<deadline);
+    throw Error('runtime-v2: timed out waiting for '+label+'; frame='+await frameEval('document.body.innerText'));
+  };
   for(let i=0;i<150;i++){if(await frameEval('document.querySelectorAll(".sr-suggestions button").length')===3)break;await pause(100);}
   const available=await frameEval('document.querySelectorAll(".sr-suggestions button:not(:disabled)").length');
   if(available!==3)throw Error('runtime-v2 initial render: '+JSON.stringify({available,frame:await frameEval('document.body.innerText'),host:await evaluate('document.querySelector(".host")?.innerText')}));
@@ -39,7 +47,7 @@ export async function verifyRuntime(call,pause){
   };
   for(const width of [1280,375]){
     await call('Emulation.setDeviceMetricsOverride',{width,height:812,deviceScaleFactor:1,mobile:width<600});await pause(160);
-    if(width<600)await frameEval('document.querySelector(".sr-story-state > button")?.click()');await pause(100);
+    if(width<600)await frameEval('document.querySelector(".sr-state-heading button")?.click()');await pause(100);
     const layout=JSON.parse(await evaluate('JSON.stringify({width:document.documentElement.clientWidth,scroll:document.querySelector(".host").scrollWidth})'));
     assert(layout.scroll<=layout.width+1,width+'px host does not overflow');
     const story=JSON.parse(await frameEval('JSON.stringify({width:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth,buttons:[...document.querySelectorAll(".sr-suggestions button")].map(b=>b.getBoundingClientRect().right)})'));
@@ -70,10 +78,14 @@ export async function verifyRuntime(call,pause){
   await evaluate('document.querySelector(".host-settings-dialog-footer .primary").click()');await pause(120);
   assert(await evaluate('__runtimeTest.calls.some(c=>c.path.endsWith("/capabilities")&&c.body.overrides.state_update===false)'),'capability overrides can be saved while busy for the next Run');
   await frameEval('window.__oldParagraph=document.querySelector(".sr-rich p")');
-  await evaluate('__runtimeTest.stream("稳定段落。\\n\\n正在")');await pause(100);
+  await evaluate('__runtimeTest.stream("稳定段落。\\n\\n正在")');
+  // Delta delivery crosses the iframe channel and may use WorldStory's 100ms
+  // batching fallback; await the committed DOM before testing its identity.
+  await waitForFrame(`document.querySelector('[data-message-id="a2"] .sr-rich')?.textContent.includes("正在")`,'the first streamed paragraph');
   await frameEval(`window.__liveParagraph=document.querySelector('[data-message-id="a2"] .sr-rich p')`);
-  await evaluate('__runtimeTest.stream("生成正文。");__runtimeTest.duplicate()');await pause(100);
-  assert(await frameEval(`document.querySelector('[data-message-id="a2"]').innerText.includes("正在生成正文。")`),'stream appends text without duplicating overlapping deltas');
+  await evaluate('__runtimeTest.stream("生成正文。");__runtimeTest.duplicate()');
+  await waitForFrame(`document.querySelector('[data-message-id="a2"]')?.innerText.includes("正在生成正文。")`,'the appended stream text');
+  assert(await frameEval(`document.querySelector('[data-message-id="a2"]').innerText.split("正在生成正文。").length===2`),'stream appends text without duplicating overlapping deltas');
   assert(await frameEval('document.querySelector(".sr-rich p")===window.__oldParagraph'),'streaming preserves historical DOM identity');
   assert(await frameEval(`document.querySelector('[data-message-id="a2"] .sr-rich p')===window.__liveParagraph`),'streaming preserves the active message paragraph');
   await evaluate('__runtimeTest.disconnect();__runtimeTest.stream("断线期间的正文",false);__runtimeTest.reconnect()');await pause(250);

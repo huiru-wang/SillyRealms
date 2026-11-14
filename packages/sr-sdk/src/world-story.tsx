@@ -1,4 +1,4 @@
-import React,{useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
+import React,{useCallback,useEffect,useLayoutEffect,useId,useMemo,useRef,useState} from 'react';
 import {useSRSession,useSRStateAPI} from './atomic-context.js';
 import {useStoryConfiguration} from './story-context.js';
 import {applyRunEvent,displayMessages,hasDeltaGap,mergeHistory,mergeInitial} from './story-history.js';
@@ -6,15 +6,25 @@ import {captureScrollAnchor,restoreScrollAnchor} from './story-scroll.js';
 import type {Run,SessionRunEvent,StateScope,StateValue} from './index.js';
 import {MessageContent} from './message-content.js';
 
-function StatePanel({close,mobile}:{close:()=>void;mobile:boolean}){
+function StatePanel({close,restoreFocus,overlay,id}:{close:()=>void;restoreFocus:()=>void;overlay:boolean;id:string}){
   const config=useStoryConfiguration(),state=useSRStateAPI();
-  const panel=useRef<HTMLElement>(null),closeButton=useRef<HTMLButtonElement>(null);
+  const dialog=useRef<HTMLDialogElement>(null),aside=useRef<HTMLElement>(null),closeButton=useRef<HTMLButtonElement>(null);
   const [values,setValues]=useState<Array<{path:string;scope:StateScope;value:StateValue|undefined}>>([]);
   const [loading,setLoading]=useState(false),[error,setError]=useState(false),[retry,setRetry]=useState(0);
   const definitions=config.state as {scopes?:Partial<Record<StateScope,Record<string,unknown>>>};
   const entries=(['global','session','message'] as StateScope[]).flatMap(scope=>Object.keys(definitions.scopes?.[scope]??{}).map(path=>({scope,path})));
   const signature=JSON.stringify(entries);
-  useEffect(()=>{if(mobile)closeButton.current?.focus();},[mobile]);
+  useLayoutEffect(()=>{
+    const element=overlay?dialog.current:aside.current;if(!element)return;
+    if(overlay){dialog.current!.showModal();closeButton.current?.focus({preventScroll:true});}
+    return()=>{
+      const hadFocus=element.contains(document.activeElement);
+      if(element instanceof HTMLDialogElement&&element.open)element.close();
+      // Deletion happens after this cleanup, so this also covers showState=false
+      // when both the panel and its trigger disappear in the same render.
+      if(hadFocus)restoreFocus();
+    };
+  },[overlay,restoreFocus]);
   useEffect(()=>{
     let live=true;let sequence=0;
     const read=()=>{const current=++sequence;if(entries.length)setLoading(true);void state.batchGetState(entries).then(value=>{if(live&&current===sequence){setValues(value);setError(false);setLoading(false);}}).catch(()=>{if(live&&current===sequence){setError(true);setLoading(false);}});};
@@ -22,19 +32,34 @@ function StatePanel({close,mobile}:{close:()=>void;mobile:boolean}){
     return()=>{live=false;unsubscribe();};
   // The signature represents the stable path list.
   },[state,signature,retry]);
-  const labels:Record<StateScope,string>={global:'世界状态',session:'会话状态',message:'消息状态'};
-  return <aside ref={panel} className="sr-story-state" role={mobile?'dialog':undefined} aria-modal={mobile||undefined} aria-label="会话状态" onKeyDown={event=>{
-    if(!mobile)return;
-    if(event.key==='Escape'){event.preventDefault();close();return;}
-    if(event.key==='Tab'){
-      const controls=Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled),summary,[tabindex]:not([tabindex="-1"])')??[]);
-      const first=controls[0],last=controls.at(-1);if(!first||!last)return;
-      if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
-      else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
-    }
-  }}><button ref={closeButton} onClick={close}>收起状态</button><h2>状态</h2>{error?<p role="alert">状态加载失败 <button onClick={()=>setRetry(value=>value+1)}>重试</button></p>:loading&&!values.length?<p>正在加载状态…</p>:values.length?(['global','session','message'] as StateScope[]).map(scope=>{
-    const items=values.filter(item=>item.scope===scope);return items.length?<details key={scope} open><summary>{labels[scope]}</summary>{items.map(item=><div key={item.path}><span>{item.path}</span><code>{item.value===undefined?'—':typeof item.value==='string'?item.value:JSON.stringify(item.value)}</code></div>)}</details>:null;
-  }):<p>暂无状态</p>}</aside>;
+  function wrapModalFocus(event:React.KeyboardEvent<HTMLDialogElement>){
+    if(event.key!=='Tab')return;
+    const element=event.currentTarget;
+    const controls=Array.from(element.querySelectorAll<HTMLElement>('button:not(:disabled),summary,[tabindex]:not([tabindex="-1"])')).filter(control=>control.tabIndex>=0&&control.getClientRects().length>0);
+    const first=controls[0],last=controls.at(-1);if(!first||!last)return;
+    const active=element.ownerDocument.activeElement;
+    if(event.shiftKey&&(active===first||active===element)){event.preventDefault();last.focus({preventScroll:true});}
+    else if(!event.shiftKey&&(active===last||active===element)){event.preventDefault();first.focus({preventScroll:true});}
+  }
+  const labels:Record<StateScope,string>={global:'世界状态',session:'会话状态',message:'当前剧情'};
+  const content=<>
+    <header className="sr-state-heading"><h2 id={id+'-title'}>会话状态</h2><button ref={closeButton} type="button" onClick={close} aria-label="收起状态">收起</button></header>
+    <div className="sr-state-content">
+      {error?<p className="sr-state-error" role="alert">状态加载失败 <button type="button" onClick={()=>setRetry(value=>value+1)}>重试</button></p>
+      :loading&&!values.length?<p className="sr-state-empty" role="status">正在加载状态…</p>
+      :values.length?(['global','session','message'] as StateScope[]).map(scope=>{
+        const items=values.filter(item=>item.scope===scope);
+        return items.length?<details className="sr-state-group" key={scope} open><summary>{labels[scope]}</summary><dl>{items.map(item=><div className="sr-state-value" key={item.path}><dt>{item.path}</dt><dd><code>{item.value===undefined?'—':typeof item.value==='string'?item.value:JSON.stringify(item.value,null,2)}</code></dd></div>)}</dl></details>:null;
+      }):<p className="sr-state-empty">暂无状态</p>}
+    </div>
+  </>;
+  return overlay
+    ?<dialog ref={dialog} id={id} className="sr-story-state sr-story-dialog" aria-labelledby={id+'-title'} onKeyDown={wrapModalFocus} onCancel={event=>{event.preventDefault();close();}} onClick={event=>{
+      if(event.target!==event.currentTarget)return;
+      const rect=event.currentTarget.getBoundingClientRect();
+      if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)close();
+    }}>{content}</dialog>
+    :<aside ref={aside} id={id} className="sr-story-state" aria-labelledby={id+'-title'}>{content}</aside>;
 }
 
 function RunFeedback({run,current,onChoose}:{run:Run;current:boolean;onChoose:(text:string)=>void}){
@@ -57,49 +82,89 @@ function RunFeedback({run,current,onChoose}:{run:Run;current:boolean;onChoose:(t
 const StoryRun = React.memo(function StoryRun({run,current,onChoose}:{run:Run;current:boolean;onChoose:(text:string)=>void}) {
   const messages = useMemo(() => displayMessages(run.messages), [run.messages]);
   return <>{messages.map(message=><article className={'sr-message '+message.role} data-message-id={message.id} key={message.id}>
-    <span className="sr-avatar">{message.role==='user'?'我':'✦'}</span>
-    <div className="sr-bubble"><MessageContent message={message} runId={run.id}/></div>
+    <span className="sr-message-source">{message.role==='user'?'我':'故事'}</span>
+    <div className="sr-story-content"><MessageContent message={message} runId={run.id}/></div>
   </article>)}<RunFeedback run={run} current={current} onChoose={onChoose}/></>;
 });
 export function WorldStory({showState=true}:{showState?:boolean}={}){
   const session=useSRSession(),config=useStoryConfiguration();
-  const [runs,setRuns]=useState<Run[]>([]),[cursor,setCursor]=useState<string|null>(null),[more,setMore]=useState(false),[loading,setLoading]=useState(true),[error,setError]=useState(''),[stateOpen,setStateOpen]=useState(()=>window.matchMedia('(min-width: 761px)').matches);
+  const panelId=useId();
+  const [runs,setRuns]=useState<Run[]>([]),[cursor,setCursor]=useState<string|null>(null),[more,setMore]=useState(false),[loading,setLoading]=useState(true),[error,setError]=useState('');
+  const [stateOpen,setStateOpen]=useState(false),[docked,setDocked]=useState(false);
   const [retry,setRetry]=useState(0),[loadingMore,setLoadingMore]=useState(false),[historyError,setHistoryError]=useState('');
   const runsRef=useRef<Run[]>([]),historyEpoch=useRef(0);
   const updateRuns=useCallback((next:Run[])=>{runsRef.current=next;setRuns(next);},[]);
   const chooseSuggestion=useCallback((text:string)=>session.setDraft(text),[session]);
-  const view=useRef<HTMLDivElement>(null);
+  const root=useRef<HTMLDivElement>(null),view=useRef<HTMLDivElement>(null);
   const stateButton=useRef<HTMLButtonElement>(null);
-  const [mobile,setMobile]=useState(()=>window.matchMedia('(max-width: 760px)').matches);
-  const stickToEnd=useRef(true);
-  const initialPositionPending=useRef(true);
-  const loadingMoreRef=useRef(false);
+  const dockedMode=useRef<boolean|null>(null),dockedPreference=useRef(true);
+  const showStateRef=useRef(showState);showStateRef.current=showState;
+  const stickToEnd=useRef(true),initialPositionPending=useRef(true),loadingMoreRef=useRef(false);
   const pendingScrollAnchor=useRef<ReturnType<typeof captureScrollAnchor>|null>(null);
-  const fontChangeSnapshot=useRef<{anchor:ReturnType<typeof captureScrollAnchor>;wasAtEnd:boolean}|null>(null);
+  const readingPosition=useRef<{anchor:ReturnType<typeof captureScrollAnchor>;width:number;height:number;scrollHeight:number}|null>(null);
+  const userScrollIntent=useRef(false),latestRequested=useRef(false);
+  const restoredScrollTop=useRef<number|null>(null);
+  const repairFrame=useRef<number|undefined>(undefined);
   const [showLatest,setShowLatest]=useState(false);
-  useEffect(()=>{const query=window.matchMedia('(max-width: 760px)');const update=()=>setMobile(query.matches);query.addEventListener('change',update);return()=>query.removeEventListener('change',update);},[]);
-  const closeState=()=>{setStateOpen(false);requestAnimationFrame(()=>stateButton.current?.focus());};
+
+  const rememberReading=useCallback(()=>{
+    const element=view.current;if(!element||initialPositionPending.current)return;
+    readingPosition.current={anchor:captureScrollAnchor(element),width:element.clientWidth,height:element.clientHeight,scrollHeight:element.scrollHeight};
+  },[]);
+  const restoreReading=useCallback(()=>{
+    const element=view.current;if(!element||initialPositionPending.current||pendingScrollAnchor.current)return;
+    const previousTop=element.scrollTop;
+    if(stickToEnd.current){element.scrollTop=element.scrollHeight;setShowLatest(false);}
+    else if(readingPosition.current)restoreScrollAnchor(element,readingPosition.current.anchor);
+    if(element.scrollTop!==previousTop)restoredScrollTop.current=element.scrollTop;
+    rememberReading();
+  },[rememberReading]);
+  const scheduleRestore=useCallback(()=>{
+    if(repairFrame.current!==undefined)return;
+    repairFrame.current=requestAnimationFrame(()=>{repairFrame.current=undefined;restoreReading();});
+  },[restoreReading]);
+  const focusStateTrigger=useCallback(()=>{
+    requestAnimationFrame(()=>{(stateButton.current??view.current)?.focus({preventScroll:true});});
+  },[]);
+  const closeState=useCallback(()=>{
+    rememberReading();
+    if(dockedMode.current)dockedPreference.current=false;
+    setStateOpen(false);focusStateTrigger();
+  },[rememberReading,focusStateTrigger]);
+
+  useLayoutEffect(()=>{
+    const element=root.current;if(!element)return;
+    const measure=()=>{
+      const next=element.clientWidth>=960;
+      if(next===dockedMode.current)return;
+      const panelHadFocus=!!element.querySelector('.sr-story-state')?.contains(document.activeElement);
+      dockedMode.current=next;setDocked(next);
+      setStateOpen(showStateRef.current&&next&&dockedPreference.current);
+      if(panelHadFocus)focusStateTrigger();
+    };
+    measure();const observer=new ResizeObserver(measure);observer.observe(element);
+    return()=>observer.disconnect();
+  },[focusStateTrigger]);
+  useLayoutEffect(()=>{
+    if(!showState){
+      const hadFocus=!!root.current?.querySelector('.sr-story-state')?.contains(document.activeElement);
+      setStateOpen(false);if(hadFocus)focusStateTrigger();
+    }else setStateOpen(!!dockedMode.current&&dockedPreference.current);
+  },[showState,focusStateTrigger]);
+  useLayoutEffect(()=>{restoreReading();},[stateOpen,docked,showState,restoreReading]);
+
   useEffect(()=>{
-    const before=()=>{
-      const element=view.current;if(!element)return;
-      fontChangeSnapshot.current={anchor:captureScrollAnchor(element),wasAtEnd:element.scrollHeight-element.scrollTop-element.clientHeight<64};
-    };
-    const after=()=>{
-      const snapshot=fontChangeSnapshot.current;fontChangeSnapshot.current=null;
-      if(!snapshot)return;
-      // Reading geometry flushes the new font's layout synchronously. An
-      // obscured iframe may defer animation frames while Host's modal is open.
-      const element=view.current;if(!element)return;
-      if(snapshot.wasAtEnd){element.scrollTop=element.scrollHeight;stickToEnd.current=true;setShowLatest(false);}
-      else if(snapshot.anchor.messageId)restoreScrollAnchor(element,snapshot.anchor);
-    };
+    const before=()=>rememberReading();
+    // Keep this synchronous: the Host's settings dialog can obscure the frame,
+    // delaying animation frames even though the font has already changed.
+    const after=()=>restoreReading();
     window.addEventListener('sr:font-size-will-change',before);
     window.addEventListener('sr:font-size-changed',after);
     return()=>{
       window.removeEventListener('sr:font-size-will-change',before);
       window.removeEventListener('sr:font-size-changed',after);
     };
-  },[]);
+  },[rememberReading,restoreReading]);
   useEffect(()=>{
     let live=true,initial=true,syncing=false;
     let frame:number|undefined,timer:ReturnType<typeof setTimeout>|undefined;
@@ -107,7 +172,7 @@ export function WorldStory({showState=true}:{showState?:boolean}={}){
     historyEpoch.current++;
     initialPositionPending.current=true;
     stickToEnd.current=true;
-    pendingScrollAnchor.current=null;
+    pendingScrollAnchor.current=null;readingPosition.current=null;latestRequested.current=false;restoredScrollTop.current=null;userScrollIntent.current=false;
     loadingMoreRef.current=false;setLoadingMore(false);
     updateRuns([]);setCursor(null);setMore(false);setHistoryError('');
     setLoading(true);setError('');
@@ -164,30 +229,58 @@ export function WorldStory({showState=true}:{showState?:boolean}={}){
     if(initialPositionPending.current){
       if(loading)return;
       element.scrollTop=element.scrollHeight;
-      initialPositionPending.current=false;
-      stickToEnd.current=true;
-      setShowLatest(false);
-      return;
+      initialPositionPending.current=false;stickToEnd.current=true;setShowLatest(false);
+      rememberReading();return;
     }
     if(pendingScrollAnchor.current){
-      const anchor=pendingScrollAnchor.current;
-      pendingScrollAnchor.current=null;
+      const anchor=pendingScrollAnchor.current;pendingScrollAnchor.current=null;
+      const previousTop=element.scrollTop;
       restoreScrollAnchor(element,anchor);
-      return;
+      if(element.scrollTop!==previousTop)restoredScrollTop.current=element.scrollTop;
+      rememberReading();return;
     }
-    if(stickToEnd.current)element.scrollTop=element.scrollHeight;
-  },[runs,loading]);
+    restoreReading();
+  },[runs,loading,rememberReading,restoreReading]);
   useEffect(()=>{
     const element=view.current;if(!element)return;
-    // Images and asynchronous custom rendering can change height after a React commit.
-    const resize=new ResizeObserver(()=>{
-      if(stickToEnd.current&&!initialPositionPending.current&&!pendingScrollAnchor.current)
-        element.scrollTop=element.scrollHeight;
-    });
+    // Keep the last settled message anchor. Observer callbacks run *after*
+    // layout, so capturing here would lose the position before an image/reflow.
+    const resize=new ResizeObserver(scheduleRestore);
     const observe=()=>{resize.disconnect();resize.observe(element);for(const child of element.children)resize.observe(child);};
     const mutations=new MutationObserver(observe);mutations.observe(element,{childList:true});observe();
-    return()=>{resize.disconnect();mutations.disconnect();};
-  },[]);
+    return()=>{
+      resize.disconnect();mutations.disconnect();
+      if(repairFrame.current!==undefined)cancelAnimationFrame(repairFrame.current);
+      repairFrame.current=undefined;
+    };
+  },[scheduleRestore]);
+
+  function userScroll(){
+    restoredScrollTop.current=null;
+    if(latestRequested.current&&view.current)view.current.scrollTo({top:view.current.scrollTop,behavior:'auto'});
+    latestRequested.current=false;userScrollIntent.current=true;
+  }
+  function scrolled(){
+    const element=view.current;if(!element||initialPositionPending.current)return;
+    const saved=readingPosition.current;
+    const restoredTop=restoredScrollTop.current;restoredScrollTop.current=null;
+    const geometryChanged=saved&&(saved.width!==element.clientWidth||saved.height!==element.clientHeight||saved.scrollHeight!==element.scrollHeight);
+    if(geometryChanged&&!userScrollIntent.current){scheduleRestore();return;}
+    // A layout repair may move a reader inside the 64px threshold. Consume only
+    // its own scroll event; it must not opt that reader back into following.
+    if(!userScrollIntent.current&&restoredTop!==null&&element.scrollTop===restoredTop)return;
+    const atEnd=element.scrollHeight-element.scrollTop-element.clientHeight<64;
+    if(latestRequested.current&&!atEnd&&!userScrollIntent.current)return;
+    latestRequested.current=false;userScrollIntent.current=false;
+    stickToEnd.current=atEnd;setShowLatest(!atEnd);rememberReading();
+  }
+  function latest(){
+    restoredScrollTop.current=null;
+    stickToEnd.current=true;latestRequested.current=true;setShowLatest(false);
+    const element=view.current;
+    element?.focus({preventScroll:true});
+    element?.scrollTo({top:element.scrollHeight,behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+  }
   async function loadMore(){
     if(!cursor||loadingMoreRef.current)return;
     const epoch=historyEpoch.current;
@@ -215,5 +308,28 @@ export function WorldStory({showState=true}:{showState?:boolean}={}){
       }
     }
   }
-  return <div className="sr-story"><div className="sr-story-main"><div className="sr-story-toolbar"><span>故事</span>{showState&&<button ref={stateButton} onClick={()=>setStateOpen(open=>!open)} aria-expanded={stateOpen}>状态 {stateOpen?'收起':'展开'}</button>}</div><div className="sr-chat-messages" ref={view} onScroll={event=>{if(initialPositionPending.current)return;const element=event.currentTarget;stickToEnd.current=element.scrollHeight-element.scrollTop-element.clientHeight<64;setShowLatest(!stickToEnd.current);}}>{more&&<button className="sr-more" disabled={loadingMore} onClick={()=>void loadMore()}>{loadingMore?'正在加载…':historyError?'重试加载':'加载更早消息'}</button>}{historyError&&<p className="sr-error" role="alert">{historyError}</p>}{loading&&<p>正在加载故事…</p>}{error&&<p className="sr-error" role="alert">{error} <button onClick={()=>setRetry(value=>value+1)}>重试</button></p>}{!loading&&!error&&!runs.length&&<p>故事尚未开始。</p>}{runs.map(run=><StoryRun key={run.id} run={run} current={runs.at(-1)?.id===run.id} onChoose={chooseSuggestion}/>)}</div>{showLatest&&<button className="sr-more" onClick={()=>{stickToEnd.current=true;if(view.current)view.current.scrollTo({top:view.current.scrollHeight,behavior:'smooth'});setShowLatest(false);}}>回到最新</button>}</div>{showState&&stateOpen&&<>{mobile&&<button className="sr-story-backdrop" aria-label="关闭状态" tabIndex={-1} onClick={closeState}/>}<StatePanel close={closeState} mobile={mobile}/></>}</div>;
+  return <div ref={root} className="sr-story" data-state-mode={docked?'docked':'overlay'}>
+    <div className="sr-story-main">
+      <div className="sr-story-toolbar">
+        <span className="sr-story-heading">故事</span>
+        {showState&&<button ref={stateButton} type="button" onClick={()=>{
+          rememberReading();
+          const next=!stateOpen;if(docked)dockedPreference.current=next;setStateOpen(next);
+        }} aria-controls={panelId} aria-expanded={stateOpen}>状态 <span aria-hidden="true">{stateOpen?'−':'+'}</span></button>}
+      </div>
+      <div className="sr-chat-messages" ref={view} tabIndex={0} role="region" aria-label="故事内容" aria-busy={loading||undefined}
+        onScroll={scrolled} onWheel={userScroll} onTouchMove={userScroll}
+        onPointerDown={event=>{if(event.target===event.currentTarget)userScroll();}}
+        onKeyDown={event=>{if(['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(event.key))userScroll();}}>
+        {more&&<button className="sr-more" type="button" disabled={loadingMore} onClick={()=>void loadMore()}>{loadingMore?'正在加载…':historyError?'重试加载':'加载更早消息'}</button>}
+        {historyError&&<p className="sr-error" role="alert">{historyError}</p>}
+        {loading&&<p className="sr-story-empty" role="status">正在加载故事…</p>}
+        {error&&<p className="sr-error" role="alert">{error} <button type="button" onClick={()=>setRetry(value=>value+1)}>重试</button></p>}
+        {!loading&&!error&&!runs.length&&<p className="sr-story-empty">故事尚未开始。</p>}
+        {runs.map(run=><StoryRun key={run.id} run={run} current={runs.at(-1)?.id===run.id} onChoose={chooseSuggestion}/>)}
+      </div>
+      {showLatest&&<div className="sr-story-latest"><button className="sr-more" type="button" onClick={latest}>回到最新 <span aria-hidden="true">↓</span></button></div>}
+    </div>
+    {showState&&stateOpen&&<StatePanel id={panelId} close={closeState} restoreFocus={focusStateTrigger} overlay={!docked}/>}
+  </div>;
 }

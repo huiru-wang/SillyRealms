@@ -10,6 +10,7 @@ import type { StateEvent } from '../../../packages/sr-sdk/src/state-contract';
 import type { SessionRunEvent } from '../../../packages/sr-sdk/src/run-contract';
 import {StoryContext,type MessageComponent} from '../../../packages/sr-sdk/src/story-context';
 import './frame.css';
+import '@sillyrealms/sdk/world-story.css';
 
 let port:MessagePort;
 let sequence=0;

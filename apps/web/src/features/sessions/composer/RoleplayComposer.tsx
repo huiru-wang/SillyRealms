@@ -13,13 +13,11 @@ import {
   $getSelection,
   $isElementNode,
   $isRangeSelection,
-  $setSelection,
   COMMAND_PRIORITY_HIGH,
   KEY_BACKSPACE_COMMAND,
   KEY_ENTER_COMMAND,
   PASTE_COMMAND,
   type EditorState,
-  type RangeSelection,
 } from 'lexical';
 import {mergeRegister} from '@lexical/utils';
 import {
@@ -29,14 +27,10 @@ import {
   trimTrailingEmptyRoleplayLines,
   type RoleplayBlock,
 } from '@sillyrealms/roleplay';
-import {$createRoleplayBlockNode, $isRoleplayBlockNode, RoleplayBlockNode, type RoleplayBlockKind} from './roleplay-nodes';
-import {$exitRoleplayBlock, $insertRoleplayBlock, $isBlankParagraph, $removeEmptyRoleplayBlock, normalizeRoleplayBlockPaste} from './composer-operations';
+import {$createRoleplayBlockNode, $isRoleplayBlockNode, RoleplayBlockNode} from './roleplay-nodes';
+import {$exitRoleplayBlock, $removeEmptyRoleplayBlock, normalizeRoleplayBlockPaste} from './composer-operations';
 
 const MAX_LENGTH = 100000;
-const actions: Array<{kind: RoleplayBlockKind; label: string}> = [
-  {kind: 'speech', label: '话语'},
-  {kind: 'instruction', label: '叙事指令'},
-];
 
 function $blocks(): RoleplayBlock[] {
   const blocks: RoleplayBlock[] = [];
@@ -82,21 +76,9 @@ function $replaceDraft(value: string) {
     root.append(paragraph);
   });
   if (root.isEmpty()) root.append($createParagraphNode());
-  // Clearing/replacing a draft must also restore a valid selection: otherwise
-  // subsequent toolbar clicks can target a detached Lexical node.
+  // External drafts replace the tree; restore a valid selection for the next edit.
   const last = root.getLastChild();
   if ($isElementNode(last)) last.selectEnd();
-}
-
-function $lastActionParagraph() {
-  const children = $getRoot().getChildren();
-  const lastInstruction = [...children].reverse().find(node => $isRoleplayBlockNode(node) && node.getKind() === 'instruction');
-  const lastAction = [...children].reverse().find(node => !$isRoleplayBlockNode(node));
-  if ($isElementNode(lastAction)) return lastAction;
-  const paragraph = $createParagraphNode();
-  if (lastInstruction) lastInstruction.insertBefore(paragraph);
-  else $getRoot().append(paragraph);
-  return paragraph;
 }
 
 function Controls({value, disabled, onChange, onSubmit}: {
@@ -106,7 +88,6 @@ function Controls({value, disabled, onChange, onSubmit}: {
   onSubmit: (text: string) => void;
 }) {
   const [editor] = useLexicalComposerContext();
-  const lastSelection = useRef<RangeSelection | null>(null);
   const current = useRef(value), changeRef = useRef(onChange), submitRef = useRef(onSubmit);
   changeRef.current = onChange;
   submitRef.current = onSubmit;
@@ -115,15 +96,10 @@ function Controls({value, disabled, onChange, onSubmit}: {
   useEffect(() => {
     if (value === current.current) return;
     current.current = value;
-    lastSelection.current = null;
     editor.update(() => $replaceDraft(value), {tag: 'external-draft'});
   }, [editor, value]);
 
   useEffect(() => mergeRegister(
-    editor.registerUpdateListener(({editorState}) => editorState.read(() => {
-      const selection = $getSelection();
-      if ($isRangeSelection(selection)) lastSelection.current = selection.clone();
-    })),
     editor.registerCommand(KEY_ENTER_COMMAND, event => {
       if (!event || event.isComposing || editor.isComposing()) return false;
       if (event.metaKey || event.ctrlKey) {
@@ -178,28 +154,8 @@ function Controls({value, disabled, onChange, onSubmit}: {
     changeRef.current(next);
   }, []);
 
-  const insert = (kind: RoleplayBlockKind) => {
-    editor.update(() => {
-      if (kind !== 'instruction') {
-        let selection = $getSelection();
-        if (!$isRangeSelection(selection) && lastSelection.current) {
-          $setSelection(lastSelection.current.clone());
-          selection = $getSelection();
-        }
-        if (!$isRangeSelection(selection)) {
-          $lastActionParagraph().selectEnd();
-        }
-      }
-      $insertRoleplayBlock(kind);
-    });
-    editor.focus();
-  };
-
   return <>
     <OnChangePlugin onChange={changed} ignoreSelectionChange />
-    <div className="sr-composer-toolbar" role="toolbar" aria-label="输入类型">
-      {actions.map(action => <button key={action.kind} type="button" className={`sr-composer-tool sr-composer-tool-${action.kind}`} disabled={disabled} onMouseDown={event => event.preventDefault()} onClick={() => insert(action.kind)} title={`插入${action.label}`}>{action.label}</button>)}
-    </div>
     {value.length > MAX_LENGTH && <p className="sr-composer-error" role="alert">消息超过 100000 字符，请缩短后发送。</p>}
   </>;
 }
@@ -222,7 +178,7 @@ export function RoleplayComposer({value, disabled, onChange, onSubmit}: {
     <div className="sr-roleplay-composer">
       <Controls value={value} disabled={disabled} onChange={onChange} onSubmit={onSubmit}/>
       <div className="sr-composer-editor-wrap">
-        <RichTextPlugin contentEditable={<ContentEditable className="sr-composer-editor" aria-label="输入消息" aria-multiline="true" aria-placeholder="输入内容，Enter 换行，Cmd+Enter 发送…" placeholder={<span className="sr-composer-placeholder">输入内容，Enter 换行，Cmd+Enter 发送…</span>} />} ErrorBoundary={LexicalErrorBoundary}/>
+        <RichTextPlugin contentEditable={<ContentEditable className="sr-composer-editor" role="textbox" aria-label="输入消息" aria-multiline="true" aria-placeholder="写下你的回应，Enter 换行，⌘ / Ctrl + Enter 发送…" placeholder={<span className="sr-composer-placeholder">写下你的回应，Enter 换行，⌘ / Ctrl + Enter 发送…</span>} />} ErrorBoundary={LexicalErrorBoundary}/>
       </div>
       <HistoryPlugin />
     </div>

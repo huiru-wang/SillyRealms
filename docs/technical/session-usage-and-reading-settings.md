@@ -1,10 +1,10 @@
 # Session Token Usage and Reading Settings
 
-Status: implemented 2026-11-09; Runtime v2 compatibility updated 2026-11-13.
+Status: implemented 2026-11-09; Runtime v2 compatibility updated 2026-11-13; SDK surface and Studio preview scope clarified 2026-11-14.
 
 ## Platform ownership
 
-Token usage and reading preferences belong to SessionHost. They do not belong to Creator SDK state, world-card state, or model prompt configuration.
+Token usage and reading preferences belong to SessionHost. They do not belong to Creator SDK state, world-card state, or model prompt configuration. The Server endpoints and persisted preference behavior below describe the production Web Host. Studio's isolated session preview uses the same SDK reading surface with local fixture data; its distinct storage boundary is described separately below.
 
 ## Usage data
 
@@ -57,6 +57,16 @@ Reading font:
 - The font preference applies to the built-in WorldStory message body only. Creator-authored custom React UI is not forcibly restyled; it can opt in using --sr-story-font-size.
 
 Host sends appearance {fontSize} over the existing MessageChannel. The frame validates the range and sets --sr-story-font-size on the document root.
+
+## Shared SDK surface and Studio preview
+
+The frame build entry imports `@sillyrealms/sdk/world-story.css`. Web and Studio use this SDK subpath for the official `.sr-story` surface; Studio does not import legacy Web platform styles. The stylesheet keeps author-owned page layouts outside its scope and accepts the limited `--sr-story-*` appearance variables.
+
+The official state panel uses the actual WorldStory container width: `clientWidth >= 960` enables docked mode, while smaller containers use an initially closed dialog. A narrow author column inside a wide iframe must still use dialog mode. `showState={false}` removes the official trigger, panel, and dialog.
+
+Studio sends validated appearance values to its opaque-origin local preview iframe. Font size still defaults to 16px, ranges from 13px to 21px, previews immediately, and returns to the previous value on Cancel. Studio saves this preview preference only in current-document memory; it does not write the production Web localStorage key or add another persistent namespace. Its context composition is explicitly illustrative, and fixture runs/state/history do not call Server or generate provider billing records. Refresh restores the fixture.
+
+The Host owns the composer in both applications. Studio reuses the existing Lexical component with local styles; normal Enter creates a newline, Enter in a semantic block exits the block, and Cmd/Ctrl+Enter sends. Removing the speech/instruction shortcuts preserves manual plain-text escaping and external formatted drafts. The input remains editable during active generation, and send responses may clear only the submitted draft revision. See [WorldStory runtime](worldstory-runtime-v1.md) for the complete input and preview boundary.
 
 ## Font stability and scroll anchoring
 

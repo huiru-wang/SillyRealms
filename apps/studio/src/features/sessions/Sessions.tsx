@@ -1,13 +1,19 @@
-import {useEffect,useRef,useState,type FormEvent} from 'react';
+import {useCallback,useEffect,useRef,useState,type FormEvent} from 'react';
 import {Link,useParams} from 'react-router-dom';
-import {ArrowDown,ArrowLeft,ArrowRight,ChevronDown,ChevronUp,Info,Send,Settings2} from 'lucide-react';
+import {ArrowLeft,ArrowRight,ChevronDown,ChevronUp,Info,Send,Settings2,Square,Undo2} from 'lucide-react';
+import {trimTrailingEmptyRoleplayLines} from '@sillyrealms/roleplay';
+import {RoleplayComposer} from '../../../../web/src/features/sessions/composer/RoleplayComposer';
 import {Modal} from '../../components/ui/Modal';
 import {Button} from '../../components/ui/Button';
-import {sessionSamples as samples} from '../../fixtures/sessions';
+import {sessionSamples as samples,type SessionSample} from '../../fixtures/sessions';
+import {StoryPreviewHost,type StoryPreviewHandle,type PreviewStatus} from './preview/StoryPreviewHost';
 import styles from './Sessions.module.css';
 
+// Preview state is intentionally local to this browser document.
 const drafts:Record<string,string>={};
-const additions:Record<string,string[]>={};
+const readingSizes:Record<string,number>={};
+const initialStatus:PreviewStatus={ready:false,active:false,phase:null,error:null};
+const phaseLabels={preparing:'准备中',narrative:'生成中',extensions:'整理中'} as const;
 
 export function SessionListPage(){
   return <section className={styles.listPage}>
@@ -33,75 +39,160 @@ function ContextBar(){
   </Modal>}</>;
 }
 
-function DefaultStory(){return <div className={styles.storyColumn}>
-  <div className={styles.storyDate}>初入长安 <span>·</span> 故事开始</div>
-  <article className={styles.narrative}>
-    <div className={styles.messageMeta}><span className={styles.storyMark}>长</span><span>长安风云</span></div>
-    <p>暮色正沿着朱雀街缓缓落下。街边的灯笼一盏接一盏亮起来，行人收起摊铺，风里带着一点刚落过雨的凉意。</p>
-    <p>你在城门口收到一封没有署名的信。信纸上只有寥寥几字：<em>“今夜戌时，来平康坊。不必带旁人。”</em></p>
-    <p>马车停在街角，车夫回头看了你一眼。远处传来几声清脆的梆响，离信上约定的时辰已不剩多久。</p>
-  </article>
-  <div className={styles.playerRow}><span className={styles.playerBubble}>我收起信，走向平康坊。</span><span className={styles.playerAvatar}>我</span></div>
-  <article className={styles.narrative}>
-    <div className={styles.messageMeta}><span className={styles.storyMark}>长</span><span>长安风云</span></div>
-    <p>坊门前的灯火比别处更亮。你穿过人群，留意到一家茶肆的二楼窗边，有人正将一盏茶推向对面的空座。</p>
-    <p>那人抬眼望来，像是早已认出了你。</p>
-  </article>
-</div>}
-
-function CustomStory(){return <div className={styles.customStory}>
-  <div className={styles.sceneImage} role="img" aria-label="雨夜里的霓虹之城"/>
-  <div className={styles.sceneContent}>
-    <div className={styles.sceneKicker}><span/> NIGHT CITY <b> / </b> 03</div>
-    <div className={styles.sceneTitle}><div><span>第三区 · 23:41</span><h2>雨夜重逢</h2></div><span className={styles.sceneWeather}>小雨<br/><strong>街道湿滑</strong></span></div>
-    <p className={styles.sceneLead}>雨落在玻璃顶棚上，淹没了街道另一端的脚步声。</p>
-    <div className={styles.sceneRule}/>
-    <div className={styles.sceneDialogue}><div className={styles.scenePortrait}>岚</div><div><strong>林岚 <small>旧识</small></strong><p>“你还是来了。”她把一枚旧芯片放在桌上，霓虹在金属边缘留下一道蓝光。</p><p>“这次，我们可能没有太多时间。”</p></div></div>
-    <div className={styles.sceneFoot}><span>地点　旧城区 / 雨幕酒吧</span><span>故事进行中</span></div>
-  </div>
-</div>}
-
 export function SessionDetailPage(){
   const {sessionId}=useParams();
   const sample=samples.find(item=>item.id===sessionId);
-  const id=sample?.id??'';
+  if(!sample)return <div className={styles.notFound}><h1>找不到这个会话</h1><Link to="/sessions">返回会话列表</Link></div>;
+  return <SessionDetail key={sample.id} sample={sample}/>;
+}
+
+function SessionDetail({sample}:{sample:SessionSample}){
+  const id=sample.id;
   const [draft,setDraft]=useState(()=>drafts[id]??'');
-  const [messages,setMessages]=useState(()=>additions[id]??[]);
+  const draftRef=useRef(draft),draftRevision=useRef(0);
+  const [draftUndo,setDraftUndo]=useState<{text:string;revision:number}|null>(null);
   const [expanded,setExpanded]=useState(true);
   const [settings,setSettings]=useState(false);
-  const [notice,setNotice]=useState(false);
-  const [atBottom,setAtBottom]=useState(true);
-  const reading=useRef<HTMLDivElement>(null);
-  const input=useRef<HTMLTextAreaElement>(null);
-  useEffect(()=>{setDraft(drafts[id]??'');setMessages(additions[id]??[]);setExpanded(true);setNotice(false);setAtBottom(true);},[id]);
-  if(!sample)return <div className={styles.notFound}><h1>找不到这个会话</h1><Link to="/sessions">返回会话列表</Link></div>;
-  const updateDraft=(value:string)=>{drafts[id]=value;setDraft(value);setNotice(false);};
-  const scrollToLatest=()=>reading.current?.scrollTo({top:reading.current.scrollHeight,behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
-  const submit=(event?:FormEvent)=>{
-    event?.preventDefault();
-    if(!draft.trim())return;
-    const next=[...(additions[id]??[]),draft.trim()]; additions[id]=next;setMessages(next);updateDraft('');setNotice(true);
-    requestAnimationFrame(scrollToLatest);
+  const [fontSize,setFontSize]=useState(()=>readingSizes[id]??16);
+  const fontBeforeSettings=useRef(fontSize);
+  const [notice,setNotice]=useState('');
+  const [status,setStatus]=useState<PreviewStatus>(initialStatus);
+  const statusRef=useRef(status);
+  const [sending,setSending]=useState(false);
+  const pending=useRef(false),alive=useRef(true);
+  const stage=useRef<StoryPreviewHandle>(null);
+  const detail=useRef<HTMLElement>(null);
+  const composer=useRef<HTMLDivElement>(null);
+  const expandButton=useRef<HTMLButtonElement>(null);
+  const focusFrame=useRef<number|undefined>(undefined);
+
+  useEffect(()=>{
+    alive.current=true;
+    const viewport=window.visualViewport;
+    const update=()=>{
+      const element=detail.current;if(!element)return;
+      if(viewport&&window.innerWidth<=760&&viewport.scale===1){
+        element.style.setProperty('--session-viewport-height',Math.min(window.innerHeight,viewport.height+viewport.offsetTop)+'px');
+      }else element.style.removeProperty('--session-viewport-height');
+    };
+    update();
+    viewport?.addEventListener('resize',update);
+    viewport?.addEventListener('scroll',update);
+    window.addEventListener('resize',update);
+    return()=>{
+      alive.current=false;
+      if(focusFrame.current!==undefined)cancelAnimationFrame(focusFrame.current);
+      viewport?.removeEventListener('resize',update);
+      viewport?.removeEventListener('scroll',update);
+      window.removeEventListener('resize',update);
+    };
+  },[]);
+  useEffect(()=>{if(!expanded)expandButton.current?.focus();},[expanded]);
+
+  const updateDraft=useCallback((value:string)=>{
+    if(value===draftRef.current)return;
+    draftRevision.current++;
+    draftRef.current=value;drafts[id]=value;setDraft(value);setDraftUndo(null);setNotice('');
+  },[id]);
+  const receiveDraft=useCallback((text:string)=>{
+    if(!alive.current||text.length>100000)return;
+    const previous=draftRef.current;
+    if(previous!==text){
+      updateDraft(text);
+      setDraftUndo({text:previous,revision:draftRevision.current});
+    }
+    setExpanded(true);
+  },[updateDraft]);
+  const updateStatus=useCallback((value:PreviewStatus)=>{
+    if(!alive.current)return;
+    statusRef.current=value;
+    setStatus(previous=>previous.ready===value.ready&&previous.active===value.active&&previous.phase===value.phase&&previous.error===value.error?previous:value);
+  },[]);
+  const focusInput=()=>{
+    setExpanded(true);
+    if(focusFrame.current!==undefined)cancelAnimationFrame(focusFrame.current);
+    focusFrame.current=requestAnimationFrame(()=>composer.current?.querySelector<HTMLElement>('.sr-composer-editor')?.focus());
   };
-  return <section className={styles.detail} data-session-detail={id}>
+  async function submit(value?:string){
+    if(pending.current||statusRef.current.active||!statusRef.current.ready||statusRef.current.error||!stage.current)return;
+    const text=trimTrailingEmptyRoleplayLines(value??draftRef.current);
+    if(!text.trim()||text.length>100000)return;
+    const revision=draftRevision.current;
+    pending.current=true;setSending(true);setNotice('');
+    try{
+      await stage.current.send(text);
+      if(!alive.current)return;
+      if(revision===draftRevision.current)updateDraft('');
+      setNotice('已发送到本地预览，刷新后恢复样例。');
+    }catch(error){
+      if(alive.current)setNotice(error instanceof Error?error.message:'发送失败，请重试');
+    }finally{
+      pending.current=false;
+      if(alive.current)setSending(false);
+    }
+  }
+  function openSettings(){
+    fontBeforeSettings.current=fontSize;
+    setSettings(true);
+  }
+  function cancelSettings(){
+    setFontSize(fontBeforeSettings.current);
+    setSettings(false);
+  }
+  function saveSettings(){
+    readingSizes[id]=fontSize;
+    fontBeforeSettings.current=fontSize;
+    setSettings(false);
+  }
+  const stateLabel=status.error?'舞台异常':status.active?phaseLabels[status.phase??'preparing']:status.ready?'本地演示':'正在加载';
+  const disabledSend=sending||!status.ready||!!status.error||!draft.trim()||draft.length>100000;
+  const submitForm=(event:FormEvent)=>{event.preventDefault();void submit();};
+
+  return <section ref={detail} className={styles.detail} data-session-detail={id} data-preview-ready={status.ready} data-preview-active={status.active} data-preview-phase={status.phase??'idle'}>
     <header className={styles.topbar}>
       <Link to="/sessions" className={styles.mobileBack} aria-label="返回会话列表"><ArrowLeft size={20}/></Link>
       <div className={styles.identity}><h1 title={sample.title}>{sample.title}</h1><span>{sample.world}</span></div>
-      <div className={styles.topActions}><ContextBar/><span className={styles.divider}/><span className={styles.status} title="静态演示"><i/>演示</span><button className={styles.iconButton} type="button" aria-label="会话设置" onClick={()=>setSettings(true)}><Settings2 size={18}/></button></div>
+      <div className={styles.topActions}>
+        <ContextBar/><span className={styles.divider}/>
+        <span className={styles.status} data-active={status.active} data-error={!!status.error} title={stateLabel} aria-label={'本地预览，'+stateLabel}><i/><span>演示</span></span>
+        <button className={styles.iconButton} type="button" aria-label="会话设置" aria-haspopup="dialog" onClick={openSettings}><Settings2 size={18}/></button>
+      </div>
     </header>
-    <div className={styles.reading} ref={reading} tabIndex={0} aria-label="故事内容" onScroll={event=>{const el=event.currentTarget;setAtBottom(el.scrollHeight-el.scrollTop-el.clientHeight<48);}}>
-      {sample.custom?<CustomStory/>:<DefaultStory/>}
-      {messages.length>0&&<div className={styles.storyColumn}>{messages.map((message,index)=><div className={styles.playerRow} key={index}><span className={styles.playerBubble}>{message}</span><span className={styles.playerAvatar}>我</span></div>)}</div>}
+    <div className={styles.stageSlot} aria-label="故事舞台">
+      <StoryPreviewHost ref={stage} sessionId={id} kind={sample.custom?'composed':'official'} fontSize={fontSize} onSetDraft={receiveDraft} onStatusChange={updateStatus} className={styles.preview}/>
     </div>
-    {!atBottom&&<button className={styles.latest} type="button" onClick={scrollToLatest}><ArrowDown size={15}/>回到最新</button>}
     <div className={styles.composerArea}>
-      <p className={notice?styles.previewNotice:styles.srOnly} role="status">{notice?'已添加到本地预览，不会发送或保存。':''}</p>
-      {expanded?<form className={styles.composer} onSubmit={submit}>
-        <label className={styles.inputLabel} htmlFor="session-draft">输入消息</label>
-        <textarea ref={input} id="session-draft" rows={2} value={draft} placeholder="写下你的回应…" onChange={event=>updateDraft(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)&&!event.nativeEvent.isComposing){event.preventDefault();submit();}}}/>
-        <div className={styles.composerFooter}><button type="button" className={styles.collapse} onClick={()=>setExpanded(false)}><ChevronDown size={16}/>收起输入框</button><span className={styles.keyHint}>⌘ / Ctrl + Enter 发送</span><button className={styles.send} type="submit" disabled={!draft.trim()} aria-label="发送消息到本地预览"><Send size={16}/><span>发送</span></button></div>
-      </form>:<button type="button" className={styles.expand} onClick={()=>{setExpanded(true);requestAnimationFrame(()=>input.current?.focus());}}><ChevronUp size={16}/>展开输入框</button>}
+      {draftUndo&&draftUndo.revision===draftRevision.current&&<div className={styles.draftUndo} role="status">
+        <span>已填入草稿</span><button type="button" onClick={()=>{if(draftUndo.revision===draftRevision.current)updateDraft(draftUndo.text);}}><Undo2 size={14}/>撤销</button>
+      </div>}
+      <p className={notice?styles.previewNotice:styles.srOnly} data-preview-notice role="status">{notice}</p>
+      {expanded?<form className={styles.composer} onSubmit={submitForm}>
+        <div className={styles.inputHeader}><span>你的回应</span><span className={styles.keyHint}>⌘ / Ctrl + Enter 发送</span></div>
+        <div ref={composer} className={styles.editor}>
+          <RoleplayComposer value={draft} disabled={!!status.error} onChange={updateDraft} onSubmit={text=>void submit(text)}/>
+        </div>
+        <div className={styles.composerFooter}>
+          <button type="button" className={styles.collapse} onClick={()=>setExpanded(false)}><ChevronDown size={16}/>收起输入框</button>
+          {status.active?<button className={styles.send} type="button" aria-label="停止本地预览" onClick={()=>stage.current?.stop()}><Square size={13}/><span>停止</span></button>:
+            <button className={styles.send} type="submit" disabled={disabledSend} aria-label="发送消息到本地预览"><Send size={16}/><span>{sending?'发送中':'发送'}</span></button>}
+        </div>
+      </form>:<div className={styles.collapsedActions}>
+        <button ref={expandButton} type="button" className={styles.expand} onClick={focusInput}><ChevronUp size={16}/>展开输入框</button>
+        {status.active&&<button className={styles.stopCollapsed} type="button" aria-label="停止本地预览" onClick={()=>stage.current?.stop()}><Square size={13}/>停止</button>}
+      </div>}
     </div>
-    {settings&&<Modal title="会话设置" onClose={()=>setSettings(false)}><div className={styles.settingRows}><div><span>会话名称</span><strong>{sample.title}</strong></div><div><span>所属世界</span><strong>{sample.world}</strong></div></div><p className={styles.contextNote}><Info size={14}/> 当前为静态视觉样板，设置将在后续完善。</p><Button onClick={()=>setSettings(false)}>完成</Button></Modal>}
+    {settings&&<Modal title="会话设置" onClose={cancelSettings}>
+      <div className={styles.settingRows}>
+        <div><span>会话名称</span><strong>{sample.title}</strong></div>
+        <div><span>所属世界</span><strong>{sample.world}</strong></div>
+      </div>
+      <div className={styles.readingSetting}>
+        <label htmlFor="preview-reading-size">阅读字号 <output htmlFor="preview-reading-size">{fontSize}px</output></label>
+        <input id="preview-reading-size" type="range" min={13} max={21} step={1} value={fontSize} onChange={event=>setFontSize(Number(event.target.value))} aria-valuetext={fontSize+' 像素'}/>
+        <p style={{fontSize}}>风穿过长街，灯火渐渐亮起。</p>
+      </div>
+      <p className={styles.contextNote}><Info size={14}/> 本地预览 · 阅读设置只在本次浏览中保留。</p>
+      <div className={styles.settingsActions}><Button onClick={cancelSettings}>取消</Button><Button tone="accent" onClick={saveSettings}>保存</Button></div>
+    </Modal>}
   </section>;
 }

@@ -26,6 +26,7 @@ try{
   await mkdir(out,{recursive:true});
   browser=spawn(chromePath,[
     '--headless=new','--no-first-run','--no-default-browser-check','--disable-gpu',
+    '--disable-background-timer-throttling','--disable-renderer-backgrounding','--disable-backgrounding-occluded-windows',
     '--hide-scrollbars','--disable-smooth-scrolling','--remote-debugging-port=0','--force-device-scale-factor=1',
     '--window-size=1536,864','--user-data-dir='+profile,'about:blank'
   ],{stdio:'ignore'});
@@ -42,7 +43,12 @@ try{
   await new Promise((res,rej)=>{conn.addEventListener('open',res,{once:true});conn.addEventListener('error',rej,{once:true});});
   conn.addEventListener('message',e=>{
     const data=JSON.parse(e.data);
-    if(data.method==='Runtime.exceptionThrown')exceptionCount++;
+    if(data.method==='Runtime.exceptionThrown'){exceptionCount++;console.error('Browser exception:',data.params.exceptionDetails.exception?.description??data.params.exceptionDetails.text);}
+    if(data.method==='Fetch.requestPaused'&&data.params.request.url==='https://sr-preview.invalid/deferred.svg'){
+      // Deterministic image decoding exercises late layout without external network access.
+      const body=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="260"><rect width="600" height="260" fill="#807080"/></svg>').toString('base64');
+      setTimeout(()=>void send('Fetch.fulfillRequest',{requestId:data.params.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:'image/svg+xml'}],body},data.sessionId).catch(error=>console.error(error)),180);
+    }
     if(data.method==='DOM.documentUpdated')forcedHoverNodeId=null;
     if(data.id){
       const task=pend.get(data.id);if(!task)return;
@@ -50,11 +56,11 @@ try{
       data.error?task.reject(new Error(JSON.stringify(data.error))):task.resolve(data.result);
     }
   });
-  function send(method,params={}){
+  function send(method,params={},sessionId){
     const req=id++;
     return new Promise((resolve,reject)=>{
       pend.set(req,{resolve,reject});
-      conn.send(JSON.stringify({id:req,method,params}));
+      conn.send(JSON.stringify({id:req,method,params,...(sessionId?{sessionId}:{})}));
     });
   }
   async function evaluate(expression){

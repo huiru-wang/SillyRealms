@@ -238,6 +238,8 @@ export async function checkPresets({send,evaluate,until,viewport,click,screensho
   await pointerClick('button[aria-label="更多预设操作"]');
   await buttonText('放弃更改','[data-preset-menu]');
   assert(await evaluate('document.querySelector('+json(fieldName)+').value')===draftName,'Discard changes failed to restore the saved snapshot');
+  // closeMenu restores focus in requestAnimationFrame after removing the menu.
+  await until('document.querySelector(\'button[aria-label="更多预设操作"]\')?.getAttribute("aria-expanded")==="false"&&document.activeElement===document.querySelector(\'button[aria-label="更多预设操作"]\')',2000);
   assert(await evaluate('document.activeElement===document.querySelector(\'button[aria-label="更多预设操作"]\')'),'Discard changes should return focus to the preset menu trigger');
   assert(await evaluate('document.querySelector(\'button[aria-label="保存预设"]\').disabled'),'Restoring a saved snapshot should clear dirty state');
 

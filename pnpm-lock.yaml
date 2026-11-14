@@ -65,6 +65,9 @@ importers:
 
   apps/studio:
     dependencies:
+      '@sillyrealms/roleplay':
+        specifier: workspace:*
+        version: link:../../packages/sr-roleplay
       '@sillyrealms/sdk':
         specifier: workspace:*
         version: link:../../packages/sr-sdk

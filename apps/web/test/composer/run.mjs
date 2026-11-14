@@ -42,11 +42,13 @@ try {
       await pause(100);
       let tests=[];
       if(name!=='worldstory-font'&&name!=='runtime-v2'){
+        let complete=false;
         for(let i=0;i<250;i++){
-          const result=await call('Runtime.evaluate',{expression:'document.querySelector("#results")?.textContent || "[]"',returnByValue:true});
-          tests=JSON.parse(result.result.value);if(tests.length>=(name==='host-roleplay'?8:7))break;await pause(100);
+          const result=await call('Runtime.evaluate',{expression:'JSON.stringify({tests:JSON.parse(document.querySelector("#results")?.textContent || "[]"),complete:document.querySelector("#results")?.dataset.complete==="true"})',returnByValue:true});
+          const state=JSON.parse(result.result.value);tests=state.tests;complete=state.complete;
+          if(complete)break;await pause(100);
         }
-        if(tests.length<(name==='host-roleplay'?8:7))throw new Error(name+': browser tests did not complete: '+JSON.stringify(tests));
+        if(!complete||tests.length===0)throw new Error(name+': browser tests did not complete: '+JSON.stringify(tests));
       }
       for(const test of tests)console.log(`${test.pass?'PASS':'FAIL'} ${name}: ${test.name}${test.error?`: ${test.error}`:''}`);
       if(tests.some(test=>!test.pass))process.exitCode=1;
@@ -98,10 +100,17 @@ try {
         }
         if(frameId){const isolated=await call('Page.createIsolatedWorld',{frameId,worldName:'sr-font-regression',grantUniveralAccess:true});frameContextId=isolated.executionContextId;}
         const frameEval=async expression=>{
-          const result=await call('Runtime.evaluate',{expression,returnByValue:true,...(frameContextId?{contextId:frameContextId}:{})},frameSession??undefined);
+          const result=await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true,...(frameContextId?{contextId:frameContextId}:{})},frameSession??undefined);
           if(result.exceptionDetails)throw new Error(result.exceptionDetails.text??'iframe evaluation failed');
           return result.result.value;
         };
+        const waitForFrame=async(expression,label)=>{
+          const deadline=Date.now()+5000;
+          do {if(await frameEval(expression))return;await pause(25);}while(Date.now()<deadline);
+          throw Error('worldstory-font: timed out waiting for '+label+'; '+await frameEval(readingMetrics));
+        };
+        const settleFrame=()=>frameEval('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true)))))');
+        const readingMetrics='(()=>{const c=document.querySelector(".sr-chat-messages"),top=c.getBoundingClientRect().top+c.clientTop,bottom=top+c.clientHeight,m=[...c.querySelectorAll("[data-message-id]")].find(n=>n.getBoundingClientRect().bottom>top&&n.getBoundingClientRect().top<bottom);return JSON.stringify({id:m?.dataset.messageId,top:m?m.getBoundingClientRect().top-top:null,gap:c.scrollHeight-c.scrollTop-c.clientHeight,latest:!!document.querySelector(".sr-story-latest")})})()';
         let rendered=0;
         for(let i=0;i<180;i++){rendered=Number(await frameEval('document.querySelectorAll(".sr-message").length').catch(()=>0));if(rendered===200)break;await pause(100);}
         if(rendered!==200)throw new Error('WorldStory did not render 200 messages; rendered '+rendered+'; frame='+await frameEval('document.body.innerText')+'; host='+(await call('Runtime.evaluate',{expression:'document.querySelector(".host")?.innerText',returnByValue:true})).result.value);
@@ -111,8 +120,10 @@ try {
           const countChecks=JSON.parse(await frameEval('(()=>{const list=document.querySelector(".sr-chat-messages"),nodes=[...list.querySelectorAll(".sr-message")],result=[];for(const count of [5,50,200]){nodes.slice(count).forEach(node=>node.remove());const items=[...list.querySelectorAll(".sr-message .sr-rich")];result.push({count:items.length,fonts:[0,Math.floor((items.length-1)/2),items.length-1].map(index=>getComputedStyle(items[index]).fontSize)});nodes.slice(count).forEach(node=>list.appendChild(node));}return JSON.stringify(result)})()'));
           if(before.count!==200||before.fonts.some(value=>value!=='16px')||before.adjust.trim()!=='100%'||countChecks.some(item=>item.fonts.some(value=>value!=='16px'))){console.log('FAIL worldstory-font '+width+'px '+JSON.stringify({before,countChecks}));process.exitCode=1;}
           else console.log('PASS worldstory-font '+width+'px font stable at 5/50/200 messages');
+          await settleFrame();
           if(width===375){
             const anchorBefore=JSON.parse(await frameEval('(()=>{const c=document.querySelector(".sr-chat-messages"),m=document.querySelectorAll("[data-message-id]")[100];m.scrollIntoView({block:"start"});return JSON.stringify({id:m.getAttribute("data-message-id"),top:m.getBoundingClientRect().top-c.getBoundingClientRect().top})})()'));
+            await waitForFrame('!!document.querySelector(".sr-story-latest")','historical reading before the font change');
             await call('Runtime.evaluate',{expression:'document.querySelector(".host-settings-button").click()'});await pause(100);
             await call('Runtime.evaluate',{expression:'(()=>{const e=document.querySelector(".host-reading-slider"),s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set;s.call(e,"20");e.dispatchEvent(new Event("input",{bubbles:true}))})()'});await pause(200);
             const anchorAfterExpr='(()=>{const c=document.querySelector(".sr-chat-messages"),m=[...document.querySelectorAll("[data-message-id]")].find(x=>x.getAttribute("data-message-id")==='+JSON.stringify(anchorBefore.id)+');return JSON.stringify({id:m?.getAttribute("data-message-id"),top:m?m.getBoundingClientRect().top-c.getBoundingClientRect().top:null,font:getComputedStyle(document.querySelectorAll(".sr-message .sr-rich")[199]).fontSize})})()';
@@ -139,13 +150,43 @@ try {
             else console.log('PASS worldstory-font font change preserves bottom anchoring');
           }
         }
+        // A shrink above the anchor requires a programmatic scroll, while a
+        // shrink below it moves the bottom gap from 100px to 40px. Neither is
+        // a user request to resume following future content.
+        await frameEval('(()=>{const m=document.querySelectorAll(".sr-story-content");m[0].style.paddingTop="20px";m[m.length-1].style.paddingBottom="60px"})()');
+        await settleFrame();
+        await frameEval('(()=>{const c=document.querySelector(".sr-chat-messages");c.scrollTop=c.scrollHeight})()');
+        await settleFrame();
+        await waitForFrame('(()=>{const c=document.querySelector(".sr-chat-messages");return c.scrollHeight-c.scrollTop-c.clientHeight<2})()','layout setup at the bottom');
+        await frameEval('(()=>{const c=document.querySelector(".sr-chat-messages");c.scrollTop=c.scrollHeight-c.clientHeight-100})()');
+        await waitForFrame('!!document.querySelector(".sr-story-latest")','manual reading mode');
+        const intentBefore=JSON.parse(await frameEval(readingMetrics));
+        await frameEval('(()=>{const m=document.querySelectorAll(".sr-story-content");m[0].style.paddingTop="0";m[m.length-1].style.paddingBottom="0"})()');
+        await settleFrame();
+        const contracted=JSON.parse(await frameEval(readingMetrics));
+        await frameEval('(()=>{const m=document.querySelectorAll(".sr-story-content");m[m.length-1].style.paddingBottom="160px"})()');
+        await settleFrame();
+        const grown=JSON.parse(await frameEval(readingMetrics));
+        if(intentBefore.gap<=64||contracted.gap<=0||contracted.gap>=64||!contracted.latest||
+          contracted.id!==intentBefore.id||Math.abs(contracted.top-intentBefore.top)>2||
+          !grown.latest||grown.gap<100||grown.id!==intentBefore.id||Math.abs(grown.top-intentBefore.top)>2){
+          console.log('FAIL worldstory-font layout shrink preserves manual reading intent '+JSON.stringify({intentBefore,contracted,grown}));process.exitCode=1;
+        }else console.log('PASS worldstory-font layout shrink below 64px preserves manual reading intent');
+        await frameEval('document.querySelector(".sr-chat-messages").focus({preventScroll:true})');
+        await call('Input.dispatchKeyEvent',{type:'keyDown',key:'End',code:'End',windowsVirtualKeyCode:35});
+        await call('Input.dispatchKeyEvent',{type:'keyUp',key:'End',code:'End',windowsVirtualKeyCode:35});
+        await waitForFrame('(()=>{const c=document.querySelector(".sr-chat-messages");return c.scrollHeight-c.scrollTop-c.clientHeight<2&&!document.querySelector(".sr-story-latest")})()','keyboard End to resume following');
+        await frameEval('(()=>{const m=document.querySelectorAll(".sr-story-content");m[m.length-1].style.paddingBottom="240px"})()');
+        await waitForFrame('(()=>{const c=document.querySelector(".sr-chat-messages");return c.scrollHeight-c.scrollTop-c.clientHeight<2})()','following content after keyboard End');
+        console.log('PASS worldstory-font real keyboard scroll resumes following after layout restoration');
+        await frameEval('(()=>{const m=document.querySelectorAll(".sr-story-content");m[0].style.removeProperty("padding-top");m[m.length-1].style.removeProperty("padding-bottom")})()');
       }
       if(name==='composer'){
         for(const width of [768,375,320]){
           await call('Emulation.setDeviceMetricsOverride',{width,height:812,deviceScaleFactor:1,mobile:width<600});
           const layout=await call('Runtime.evaluate',{returnByValue:true,expression:'JSON.stringify({viewport:document.documentElement.clientWidth,innerWidth,visualViewport:visualViewport?.width,screen:screen.width,documentWidth:document.documentElement.scrollWidth,toolbar:!!document.querySelector(".sr-composer-toolbar"),editor:!!document.querySelector(".sr-composer-editor")})'});
           const metrics=JSON.parse(layout.result.value);
-          if(metrics.documentWidth>metrics.viewport+1||!metrics.toolbar||!metrics.editor){
+          if(metrics.documentWidth>metrics.viewport+1||metrics.toolbar||!metrics.editor){
             console.log(`FAIL composer: ${width}px responsive layout ${JSON.stringify(metrics)}`);process.exitCode=1;
           }else console.log(`PASS composer: ${width}px responsive layout`);
         }
