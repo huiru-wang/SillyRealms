@@ -41,10 +41,15 @@ export function mergeCapabilities(base: unknown, patch: unknown): CapabilityConf
     action_suggestions: { ...current.action_suggestions, ...parsed.data.action_suggestions },
   });
 }
-export function effectiveCapabilities(base: unknown, overrides: CapabilityOverrides): CapabilityConfig {
+export function effectiveCapabilities(base: unknown, overrides: CapabilityOverrides, mode: 'direct' | 'agent' = 'direct'): CapabilityConfig {
   const result = normalizeCapabilities(base);
   for (const id of ['state_update', 'action_suggestions'] as const)
     if (Object.hasOwn(overrides, id)) result[id].enabled = overrides[id]!;
+  // Temporary Direct policy: preserve stored switches, but enable both capabilities for execution.
+  if (mode === 'direct') {
+    result.state_update.enabled = true;
+    result.action_suggestions.enabled = true;
+  }
   return result;
 }
 export function publicCapabilities(config: RuntimeConfig, active: ReadonlySet<string> = new Set()): PublicCapabilities {
@@ -98,7 +103,7 @@ export function resolveRuntimeConfig(store: RunStore, client: ModelClient, sessi
     preset: { id: String(session.preset_id), hash: fingerprint(preset), nodes: structuredClone(preset.nodes), summaryPrompt: String(preset.summary_prompt ?? '') },
     contextPolicy: { budget, safetyMarginTokens: 1024,
       summary: { inputRatio: 0.75, maxOutputTokens: Math.min(2048, model.maxTokens) }, keepRecentTurns: 5 },
-    extensions: effectiveCapabilities(preset.capabilities, overrides.data),
+    extensions: effectiveCapabilities(preset.capabilities, overrides.data, mode),
     capabilityRevision: Number(session.capability_revision ?? 0),
     agentPolicy: { allowedTools: ['update_state'] },
   } as RuntimeConfig);

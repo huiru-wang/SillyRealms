@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest';
-import {LiveMessages} from '../../web/src/live-messages.js';
+import {LiveMessages} from '../../studio/test/live-messages.js';
 it('merges streaming segments in one run without duplicates or separators',()=>{
  const live=new LiveMessages();live.load([{runId:'open',status:'completed',user:null,assistantSegments:[{id:'o',text:'开局',createdAt:1}]}]);
  live.event('message.created',{runId:'run',message:{id:'u',role:'user',text:'你好',createdAt:2,status:'completed'}});

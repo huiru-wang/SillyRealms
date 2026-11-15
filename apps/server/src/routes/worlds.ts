@@ -4,6 +4,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { ErrorCodes } from '../common/error-codes.js';
+import { validateSnapshot } from '../domain/state/state.js';
 import { CardError,parseCard } from '../domain/world-card.js';
 import { worldFailure } from './world-failure.js';
 import { targetRoutes,tagNames,clearTags,importTags,transaction } from '../domain/tags.js';
@@ -104,6 +105,16 @@ export function worldRoutes(
       await files.remove(id);
       return c.json({ok:true});
     } catch {return c.json(failure(ErrorCodes.WORLD_DELETE_FAILED),500);}
+  });
+
+  app.get('/:id/state',c=>{
+    const row=worlds.get(c.req.param('id'));
+    if(!row)return c.json(failure(ErrorCodes.WORLD_NOT_FOUND),404);
+    try {
+      const card=readWorld(row),global=JSON.parse(String(row.state));
+      validateSnapshot(card.data.state,'global',global);
+      return c.json({global});
+    } catch(error){return c.json(worldFailure(error),422);}
   });
 
   app.get('/:id/source',async c=>{

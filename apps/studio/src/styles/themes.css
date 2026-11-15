@@ -42,17 +42,3 @@
   --shade:rgba(15,13,21,.56);
   --drop-shadow:0 20px 55px rgba(52,35,64,.17);
 }
-
-/* Color Lab exploratory palettes. Keep component and layout rules identical. */
-[data-theme="dark"][data-palette="neutral"]{
-  --canvas:#18181c;--sidebar-bg:#151518;--surface:#26262b;--surface-raised:#303036;
-  --surface-hover:#34343b;--surface-active:#38353e;--canvas-glow:rgba(100,92,117,.075);
-  --accent:#baaacb;--accent-soft:rgba(143,133,157,.16);--accent-selected:rgba(149,134,163,.23);
-}
-[data-theme="dark"][data-palette="cool"]{
-  --canvas:#191b25;--sidebar-bg:#151720;--surface:#272a36;--surface-raised:#303344;
-  --surface-hover:#373a4b;--surface-active:#3b3d52;--canvas-glow:rgba(94,106,153,.12);
-  --accent:#a6a8db;--accent-soft:rgba(112,119,177,.17);--accent-selected:rgba(115,124,177,.27);
-}
-/* SDK isolated documents inherit the Studio semantic text color. */
-:root{--ink:var(--text)}

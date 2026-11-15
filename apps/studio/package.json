@@ -4,14 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 5174 --strictPort",
-    "dev:mock": "VITE_STUDIO_MOCK_DATA=1 vite --host 0.0.0.0 --port 5174 --strictPort",
+    "dev": "node ../../scripts/dev.mjs --studio",
+    "dev:host": "vite",
+    "dev:stage": "vite --mode stage",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
-    "test:visual": "node tests/visual/capture.mjs",
-    "test:visual:world-api": "node tests/visual/world-api.mjs",
-    "test:visual:mobile-nav": "node tests/visual/mobile-navigation.mjs",
-    "test:visual:mock-data": "node tests/visual/mock-data.mjs"
+    "test:visual": "node tests/visual/production.mjs"
   },
   "dependencies": {
     "@sillyrealms/sdk": "workspace:*",
@@ -19,7 +17,16 @@
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-router-dom": "7.9.6",
-    "@sillyrealms/roleplay": "workspace:*"
+    "@sillyrealms/roleplay": "workspace:*",
+    "@lexical/history": "^0.53.0",
+    "@lexical/plain-text": "^0.53.0",
+    "@lexical/react": "^0.53.0",
+    "@lexical/utils": "^0.53.0",
+    "@sillyrealms/ui-compiler": "workspace:*",
+    "@tailwindcss/browser": "4.1.17",
+    "dompurify": "3.2.6",
+    "lexical": "^0.53.0",
+    "marked": "15.0.12"
   },
   "devDependencies": {
     "@types/react": "19.2.7",

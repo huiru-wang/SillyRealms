@@ -33,12 +33,6 @@
   white-space:nowrap;text-align:left;
   border-radius:11px;
 }
-.brandMark{
-  flex:0 0 20px;
-  display:grid;place-items:center;width:20px;height:24px;
-  font-family:Georgia,serif;font-size:24px;font-weight:700;font-style:italic;
-  color:var(--accent);
-}
 .brandName{
   display:block;flex:none;
   font-size:19px;letter-spacing:-.035em;font-weight:600;
@@ -194,7 +188,7 @@
   .mobileListMain{padding-bottom:calc(88px + env(safe-area-inset-bottom))}
   .mobileNav{
     position:fixed;z-index:20;left:16px;right:16px;bottom:max(12px,env(safe-area-inset-bottom));height:64px;
-    display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:center;padding:4px;
+    display:grid;grid-template-columns:repeat(5,minmax(0,1fr));align-items:center;padding:4px;
     border:1px solid rgba(255,255,255,.3);border-radius:20px;
     background:rgba(35,32,44,.58);
     box-shadow:0 10px 30px rgba(0,0,0,.24),inset 0 1px 1px rgba(255,255,255,.3),inset 0 -1px 1px rgba(255,255,255,.1);
@@ -208,3 +202,6 @@
   @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.mobileNav,:global([data-theme="light"]) .mobileNav{background:var(--sidebar-bg)}}
   @media(prefers-reduced-transparency:reduce){.mobileNav,:global([data-theme="light"]) .mobileNav{background:var(--sidebar-bg);backdrop-filter:none;-webkit-backdrop-filter:none}}
 }
+
+/* Brand stays readable as text in both sidebar widths. */
+.layout[data-collapsed="true"] .brandName{opacity:1;visibility:visible}

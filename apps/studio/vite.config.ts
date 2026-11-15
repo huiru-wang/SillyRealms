@@ -1,42 +1,27 @@
-import {defineConfig,type ViteDevServer} from 'vite';
+import {defineConfig} from 'vite';
 import react from '@vitejs/plugin-react';
-import {randomBytes} from 'node:crypto';
 import {resolve} from 'node:path';
-
-function allowPreviewAssets(server:Pick<ViteDevServer,'middlewares'>){
-  server.middlewares.use((request,response,next)=>{
-    const path=(request.url??'').split(/[?#]/,1)[0]??'';
-    const asset=/^\/(?:src\/|node_modules\/|assets\/|@(?:fs|id|vite)\/|@react-refresh$|preview-frame\.html$)/.test(path);
-    // Opaque-origin frames need CORS for modules and styles, never for the API proxy.
-    if(asset&&request.headers.origin==='null'&&['GET','HEAD'].includes(request.method??'')){
-      response.setHeader('Access-Control-Allow-Origin','null');
-      response.setHeader('Vary','Origin');
-    }
-    next();
-  });
-}
-
-export default defineConfig({
-  plugins:[react(),{
-    name:'studio-preview-frame-csp',
-    configureServer:allowPreviewAssets,
-    configurePreviewServer:allowPreviewAssets,
-    transformIndexHtml:{
-      order:'post',
-      handler(html,context){
-        if(!context.path.split(/[?#]/,1)[0]?.endsWith('preview-frame.html'))return html;
-        const nonce=randomBytes(18).toString('base64');
-        return html.replaceAll('__SR_PREVIEW_NONCE__',nonce).replace(/<script\b/g,'<script nonce="'+nonce+'"');
-      },
-    },
-  }],
-  resolve:{dedupe:['react','react-dom']},
-  server:{
-    port:5174,strictPort:true,
-    proxy:{'/api':process.env.SR_STUDIO_SERVER_URL||'http://127.0.0.1:3000','/health':process.env.SR_STUDIO_SERVER_URL||'http://127.0.0.1:3000'},
-  },
-  build:{rollupOptions:{input:{
-    main:resolve(__dirname,'index.html'),
-    preview:resolve(__dirname,'preview-frame.html'),
-  }}},
-});
+export default defineConfig(({mode})=>{
+ const stage=mode==='stage',stagePort=Number(process.env.SR_STUDIO_STAGE_PORT??5175);
+ if(!Number.isInteger(stagePort)||stagePort<1||stagePort>65535)throw Error('Invalid SR_STUDIO_STAGE_PORT');
+ return {
+ cacheDir:stage?'node_modules/.vite-stage':'node_modules/.vite',
+ plugins:[react(),{name:'creator-origin-boundary',configureServer(server){server.middlewares.use((req,res,next)=>{
+  let path:string;try{path=decodeURIComponent(new URL(req.url??'/','http://localhost').pathname);}catch{res.statusCode=400;res.end();return;}
+  const modulePath=/^\/(src|node_modules|assets|@fs|@id|@vite)\//.test(path)||path==='/@react-refresh';
+  const renderer=path==='/frame.html'||path==='/world-component.html';
+  const allowedStagePath=renderer||(modulePath&&!path.endsWith('.html'));
+  if(stage?!allowedStagePath:/\/(frame|world-component)\.html$/.test(path)){res.statusCode=404;res.end('Not Found');return;}
+  if(!stage&&path==='/api/v1/runtime/web-config'){
+   res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');
+   res.end(JSON.stringify({success:true,errorCode:null,errorMessage:'',data:{stage:{origin:process.env.SILLYREALMS_STAGE_ORIGIN??null,port:stagePort,entryPath:'/frame.html'}}}));return;
+  }
+  if(/^\/(src|node_modules|assets|@fs|@id|@vite)\//.test(path)||path==='/@react-refresh')res.setHeader('Access-Control-Allow-Origin','*');
+  if(!stage)res.setHeader('Content-Security-Policy',"frame-ancestors 'self'");
+  if(stage&&renderer)res.setHeader('Content-Security-Policy','sandbox allow-scripts allow-same-origin');
+  if(path.includes('message-matcher.worker.ts'))res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; connect-src 'none'");next();
+ });}}],
+ resolve:{dedupe:['react','react-dom']},
+ server:{host:'0.0.0.0',port:stage?stagePort:5174,strictPort:true,proxy:stage?undefined:{'/api':process.env.SR_STUDIO_SERVER_URL||'http://127.0.0.1:3000','/health':process.env.SR_STUDIO_SERVER_URL||'http://127.0.0.1:3000'}},
+ build:{rollupOptions:{input:{main:resolve(__dirname,'index.html'),frame:resolve(__dirname,'frame.html'),worldComponent:resolve(__dirname,'world-component.html')}}},
+};});

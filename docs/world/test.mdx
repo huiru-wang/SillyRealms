@@ -1,0 +1,297 @@
+import { useState } from 'react'
+
+export const districts = [
+  { name: '旧灯塔', kind: '观察', time: 20, color: '#9a4b23', description: '登上潮湿的旋梯，辨认雾里第三次出现的灯光。' },
+  { name: '玻璃集市', kind: '交涉', time: 35, color: '#32665b', description: '用一段真实的记忆，交换一封尚未寄出的信。' },
+  { name: '沉钟码头', kind: '探索', time: 45, color: '#515e9a', description: '潮水退去之前，寻找水面下那座没有门的钟楼。' },
+]
+
+export function Note({ title = '航海者批注', children }) {
+  return <aside className="fog-note"><strong>{title}</strong><div>{children}</div></aside>
+}
+
+export function DistrictCards() {
+  return (
+    <div className="fog-grid">
+      {districts.map((district, index) => (
+        <article className="fog-card" key={district.name} style={{ borderTopColor: district.color }}>
+          <span className="fog-eyebrow">0{index + 1} / {district.kind}</span>
+          <h3>{district.name}</h3>
+          <p>{district.description}</p>
+          <small>步行约 {district.time} 分钟</small>
+        </article>
+      ))}
+    </div>
+  )
+}
+
+export function DepartureDesk() {
+  const [name, setName] = useState('旅人')
+  const [route, setRoute] = useState(0)
+  const [courage, setCourage] = useState(60)
+  const [lantern, setLantern] = useState(true)
+  const [ticket, setTicket] = useState(null)
+  const destination = districts[route]
+  const reset = () => {
+    setName('旅人')
+    setRoute(0)
+    setCourage(60)
+    setLantern(true)
+    setTicket(null)
+  }
+  return (
+    <section className="fog-desk" aria-label="交互式出航登记">
+      <div className="fog-grid fog-form">
+        <label>旅人称呼<input value={name} maxLength={24} onChange={event => setName(event.target.value)} placeholder="留下一个名字" /></label>
+        <label>目的地<select value={route} onChange={event => setRoute(Number(event.target.value))}>{districts.map((district, index) => <option key={district.name} value={index}>{district.name}</option>)}</select></label>
+      </div>
+      <label className="fog-range">勇气储备：{courage}%<input type="range" min="0" max="100" step="5" value={courage} onChange={event => setCourage(Number(event.target.value))} /></label>
+      <label className="fog-check"><input type="checkbox" checked={lantern} onChange={event => setLantern(event.target.checked)} />带上风灯</label>
+      <div className="fog-preview" aria-live="polite">
+        <strong>{name.trim() || '无名旅人'}，今晚前往{destination.name}。</strong>
+        <p>{courage >= 50 ? '你已准备好主动敲响那扇门。' : '不必勉强，沿着有灯的街道慢慢走。'}{lantern ? '风灯会照亮脚下的石阶。' : '没有风灯，记得在天黑前回来。'}</p>
+        <small>预计步行 {destination.time} 分钟 · {destination.kind}路线</small>
+      </div>
+      <div className="fog-actions">
+        <button type="button" disabled={!name.trim()} onClick={() => setTicket({ name: name.trim(), destination: destination.name, courage, lantern })}>生成船票</button>
+        <button type="button" className="fog-secondary" onClick={reset}>重置演示</button>
+      </div>
+      <div role="status">
+        {ticket ? <p className="fog-ticket">船票已签发：{ticket.name} → {ticket.destination}，勇气 {ticket.courage}%，{ticket.lantern ? '携带风灯' : '未带风灯'}。这是点击时的快照，修改选项后可重新签发。</p> : <p className="fog-muted">尚未签发船票。填写称呼后即可生成；所有状态仅保留在当前页面。</p>}
+      </div>
+    </section>
+  )
+}
+
+export default function Notebook({ children }) {
+  return (
+    <article className="fog-notebook">
+      <style>{`
+        .fog-notebook { color-scheme: light; box-sizing: border-box; max-width: 880px; margin: 0 auto; padding: clamp(20px, 5vw, 64px); color: #263c3a; background: #faf8f1; font: 16px/1.85 system-ui, sans-serif; overflow-wrap: anywhere; }
+        .fog-notebook * { box-sizing: border-box; }
+        .fog-notebook h1, .fog-notebook h2, .fog-notebook h3 { color: #183d38; line-height: 1.3; }
+        .fog-notebook h1 { margin: 12px 0 24px; font: 700 clamp(36px, 7vw, 64px)/1.15 Georgia, 'Songti SC', serif; letter-spacing: -.04em; }
+        .fog-notebook h2 { margin-top: 52px; padding-top: 20px; border-top: 1px solid #d8dfd4; font-size: 25px; }
+        .fog-notebook h3 { font-size: 19px; }
+        .fog-notebook a { color: #28665c; text-underline-offset: 4px; }
+        .fog-notebook blockquote { margin: 24px 0; padding: 4px 22px; border-left: 3px solid #a46538; font-family: Georgia, 'Songti SC', serif; }
+        .fog-notebook code { padding: 2px 5px; background: #e9eee5; border-radius: 4px; font-size: .88em; }
+        .fog-notebook pre { padding: 20px; overflow-x: auto; background: #e9eee5; border-radius: 8px; line-height: 1.6; }
+        .fog-notebook pre code { padding: 0; }
+        .fog-notebook hr { margin: 40px 0; border: 0; border-top: 1px solid #d8dfd4; }
+        .fog-notebook figure { margin: 24px 0; }
+        .fog-notebook figcaption, .fog-muted { color: #536760; font-size: 14px; }
+        .fog-eyebrow { color: #667266; font-size: 12px; font-weight: 700; letter-spacing: .12em; }
+        .fog-note { margin: 24px 0; padding: 20px 24px; background: #edf0e5; border-left: 3px solid #536b4c; }
+        .fog-note p:last-child { margin-bottom: 0; }
+        .fog-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 16px; }
+        .fog-card { padding: 20px; background: #fffdf8; border: 1px solid #d8dfd4; border-top: 3px solid; border-radius: 8px; }
+        .fog-card h3 { margin: 12px 0; }
+        .fog-card p { font-size: 14px; }
+        .fog-notebook details { margin: 12px 0; padding: 16px 20px; border: 1px solid #d8dfd4; border-radius: 8px; }
+        .fog-notebook summary { cursor: pointer; font-weight: 650; }
+        .fog-desk { padding: 24px; background: #fffdf8; border: 1px solid #b8c8bb; border-radius: 12px; }
+        .fog-form label, .fog-range { display: grid; gap: 8px; }
+        .fog-notebook input:not([type="checkbox"]), .fog-notebook select { width: 100%; min-width: 0; }
+        .fog-notebook input:not([type="range"]):not([type="checkbox"]), .fog-notebook select { padding: 10px; border: 1px solid #849a8e; border-radius: 6px; color: #263c3a; background: #fff; font: inherit; }
+        .fog-range { margin: 20px 0 12px; }
+        .fog-check { display: flex; align-items: center; gap: 8px; }
+        .fog-notebook input { accent-color: #28665c; }
+        .fog-preview { margin: 20px 0; padding: 18px; background: #edf0e5; border-radius: 6px; }
+        .fog-preview p { margin: 8px 0; }
+        .fog-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+        .fog-notebook button { padding: 10px 18px; border: 1px solid #28665c; border-radius: 6px; background: #28665c; color: #fff; font: inherit; cursor: pointer; }
+        .fog-notebook button.fog-secondary { color: #28665c; background: transparent; }
+        .fog-notebook button:disabled { opacity: .5; cursor: not-allowed; }
+        .fog-notebook :is(a, button, input, select, summary):focus-visible { outline: 3px solid #a46538; outline-offset: 4px; }
+        .fog-ticket { padding-top: 12px; border-top: 1px dashed #849a8e; }
+        .fog-table-wrap { overflow-x: auto; }
+        .fog-notebook table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
+        .fog-notebook caption { text-align: left; font-weight: 650; margin-bottom: 12px; }
+        .fog-notebook th, .fog-notebook td { padding: 12px; border-bottom: 1px solid #d8dfd4; vertical-align: top; }
+        .fog-notebook th { background: #edf0e5; }
+        .fog-notebook progress { width: 100%; accent-color: #28665c; }
+      `}</style>
+      {children}
+    </article>
+  )
+}
+
+<div className="fog-eyebrow">FIELD NOTES · VOL. 07 · MDX EXPLORER</div>
+
+# 雾港来信
+
+一本可以阅读、展开，也可以亲手改变的旅行手册。
+
+凌晨四点，渡轮停在地图之外。你带着**一封没有收件人的信**、一枚温热的铜币，以及*一个暂时不愿告诉任何人的名字*，走进雾港。
+
+> “这里的每一条街都通向海。只有你决定回头的时候，它们才通向家。”
+>
+> —— 灯塔守夜人，林舟
+
+<Note title="阅读之前：这份文件如何运行">
+
+这是独立的 **MDX 示例**，需要支持 MDX 编译和 React 的预览环境；交互需要在浏览器中挂载或水合。普通 Markdown 预览器不会执行这里的组件。
+
+当前 SillyRealms 尚未接入 `.mdx` 渲染，本示例不等同于可直接导入的世界卡组件。页面不访问服务、不调用模型，也不写入世界状态。
+
+</Note>
+
+<nav aria-label="手册目录">
+  <a href="#prose">文字</a> · <a href="#districts">街区</a> · <a href="#map">地图</a> · <a href="#secrets">秘密</a> · <a href="#departure">出航</a> · <a href="#syntax">语法</a>
+</nav>
+
+<h2 id="prose">01 / 文字有自己的节奏</h2>
+
+## 一座城市的三个细节
+
+### 先听见，再看见
+
+远处的汽笛响了三声。窗台上的 <mark>蓝色盐粒</mark> 开始发光，店主把门牌从“营业”翻成了“等你”。她说：<q>在雾散之前，你可以问一个问题。</q>
+
+- **声音**：钟声比潮汐早到七分钟。
+- **气味**：烤面包、海盐，以及刚刚熄灭的火柴。
+- **触感**：信封边缘粗糙，封蜡却像刚被人握过。
+
+### 到港后的第一件事
+
+1. 在旅馆留下一个称呼。
+2. 找到愿意回答问题的人。
+3. 决定是否打开那封信。
+
+这里可以混排 `行内代码`、**粗体**、*斜体*、<del>已经作废的约定</del>，以及 H<sub>2</sub>O、m<sup>2</sup> 等语义标记。键盘标记也可以写成 <kbd>Tab</kbd>，用于提示如何移动焦点。
+
+<Note title="Markdown 可以放进组件里">
+
+这个提示框由 `Note` 组件提供外观，内部仍然使用普通 Markdown：
+
+- 作者负责写内容。
+- 组件负责呈现内容。
+- 同一个组件可以在整篇文档中反复使用。
+
+**注意 JSX 标签与 Markdown 正文之间的空行。** 它们帮助 MDX 正确识别块级内容。
+
+</Note>
+
+<h2 id="districts">02 / 同一份数据，多种呈现</h2>
+
+雾港目前开放 **{districts.length} 个街区**。逐一走访的预计步行时间为 **{districts.reduce((total, district) => total + district.time, 0)} 分钟**；这些数字由文件顶部的数据实时计算。
+
+<DistrictCards />
+
+<div className="fog-table-wrap" role="region" aria-label="街区速查表，可横向滚动" tabIndex={0}>
+  <table>
+    <caption>街区速查 · 与卡片共用同一份数据</caption>
+    <thead><tr><th scope="col">街区</th><th scope="col">体验</th><th scope="col">步行时间</th></tr></thead>
+    <tbody>{districts.map(district => <tr key={district.name}><th scope="row">{district.name}</th><td>{district.kind}</td><td>{district.time} 分钟</td></tr>)}</tbody>
+  </table>
+</div>
+
+这里使用原生 JSX 表格，不依赖 GFM 表格插件。修改 `districts` 后，卡片、表格、统计数字和下方的目的地选项会一起变化。
+
+<h2 id="map">03 / 让插图成为正文的一部分</h2>
+
+<figure>
+  <svg viewBox="0 0 640 260" role="img" aria-label="雾港示意图：旧灯塔、玻璃集市和沉钟码头由一条沿海小路连接" style={{ display: 'block', width: '100%', height: 'auto', background: '#e8eee7', borderRadius: 12 }}>
+    <path d="M0 180 Q100 135 210 175 T420 180 T640 150 V260 H0Z" fill="#c2d8d1" />
+    <path d="M0 210 Q100 170 210 210 T420 215 T640 185" fill="none" stroke="#8eafa4" strokeWidth="2" />
+    <path d="M100 100 Q220 40 310 110 T540 95" fill="none" stroke="#8a7259" strokeWidth="3" strokeDasharray="7 8" />
+    <g fill="#263c3a" fontFamily="system-ui, sans-serif" fontSize="18" textAnchor="middle">
+      <path d="M85 102 L91 57 H109 L115 102Z" fill="#faf8f1" stroke="#9a4b23" strokeWidth="3" />
+      <path d="M85 56 L100 40 L115 56Z" fill="#9a4b23" />
+      <text x="100" y="136">旧灯塔</text>
+      <path d="M283 105 V76 L310 55 L337 76 V105Z" fill="#faf8f1" stroke="#32665b" strokeWidth="3" />
+      <text x="310" y="139">玻璃集市</text>
+      <path d="M512 98 H568 M520 98 V126 M540 98 V126 M560 98 V126" fill="none" stroke="#515e9a" strokeWidth="4" />
+      <text x="540" y="157">沉钟码头</text>
+      <text x="320" y="235" fontSize="14" fill="#46665e">潮汐海 / THE TIDAL SEA</text>
+    </g>
+  </svg>
+  <figcaption>图 01 · 直接嵌入的 SVG，不需要外部图片；文字、路径和配色都可以由表达式驱动。</figcaption>
+</figure>
+
+<label>手册探索进度（静态示例）：<progress value={3} max={5}>3 / 5</progress></label>
+
+<h2 id="secrets">04 / 把秘密藏在折页里</h2>
+
+下面的折叠区使用浏览器原生的 `details / summary`，不需要 React 状态。点击标题，或用键盘聚焦后展开。
+
+<details>
+<summary>打开信封 · 含剧情线索</summary>
+
+信里只有一句话：
+
+> 请不要相信那座灯塔。它照亮的不是海，是昨天。
+
+落款的位置画着一只眼睛。你碰到墨迹时，外面的钟声停了。
+
+<Note title="观察检定">
+
+信纸背面还有一行极小的字：**去玻璃集市，找不卖镜子的人。**
+
+</Note>
+
+</details>
+
+<details>
+<summary>作者侧注 · 同一段文字可以如何组织</summary>
+
+<dl>
+  <dt><strong>正文</strong></dt><dd>提供感官细节，让读者先进入场景。</dd>
+  <dt><strong>折叠内容</strong></dt><dd>容纳可选背景、线索、作者注和剧透。</dd>
+  <dt><strong>交互组件</strong></dt><dd>让读者选择路线，观察状态如何改变叙述。</dd>
+</dl>
+
+</details>
+
+<h2 id="departure">05 / 从阅读到参与</h2>
+
+修改称呼、选择目的地、拖动勇气滑杆，观察下面的叙述如何变化。试着清空称呼，查看按钮的禁用状态；再签发一张船票，比较实时预览与已签发快照。
+
+<DepartureDesk />
+
+<Note title="交互的边界">
+
+这里的 `useState` 只服务于演示。刷新或卸载页面后，登记内容会重置；“签发”不会创建真实会话或保存数据。MDX 可以承载 React 交互，实际产品中的权限和持久化仍由宿主应用负责。
+
+</Note>
+
+<h2 id="syntax">06 / 看看幕后写法</h2>
+
+下面是展示用的代码块，**不会执行**。它与上面真正参与渲染的 JSX 形成对照：
+
+```mdx
+export const destinations = ['旧灯塔', '玻璃集市', '沉钟码头']
+
+# 下一站去哪里？
+
+当前有 **{destinations.length}** 个目的地。
+
+<Note title="来自守夜人的提醒">
+
+记得带上 **风灯**。
+
+</Note>
+
+<ul>
+  {destinations.map(name => <li key={name}>{name}</li>)}
+</ul>
+```
+
+### 哪些能力来自哪里？
+
+- **Markdown 本身**：标题、段落、强调、引用、列表、链接、代码块。
+- **HTML / JSX 元素**：表格、折叠区、语义标记、进度条、SVG。
+- **MDX 表达式与组件**：变量插值、计算、列表映射、属性传递、Markdown 与组件嵌套。
+- **React 客户端运行时**：输入事件、局部状态、条件渲染、可重置交互。
+- **需要另行配置的扩展**：GFM 任务列表与脚注、数学公式、Mermaid、代码语法高亮。本文件没有假定这些插件已经存在。
+
+{/* MDX 注释：这句话保留在源码中，不会出现在页面正文里。 */}
+
+---
+
+雾散了一点。你把船票折好，放进外套口袋。
+
+**现在，故事可以从你选择的那条街开始。**
+
+<p className="fog-muted">END OF FIELD NOTES · <a href="#departure">返回出航登记 ↑</a></p>

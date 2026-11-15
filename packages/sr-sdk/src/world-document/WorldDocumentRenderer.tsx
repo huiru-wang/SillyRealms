@@ -18,7 +18,8 @@ export function WorldDocumentRenderer({content,title='文档',presentation='isol
   },[themeVersion,presentation]);
   const rendered=useMemo(()=>renderWorldDocument(content,{profile:presentation==='isolated'?'document':'message'}),[content,presentation]);
   const srcDoc=useMemo(()=>{
-    const ink=getComputedStyle(document.documentElement).getPropertyValue('--ink').trim();
+    const hostStyle=getComputedStyle(document.documentElement);
+    const ink=hostStyle.getPropertyValue('--ink').trim()||hostStyle.getPropertyValue('--text').trim();
     const color=CSS.supports('color',ink)?ink:'#20212a';
     const bg=CSS.supports('color',background)?background:'#fff';
     return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; img-src https:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><meta name="viewport" content="width=device-width, initial-scale=1"><style>:root{--sr-document-ink:${color};--sr-document-background:${bg}}${baseStyle}</style>${rendered.head}<style>html,body{height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important}</style></head><body>${rendered.html}</body></html>`;

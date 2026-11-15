@@ -13,6 +13,7 @@ it('forwards Run and state notifications using the target event names',async()=>
     const runtime={status:()=>null,onEvent:(listener:typeof notify)=>{notify=listener;return()=>{notify=undefined;};}} as unknown as SRRuntime;
     const response=await sessionRuntimeRoutes(db,runtime).request('/s/events');
     const reader=response.body!.getReader();const decoder=new TextDecoder();
+    expect(decoder.decode((await reader.read()).value)).toBe(': connected\n\n');
     notify!('s','message.created',{runId:'r',message:{id:'e',role:'user',text:'你好'}});
     expect(decoder.decode((await reader.read()).value)).toContain('event: run.created');
     notify!('s','message.delta',{runId:'r',messageId:'a',text:'你好',offset:0});

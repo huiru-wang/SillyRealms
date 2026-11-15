@@ -3,7 +3,10 @@
   "spec_version": "0.1",
   "data": {
     "name": "测试世界",
-    "description": "用于测试的独立世界卡。",
+    "description": {
+      "type": "component",
+      "component": "Introduction"
+    },
     "tags": [
       "测试"
     ],
@@ -55,6 +58,12 @@
           }
         }
       ]
-    }
+    },
+    "components": [
+      {
+        "id": "Introduction",
+        "component": "import {WorldDocumentContent} from '@sillyrealms/sdk';export default function Introduction(){return <WorldDocumentContent content={\"用于测试的独立世界卡。\"}/>;}"
+      }
+    ]
   }
 }

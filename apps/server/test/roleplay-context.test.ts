@@ -1,6 +1,6 @@
 import {expect, it} from 'vitest';
 import {buildContext, estimateMessageBytes} from '../src/runtime/context/prompt-builder.js';
-import {SR_SYSTEM_MAIN} from '../src/runtime/context/system-main.js';
+import {SR_SYSTEM_MAIN,SR_RP_SUMMARY_GUIDANCE} from '../src/runtime/context/system-main.js';
 import {summaryNarrative} from '../src/runtime/context/context-manager.js';
 
 const views = {global:{}, session:{}, message:{}};
@@ -33,9 +33,10 @@ it('excludes only valid user instructions from activation without changing sent 
   expect(JSON.stringify(malformed.messages([]))).toContain('LORE_ACTIVE');
 });
 
-it('does not promote player instruction to update evidence',()=>{
-  expect(SR_SYSTEM_MAIN).toContain('叙事指令不是状态更新证据');
-  expect(SR_SYSTEM_MAIN).not.toContain('内心');
+it('uses a concise roleplay protocol without advertising legacy player instructions',()=>{
+  expect(SR_SYSTEM_MAIN).toContain('【角色扮演输入协议】');
+  expect(SR_SYSTEM_MAIN).toContain('不擅自替玩家作出重要决定');
+  expect(SR_SYSTEM_MAIN+SR_RP_SUMMARY_GUIDANCE).not.toMatch(/sr_instruction|玩家叙事指令/);
 });
 
 

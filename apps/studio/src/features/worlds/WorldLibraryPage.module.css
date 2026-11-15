@@ -1,7 +1,7 @@
 .page{
   --page-inset:34px;
   --filter-gap:24px;
-  min-height:100%;padding:92px var(--page-inset) 50px;
+  min-height:100%;padding:var(--page-header-top) var(--page-inset) 50px;
   transition:padding-left var(--motion-layout) var(--ease-layout),
     padding-right var(--motion-layout) var(--ease-layout);
 }
@@ -33,19 +33,20 @@
 .empty{min-height:290px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:13px;color:var(--text-muted);border:1px dashed var(--stroke-strong);border-radius:15px}
 .empty strong{color:var(--text);font-size:16px;font-weight:500}
 .empty button{padding:10px 18px;border-radius:8px;background:var(--surface-hover);color:var(--text)}
-.previewHero{width:100%;height:155px;overflow:hidden;border-radius:10px;margin-bottom:15px}
-.previewHero img{width:100%;height:100%;object-fit:cover;object-position:center 20%}
-.previewGenre{font-size:12px;color:var(--accent)}
-.demoNotice{margin-top:16px;font-size:12px;border-radius:9px;padding:12px 14px;color:var(--text-muted);background:var(--surface-raised)}
 @media(max-width:1340px) and (min-width:1081px){
  .page{--page-inset:28px;--filter-gap:18px}
  :global([data-collapsed="true"]) .page{--page-inset:50px;--filter-gap:30px}
  .body{grid-template-columns:100px minmax(0,1fr)}
 }
 @media(max-width:1080px){
- .page,:global([data-collapsed="true"]) .page{--page-inset:25px;--filter-gap:16px;padding-top:68px;padding-bottom:42px}
+ .page,:global([data-collapsed="true"]) .page{--page-inset:25px;--filter-gap:16px;padding-top:var(--page-header-top);padding-bottom:42px}
  .body{grid-template-columns:90px minmax(0,1fr)}
  .gallery{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+}
+@media(min-width:761px) and (max-width:900px){
+ .body{display:block}
+ .categories{flex-direction:row;overflow-x:auto;margin-bottom:16px}
+ .gallery{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media(max-width:760px){
  .page,:global([data-collapsed="true"]) .page{--page-inset:16px;padding-top:23px;padding-bottom:30px}
@@ -67,4 +68,3 @@
 .loadMore{display:block;margin:24px auto 0;padding:10px 18px;border-radius:8px;background:var(--surface-hover);color:var(--text)}
 .loadMore:disabled{opacity:.6}
 @media(max-width:760px){.header{padding-left:0}}
-.mockLabel{font-size:12px;color:var(--text-muted)}

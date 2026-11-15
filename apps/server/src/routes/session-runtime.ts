@@ -10,7 +10,7 @@ import { UsageStore } from '../runtime/persistence/usage-store.js';
 const runRequest=z.object({text:z.string().min(1).max(100000).refine(value=>!!value.trim()),requestId:z.string().uuid(),expectedTipEntryId:z.string().min(1)}).strict();
 
 /** Runtime endpoints are version-neutral; the app mounts them under V1. */
-export function sessionRuntimeRoutes(db:DatabaseSync,runtime:SRRuntime):Hono {
+export function sessionRuntimeRoutes(db:DatabaseSync,runtime:SRRuntime,shutdown?:AbortSignal):Hono {
   const app=new Hono();
   const session=(id:string)=>db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
   const usage = new UsageStore(db);
@@ -52,9 +52,17 @@ export function sessionRuntimeRoutes(db:DatabaseSync,runtime:SRRuntime):Hono {
   app.get('/:id/events',c=>{
     const id=c.req.param('id');if(!session(id))return c.json(failure(ErrorCodes.SESSION_NOT_FOUND),404);
     const encoder=new TextEncoder();let dispose=()=>{};let timer:ReturnType<typeof setInterval>;
+    let close=()=>{};
     const stream=new ReadableStream<Uint8Array>({start(controller){
       let closed=false;
-      const send=(event:string,data:unknown)=>{if(closed)return;try{if((controller.desiredSize??1)<-128){closed=true;dispose();clearInterval(timer);controller.close();return;}controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));}catch{closed=true;dispose();clearInterval(timer);}};
+      close=()=>{
+        if(closed)return;
+        closed=true;dispose();clearInterval(timer);
+        shutdown?.removeEventListener('abort',close);
+        c.req.raw.signal.removeEventListener('abort',close);
+        try{controller.close();}catch{/* Already cancelled by the client. */}
+      };
+      const send=(event:string,data:unknown)=>{if(closed)return;try{if((controller.desiredSize??1)<-128){close();return;}controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));}catch{close();}};
       const messages=(runId:string)=>runtime.status(id,runId)?.messages??[];
       dispose=runtime.onEvent((target,event,payload)=>{
         if(target!==id)return;
@@ -82,8 +90,13 @@ export function sessionRuntimeRoutes(db:DatabaseSync,runtime:SRRuntime):Hono {
         else if(event==='run.phase')send('run.phase',{runId,phase:payload.phase});
         else if(event==='usage.updated')send('usage.updated',payload);
       });
-      timer=setInterval(()=>{try{controller.enqueue(encoder.encode(': heartbeat\n\n'));}catch{dispose();clearInterval(timer);}},15000);
-    },cancel(){dispose();clearInterval(timer);}});
+      // A body byte flushes proxy buffers and opens EventSource immediately.
+      controller.enqueue(encoder.encode(': connected\n\n'));
+      timer=setInterval(()=>{try{if((controller.desiredSize??1)<-128){close();return;}controller.enqueue(encoder.encode(': heartbeat\n\n'));}catch{close();}},15000);
+      shutdown?.addEventListener('abort',close,{once:true});
+      c.req.raw.signal.addEventListener('abort',close,{once:true});
+      if(shutdown?.aborted||c.req.raw.signal.aborted)close();
+    },cancel(){close();}});
     return c.body(stream,200,{'content-type':'text/event-stream','cache-control':'no-cache, no-transform','x-accel-buffering':'no'});
   });
   return app;

@@ -1,5 +1,4 @@
 packages:
   - apps/server
-  - apps/web
   - apps/studio
   - packages/*

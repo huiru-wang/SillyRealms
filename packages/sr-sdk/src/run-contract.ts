@@ -1,5 +1,5 @@
 /** Public narrative messages omit raw tool entries and implementation metadata. */
-export type ChatMessage = { id: string; role: 'user' | 'assistant'; text: string };
+export type ChatMessage = { id: string; role: 'user' | 'assistant'; text: string; origin?: 'opening' };
 export type RunPhase = 'preparing' | 'narrative' | 'extensions' | 'finalized';
 export type StateUpdateResult = {
   status: 'disabled' | 'not_required' | 'pending' | 'unchanged' | 'applied' | 'partial' | 'failed' | 'cancelled';

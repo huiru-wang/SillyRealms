@@ -12,12 +12,12 @@ export function readWorld(row: WorldRow): WorldCard {
     openings: JSON.parse(String(row.openings_json)),
   };
   for (const [field, column] of Object.entries({
-    summary:'summary', description:'description', cover:'cover',
+    description:'description', cover:'cover',
     lorebook:'lorebook_json', state:'state_definition_json',
-    message_render:'message_render_json', ui:'ui_json', extensions:'extensions_json',
+    message_render:'message_render_json', components:'components', stage_component:'stage_component', extensions:'extensions_json',
   })) {
     if (row[column] == null) continue;
-    data[field] = column.endsWith('_json') ? JSON.parse(String(row[column])) : row[column];
+    data[field] = (column.endsWith('_json') || column==='description' || column==='components') ? JSON.parse(String(row[column])) : row[column];
   }
   const card = parseCard({ spec:row.spec, spec_version:row.spec_version, data });
   validateSnapshot(card.data.state, 'global', JSON.parse(String(row.state)));
@@ -42,14 +42,14 @@ export class WorldRepository {
     const data = card.data;
     const json = (v: unknown) => v === undefined ? null : JSON.stringify(v);
     this.db.prepare(`INSERT INTO worlds(
-      id,spec,spec_version,name,summary,description,cover,characters_json,openings_json,
-      lorebook_json,state_definition_json,message_render_json,ui_json,extensions_json,
+      id,spec,spec_version,name,description,cover,characters_json,openings_json,
+      lorebook_json,state_definition_json,message_render_json,components,stage_component,extensions_json,
       default_preset_id,default_api_model_config_id,state,source_file_path,source_sha256,source_kind,
       created_at,updated_at
     ) VALUES(${new Array(22).fill('?').join(',')})`).run(
-      id,card.spec,card.spec_version,data.name,data.summary??null,data.description??null,data.cover??null,
+      id,card.spec,card.spec_version,data.name,json(data.description),data.cover??null,
       JSON.stringify(data.characters),JSON.stringify(data.openings),json(data.lorebook),json(data.state),
-      json(data.message_render),json(data.ui),json(data.extensions),
+      json(data.message_render),json(data.components??[]),data.stage_component??null,json(data.extensions),
       presetId,modelId,JSON.stringify(initialState(data.state,'global')),
       sourcePath,sourceHash,sourceKind,now,now
     );

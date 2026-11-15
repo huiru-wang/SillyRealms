@@ -2,7 +2,7 @@ import { afterEach,expect,it,vi } from 'vitest';
 import { summaryInputLimit,requestFingerprint,assertPreparedRequest,hashRequest,type PreparedRequest } from '../src/runtime/context/budget.js';
 import { PiGateway,requiredToolChoice } from '../src/runtime/model/pi-gateway.js';
 import { buildContext } from '../src/runtime/context/prompt-builder.js';
-import { DEFAULT_CAPABILITIES } from '../src/runtime/config.js';
+import { effectiveCapabilities } from '../src/runtime/config.js';
 import type { ContextPolicy } from '../src/runtime/types.js';
 import type { Context } from '@earendil-works/pi-ai';
 import { runtimeFixture,textGateway,testModel,drain,response } from './fixtures/runtime-v2.js';
@@ -49,8 +49,9 @@ it('previews the same real Pi payload it sends, preserving fixed Direct order wi
     {id:'main',kind:'system' as const,role:'system' as const,enabled:true,content:'STYLE'},
   ];
   const built=buildContext({characters:[{id:'p',player_selectable:true,prompt:'PLAYER'},{id:'n',prompt:'NPC'}],
+    state:{scopes:{message:{score:{type:'number',initial:0,min:0}}}},
     lorebook:{entries:[{id:'l',content:'LORE',load:{mode:'always',order:0}}]}},
-    nodes,'p',{global:{},session:{},message:{}},[],'CURRENT',{mode:'direct',capabilities:DEFAULT_CAPABILITIES});
+    nodes,'p',{global:{},session:{},message:{score:7}},[],'CURRENT',{mode:'direct',capabilities:effectiveCapabilities(undefined,{})});
   const context:Context={messages:built.messages([{role:'user',text:'OLD_USER'},{role:'assistant',text:'OLD_STORY'}])};
   let sent:any;const mock=vi.fn(async(_url:unknown,init:RequestInit)=>{
     sent=JSON.parse(String(init.body));
@@ -69,6 +70,11 @@ it('previews the same real Pi payload it sends, preserving fixed Direct order wi
   }
   expect(contents.at(-1)).toBe('CURRENT');expect(contents.filter((v:string)=>v==='CURRENT')).toHaveLength(1);
   expect(sent.messages.at(-2).role).toBe('system');
+  const protocol=sent.messages.at(-2).content;
+  expect(protocol).toContain('<output_rules>\n```text\n故事正文……\n\n<sr_extensions>\n<state_update>[]</state_update>\n<action_suggestions>[]</action_suggestions>\n</sr_extensions>\n```');
+  expect(protocol).toContain('"path":"score","scope":"message","type":"number","value":7');
+  expect(protocol).not.toMatch(/synchronization_gaps|state_sync_notice|authority|sr_instruction/);
+  expect(sent.messages[0].content).toContain('【角色扮演输入协议】');
   mock.mockClear();
   await expect((async()=>{for await(const _event of gateway.stream(model,context,{apiKey:'fake',signal:new AbortController().signal,maxTokens:65,wireFingerprint})){} })()).rejects.toMatchObject({code:'PREPARED_REQUEST_CHANGED'});
   expect(mock).not.toHaveBeenCalled();

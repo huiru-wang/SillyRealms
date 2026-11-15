@@ -1,16 +1,18 @@
 import { DatabaseSync } from 'node:sqlite';
+import { migrateWorldComponents } from '../../domain/world-components-migration.js';
+import { readWorld } from '../../repositories/world-repository.js';
 import { normalizeCapabilities } from '../../runtime/config.js';
 import { UsageStore } from '../../runtime/persistence/usage-store.js';
 
 
-/** Additive schema migration. Service startup holds the data-directory lock. */
+/** Versioned schema migration. Service startup holds the data-directory lock. */
 export function openDatabase(path: string): DatabaseSync {
   const db = new DatabaseSync(path);
   const existed = !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='worlds'").get();
   const version = Number(db.prepare('PRAGMA user_version').get()?.user_version ?? 0);
-  if (version > 3 || (existed && version < 1)) {
+  if (version > 5 || (existed && version < 1)) {
     db.close();
-    throw new Error(version > 3 ? 'DATABASE_VERSION_UNSUPPORTED' : 'OLD_DATABASE_UNSUPPORTED: 旧数据库需要独立迁移，未改动任何数据');
+    throw new Error(version > 5 ? 'DATABASE_VERSION_UNSUPPORTED' : 'OLD_DATABASE_UNSUPPORTED: 旧数据库需要独立迁移，未改动任何数据');
   }
   if (existed && version >= 2) {
     const columns = db.prepare("SELECT name FROM pragma_table_info('sessions')").all().map(row => row.name);
@@ -18,14 +20,14 @@ export function openDatabase(path: string): DatabaseSync {
       db.close(); throw new Error('DATABASE_SCHEMA_VERSION_MISMATCH');
     }
   }
-  if (existed && version === 3) {
+  if (existed && version >= 3) {
     const columns = db.prepare("SELECT name FROM pragma_table_info('run_preparations')").all().map(row => row.name);
     if (!['run_id', 'session_id', 'request_id', 'expected_tip_entry_id', 'input_text', 'status', 'created_at', 'finished_at', 'result_json', 'metrics_json', 'accounted'].every(name => columns.includes(name))) {
       db.close(); throw new Error('DATABASE_SCHEMA_VERSION_MISMATCH');
     }
   }
   // SQLite snapshots committed WAL pages before any upgrade.
-  if (existed && version < 3 && path !== ':memory:') {
+  if (existed && version < 5 && path !== ':memory:') {
     try { db.prepare('VACUUM INTO ?').run(path + '.backup-v' + version + '-' + Date.now()); }
     catch (error) { db.close(); throw error; }
   }
@@ -42,13 +44,14 @@ export function openDatabase(path: string): DatabaseSync {
       spec TEXT NOT NULL CHECK(spec='world_card'),
       spec_version TEXT NOT NULL CHECK(spec_version='0.1'),
       name TEXT NOT NULL,
-      summary TEXT, description TEXT, cover TEXT,
+      description TEXT, cover TEXT,
       characters_json TEXT NOT NULL CHECK(json_valid(characters_json) AND json_type(characters_json)='array'),
       openings_json TEXT NOT NULL CHECK(json_valid(openings_json) AND json_type(openings_json)='array'),
       lorebook_json TEXT CHECK(lorebook_json IS NULL OR json_valid(lorebook_json)),
       state_definition_json TEXT CHECK(state_definition_json IS NULL OR json_valid(state_definition_json)),
       message_render_json TEXT CHECK(message_render_json IS NULL OR json_valid(message_render_json)),
-      ui_json TEXT CHECK(ui_json IS NULL OR json_valid(ui_json)),
+      components TEXT CHECK(components IS NULL OR (json_valid(components) AND json_type(components)='array')),
+      stage_component TEXT,
       extensions_json TEXT CHECK(extensions_json IS NULL OR json_valid(extensions_json)),
       default_preset_id TEXT REFERENCES presets(id) ON DELETE RESTRICT,
       default_api_model_config_id TEXT REFERENCES api_model_configs(id) ON DELETE RESTRICT,
@@ -176,7 +179,26 @@ export function openDatabase(path: string): DatabaseSync {
       }
       db.exec('PRAGMA user_version = 2');
     }
-  if (version < 3) db.exec('PRAGMA user_version = 3');
+  // V4 removes only the deprecated world-card summary; narrative summaries are unchanged.
+  if (version < 4) {
+    if (db.prepare("SELECT 1 FROM pragma_table_info('worlds') WHERE name='summary'").get()) db.exec('ALTER TABLE worlds DROP COLUMN summary');
+    db.exec('PRAGMA user_version = 4');
+  }
+  if (version < 5) {
+    if (db.prepare("SELECT 1 FROM pragma_table_info('worlds') WHERE name='ui_json'").get()) {
+      const updates=db.prepare('SELECT * FROM worlds').all().map(row=>{
+        const converted=migrateWorldComponents({description:row.description??undefined,openings:JSON.parse(String(row.openings_json)),ui:row.ui_json==null?undefined:JSON.parse(String(row.ui_json))});
+        const description=converted.description===undefined?null:JSON.stringify(converted.description);
+        const components=JSON.stringify(converted.components),stage=converted.stage_component??null,openings=JSON.stringify(converted.openings);
+        readWorld({...row,description,components,stage_component:stage,openings_json:openings});
+        return {id:String(row.id),description,components,stage,openings};
+      });
+      db.exec('ALTER TABLE worlds RENAME COLUMN ui_json TO components; ALTER TABLE worlds ADD COLUMN stage_component TEXT');
+      const update=db.prepare('UPDATE worlds SET components=?,stage_component=?,description=?,openings_json=? WHERE id=?');
+      for(const row of updates)update.run(row.components,row.stage,row.description,row.openings,row.id);
+    }
+    db.exec('PRAGMA user_version = 5');
+  }
   db.prepare('INSERT OR IGNORE INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,?,?,?,?)')
     .run('sr-default-preset',null,now,now);
   db.exec('COMMIT');

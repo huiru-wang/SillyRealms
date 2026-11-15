@@ -10,7 +10,7 @@ describe('database initialization', () => {
     expect(rows).toHaveLength(9);
     expect(rows.some(row=>String(row.sql).includes('REFERENCES presets'))).toBe(true);
     expect(db.prepare('PRAGMA foreign_keys').get()?.foreign_keys).toBe(1);
-    expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(3);
+    expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(5);
     db.close();
   });
   it('allows only configured LAN origins in addition to local origins', async () => {

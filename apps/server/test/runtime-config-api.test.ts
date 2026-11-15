@@ -4,16 +4,16 @@ import { runtimeFixture,textGateway,tail } from './fixtures/runtime-v2.js';
 import { fakeCredentials } from './fixtures/db-seed.js';
 import { sessionRoutes } from '../src/routes/sessions.js';
 const patch=(value:unknown)=>({method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify(value)});
-it('merges capability overrides with revision conflicts, inheritance reset and strict public fields',async()=>{
+it('preserves capability overrides while reporting the fixed Direct policy and revision conflicts',async()=>{
   const gateway=textGateway('story'+tail()),{db}=runtimeFixture(gateway),app=createApp(db,fakeCredentials,gateway);
   try {
     const get=async()=>await (await app.request('/api/v1/sessions/session/capabilities')).json() as any;
     expect((await get()).data).toMatchObject({revision:0,overrides:{},availability:{applicable:true}});
     const change=await app.request('/api/v1/sessions/session/capabilities',patch({expectedRevision:0,overrides:{state_update:false}}));
-    expect(change.status).toBe(200);expect((await change.json() as any).data).toMatchObject({revision:1,effective:{state_update:{enabled:false},action_suggestions:{enabled:true}},sources:{state_update:'session'}});
+    expect(change.status).toBe(200);expect((await change.json() as any).data).toMatchObject({revision:1,overrides:{state_update:false},effective:{state_update:{enabled:true},action_suggestions:{enabled:true}},sources:{state_update:'platform',action_suggestions:'platform'}});
     expect((await app.request('/api/v1/sessions/session/capabilities',patch({expectedRevision:0,overrides:{action_suggestions:false}}))).status).toBe(409);
     expect((await app.request('/api/v1/sessions/session/capabilities',patch({expectedRevision:1,overrides:{state_update:null}}))).status).toBe(200);
-    expect((await get()).data).toMatchObject({revision:2,overrides:{},effective:{state_update:{enabled:true}},sources:{state_update:'preset'}});
+    expect((await get()).data).toMatchObject({revision:2,overrides:{},effective:{state_update:{enabled:true}},sources:{state_update:'platform'}});
     expect((await app.request('/api/v1/sessions/session/capabilities',patch({expectedRevision:2,overrides:{state_update:{prompt:'PRIVATE'}}}))).status).toBe(422);
     expect((await app.request('/api/v1/sessions/session',patch({executionMode:'agent'}))).status).toBe(200);
     expect((await get()).data.availability).toEqual({applicable:false,reason:'agent_mode'});

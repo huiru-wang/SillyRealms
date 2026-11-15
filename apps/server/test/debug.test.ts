@@ -41,6 +41,7 @@ it('keeps concurrent asynchronous run scopes isolated and stays silent without d
     const line = String(value); expect(line).toContain('runId=' + JSON.stringify(body(line).label));
   }
   log.mockClear(); vi.stubEnv('SILLYREALMS_DEBUG','0'); debugLog('EVENT',{text:'not logged'});
+  debugLog('RUN BEGIN', {}); debugLog('RUN END', {});
   expect(log).not.toHaveBeenCalled();
 });
 
@@ -55,7 +56,9 @@ it('groups a Run around full model input and unparsed output, including hidden e
     expect(lines.every(line => !/[\r\n]/.test(line))).toBe(true);
     expect(lines.filter(line=>line.includes('RUN BEGIN'))).toHaveLength(1);
     expect(lines.filter(line=>line.includes('RUN END'))).toHaveLength(1);
-    expect(lines[0]).toContain('RUN BEGIN'); expect(lines.at(-1)).toContain('RUN END');
+    expect(lines[0]).toMatch(/^═{100}$/); expect(lines.at(-1)).toBe(lines[0]);
+    expect(lines.filter(line => /^═+$/.test(line))).toHaveLength(2);
+    expect(lines[1]).toContain('RUN BEGIN'); expect(lines.at(-2)).toContain('RUN END');
     const input = lines.find(line=>line.includes('MODEL INPUT'))!;
     expect(input).toContain(`runId="${run.runId}"`); expect(input).toContain('requestIndex=1'); expect(input).toContain('phase="generation"');
     expect(body(input).messages).toEqual(expect.arrayContaining([expect.objectContaining({role:'user',content:'debug input'})]));
@@ -63,7 +66,7 @@ it('groups a Run around full model input and unparsed output, including hidden e
     expect(lines.join('')).not.toContain('fake-key');
     expect(lines.some(line=>line.includes('"event":"message.delta"'))).toBe(false);
     expect(listener.mock.calls.some(([,event]) => event === 'message.delta')).toBe(true);
-    expect(body(lines.at(-1)!)).toMatchObject({status:'completed'});
+    expect(body(lines.at(-2)!)).toMatchObject({status:'completed'});
   } finally { db.close(); }
 });
 
@@ -78,7 +81,9 @@ it('closes a failed preparation without inventing a model call', async () => {
     await expect(new SRRuntime(db, fakeCredentials, gateway).prepare('session','input','request','opening')).rejects.toBeDefined();
     const lines=log.mock.calls.map(([value])=>String(value));
     expect(lines.filter(line=>line.includes('RUN BEGIN'))).toHaveLength(1);
-    expect(lines.at(-1)).toContain('RUN END'); expect(lines.some(line=>line.includes('MODEL BEGIN'))).toBe(false);
+    expect(lines[0]).toMatch(/^═{100}$/); expect(lines.at(-1)).toBe(lines[0]);
+    expect(lines[1]).toContain('RUN BEGIN'); expect(lines.at(-2)).toContain('RUN END');
+    expect(lines.some(line=>line.includes('MODEL BEGIN'))).toBe(false);
     expect(runtime.busy('session')).toBe(false);
   } finally { db.close(); }
 });

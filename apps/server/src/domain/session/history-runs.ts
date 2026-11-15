@@ -3,7 +3,7 @@ import { ErrorCodes } from '../../common/error-codes.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { readRunPage } from './history-page.js';
 
-type Message = { id:string; role:'user'|'assistant'; text:string };
+type Message = { id:string; role:'user'|'assistant'; text:string; origin?:'opening' };
 type Run = { id:string; status:string; messages:Message[] } & Record<string, any>;
 
 /** Read one current ancestry page without splitting runs. Cursor is scoped to the session. */
@@ -20,7 +20,7 @@ export function historyRuns(db:DatabaseSync, sessionId:string, tip:string, limit
       if(row.type!=='message' || (row.role!=='user' && row.role!=='assistant') || ext.nonNarrative) continue;
       const message=JSON.parse(String(row.payload)).message;
       const text=typeof message.content==='string' ? message.content : (message.content??[]).filter((part:{type:string})=>part.type==='text').map((part:{text:string})=>part.text).join('');
-      if(text) messages.push({id:String(row.id),role:row.role,text});
+      if(text) messages.push({id:String(row.id),role:row.role,text,...(ext.origin==='opening'?{origin:'opening' as const}:{})});
     }
     return { ...result,id,status,messages };
   });

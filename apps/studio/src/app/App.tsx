@@ -2,9 +2,11 @@ import {Navigate,Route,Routes} from 'react-router-dom';
 import {AppShell} from './AppShell';
 import {WorldLibraryPage} from '../features/worlds/WorldLibraryPage';
 import {WorldDetailPage} from '../features/worlds/WorldDetailPage';
-import {PlaceholderPage} from '../features/placeholder/PlaceholderPage';
+import {ModelsPage} from '../features/models/ModelsPage';
+import {SettingsPage} from '../features/settings/SettingsPage';
+import {SetupPage} from '../features/onboarding/SetupPage';
 import {MorePage} from '../features/more/MorePage';
-import {ColorLabPage} from '../features/lab/ColorLabPage';
+
 import {PresetProvider} from '../features/presets/PresetStore';
 import {PresetLibraryPage} from '../features/presets/PresetLibraryPage';
 import {SessionDetailPage,SessionListPage} from '../features/sessions/Sessions';
@@ -17,9 +19,10 @@ export default function App(){
       <Route path="/sessions" element={<SessionListPage/>}/><Route path="/sessions/:sessionId" element={<SessionDetailPage/>}/>
       <Route path="/presets/:presetId?" element={<PresetLibraryPage/>}/>
       <Route path="/more" element={<MorePage/>}/>
-      <Route path="/models" element={<PlaceholderPage title="模型配置" description="模型配置视觉原型将在第二轮迭代中构建。本 Demo 不保存任何真实密钥。" />}/>
-      <Route path="/lab/colors" element={<ColorLabPage/>}/>
-      <Route path="/settings" element={<PlaceholderPage title="设置" description="当前是静态 UI 设计应用，不包含服务端设置。" />}/>
+      <Route path="/models/:modelId?" element={<ModelsPage/>}/>
+      <Route path="/providers" element={<Navigate to="/models" replace/>}/>
+      <Route path="/settings" element={<SettingsPage/>}/>
+      <Route path="/setup" element={<SetupPage/>}/>
       <Route path="*" element={<Navigate to="/worlds" replace/>}/>
     </Route>
   </Routes></PresetProvider>;

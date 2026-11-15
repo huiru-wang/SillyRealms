@@ -30,6 +30,7 @@ export class SRRuntime {
   private deletingWorlds = new Set<string>();
   private worldRuns = new Map<string, string>();
   private listeners = new Set<RunEvent>();
+  private closing = false;
   private store: RunStore;
   private context: ContextManager;
   private runner: AgentRunner;
@@ -69,6 +70,7 @@ export class SRRuntime {
   }
 
   start(sessionId: string, text: string, requestId: string, tip: string) {
+    if (this.closing) throw new RuntimeError(ErrorCodes.RUN_STOPPED);
     if (this.busy(sessionId)) throw new RuntimeError(ErrorCodes.SESSION_BUSY);
     const session = this.store.session(sessionId);
     if (!session) throw new RuntimeError(ErrorCodes.SESSION_NOT_FOUND);
@@ -120,6 +122,16 @@ export class SRRuntime {
     const task = this.active.get(sessionId);
     return task ? this.stop(sessionId, task.runId) : null;
   }
+  async shutdown(): Promise<void> {
+    this.closing = true;
+    const tasks = [...this.active.values()];
+    for (const task of tasks) {
+      task.stopped = true;
+      task.controller.abort();
+      task.drain?.();
+    }
+    await Promise.all(tasks.map(task => task.done));
+  }
   status(sessionId: string, runId: string) {
     const stored = this.store.status(sessionId, runId);
     const task = this.active.get(sessionId);
@@ -159,6 +171,7 @@ export class SRRuntime {
 
   private async prepareRun(runId: string, sessionId: string, input: string, requestId: string, expectedTip: string, clientSignal?: AbortSignal):
     Promise<{ runId: string; stream: ReadableStream<Uint8Array> }> {
+    if (this.closing) throw new RuntimeError(ErrorCodes.RUN_STOPPED);
     if (this.deleting.has(sessionId)) throw new RuntimeError(ErrorCodes.SESSION_BUSY);
     const running = this.active.get(sessionId);
     if (running) {

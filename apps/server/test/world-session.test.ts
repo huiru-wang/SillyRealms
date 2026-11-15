@@ -4,6 +4,29 @@ import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/infrastructure/database/database.js';
 
 const card = { spec: 'world_card', spec_version: '0.1', data: { name: 'Test', tags: [' fantasy ', 'fantasy', 'other'], characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'open', name: 'Start', content: 'Welcome' }] } };
+it.each([
+  {title:undefined,expected:'未命名会话'},
+  {title:null,expected:'未命名会话'},
+  {title:'',expected:'未命名会话'},
+  {title:' \t\n　',expected:'未命名会话'},
+  {title:'Start',expected:'Start'},
+  {title:'  自定义 会话  ',expected:'自定义 会话'},
+])('persists and returns the creation title for $title',async({title,expected})=>{
+  const db=openDatabase(':memory:'),app=createApp(db,fakeCredentials);
+  try {
+    const form=new FormData();form.set('file',new File([JSON.stringify(card)],'world.json'));
+    const imported=await (await app.request('/api/v1/worlds/import',{method:'POST',body:form})).json() as {data:{item:{id:string}}};
+    const worldId=imported.data.item.id;
+    configureWorldModel(db,worldId);
+    const response=await app.request('/api/v1/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({worldId,openingId:'open',userCharacterId:'player',title})});
+    expect(response.status).toBe(201);
+    const {data:{item}}=await response.json() as {data:{item:{id:string;title:string}}};
+    expect(item.title).toBe(expected);
+    expect(db.prepare('SELECT title FROM sessions WHERE id=?').get(item.id)?.title).toBe(expected);
+    expect(await (await app.request('/api/v1/sessions/'+item.id)).json()).toMatchObject({data:{title:expected}});
+    expect(await (await app.request('/api/v1/sessions?worldId='+worldId)).json()).toMatchObject({data:{items:[{id:item.id,title:expected}]}});
+  } finally {db.close();}
+});
 describe('world imports and sessions', () => {
   it('deduplicates tags, requires a model default before creating a session and keeps invalid import atomic', async () => {
     const db = openDatabase(':memory:'); const app = createApp(db,fakeCredentials);

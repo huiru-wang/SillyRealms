@@ -7,7 +7,7 @@ const sample=JSON.parse(readFileSync(new URL('./fixtures/preset.json',import.met
 import { buildContext } from '../src/runtime/context/prompt-builder.js';
 
 const json=(method:string, body:unknown)=>({method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
-const base={name:'Harbor',description:'<b>{{user}}</b> **原文**',characters:[{id:'p',name:'水手',player_selectable:true}],openings:[{id:'o',name:'港口',content:'{{user}} 到港',format:'html'}]};
+const base={name:'Harbor',description:{type:'component',component:'Intro'},components:[{id:'Intro',component:'export default function Intro(){return null}'}],characters:[{id:'p',name:'水手',player_selectable:true}],openings:[{id:'o',name:'港口',content:'{{user}} 到港',format:'html'}]};
 function upload(data:unknown) {
   const body=new FormData();
   body.set('file',new File([JSON.stringify({spec:'world_card',spec_version:'0.1',data})],'test.json'));
@@ -147,10 +147,10 @@ it('round-trips the optional creator UI and validates V1 state writes',async()=>
   const source="import React from 'react'; export default function App(){ return <p>hello</p> }";
   const state={schema_version:1,scopes:{message:{hero:{type:'json',initial:{hp:10},description:'角色的生命值。'}}}};
   try {
-    const imported=await app.request('/api/v1/worlds/import',upload({...base,state,ui:{type:'react',source}}));
+    const imported=await app.request('/api/v1/worlds/import',upload({...base,state,components:[{id:'main',component:source},...base.components],stage_component:'main'}));
     expect(imported.status).toBe(201);const {data:{item}}=await imported.json() as {data:{item:{id:string}}};
     configureWorldModel(db,item.id);
-    const card=await (await app.request('/api/v1/worlds/'+item.id+'/export')).json() as {data:{ui:{source:string}}};expect(card.data.ui.source).toBe(source);
+    const card=await (await app.request('/api/v1/worlds/'+item.id+'/export')).json() as {data:{components:Array<{id:string;component:string}>}};expect(card.data.components[0]?.component).toBe(source);
     const session=await (await app.request('/api/v1/sessions',json('POST',{worldId:item.id,openingId:'o',userCharacterId:'p'}))).json() as {data:{item:{id:string}}};
     const url='/api/v1/sessions/'+session.data.item.id+'/state';
     expect((await app.request(url,json('PATCH',{updates:[{scope:'message',path:'hero.hp',value:7}]}))).status).toBe(200);

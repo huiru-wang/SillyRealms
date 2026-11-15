@@ -1,8 +1,9 @@
+import {Select} from '../../components/ui/Select';
 import {useEffect, useId, useState} from 'react';
 import type {FormEvent} from 'react';
 import {Modal} from '../../components/ui/Modal';
 import {Button} from '../../components/ui/Button';
-import type {PresetRole} from '../../fixtures/presets';
+import type {PresetRole} from './types';
 import styles from './Presets.module.css';
 
 export type PromptValue = {name: string; role: PresetRole; content: string};
@@ -59,10 +60,10 @@ export function PromptEditorDialog({title, initialValue, metadata = false, descr
             onChange={event => {setValue({...value, name: event.target.value}); setDiscard(false); setError('');}}/>
         </label>
         <label className={styles.field}>消息角色
-          <select aria-label="消息角色" value={value.role}
+          <Select aria-label="消息角色" value={value.role}
             onChange={event => setValue({...value, role: event.target.value as PresetRole})}>
             <option value="system">System</option><option value="user">User</option><option value="assistant">Assistant</option>
-          </select>
+          </Select>
         </label>
       </div>}
       <label className={styles.field}>提示词正文

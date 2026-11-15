@@ -1,20 +1,40 @@
 import {marked} from 'marked';
+import {roleplayLiteralMask} from '@sillyrealms/roleplay';
 import {protectedRanges} from './message-ranges.js';
 
 type Range={start:number;end:number};
-type SemanticRange=Range&{kind:string};
 type Insertion={at:number;text:string};
 const overlaps=(a:Range,b:Range)=>a.start<b.end&&a.end>b.start;
 
 /** Mark only source ranges which survived author replacements. Markers are random,
  * are never author-controlled attributes, and are consumed after sanitization. */
-export function roleplayMarkers(source:string,ranges:SemanticRange[],blocked:Range[],nonce:string){
-  const protectedSpans=protectedRanges(source);
+export function roleplayMarkers(source:string,blocked:Range[],nonce:string){
+  const protectedSpans=protectedRanges(source),literalMask=roleplayLiteralMask(source);
   const insertions:Insertion[]=[];
   let index=0;
-  for(const range of ranges){
-    if(range.kind!=='speech'||blocked.some(item=>overlaps(item,range)))continue;
-    if(protectedSpans.some(item=>item.type!=='inline-container'&&overlaps(item,range)))continue;
+  // Display-only quotation recognition: do not alter the Composer/wire protocol.
+  // A pair may contain inline Markdown, but never code, HTML, image syntax,
+  // link destinations, author replacements or separate paragraphs.
+  const unsafe=(range:Range)=>literalMask.subarray(range.start,range.end).some(Boolean)||blocked.some(item=>overlaps(item,range))||protectedSpans.some(item=>{
+    if(item.type==='inline-container')return false;
+    if(item.type==='syntax'){
+      // Entire raw HTML containers stay author-owned; emphasis delimiters are safe.
+      if(source[item.containerStart!]==='<')return overlaps({start:item.containerStart!,end:item.containerEnd!},range);
+      if(/^[*_~]+$/.test(source.slice(item.start,item.end)))return false;
+    }
+    return overlaps(item,range);
+  });
+  const escaped=(at:number)=>{let count=0;while(at>0&&source[--at]==='\\')count++;return count%2===1;};
+  let opening=-1,closing='';
+  for(let at=0;at<source.length;at++){
+    const char=source[at];
+    if(char==='\n'&&/^\n[\t \r]*\n/.test(source.slice(at))){opening=-1;continue;}
+    if(char!=='“'&&char!=='”'&&char!=='"'||escaped(at))continue;
+    if(unsafe({start:at,end:at+1})){opening=-1;continue;}
+    if(opening<0){if(char!=='”'){opening=at;closing=char==='“'?'”':'"';}continue;}
+    if(char!==closing){if(char==='“'&&closing==='”')opening=at;continue;}
+    const range={start:opening,end:at+1};opening=-1;
+    if(unsafe(range))continue;
     const marker=`SRRP${nonce}S${index++}X`;
     insertions.push({at:range.start,text:marker+'A'},{at:range.end,text:marker+'B'});
   }
@@ -35,8 +55,8 @@ export function roleplayMarkers(source:string,ranges:SemanticRange[],blocked:Ran
 /** Operate only on sanitized, local DOM; portal targets and links are never touched. */
 export function applyRoleplayMarkers(root:DocumentFragment,nonce:string){
   // A Markdown soft line break becomes a <br> and splits the marker pair
-  // across text nodes. Wrap only sibling text/<br> sequences; anything richer
-  // (links, author HTML, or portal slots) retains the conservative fallback.
+  // across text nodes. Wrap sibling text, breaks and inline emphasis together;
+  // links, code, author HTML and portal slots retain the conservative fallback.
   const markerPrefix=`SRRP${nonce}S`;
   const ids=new Set<string>();
   const initial=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
@@ -53,11 +73,12 @@ export function applyRoleplayMarkers(root:DocumentFragment,nonce:string){
       if(node.data.includes(opening))first=node;
       if(node.data.includes(closing)){last=node;break;}
     }
-    if(!first||!last||first===last||first.parentNode!==last.parentNode)continue;
+    if(!first||!last||first===last)continue;
     if(!first.parentElement||first.parentElement.closest('pre,code,a,[data-sr-slot]'))continue;
+    if(first.parentNode!==last.parentNode)continue;
     let current:Node|null=first.nextSibling,safe=true;
     while(current&&current!==last){
-      if(current.nodeType!==Node.TEXT_NODE&&!(current instanceof HTMLBRElement)){safe=false;break;}
+      if(current.nodeType!==Node.TEXT_NODE&&(!(current instanceof Element)||!['BR','STRONG','EM','DEL','S'].includes(current.tagName)||Array.from(current.querySelectorAll('*')).some(el=>!['BR','STRONG','EM','DEL','S'].includes(el.tagName)))){safe=false;break;}
       current=current.nextSibling;
     }
     if(!safe||current!==last)continue;

@@ -29,8 +29,7 @@ export function handleStateUpdate(block: ParsedBlock | undefined, initial: State
       applyRuntimeStateUpdate(workspace, modules, active, raw.path, raw.value);
       result.acceptedCount++;
       accepted.push(raw.path);
-      if (typeof raw.reason !== 'string' || !raw.reason.trim()) result.warningCodes.push('reason_missing');
-      else {
+      if (typeof raw.reason === 'string' && raw.reason.trim()) {
         const chars = Array.from(raw.reason.trim());
         if (chars.length > 120) result.warningCodes.push('reason_truncated');
         diagnostics.push({ index, reason: chars.slice(0, 120).join('') });

@@ -8,10 +8,11 @@ export function protectedRanges(text:string):Span[]{
   function walk(tokens:unknown[],source:string,base:number){
     let cursor=0;
     for(const rawToken of tokens){
-      const token=rawToken as {type?:string;raw?:string;tokens?:unknown[];items?:unknown[]};
+      const token=rawToken as {type?:string;raw?:string;tokens?:unknown[];items?:unknown[];header?:Array<{tokens:unknown[]}>;rows?:Array<Array<{tokens:unknown[]}>>};
       if(typeof token.raw!=='string')continue;
       const index=source.indexOf(token.raw,cursor);if(index<0)continue;cursor=index+token.raw.length;
       const start=base+index,end=start+token.raw.length;
+      if(token.type==='image'){spans.push({start,end,type:'destination'});continue;}
       if(token.type==='code'||token.type==='codespan'){spans.push({start,end,type:'code'});continue;}
       if(token.type==='html'){spans.push({start,end:start+token.raw.trimEnd().length,type:'html'});continue;}
       if(token.type==='link'){
@@ -36,6 +37,7 @@ export function protectedRanges(text:string):Span[]{
       }
       if(token.tokens)walk(token.tokens,token.raw,start);
       if(token.items)walk(token.items,token.raw,start);
+      if(token.type==='table')walk([...(token.header??[]),...(token.rows??[]).flat()].flatMap(cell=>cell.tokens),token.raw,start);
     }
   }
   walk(marked.lexer(text,{breaks:true}),text,0);

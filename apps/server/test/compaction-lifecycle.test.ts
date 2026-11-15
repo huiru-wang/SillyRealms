@@ -66,8 +66,11 @@ it.each(['completed','failed','stopped'] as const)('initial compaction persists 
     if(outcome==='failed')throw Error('test provider failure');
     yield {type:'done' as const,reason:'stop' as const,message:response('工具之后的故事')};
   }});
-  const {db,runtime}=runtimeFixture(gateway,'agent');
+  const {db,runtime,preset}=runtimeFixture(gateway,'agent');
   try{
+    // Keep the fixture over threshold even with the shorter platform prompt.
+    preset.budget.max_context_tokens=5000;
+    db.prepare('UPDATE presets SET config_json=?').run(JSON.stringify(preset));
     const tip=oldHistory(db,14000),run=await runtime.prepare('session','继续','continuation',tip),done=drain(run.stream);
     await reached.promise;
     expect(summaryCalls).toBeGreaterThan(0);expect(summaries(db)).toHaveLength(1);expect(score(db)).toBe(0);
@@ -122,7 +125,8 @@ it.each([
   }});
   const {db,runtime,preset}=runtimeFixture(gateway);
   try{
-    preset.budget={strategy,max_context_tokens:3500,max_output_tokens:128};
+    // Leave room for the complete Direct example and recent turns, but not the large old turn.
+    preset.budget={strategy,max_context_tokens:6000,max_output_tokens:128};
     db.prepare('UPDATE presets SET config_json=?').run(JSON.stringify(preset));
     db.prepare('UPDATE worlds SET characters_json=?,lorebook_json=?,state_definition_json=? WHERE id=?').run(
       JSON.stringify([{id:'p',name:'Player',player_selectable:true,prompt:'PLAYER_NEVER',load:{mode:'never'}},

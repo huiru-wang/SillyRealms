@@ -20,7 +20,9 @@ function keywords(rule:{mode?:string;keywords?:string[]},ctx:z.RefinementCtx) {
 const load=z.object(rules).superRefine(keywords);
 const loreLoad=z.object({...rules,anchor:z.enum(['personaInfo','characterInfo','worldState','userInput']).optional(),position:z.enum(['before','after']).optional(),order:z.number().int().optional()}).superRefine(keywords);
 const character=z.object({id,name:nonblank,description:z.string().optional(),prompt:z.string().optional(),avatar:z.string().optional(),order:z.number().int().optional(),player_selectable:z.boolean().optional(),load:load.optional()});
-const opening=z.object({id,name:nonblank,content:nonblank,initial_state:dict.optional()});
+const componentId=z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$-]*$/);
+const componentView=z.object({type:z.literal('component'),component:componentId}).strict();
+const opening=z.object({id,name:nonblank,content:nonblank,initial_state:dict.optional(),type:z.literal('component').optional(),component:componentId.optional()}).superRefine((value,ctx)=>{if((value.type===undefined)!==(value.component===undefined))ctx.addIssue({code:'custom',path:['component'],message:'type and component must be specified together'});});
 const lore=z.object({id,title:z.string().optional(),content:nonblank,enabled:z.boolean().optional(),load:loreLoad.optional()});
 function unique(items:{id:string}[],ctx:z.RefinementCtx) {
   const seen=new Set<string>();
@@ -36,7 +38,7 @@ const renderRule=z.object({
   replacement:z.discriminatedUnion('type',[
     z.object({type:z.literal('markdown'),content:boundedBytes(100000)}).strict(),
     z.object({type:z.literal('html'),content:boundedBytes(100000)}).strict(),
-    z.object({type:z.literal('component'),component:z.string().regex(/^[$_\p{ID_Start}][$\u200c\u200d_\p{ID_Continue}]*$/u)}).strict(),
+    z.object({type:z.literal('component'),component:componentId}).strict(),
   ]),
 }).strict().superRefine((rule,ctx)=>{
   const flags=rule.flags??'g';
@@ -47,16 +49,16 @@ const renderRule=z.object({
 });
 const messageRender=z.object({
   rules:z.array(renderRule).max(100).superRefine(unique).optional(),
-  component_source:boundedBytes(1024*1024).refine(value=>value.trim().length>0,'Expected nonempty source').optional(),
-}).strict().superRefine((value,ctx)=>{
-  if(value.rules?.some(rule=>rule.replacement.type==='component') && !value.component_source)
-    ctx.addIssue({code:'custom',path:['component_source'],message:'Component source required'});
+}).strict();
+const componentSource=z.object({id:componentId,component:boundedBytes(1024*1024).refine(value=>value.trim().length>0,'Expected nonempty source')}).strict();
+const components=z.array(componentSource).max(100).superRefine(unique).superRefine((value,ctx)=>{
+  if(value.reduce((total,item)=>total+Buffer.byteLength(item.component,'utf8'),0)>2*1024*1024)ctx.addIssue({code:'custom',message:'Components exceed 2 MiB'});
 });
 const schema=z.object({spec:z.literal('world_card'),spec_version:z.literal('0.1'),data:z.object({
-  name:id,summary:z.string().optional(),description:z.string().optional(),tags:z.array(id).optional(),cover:z.string().optional(),
+  name:id,description:componentView.optional(),tags:z.array(id).optional(),cover:z.string().optional(),
   characters:z.array(character).superRefine(unique).refine(items=>items.some(v=>v.player_selectable===true),'Expected a selectable player character'),
   openings:z.array(opening).min(1).superRefine(unique),state:atomicStateSchema.optional(),
-  lorebook:z.object({entries:z.array(lore).superRefine(unique)}).optional(),message_render:messageRender.optional(),ui:z.object({type:z.literal('react'),source:z.string().min(1)}).strict().nullable().optional(),extensions:z.custom<Record<string,unknown>>(v=>v!==null && typeof v==='object' && !Array.isArray(v),'Expected extension object').optional()
+  lorebook:z.object({entries:z.array(lore).superRefine(unique)}).optional(),message_render:messageRender.optional(),ui:z.never().optional(),components:components.optional(),stage_component:componentId.optional(),extensions:z.custom<Record<string,unknown>>(v=>v!==null && typeof v==='object' && !Array.isArray(v),'Expected extension object').optional()
 })});
 export class CardError extends Error {
   constructor(readonly path:string,readonly reason:string) {super(path+': '+reason);}
@@ -90,6 +92,9 @@ export function parseCard(raw:unknown) {
     throw new CardError(location(issue.path),issue.message);
   }
   const card=parsed.data;
+  const ids=new Set(card.data.components?.map(item=>item.id));
+  if(card.data.description&&!ids.has(card.data.description.component))throw new CardError('$.data.description.component','Component not found');
+  card.data.openings.forEach((item,index)=>{if(item.component&&!ids.has(item.component))throw new CardError('$.data.openings['+index+'].component','Component not found');});
   for(const scopeName of ['global','session','message'] as const) {
     try {initialState(card.data.state,scopeName);} catch(error) {
       const [path,reason]=splitReason(error);

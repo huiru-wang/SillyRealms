@@ -9,7 +9,10 @@
   --_story-accent: var(--sr-story-accent, #73629b);
   --_story-focus: var(--sr-story-focus, #8b76b6);
   --_story-danger: var(--sr-story-danger, #a33e52);
+  --_story-speech: var(--sr-story-speech, #a65b00);
   --_story-bottom-inset: max(0px, var(--sr-story-bottom-inset, 0px));
+  /* Stable reading space; composer toggles must not change message geometry. */
+  --_story-reading-bottom-space: 128px;
   box-sizing: border-box;
   width: 100%;
   height: 100%;
@@ -35,6 +38,7 @@
   --_story-accent: var(--sr-story-accent, #b4a1d8);
   --_story-focus: var(--sr-story-focus, #b7a0e7);
   --_story-danger: var(--sr-story-danger, #e99aab);
+  --_story-speech: var(--sr-story-speech, #efb05d);
 }
 .sr-story :where(.sr-story-main, .sr-story-toolbar, .sr-chat-messages, .sr-message, .sr-story-content, .sr-story-state, .sr-state-content) { box-sizing: border-box; }
 .sr-story .sr-story-main { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -53,8 +57,8 @@
 .sr-story .sr-story-toolbar button[aria-expanded="true"] { color: var(--_story-text); background: color-mix(in srgb, var(--_story-accent) 9%, transparent); }
 .sr-story .sr-chat-messages {
   flex: 1; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior-y: contain;
-  padding: 18px 24px calc(42px + var(--_story-bottom-inset)); display: flex; flex-direction: column; align-items: center; gap: 24px;
-  scroll-padding-bottom: calc(16px + var(--_story-bottom-inset));
+  padding: 18px 24px var(--_story-reading-bottom-space); display: flex; flex-direction: column; align-items: center; gap: 24px;
+  scroll-padding-bottom: var(--_story-reading-bottom-space);
   overflow-anchor: none; scroll-behavior: auto; scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--_story-muted) 30%, transparent) transparent;
   outline: none;
@@ -82,13 +86,25 @@
 .sr-story .sr-rich h1,
 .sr-story .sr-rich h2,
 .sr-story .sr-rich h3,
-.sr-story .sr-rich h4 { margin: 1.25em 0 .55em; font-weight: 600; line-height: 1.45; color: inherit; }
+.sr-story .sr-rich h4,
+.sr-story .sr-rich h5,
+.sr-story .sr-rich h6 { margin: 1.25em 0 .55em; font-weight: 600; line-height: 1.45; color: inherit; }
 .sr-story .sr-rich h1 { font-size: 1.4em; }
 .sr-story .sr-rich h2 { font-size: 1.25em; }
 .sr-story .sr-rich h3 { font-size: 1.12em; }
 .sr-story .sr-rich h4 { font-size: 1em; }
+.sr-story .sr-rich h5 { font-size: .95em; }
+.sr-story .sr-rich h6 { font-size: .9em; }
+.sr-story .sr-rich .sr-task-marker { display: inline-block; margin-inline-end: .45em; color: var(--_story-accent); }
 .sr-story .sr-rich ul,
 .sr-story .sr-rich ol { padding-inline-start: 1.5em; margin: .75em 0 1em; }
+/* The creator iframe includes a reset; restore Markdown list markers explicitly. */
+.sr-story .sr-rich ul { list-style-type: disc; }
+.sr-story .sr-rich ol { list-style-type: decimal; }
+.sr-story .sr-rich ul ul { list-style-type: circle; }
+.sr-story .sr-rich ul ul ul { list-style-type: square; }
+.sr-story .sr-rich li:has(> .sr-task-marker),
+.sr-story .sr-rich li:has(> p > .sr-task-marker) { list-style-type: none; }
 .sr-story .sr-rich li { padding-inline-start: .15em; margin-block: .25em; }
 .sr-story .sr-rich a { color: var(--_story-accent); text-decoration: underline; text-underline-offset: .2em; }
 .sr-story .sr-rich blockquote { margin: 1em 0; padding-inline-start: 1em; border-inline-start: 2px solid var(--_story-line); color: var(--_story-muted); }
@@ -147,7 +163,7 @@
 .sr-story .sr-story-dialog[open] { display: flex; flex-direction: column; animation: sr-story-panel-in 180ms cubic-bezier(.4,0,.2,1); }
 .sr-story .sr-story-dialog::backdrop { background: #08070d70; }
 .sr-story .sr-story-dialog .sr-state-heading button { min-height: 44px; min-width: 44px; }
-.sr-story .sr-message .sr-rp-speech { font-weight: 550; color: var(--_story-text); }
+.sr-story .sr-message .sr-rp-speech { font-weight: 550; color: var(--_story-speech); }
 .sr-story .sr-message .sr-rp-thought { margin-block: 1em; color: var(--_story-muted); font-style: italic; }
 .sr-story .sr-message .sr-rp-instruction-panel { margin-top: 18px; color: var(--_story-muted); white-space: pre-wrap; overflow-wrap: anywhere; font-size: .9em; }
 .sr-story .sr-message .sr-rp-instruction-panel > span { display: block; margin-bottom: 5px; font-size: 11px; font-weight: 550; }
@@ -167,7 +183,7 @@
 }
 @container sr-story (max-width: 600px) {
   .sr-story .sr-story-toolbar { min-height: 48px; padding-inline: 16px; }
-  .sr-story .sr-chat-messages { padding: 12px 16px calc(36px + var(--_story-bottom-inset)); gap: 20px; }
+  .sr-story .sr-chat-messages { padding: 12px 16px var(--_story-reading-bottom-space); gap: 20px; }
   .sr-story .sr-message { padding: 14px 16px; border-radius: 16px; }
   .sr-story .sr-message.user { max-width: 86%; padding: 10px 14px; }
   .sr-story .sr-message-source { margin-bottom: 7px; }

@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 export type DebugContext = { sessionId?: string; runId?: string; requestId?: string; requestIndex?: number; phase?: string };
 const context = new AsyncLocalStorage<DebugContext>();
+const runSeparator = '═'.repeat(100);
 export const debugEnabled = () => process.env.SILLYREALMS_DEBUG === '1';
 export function withDebugContext<T>(scope: DebugContext, work: () => T): T {
   return context.run({ ...context.getStore(), ...scope }, work);
@@ -45,12 +46,12 @@ function writeLog(title: string, detail: unknown, options: DebugOptions, level: 
       if (data[name] !== undefined) Object.assign(scope, { [name]: data[name] });
     const tags = Object.entries(scope).filter(([,value]) => value !== undefined)
       .map(([name,value]) => `${name}=${JSON.stringify(typeof value === 'string' ? redact(value) : value)}`).join(' ');
-    const marker = title === 'RUN BEGIN' ? '╔═' : title === 'RUN END' ? '╚═'
-      : title === 'MODEL BEGIN' ? '├▶' : title === 'MODEL END' ? '└■' : '│ ';
     const label = title.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ');
     // JSON escapes embedded newlines; also escape JS line separators for line-oriented readers.
-    const line = `${new Date().toISOString()} ${marker} ${label}${tags ? ' ' + tags : ''} | ${json}`
+    const line = `${new Date().toISOString()} ${label}${tags ? ' ' + tags : ''} | ${json}`
       .replace(/[\u007f-\u009f\u2028\u2029]/g, character => '\\u' + character.charCodeAt(0).toString(16).padStart(4,'0'));
+    if (title === 'RUN BEGIN') console[level](runSeparator);
     console[level](line);
+    if (title === 'RUN END') console[level](runSeparator);
   } catch { /* Debug serialization or a closed output stream must never fail a Run. */ }
 }

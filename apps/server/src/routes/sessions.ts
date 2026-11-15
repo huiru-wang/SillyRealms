@@ -16,7 +16,7 @@ import { worldFailure } from './world-failure.js';
 import { readWorld } from '../repositories/world-repository.js';
 import { MacKeychainStore, type CredentialStore } from '../infrastructure/credentials/store.js';
 
-const create = z.object({ worldId: z.string().min(1), openingId: z.string().min(1), userCharacterId: z.string().min(1), title: z.string().optional() }).strict();
+const create = z.object({ worldId: z.string().min(1), openingId: z.string().min(1), userCharacterId: z.string().min(1), title: z.string().nullable().optional() }).strict();
 export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = () => false, removeSessions: <T>(ids:string[], remove:()=>T) => Promise<T> = async (_ids, remove) => remove(), worldDeleting:(id:string)=>boolean = () => false, onUpdated:(id:string)=>void = () => {}, credentials: CredentialStore = new MacKeychainStore(), activeRun: (id:string)=>Record<string, any>|null = () => null): Hono {
   const app = new Hono();
   const capabilityView = (id: string) => {
@@ -25,8 +25,8 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
     const presetRow = db.prepare('SELECT config_json FROM presets WHERE id=?').get(String(row.preset_id));
     const preset = presetRow ? JSON.parse(String(presetRow.config_json)) : {};
     const overrides = capabilityOverridesSchema.parse(JSON.parse(String(row.capability_overrides_json)));
-    const effective = effectiveCapabilities(preset.capabilities, overrides);
-    const source = (name: 'state_update' | 'action_suggestions') => Object.hasOwn(overrides,name)
+    const effective = effectiveCapabilities(preset.capabilities, overrides, row.execution_mode === 'direct' ? 'direct' : 'agent');
+    const source = (name: 'state_update' | 'action_suggestions') => row.execution_mode === 'direct' ? 'platform' : Object.hasOwn(overrides,name)
       ? 'session' : Object.hasOwn(preset.capabilities?.[name] ?? {},'enabled') ? 'preset' : 'platform';
     return { revision:Number(row.capability_revision), overrides,
       effective: { state_update:{enabled:effective.state_update.enabled},
@@ -63,6 +63,7 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
   app.post('/', async c => {
     try {
       const input = create.parse(await c.req.json());
+      const title = input.title?.trim() || '未命名会话';
       if (worldDeleting(input.worldId)) return c.json(failure(ErrorCodes.WORLD_BUSY),409);
       const source = db.prepare('SELECT * FROM worlds WHERE id=?').get(input.worldId);
       if (!source) return c.json(failure(ErrorCodes.WORLD_NOT_FOUND),404);
@@ -90,9 +91,9 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
         const id = randomUUID(), entryId = randomUUID(), runId = randomUUID(), now = Date.now();
         const message = { role: 'assistant', content: [{ type: 'text', text: opening.content }], timestamp: now };
         db.prepare('INSERT INTO sessions(id,world_id,preset_id,api_model_config_id,user_character_id,tip_entry_id,title,state,created_at,updated_at,execution_mode) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-          .run(id,input.worldId,presetId,modelId,input.userCharacterId,entryId,input.title??null,JSON.stringify(sessionState),now,now,'direct');
+          .run(id,input.worldId,presetId,modelId,input.userCharacterId,entryId,title,JSON.stringify(sessionState),now,now,'direct');
         db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,state,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(entryId, id, null, runId, 1, 'message', 'assistant', 0, now, JSON.stringify({ message }), JSON.stringify(Object.entries(messageState).map(([key, value]) => ({ key, value }))), JSON.stringify({ run: { status: 'completed' }, origin: 'opening' }));
-        return c.json({item:{id,worldId:input.worldId,presetId,apiModelConfigId:modelId,userCharacterId:input.userCharacterId,executionMode:'direct',tipEntryId:entryId,title:input.title??null}},201);
+        return c.json({item:{id,worldId:input.worldId,presetId,apiModelConfigId:modelId,userCharacterId:input.userCharacterId,executionMode:'direct',tipEntryId:entryId,title}},201);
       });
     } catch { return c.json(failure(ErrorCodes.INVALID_SESSION),422); }
   });
@@ -149,7 +150,7 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
       const message = JSON.parse(String(entry.payload)).message;
       if (!message || message.role !== entry.role) throw new Error(ErrorCodes.ENTRY_ROLE_MISMATCH);
       const text = typeof message.content === 'string' ? message.content : Array.isArray(message.content) ? message.content.filter((part: {type:string}) => part.type === 'text').map((part: {text:string}) => part.text).join('') : '';
-      return text ? [{ id: entry.id, role: entry.role, text, branchCount: entry.branch_count }] : [];
+      return text ? [{ id: entry.id, role: entry.role, text, ...(ext.origin==='opening'?{origin:'opening'}:{}), branchCount: entry.branch_count }] : [];
     }) }));
     return c.json({ runs, hasMore: page.hasMore, nextCursor: page.nextCursor });
   });

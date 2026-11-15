@@ -4,7 +4,7 @@ export function displayMessages(messages: ChatMessage[]): ChatMessage[] {
   const result: ChatMessage[] = [];
   for (const message of messages) {
     const last = result[result.length - 1];
-    if (message.role === 'assistant' && last?.role === 'assistant')
+    if (message.role === 'assistant' && last?.role === 'assistant' && message.origin === last.origin)
       result[result.length - 1] = { ...last, text: last.text + '\n\n' + message.text };
     else result.push(message);
   }

@@ -17,14 +17,20 @@ import { responseEnvelope } from './common/response-middleware.js';
 import { failure } from './common/http-response.js';
 import { sessionRoutes } from './routes/sessions.js';
 
-export function createApp(db: DatabaseSync, credentials: CredentialStore = new MacKeychainStore(), gateway: ModelGateway = new PiGateway(), files: WorldFileStore = new WorldFileStore(testWorldDataDir()), allowedOrigins: ReadonlySet<string> = new Set()): Hono {
+export function createApp(db: DatabaseSync, credentials: CredentialStore = new MacKeychainStore(), gateway: ModelGateway = new PiGateway(), files: WorldFileStore = new WorldFileStore(testWorldDataDir()), allowedOrigins: ReadonlySet<string> = new Set(), deniedOrigins:ReadonlySet<string> = new Set()): Hono & { shutdown(): Promise<void> } {
   const app = new Hono();
+  const shutdown = new AbortController();
+  app.use('*', async (c,next) => {
+    if(shutdown.signal.aborted)return c.json(failure(ErrorCodes.INTERNAL_ERROR,'服务正在重启，请稍后重试'),503);
+    await next();
+  });
   app.use('*', responseEnvelope);
   app.onError((_error,c)=>c.json(failure(ErrorCodes.INTERNAL_ERROR),500));
   app.notFound(c=>c.req.path.startsWith('/api/')?c.json(failure(ErrorCodes.NOT_FOUND),404):c.text('Not Found',404));
   app.use('*', async (c,next)=>{const start=Date.now();try{await next();}finally{debugLog('HTTP',{method:c.req.method,path:c.req.path,query:c.req.query(),status:c.res.status,durationMs:Date.now()-start});}});
   app.use('*', async (c, next) => {
     const origin = c.req.header('origin');
+    if(origin&&deniedOrigins.has(origin))return c.json(failure(ErrorCodes.ORIGIN_FORBIDDEN),403);
     if (origin && !(origin === 'null' && c.req.method === 'GET' && !c.req.path.startsWith('/api/'))) {
       let url: URL;
       try { url = new URL(origin); } catch { return c.json(failure(ErrorCodes.ORIGIN_FORBIDDEN),403); }
@@ -37,7 +43,7 @@ export function createApp(db: DatabaseSync, credentials: CredentialStore = new M
   app.use('/api/*', bodyLimit({maxSize:11 * 1024 * 1024,onError:c => c.json(failure(ErrorCodes.BODY_TOO_LARGE, '请求内容超过 11 MiB', { path: '$' }),413)}));
   const provider = providerRoutes(db, credentials, gateway);
   const runtime = new SRRuntime(db, credentials, gateway);
-  app.route('/api/v1/sessions', sessionRuntimeRoutes(db,runtime));
+  app.route('/api/v1/sessions', sessionRuntimeRoutes(db,runtime,shutdown.signal));
   app.route('/api/v1/sessions', stateUpdateRoutes(db,runtime));
   app.route('/api/v1/providers', provider.providers);
   app.route('/api/v1/api-model-configs', provider.configs);
@@ -51,5 +57,8 @@ export function createApp(db: DatabaseSync, credentials: CredentialStore = new M
     db.prepare('SELECT 1').get();
     return c.json({ ok: true });
   });
-  return app;
+  return Object.assign(app, { shutdown: () => {
+    shutdown.abort();
+    return runtime.shutdown();
+  } });
 }

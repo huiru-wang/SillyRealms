@@ -4,16 +4,15 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronRight, Copy, FileText, GripVertical, Layers3, LockKeyhole, MoreHorizontal, Plus, SlidersHorizontal, Star, Trash2, Undo2 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
-import type { ContextStrategy, PresetCustomNode, StudioPreset } from '../../fixtures/presets';
+import type { ContextStrategy, PresetCustomNode, StudioPreset } from './types';
 import { getPresetValidationError, usePresetStore } from './PresetStore';
 import { PromptEditorDialog } from './PromptEditorDialog';
 import type { PromptValue } from './PromptEditorDialog';
 import styles from './Presets.module.css';
 
 const STRATEGIES: { id: ContextStrategy; label: string; hint: string }[] = [
-  { id: 'compact', label: '轻量对话', hint: '更及时地整理历史，适合轻快的短篇对话。' },
-  { id: 'standard', label: '标准叙事', hint: '平衡故事记忆与上下文长度，适合日常叙事。' },
-  { id: 'extended', label: '长篇沉浸', hint: '保留更多故事细节，适合长篇与多角色叙事。' },
+  { id: 'rolling_summary', label: '滚动摘要', hint: '达到输入预算后，用摘要整理较早历史；预算还须满足实际模型窗口和输出预留。' },
+  { id: 'sliding_window', label: '滑动窗口', hint: '达到输入预算后，保留连续的最近历史，不调用摘要模型。' },
 ];
 const SOURCES = [
   { id: 'platform', name: '平台叙事规则', role: 'System', detail: '平台提供的叙事与输出约定，始终位于第一条消息，保证各世界采用一致的基础规则。' },
@@ -113,19 +112,14 @@ export function PresetLibraryPage() {
     if (preset) editPreset(preset.id, current => ({ ...current, ...patch }));
     setError('');
   }
-  function save(event: FormEvent) {
-    event.preventDefault();
-    if (!preset) return;
-    const validation = getPresetValidationError(preset);
-    if (validation || !savePreset(preset.id)) { setError(validation ?? '请检查预设配置后再保存。'); contentRef.current?.scrollTo({ top: 0 }); return; }
-    setError(''); setStatus('预设已保存');
+  async function perform(fn:()=>Promise<unknown>){try{await fn();}catch(error){setError(error instanceof Error?error.message:'操作失败');}}
+  async function save(event: FormEvent) {
+    event.preventDefault();if(!preset)return;
+    const validation=getPresetValidationError(preset);if(validation){setError(validation);return;}
+    await perform(async()=>{await savePreset(preset.id);setError('');setStatus('预设已保存');});
   }
-  function select(id: string) { navigate('/presets/' + id); }
-  function create() {
-    const id = createPreset();
-    select(id);
-    requestAnimationFrame(() => nameRef.current?.select());
-  }
+  function select(id:string){navigate('/presets/'+encodeURIComponent(id));}
+  function create(){void perform(async()=>{const id=await createPreset();select(id);requestAnimationFrame(()=>nameRef.current?.select());});}
   function changeNode(id: string, transform: (node: PresetCustomNode) => PresetCustomNode) {
     if (preset) editPreset(preset.id, current => ({ ...current, customNodes: current.customNodes.map(node => node.id === id ? transform(node) : node) }));
   }
@@ -254,10 +248,10 @@ export function PresetLibraryPage() {
   return <section className={styles.page} data-preset-workspace data-detail={!!presetId}>
     <header className={styles.pageHeader}>
       <div className={styles.pageIdentity}><h1>预设</h1></div>
-      <Button className={styles.createButton} type="button" aria-label="新建预设" icon={<Plus size={17} />} onClick={create}>新建预设</Button>
+      <div className="actions"><label className="button upload-button">导入<input aria-label="导入预设" type="file" accept=".json,application/json" disabled={store.busy} onChange={event=>{const file=event.target.files?.[0];if(file)void perform(async()=>select(await store.importPreset(await file.text())));event.target.value='';}}/></label><Button className={styles.createButton} disabled={store.busy} type="button" aria-label="新建预设" icon={<Plus size={17} />} onClick={create}>新建预设</Button></div>
     </header>
     <div className={styles.workspace}>
-      <section className={styles.library} aria-label="预设库">
+      <section className={styles.library} aria-label="预设库">{store.loading&&<p role="status">正在加载预设…</p>}{store.error&&<p role="alert">{store.error}<button onClick={()=>void store.reload()}>重试</button></p>}
         <div className={styles.presetList} data-preset-list tabIndex={0} aria-label="预设列表">
           {presets.map(item => <button key={item.id} type="button" className={styles.presetItem}
             data-preset-item={item.id} aria-pressed={item.id === selectedId} onClick={() => select(item.id)}>
@@ -284,14 +278,14 @@ export function PresetLibraryPage() {
               <div className={styles.menuAnchor} data-preset-menu>
                 <button type="button" className={styles.iconButton} aria-label="更多预设操作" aria-expanded={menu === 'preset'} data-menu-trigger="preset" onClick={() => setMenu(menu === 'preset' ? null : 'preset')}><MoreHorizontal size={19} /></button>
                 {menu === 'preset' && <div className={styles.menuPanel} role="group" aria-label="预设操作">
-                  <button type="button" autoFocus disabled={preset.id === defaultPresetId} onClick={() => { setDefaultPreset(preset.id); closeMenu('preset'); setStatus('已设为默认预设'); }}><Star size={14} />设为默认</button>
-                  <button type="button" onClick={() => { const id = duplicatePreset(preset.id); setMenu(null); select(id); }}><Copy size={14} />复制预设</button>
+                  <button type="button" autoFocus disabled={preset.id === defaultPresetId} onClick={() => { void perform(async()=>{await setDefaultPreset(preset.id);closeMenu('preset');setStatus('已设为默认预设');}); }}><Star size={14} />设为默认</button>
+                  <button type="button" onClick={() => { void perform(async()=>{const id=await duplicatePreset(preset.id);setMenu(null);select(id);}); }}><Copy size={14} />复制预设</button>
                   <button type="button" disabled={!dirty} onClick={() => { revertPreset(preset.id); closeMenu('preset'); setError(''); setStatus('已恢复保存的版本'); }}><Undo2 size={14} />放弃更改</button>
-                  <div className={styles.menuDivider} />
+                  <a className="button" href={'/api/v1/presets/'+encodeURIComponent(preset.id)+'/export'}>导出已保存预设</a><div className={styles.menuDivider} />
                   <button type="button" onClick={() => { focusMenuTrigger('preset'); setDialog({ kind: 'deletePreset' }); setMenu(null); }}><Trash2 size={14} />删除预设</button>
                 </div>}
               </div>
-              <Button type="submit" form={formId} tone="accent" aria-label="保存预设" disabled={!dirty}>保存预设</Button>
+              <Button type="submit" form={formId} tone="accent" aria-label="保存预设" disabled={!dirty||store.busy}>保存预设</Button>
             </div>
           </>}
         </div>
@@ -313,7 +307,7 @@ export function PresetLibraryPage() {
               </label>)}</div>
               <p className={styles.fieldHelp}>{STRATEGIES.find(strategy => strategy.id === preset.contextStrategy)?.hint}</p>
             </fieldset>
-            <div className={styles.budgetRow}>
+            <div className={styles.budgetRow}><label className={styles.field}>最大上下文输入<div className={styles.numberField}><input aria-label="最大上下文输入" type="number" min={2} step={1} value={preset.maxContextTokens||''} onChange={event=>update({maxContextTokens:Number(event.target.value)})}/><span>tokens</span></div></label>
               <label className={styles.field}>最大输出长度<div className={styles.numberField}><input aria-label="最大输出长度" type="number" required min={1} step={1} value={preset.maxOutputTokens || ''} onChange={event => update({ maxOutputTokens: Number(event.target.value) })} /><span>tokens</span></div></label>
               <button type="button" className={styles.summaryButton} onClick={() => setDialog({ kind: 'summary' })}><FileText size={16} /><span><strong>压缩提示词</strong><small>{preset.summaryPrompt.trim() ? '已配置' : '未填写'}</small></span><ChevronRight size={15} /></button>
             </div>
@@ -326,7 +320,7 @@ export function PresetLibraryPage() {
                 <span className={styles.nodeLead}><SlidersHorizontal size={15} /></span>
                 <button type="button" className={styles.nodeMain} aria-label="编辑叙事风格" onClick={() => setDialog({ kind: 'style' })}><span>叙事风格</span><small>{preset.style.enabled ? (preset.style.content.trim() ? '编辑提示词' : '空内容') : '已关闭'}</small></button>
                 <span className={styles.nodeRole}>System</span>
-                <Switch checked={preset.style.enabled} label="启用叙事风格" onChange={() => update({ style: { ...preset.style, enabled: !preset.style.enabled } })} />
+                <span className={styles.nodeRole}>始终启用</span>
               </div>
               <div className={styles.customGroup} ref={groupRef} data-custom-group>
                 {preset.customNodes.map((node, index) => <div key={node.id} className={styles.customRow} data-custom-node={node.id} data-disabled={!node.enabled}
@@ -359,7 +353,7 @@ export function PresetLibraryPage() {
               </div>
               {SOURCES.slice(1).map(sourceRow)}
             </div>
-            <p className={styles.fieldHelp}>自定义节点在叙事风格之后生效，可拖动排序。内置消息位置固定。</p>
+            <p className={styles.fieldHelp}>自定义节点在叙事风格之后生效，可拖动排序。Direct 内置消息位置固定；Agent 保留服务端节点编排。</p>
           </section>
           <details className={styles.advanced}><summary><span>高级设置</span><ChevronDown size={15} /></summary>
             <label className={styles.field}>温度<input aria-label="温度" type="number" min={0} max={2} step="any" value={preset.temperature} onChange={event => update({ temperature: Number(event.target.value) })} /></label>
@@ -386,9 +380,9 @@ export function PresetLibraryPage() {
       footer={<div className={styles.dialogActions}><Button onClick={() => setDialog(null)}>取消</Button><Button onClick={() => {
         const remaining = presets.filter(item => item.id !== preset.id);
         const next = remaining[Math.min(presets.findIndex(item => item.id === preset.id), remaining.length - 1)];
-        deletePreset(preset.id); setDialog(null); navigate(next ? '/presets/' + next.id : '/presets'); setStatus('预设已删除');
+        void perform(async()=>{await deletePreset(preset.id);setDialog(null);navigate(next?'/presets/'+next.id:'/presets');setStatus('预设已删除');});
       }}>删除预设</Button></div>}>
-      <p>删除“{preset.name}”及其编辑草稿？</p>{preset.id === defaultPresetId && <p>删除后将使用下一个预设作为默认项。</p>}
+      {error&&<p role="alert">{error}</p>}<p>删除“{preset.name}”及其编辑草稿？</p>{preset.id === defaultPresetId && <p>当前为默认项，请先在设置中更换默认预设。被世界或会话引用的预设不能删除。</p>}
     </Modal>}
     {preset && dialog?.kind === 'deleteNode' && <Modal title="删除节点" onClose={() => setDialog(null)}
       footer={<div className={styles.dialogActions}><Button onClick={() => setDialog(null)}>取消</Button><Button onClick={() => {

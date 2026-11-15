@@ -7,3 +7,5 @@ export type { ChatMessage,Run,RunEvent,RunPhase,RunPhaseEvent,SessionRunEvent,Ru
 export { useSRSession,useSRState,useSRStateAPI } from './atomic-context.js';
 
 export const SR = {WorldStory};
+export {useSRWorldStateAPI,WorldDocumentContent} from './world-state.js';
+export type {SRWorldStateAPI,WorldStateQuery} from './world-state.js';

@@ -7,14 +7,14 @@ import {parseCard} from '../src/domain/world-card.js';
 import {buildContext} from '../src/runtime/context/prompt-builder.js';
 
 const world=JSON.parse(readFileSync(new URL('./fixtures/world-card.json',import.meta.url),'utf8'));
-const source="function Cover(){return null} export default {Cover}";
+const source="function Cover(){return null} export default Cover";
 const rule={id:'cover',roles:['assistant'],pattern:'<Cover\\s*/>',flags:'g',replacement:{type:'component',component:'Cover'}};
-const withRender=(message_render:unknown)=>({...world,data:{...world.data,message_render}});
+const withRender=(message_render:unknown)=>({...world,data:{...world.data,message_render,components:[...world.data.components,{id:'Cover',component:source}]}});
 
 it('preserves message rules and source through import and export',async()=>{
   const db=openDatabase(':memory:'),app=createApp(db);
   try {
-    const message_render={rules:[rule,{id:'style',roles:['user'],pattern:'(hello)',replacement:{type:'html',content:'<b>$1</b>'}}],component_source:source};
+    const message_render={rules:[rule,{id:'style',roles:['user'],pattern:'(hello)',replacement:{type:'html',content:'<b>$1</b>'}}]};
     const form=new FormData();form.set('file',new File([JSON.stringify(withRender(message_render))],'world.json'));
     const response=await app.request('/api/v1/worlds/import',{method:'POST',body:form});expect(response.status).toBe(201);
     const body=await response.json() as {data:{item:{id:string}}};
@@ -26,12 +26,12 @@ it('preserves message rules and source through import and export',async()=>{
 
 it('rejects invalid rule definitions with paths',()=>{
   const invalid=[
-    {data:{rules:[rule]} ,path:'component_source'},
-    {data:{rules:[rule,rule],component_source:source},path:'rules[1].id'},
-    {data:{rules:[{...rule,pattern:'['}],component_source:source},path:'rules[0].pattern'},
-    {data:{rules:[{...rule,flags:'gg'}],component_source:source},path:'rules[0].flags'},
-    {data:{rules:[{...rule,roles:['tool']}],component_source:source},path:'rules[0].roles'},
-    {data:{rules:[{...rule,pattern:'x'.repeat(2001)}],component_source:source},path:'rules[0].pattern'},
+    {data:{rules:[rule],component_source:source},path:'message_render'},
+    {data:{rules:[rule,rule]},path:'rules[1].id'},
+    {data:{rules:[{...rule,pattern:'['}]},path:'rules[0].pattern'},
+    {data:{rules:[{...rule,flags:'gg'}]},path:'rules[0].flags'},
+    {data:{rules:[{...rule,roles:['tool']}]},path:'rules[0].roles'},
+    {data:{rules:[{...rule,pattern:'x'.repeat(2001)}]},path:'rules[0].pattern'},
   ];
   for(const {data,path} of invalid) expect(()=>parseCard(withRender(data))).toThrow(path);
 });

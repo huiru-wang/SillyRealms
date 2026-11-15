@@ -1,4 +1,5 @@
 import React,{useState} from 'react';
+import '../src/world-story.css';
 import {createRoot} from 'react-dom/client';
 import {MessageContent} from '../src/message-content';
 import {StoryContext,type MessageComponent,type StoryConfiguration} from '../src/story-context';
@@ -13,7 +14,7 @@ const replace={id:'author',roles:['user' as const,'assistant' as const],pattern:
 const Dice:MessageComponent=()=>{const [count,setCount]=useState(0);return <button id="dice" onClick={()=>setCount(n=>n+1)}>count:{count}</button>};Dice.srDisplay='inline';
 const config:StoryConfiguration={rules:[rule,replace],components:{Dice},state:{},ready:()=>{},match:async text=>({warning:false,matches:[rule,replace].flatMap(item=>{const start=text.indexOf(item.pattern);return start<0?[]:[{start,end:start+item.pattern.length,ruleId:item.id,replacement:item.replacement,match:item.pattern,groups:[],namedGroups:{}}]})})};
 const root=createRoot(document.querySelector('#root')!);
-const show=(text:string,role:'user'|'assistant'='user')=>root.render(<StoryContext.Provider value={config}><div className="sr-story"><MessageContent message={{id:'m',role,text}} runId="r"/></div></StoryContext.Provider>);
+const show=(text:string,role:'user'|'assistant'='user')=>root.render(<StoryContext.Provider value={config}><div className="sr-story"><article className="sr-message"><MessageContent message={{id:'m',role,text}} runId="r"/></article></div></StoryContext.Provider>);
 async function run(){
   const text='动作 “你好”\n\n> 安静一点\n\n<div data-sr-markdown="true">**HTML 档案**\n\n<div data-sr-markdown="true">**嵌套档案**</div>\n\n“HTML 中的引号”</div>\n\n<blockquote>普通引用</blockquote>\n\n`“代码”` DICE 作者\n\n<sr_instruction>\nDICE 放慢节奏\n</sr_instruction>\n\n<sr_instruction>\n继续保持第三人称\n</sr_instruction>';
   show(text);await wait();
@@ -45,6 +46,25 @@ async function run(){
   check('assistant tags are literal and never become an instruction panel',!!document.querySelector('#root')?.textContent?.includes('<sr_instruction>')&&!!document.querySelector('#root')?.textContent?.includes('</sr_instruction>')&&!document.querySelector('.sr-rp-instruction-panel'));
   show('“我会继续。”\n\n> 我不想让他知道。','assistant');await wait();
   check('assistant speech and thought use the same semantic renderer',document.querySelector('.sr-rp-speech')?.textContent==='“我会继续。”'&&!!document.querySelector('blockquote.sr-rp-thought'));
+  show('# 一级标题\n\n## 二级标题\n\n### 三级标题\n\n#### 四级标题\n\n##### 五级标题\n\n###### 六级标题\n\n> 引用中的“对白”\n\n1. 有序列表\n2. 第二项\n\n- 无序列表\n  - 嵌套列表\n\n- [x] 已完成\n- [ ] 待完成\n\n**粗体** *斜体* ~~删除~~ [链接](https://example.com)\n\n![图片“说明”](https://example.com/image.png "图片标题")\n\n| 列一 | 列二 |\n| --- | --- |\n| “单元格” | `"代码"` |\n\n---\n\n```js\nconst speech = "code";\n```','assistant');await wait();
+  check('Markdown headings, nested lists, quotes, links, tables and code survive',document.querySelectorAll('.sr-rich h1,.sr-rich h2,.sr-rich h3,.sr-rich h4,.sr-rich h5,.sr-rich h6').length===6&&!!document.querySelector('.sr-rich ol')&&!!document.querySelector('.sr-rich ul ul')&&!!document.querySelector('.sr-rich blockquote')&&!!document.querySelector('.sr-rich table')&&!!document.querySelector('.sr-rich hr')&&!!document.querySelector('.sr-rich pre code')&&!!document.querySelector('.sr-rich strong')&&!!document.querySelector('.sr-rich em')&&!!document.querySelector('.sr-rich del')&&document.querySelector('.sr-rich a')?.getAttribute('rel')==='noopener noreferrer');
+  check('GFM tasks remain visible static markers without form controls',document.querySelectorAll('.sr-task-marker').length===2&&document.querySelector('.sr-task-marker')?.getAttribute('aria-label')==='已完成'&&!document.querySelector('input'));
+  check('image attributes and table code are not modified by quote recognition',document.querySelector('img')?.getAttribute('src')==='https://example.com/image.png'&&document.querySelector('img')?.alt==='图片“说明”'&&document.querySelector('img')?.title==='图片标题'&&!document.querySelector('code .sr-rp-speech')&&!document.querySelector('#root')?.innerHTML.includes('SRRP'));
+  check('quotes inside blockquotes and table cells are highlighted',!!document.querySelector('blockquote .sr-rp-speech')&&!!document.querySelector('td .sr-rp-speech'));
+  show('她说：“你好，**旅人**，*请坐*。” 他答："Hello, **friend**."\n\n`"code"` [链接](https://example.com "title")\n\n\\"字面引号\\" 后面 "真正对白"','assistant');await wait();
+  check('Chinese and ASCII quotations preserve inline Markdown',document.querySelectorAll('.sr-rp-speech').length===3&&document.querySelectorAll('.sr-rp-speech strong').length===2&&!!document.querySelector('.sr-rp-speech em')&&Array.from(document.querySelectorAll('.sr-rp-speech')).some(el=>el.textContent==='"真正对白"')&&!document.querySelector('code .sr-rp-speech,a .sr-rp-speech'));
+  document.documentElement.dataset.theme='light';
+  check('light speech uses warm orange instead of body text',getComputedStyle(document.querySelector('.sr-rp-speech')!).color==='rgb(166, 91, 0)');
+  document.documentElement.dataset.theme='dark';
+  check('dark speech uses readable amber',getComputedStyle(document.querySelector('.sr-rp-speech')!).color==='rgb(239, 176, 93)');
+  show('![DICE](https://example.com/a.png "image")','assistant');await wait();
+  check('message replacement cannot consume image attributes',!document.querySelector('#dice')&&document.querySelector('img')?.alt==='DICE'&&document.querySelector('img')?.getAttribute('src')==='https://example.com/a.png');
+  show('| 内容 |\n| --- |\n| `DICE` |','assistant');await wait();
+  check('message replacement cannot consume code inside a table cell',!document.querySelector('#dice')&&document.querySelector('td code')?.textContent==='DICE');
+  show('正在说“尚未结束','assistant');await wait();const paragraph=document.querySelector('.sr-rich p');
+  check('unfinished streaming quotation stays literal',!document.querySelector('.sr-rp-speech')&&paragraph?.textContent==='正在说“尚未结束');
+  show('正在说“尚未结束，现在完成。”','assistant');await wait();
+  check('closing streamed quotation adds styling without replacing its paragraph',document.querySelector('.sr-rich p')===paragraph&&document.querySelector('.sr-rp-speech')?.textContent==='“尚未结束，现在完成。”');
   root.render(<WorldDocumentRenderer title="静态" presentation="inline" content={'“普通对白”\n\n> 普通引用'}/>);await wait();
   check('general renderer has no roleplay decorations',!document.querySelector('.sr-rp-speech,.sr-rp-thought,.sr-rp-instruction-panel'));
   root.unmount();document.querySelector('#results')!.textContent=JSON.stringify(results);document.title=results.every(item=>item.pass)?'PASS':'FAIL';

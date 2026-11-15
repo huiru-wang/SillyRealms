@@ -68,7 +68,7 @@ function RunFeedback({run,current,onChoose}:{run:Run;current:boolean;onChoose:(t
   const busy=run.status==='preparing'||run.status==='running';
   return <>
     {busy&&<p className="sr-thinking" role="status">{run.phase==='extensions'?'正文已生成，正在处理状态与建议…':run.phase==='preparing'?'正在准备上下文…':'正在生成故事…'}</p>}
-    {run.status==='failed'&&<p className="sr-error">{run.messages.some(message=>message.role==='assistant'&&message.text)?'本次生成失败，已保存的正文已保留。':'本次生成失败，本轮没有已保存的正文。'}</p>}
+    {run.status==='failed'&&!run.messages.some(message=>message.role==='assistant'&&message.text)&&<p className="sr-error">本次生成失败，本轮没有已保存的正文。</p>}
     {run.status==='stopped'&&<p className="sr-thinking">已停止生成{run.executionMode==='direct'?'，本轮未提交状态更新。':''}</p>}
     {state?.status==='partial'&&<p className="sr-thinking">部分状态更新未通过校验，已保存有效部分，本轮不提供行动建议。</p>}
     {state?.status==='disabled'&&<p className="sr-thinking">本轮未启用状态更新。</p>}

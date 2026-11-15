@@ -1,5 +1,9 @@
 import DOMPurify from 'dompurify';
-import {marked} from 'marked';
+import {Marked} from 'marked';
+
+// GFM tasks are static content, never live form controls. Keep input forbidden.
+const markdown=new Marked({gfm:true,breaks:true,renderer:{checkbox:({checked})=>
+  `<span class="sr-task-marker" role="img" aria-label="${checked?'已完成':'未完成'}">${checked?'☑':'☐'}</span> `}});
 
 type Profile='document'|'message';
 const properties=new Set(['color','background-color','font-size','font-family','font-weight','font-style','line-height','text-align','text-decoration','letter-spacing','white-space','word-break','overflow-wrap','display','margin','margin-top','margin-bottom','margin-left','margin-right','padding','padding-top','padding-bottom','padding-left','padding-right','border','border-color','border-width','border-style','border-radius','max-width','min-width','width','height','opacity','box-sizing','vertical-align','list-style-type','text-indent']);
@@ -39,7 +43,7 @@ function safeUrl(value:string,kind:'link'|'image'):boolean {
 }
 export function renderWorldDocument(source:string,options:{profile:Profile;slots?:ReadonlySet<string>}):{html:string;head:string;full:boolean;removedStyles:boolean} {
   const full=/^\s*(?:<!doctype\s+html\b|<html(?:\s|>))/i.test(source);
-  const parsed=full?source:String(marked.parse(source,{async:false,breaks:true}));
+  const parsed=full?source:String(markdown.parse(source,{async:false,breaks:true}));
   // Keep style only long enough to parse it with CSSOM. Author metadata and executable content never survive.
   const purified=DOMPurify.sanitize(parsed,{WHOLE_DOCUMENT:full,ADD_TAGS:options.profile==='document'?['style']:[],FORBID_TAGS:options.profile==='document'?forbidden:[...forbidden,'style'],FORBID_ATTR:['srcdoc','srcset']});
   const doc=new DOMParser().parseFromString(purified,'text/html');
@@ -50,7 +54,7 @@ export function renderWorldDocument(source:string,options:{profile:Profile;slots
     // containers independently.
     for(const node of Array.from(el.childNodes)){
       if(node.nodeType!==Node.TEXT_NODE||!node.textContent?.trim())continue;
-      const html=String(marked.parse(node.textContent,{async:false,breaks:true}));
+      const html=String(markdown.parse(node.textContent,{async:false,breaks:true}));
       const template=doc.createElement('template');
       template.innerHTML=DOMPurify.sanitize(html,{FORBID_TAGS:[...forbidden,'style'],FORBID_ATTR:['srcdoc','srcset']});
       node.replaceWith(template.content);

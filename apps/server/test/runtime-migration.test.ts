@@ -33,7 +33,7 @@ it('backs up v1 before additive mode inference and preserves all source content 
     const snapshots=Object.fromEntries(['worlds','entries','tags','api_model_configs','app_settings'].map(table=>[table,before.prepare('SELECT * FROM '+table).all()]));
     before.close();const bytes=readFileSync(source);
     const db=openDatabase(path);
-    expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
+    expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(5);
     expect(db.prepare('SELECT id,execution_mode FROM sessions ORDER BY id').all()).toEqual([{id:'d',execution_mode:'direct'},{id:'s',execution_mode:'agent'}]);
     for(const [table,rows] of Object.entries(snapshots))expect(db.prepare('SELECT * FROM '+table).all()).toEqual(rows);
     const afterPreset=JSON.parse(String(db.prepare('SELECT config_json FROM presets').get()!.config_json));delete afterPreset.capabilities;
@@ -100,7 +100,7 @@ it('backs up v2 and adds preparation storage without rewriting existing rows',()
     const rows=tables.map(table=>old.prepare('SELECT * FROM '+table).all());old.close();
     const upgraded=openDatabase(path);
     tables.forEach((table,i)=>expect(upgraded.prepare('SELECT * FROM '+table).all()).toEqual(rows[i]));
-    expect(upgraded.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
+    expect(upgraded.prepare('PRAGMA user_version').get()!.user_version).toBe(5);
     upgraded.prepare('INSERT INTO run_preparations(run_id,session_id,request_id,expected_tip_entry_id,input_text,status,created_at,result_json) VALUES(?,?,?,?,?,?,?,?)')
       .run('run','s','request','e','saved','preparing',1,'{}');
     expect(()=>upgraded.prepare('INSERT INTO run_preparations(run_id,session_id,request_id,expected_tip_entry_id,input_text,status,created_at,result_json) VALUES(?,?,?,?,?,?,?,?)')
@@ -118,7 +118,7 @@ it('rejects an incomplete v3 preparation table without changing schema',()=>{
   try{
     const old=openDatabase(path);old.exec('ALTER TABLE run_preparations DROP COLUMN metrics_json;');old.close();
     expect(()=>openDatabase(path)).toThrow('DATABASE_SCHEMA_VERSION_MISMATCH');
-    const db=new DatabaseSync(path);expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
+    const db=new DatabaseSync(path);expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(5);
     expect(db.prepare("SELECT name FROM pragma_table_info('run_preparations') WHERE name='metrics_json'").get()).toBeUndefined();db.close();
   }finally{rmSync(folder,{recursive:true,force:true});}
 });

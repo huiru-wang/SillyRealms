@@ -169,6 +169,11 @@ function unescapeOutsideProtected(text: string, start: number, mask: Uint8Array)
   return result;
 }
 
+/** Shared literal boundaries for display decoration; does not change protocol parsing. */
+export function roleplayLiteralMask(text:string):Uint8Array {
+  return codeAndHtmlMask(text,linesOf(text));
+}
+
 export function parseRoleplay(text: string, role: 'user' | 'assistant'): ParsedRoleplay {
   const lines = linesOf(text), mask = codeAndHtmlMask(text, lines);
   const instructionRanges: RoleplayRange[] = [], instructionText: string[] = [], warnings: string[] = [];

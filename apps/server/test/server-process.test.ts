@@ -5,13 +5,18 @@ import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 
+async function unusedPort(){
+  const listener=createServer();await new Promise<void>(resolve=>listener.listen(0,'127.0.0.1',resolve));
+  const port=(listener.address() as {port:number}).port;await new Promise<void>(resolve=>listener.close(()=>resolve()));return port;
+}
+
 it('starts with a temporary database and rejects a second server on the same data directory', async () => {
   const dir=mkdtempSync(join(tmpdir(),'sillyrealms-test-'));
   const listener=createServer();
   await new Promise<void>(resolve=>listener.listen(0,'127.0.0.1',resolve));
   const port=(listener.address() as {port:number}).port;
   await new Promise<void>(resolve=>listener.close(()=>resolve()));
-  const env={...process.env,SILLYREALMS_DATA_DIR:dir,PORT:String(port)};
+  const env={...process.env,SILLYREALMS_DATA_DIR:dir,PORT:String(port),SILLYREALMS_STAGE_PORT:String(await unusedPort())};
   const first=spawn(process.execPath,['--import','tsx','src/server.ts'],{cwd:process.cwd(),env,stdio:['ignore','ignore','pipe']});
   let startupError='';first.stderr?.on('data',chunk=>{startupError+=chunk;});
   try {
@@ -43,7 +48,7 @@ it('creates the default database in the project db directory regardless of worki
   await new Promise<void>(resolve => listener.listen(0, '127.0.0.1', resolve));
   const port = (listener.address() as { port: number }).port;
   await new Promise<void>(resolve => listener.close(() => resolve()));
-  const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(port) };
+  const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(port), SILLYREALMS_STAGE_PORT:String(await unusedPort()) };
   delete env.SILLYREALMS_DATA_DIR;
   const server = spawn(process.execPath, ['--import', resolve('node_modules/tsx/dist/loader.mjs'), join(serverDir, 'src/server.ts')], { cwd: dir, env, stdio: ['ignore','ignore','pipe'] });
   let startupError='';server.stderr?.on('data',chunk=>{startupError+=chunk;});

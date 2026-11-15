@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { api, ApiError } from '../../web/src/api.js';
+import { api, ApiError } from '../../studio/src/api.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -34,5 +34,30 @@ it('rejects malformed or legacy server envelopes', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
     code:'INVALID_REQUEST',message:'old contract',data:null,
   }), {status:400,headers:{'content-type':'application/json'}})));
+  await expect(api('v1/sessions')).rejects.toMatchObject({errorCode:'INVALID_RESPONSE'});
+});
+
+it.each([500,502,503,504])('reports proxy HTTP %s as server unavailable',async status=>{
+  vi.stubGlobal('fetch',vi.fn(async()=>new Response('',{status})));
+  await expect(api('v1/sessions')).rejects.toMatchObject({errorCode:'SERVER_UNAVAILABLE',message:expect.stringContaining('服务器暂时不可用')});
+});
+
+it('reports network failures without retrying a send',async()=>{
+  const request=vi.fn(async()=>{throw new TypeError('Failed to fetch');});
+  vi.stubGlobal('fetch',request);
+  await expect(api('v1/sessions/s/runs',{method:'POST'})).rejects.toMatchObject({errorCode:'SERVER_UNAVAILABLE'});
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+it('preserves explicit cancellation and valid server errors',async()=>{
+  const cancelled=new DOMException('Cancelled','AbortError');
+  vi.stubGlobal('fetch',vi.fn(async()=>{throw cancelled;}));
+  await expect(api('v1/sessions')).rejects.toBe(cancelled);
+  vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({success:false,errorCode:'INTERNAL_ERROR',errorMessage:'服务正在重启',data:null}),{status:503})));
+  await expect(api('v1/sessions')).rejects.toMatchObject({errorCode:'INTERNAL_ERROR',message:'服务正在重启'});
+});
+
+it('still rejects a malformed successful response',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async()=>new Response('<html>fallback</html>')));
   await expect(api('v1/sessions')).rejects.toMatchObject({errorCode:'INVALID_RESPONSE'});
 });

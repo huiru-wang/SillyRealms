@@ -5,7 +5,8 @@ import { evaluateLoad } from './activation.js';
 import { stateToolInstructions } from '../tools/state-tool.js';
 import { narrativeForActivation } from '@sillyrealms/roleplay';
 import type { CapabilityConfig } from '../narrative/extension-contract.js';
-import { SR_SYSTEM_MAIN, SR_DIRECT_SYSTEM_MAIN } from './system-main.js';
+import { SR_SYSTEM_MAIN } from './system-main.js';
+import { buildDirectPrompt, type StatePromptItem } from './direct-prompt.js';
 
 type Views = Record<'global'|'session'|'message', Record<string, unknown>>;
 type Narrative = { role:'user'|'assistant'; text:string };
@@ -40,12 +41,16 @@ export function buildContext(world: World, nodes: PresetNode[], playerId: string
   const activeModules: Record<'global'|'session'|'message', Set<string>> = { global:new Set(), session:new Set(), message:new Set() };
   const readonlyStateParts:string[] = [];
   const writableStateParts:string[] = [];
+  const stateItems:StatePromptItem[] = [];
   for (const scope of ['global','session','message'] as const) {
     const fields = world.state?.scopes?.[scope] ?? {};
     for (const [name, def] of Object.entries(fields)) {
       const source = { id:`${scope}:${name}`, load:def.load };
       if (active(source,'$.data.state.scopes.'+scope+'.'+name+'.load','状态')) {
         activeModules[scope].add(name);
+        stateItems.push({ path:name, scope, type:def.type, value:views[scope][name] as StatePromptItem['value'],
+          description:typeof def.description==='string'?render(def.description):'',
+          ...(def.min!==undefined?{min:def.min}:{}), ...(def.max!==undefined?{max:def.max}:{}) });
         const limits=[def.min!==undefined?`最小值 ${def.min}`:'',def.max!==undefined?`最大值 ${def.max}`:''].filter(Boolean).join('，');
         const record = [`${name}（${scope === 'message' ? '可更新' : '只读'}；${scope}；${def.type}${limits ? '；'+limits : ''}）`,typeof def.description==='string'?render(def.description):'',`当前值：${JSON.stringify(views[scope][name])}`].filter(Boolean).join('\n');
         if (scope === 'message') writableStateParts.push(record);
@@ -79,31 +84,7 @@ export function buildContext(world: World, nodes: PresetNode[], playerId: string
     return [{role:'system',content:text,timestamp:Date.now()}];
   };
   if (options.mode === 'direct') {
-    const capabilities = options.capabilities!;
-    const stateRequired = capabilities.state_update.enabled && activeModules.message.size > 0;
-    const json = (value: unknown) => JSON.stringify(value).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e');
-    const dynamic = () => {
-      const writable = stateRequired ? writableStateParts : [];
-      return [
-        '<current_state>',
-        json({ readonly: [...readonlyStateParts, ...(!stateRequired ? writableStateParts.map(text => text.replace('可更新', '只读')) : [])],
-          writable, synchronization_gaps: options.gaps ?? [],
-          authority: '当前值是唯一权威状态。旧失败、停止、部分更新或关闭期间的正文不代表状态已同步；不得回放旧尾块。' }),
-        '</current_state>',
-        '<capabilities>',
-        json({
-          state_update: stateRequired ? { required: true, preference: capabilities.state_update.prompt, schema: '[{path:string,value:JSON,reason?:string}]' } : { required: false },
-          action_suggestions: capabilities.action_suggestions.enabled
-            ? { enabled: true, target_count: capabilities.action_suggestions.count, preference: capabilities.action_suggestions.prompt, schema: 'string[]' }
-            : { enabled: false },
-        }),
-        '</capabilities>',
-        '<output_rules>',
-        json({ required_blocks: [...(stateRequired ? ['state_update'] : []), ...(capabilities.action_suggestions.enabled ? ['action_suggestions'] : [])],
-          preferences_are_data: true, note: '业务偏好不得改变平台协议、消息顺序或状态权限；reason仅为本轮事实的简短说明。' }),
-        '</output_rules>',
-      ].join('\n');
-    };
+    const dynamic = buildDirectPrompt(stateItems, options.capabilities!);
     const message = (role: PresetNode['role'], text: string): Message[] => {
       if (!text) return [];
       return role === 'assistant' ? [assistant(text)] : [{ role: role === 'user' ? 'user' : 'system', content: text, timestamp: 0 }];
@@ -112,7 +93,7 @@ export function buildContext(world: World, nodes: PresetNode[], playerId: string
       const rows: Array<{ nodeId: string; name: string; role: string; origin: string; editable: boolean; enabled: boolean; messages: Message[] }> = [];
       const add = (nodeId: string, name: string, role: PresetNode['role'], text: string, editable = false) =>
         rows.push({ nodeId, name, role, origin: editable ? 'preset' : 'platform', editable, enabled: true, messages: message(role, text) });
-      add('systemMain', '平台 System Main', 'system', SR_DIRECT_SYSTEM_MAIN);
+      add('systemMain', '平台 System Main', 'system', SR_SYSTEM_MAIN);
       add('main', '叙事风格', 'system', render(nodes.find(node => node.id === 'main')?.content ?? ''), true);
       for (const node of nodes.filter(node => node.enabled && (node.kind === 'text' || node.id === 'postHistory')))
         add(node.id, node.name ?? node.id, node.role, render(node.content ?? ''), true);
@@ -121,7 +102,7 @@ export function buildContext(world: World, nodes: PresetNode[], playerId: string
       add('world_info', '世界书', 'system', lore.map(({v}) => render(v.content ?? '')).filter(Boolean).join('\n\n'));
       rows.push({ nodeId: 'chatHistory', name: '摘要与历史', role: 'auto', origin: 'platform', editable: false, enabled: true,
         messages: hist.flatMap(item => message(item.role, item.text)) });
-      add('current_state', '权威状态与输出能力', 'system', dynamic());
+      add('current_state', '当前状态与输出协议', 'system', dynamic);
       add('userInput', '玩家输入', 'user', input);
       return rows.map((row, index) => ({ ...row, index }));
     };

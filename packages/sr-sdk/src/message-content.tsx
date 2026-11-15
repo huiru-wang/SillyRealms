@@ -28,19 +28,19 @@ export const MessageContent = React.memo(function MessageContent({message,runId}
   const ref=useRef<HTMLDivElement>(null),nonce=useRef(Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join(''));
   useEffect(()=>{
     let valid=true;
-    if(!config.rules.length){setMatches([]);setFailed(false);setWarning(false);return;}
+    if(message.origin==='opening'||!config.rules.length){setMatches([]);setFailed(false);setWarning(false);return;}
     const timer=setTimeout(()=>{void config.match(message.text,message.role).then(result=>{if(valid){setMatches(result.matches);setWarning(result.warning);setFailed(false);}}).catch(()=>{if(valid){setMatches([]);setWarning(false);setFailed(true);}});},60);
     return()=>{valid=false;clearTimeout(timer);};
-  },[message.text,message.role,config]);
+  },[message.text,message.role,message.origin,config]);
   const rendered=useMemo(()=>{
     let cursor=0,raw='';const portals:Array<{key:string;component:React.ComponentType<MessageComponentProps>;props:MessageComponentProps}>=[];
     const parsed=parseRoleplay(message.text,message.role);
     const instructions=parsed.ranges.filter(range=>range.kind==='instruction');
-    const selected=failed?[]:selectMessageMatches(message.text,matches,config.rules,config.components,instructions);
+    const selected=failed||message.origin==='opening'?[]:selectMessageMatches(message.text,matches,config.rules,config.components,instructions);
     const spans=protectedRanges(message.text);
-    const fallback=failed?[]:matches.filter(item=>item.replacement.type==='component'&&!selected.includes(item)&&canShowLiteralPlaceholder(item,spans)&&!instructions.some(range=>item.start<range.end&&item.end>range.start)&&!selected.some(other=>item.start<other.end&&item.end>other.start));
+    const fallback=failed||message.origin==='opening'?[]:matches.filter(item=>item.replacement.type==='component'&&!selected.includes(item)&&canShowLiteralPlaceholder(item,spans)&&!instructions.some(range=>item.start<range.end&&item.end>range.start)&&!selected.some(other=>item.start<other.end&&item.end>other.start));
     const blocked=[...selected,...fallback,...instructions];
-    const markers=failed?[]:roleplayMarkers(message.text,parsed.ranges,blocked,nonce.current);
+    const markers=failed?[]:roleplayMarkers(message.text,blocked,nonce.current);
     // Tags which were not recognized as valid user instructions are literal text,
     // except inside Markdown code or existing HTML where the renderer handles them.
     const literalTags=Array.from(message.text.matchAll(/<\/?sr_instruction>/g)).filter(match=>{
@@ -86,7 +86,7 @@ export const MessageContent = React.memo(function MessageContent({message,runId}
     }
     raw+=plain(cursor,message.text.length);
     return {html:renderWorldDocument(raw,{profile:'message',slots:new Set(portals.map(portal=>portal.key))}).html,portals,structuralWarning,missingComponent,instructions:parsed.instructionText};
-  },[message.id,message.role,message.text,matches,config,runId,failed]);
+  },[message.id,message.role,message.text,message.origin,matches,config,runId,failed]);
   useLayoutEffect(()=>{
     const container=ref.current;if(!container)return;
     const template=document.createElement('template');template.innerHTML=rendered.html;
@@ -99,4 +99,4 @@ export const MessageContent = React.memo(function MessageContent({message,runId}
     const Component=portal.component;return createPortal(<ComponentBoundary fallback={portal.props.match}><Component {...portal.props}/></ComponentBoundary>,target,portal.key);
   })}</div>;
 }, (previous,next) => previous.runId===next.runId && previous.message.id===next.message.id &&
-  previous.message.role===next.message.role && previous.message.text===next.message.text);
+  previous.message.role===next.message.role && previous.message.text===next.message.text && previous.message.origin===next.message.origin);

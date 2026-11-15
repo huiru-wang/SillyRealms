@@ -1,6 +1,6 @@
 import {expect, it} from 'vitest';
 import {initialState, applyOpening} from '../src/domain/state/state.js';
-import {openingStateRows} from '../../web/src/features/worlds/opening-state.js';
+import {openingStateRows} from '../../studio/src/features/worlds/opening-state.js';
 
 const state = {schema_version:1, scopes:{global:{shared:{type:'string', initial:'global'}}, session:{session:{type:'boolean', initial:true}}, message:{
   name:{type:'string', initial:'旅人'}, health:{type:'number', initial:8, min:0, max:10}, ready:{type:'boolean', initial:false}, inventory:{type:'json', initial:{coins:3, items:['key']}}
