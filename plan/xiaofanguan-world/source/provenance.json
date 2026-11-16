@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "sourceCard": {
+    "path": "data/角色卡/小饭馆/小饭馆.png",
+    "sha256": "b1c013334d30fb1181aa97250f71dc20a09a1a65f9728c3d25535f6c97e51f4f",
+    "bytes": 897487,
+    "format": "chara_card_v3",
+    "version": "3.0",
+    "metadataChunks": [
+      "chara",
+      "ccv3"
+    ],
+    "metadataSha256": "53a8728a50f08805ccd3255c583b4b8a9e67f2460ead87960953f9ffe92dc9e4",
+    "snapshot": "source/character-card.json"
+  },
+  "introduction": {
+    "path": "data/角色卡/小饭馆/世界介绍/WorldIntroduction.tsx",
+    "sha256": "ba989c600445521f1d38b5afaa81b9aeb241dc2d42d3ccac44563f3572e234c5",
+    "adaptation": "仅改为当前 SDK 的包内资源读取，复用原文案、CSS 和人物切换交互。"
+  },
+  "assets": [
+    {
+      "source": "data/角色卡/小饭馆/世界介绍/assets/掌柜.jpg",
+      "target": "assets/images/keeper.jpg",
+      "uri": "sr-asset://assets/images/keeper.jpg",
+      "purpose": "掌柜与封面",
+      "origin": "原卡封面的既有 JPG 显示副本",
+      "bytes": 120183,
+      "sha256": "a201dc20a0dd33b5b935ff58530a2a22a37d9ac92356ad0d4ce1fa7b8aac180e"
+    },
+    {
+      "source": "data/角色卡/小饭馆/世界介绍/assets/李鱼儿.jpg",
+      "target": "assets/images/li-yuer.jpg",
+      "uri": "sr-asset://assets/images/li-yuer.jpg",
+      "purpose": "李鱼儿头像",
+      "origin": "此前已生成的原角色介绍头像 JPG",
+      "bytes": 219752,
+      "sha256": "dd4ba32d2a728a95720ed5b7b8f40edea65923c2d154e2474cd7153b3922c5c7"
+    },
+    {
+      "source": "data/角色卡/小饭馆/世界介绍/assets/李鸟儿.jpg",
+      "target": "assets/images/li-niaoer.jpg",
+      "uri": "sr-asset://assets/images/li-niaoer.jpg",
+      "purpose": "李鸟儿头像",
+      "origin": "此前已生成的原角色介绍头像 JPG",
+      "bytes": 207558,
+      "sha256": "25e4be21728f33a8cb6d6ec9152a84c64df51bb0e5b6fb2e1ed98aa4260e48cc"
+    }
+  ]
+}

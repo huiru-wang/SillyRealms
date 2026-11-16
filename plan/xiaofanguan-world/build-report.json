@@ -1,0 +1,46 @@
+{
+  "artifact": "plan/xiaofanguan-world.zip",
+  "bytes": 566043,
+  "sha256": "9738ab17bd9176552e94f1c9db99dbb515f10032782537477f5aa7f5b70d3555",
+  "entries": [
+    {
+      "path": "assets/images/keeper.jpg",
+      "bytes": 120183,
+      "sha256": "a201dc20a0dd33b5b935ff58530a2a22a37d9ac92356ad0d4ce1fa7b8aac180e"
+    },
+    {
+      "path": "assets/images/li-niaoer.jpg",
+      "bytes": 207558,
+      "sha256": "25e4be21728f33a8cb6d6ec9152a84c64df51bb0e5b6fb2e1ed98aa4260e48cc"
+    },
+    {
+      "path": "assets/images/li-yuer.jpg",
+      "bytes": 219752,
+      "sha256": "dd4ba32d2a728a95720ed5b7b8f40edea65923c2d154e2474cd7153b3922c5c7"
+    },
+    {
+      "path": "components/WorldIntroduction.tsx",
+      "bytes": 13312,
+      "sha256": "224f1584d0a14c2c96ae75ed837097a99e9deb10bd250741d4ac1dbaebc4adba"
+    },
+    {
+      "path": "world.json",
+      "bytes": 40060,
+      "sha256": "ce3ef937dfb230e4dd0e73090c4d310c7f910a37ef69f600787575fc9960d84a"
+    }
+  ],
+  "source": {
+    "pngSha256": "b1c013334d30fb1181aa97250f71dc20a09a1a65f9728c3d25535f6c97e51f4f",
+    "metadataSha256": "53a8728a50f08805ccd3255c583b4b8a9e67f2460ead87960953f9ffe92dc9e4"
+  },
+  "content": {
+    "characters": 3,
+    "playerSelectable": [
+      "user"
+    ],
+    "openings": 3,
+    "loreEntries": 4,
+    "fullNpcPrompts": 2,
+    "sourceLoreEntriesCovered": 5
+  }
+}

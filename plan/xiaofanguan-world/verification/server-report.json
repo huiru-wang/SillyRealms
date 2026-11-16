@@ -1,0 +1,161 @@
+{
+  "success": true,
+  "artifact": {
+    "path": "plan/xiaofanguan-world.zip",
+    "bytes": 566043,
+    "sha256": "9738ab17bd9176552e94f1c9db99dbb515f10032782537477f5aa7f5b70d3555"
+  },
+  "isolation": {
+    "database": ":memory:",
+    "fakeCredentials": true,
+    "fakeGateway": true,
+    "paidProviderCalls": 0
+  },
+  "source": {
+    "pngSha256": "b1c013334d30fb1181aa97250f71dc20a09a1a65f9728c3d25535f6c97e51f4f",
+    "metadataSha256": "53a8728a50f08805ccd3255c583b4b8a9e67f2460ead87960953f9ffe92dc9e4"
+  },
+  "content": {
+    "characters": 3,
+    "selectable": [
+      "user"
+    ],
+    "verbatimOpenings": 3,
+    "sourceLoreEntries": 5,
+    "loreEntries": 4,
+    "completeNpcPrompts": 2
+  },
+  "checks": [
+    {
+      "name": "real-zip-import",
+      "passed": true
+    },
+    {
+      "name": "source-resolution-and-tsx-compilation",
+      "passed": true,
+      "compiled": [
+        {
+          "id": "WorldIntroduction",
+          "bytes": 13312,
+          "compiledBytes": 18911
+        }
+      ],
+      "dependencies": {
+        "WorldIntroduction": []
+      }
+    },
+    {
+      "name": "offline-jpeg-assets-cache-and-head",
+      "passed": true,
+      "assets": [
+        {
+          "path": "assets/images/keeper.jpg",
+          "bytes": 120183,
+          "sha256": "a201dc20a0dd33b5b935ff58530a2a22a37d9ac92356ad0d4ce1fa7b8aac180e",
+          "contentType": "image/jpeg",
+          "cache": "private, no-cache",
+          "conditionalGet": 304
+        },
+        {
+          "path": "assets/images/li-yuer.jpg",
+          "bytes": 219752,
+          "sha256": "dd4ba32d2a728a95720ed5b7b8f40edea65923c2d154e2474cd7153b3922c5c7",
+          "contentType": "image/jpeg",
+          "cache": "private, no-cache",
+          "conditionalGet": 304
+        },
+        {
+          "path": "assets/images/li-niaoer.jpg",
+          "bytes": 207558,
+          "sha256": "25e4be21728f33a8cb6d6ec9152a84c64df51bb0e5b6fb2e1ed98aa4260e48cc",
+          "contentType": "image/jpeg",
+          "cache": "private, no-cache",
+          "conditionalGet": 304
+        }
+      ]
+    },
+    {
+      "name": "opening-and-fake-runtime",
+      "passed": true,
+      "openingId": "daily-opening",
+      "openingSha256": "b6aa34dc30ad11e99f7f9127dd1d83dd684aba66302cd36632b38c714dcf2db4",
+      "extensions": {
+        "stateUpdate": {
+          "status": "not_required"
+        },
+        "actionSuggestions": {
+          "status": "ready"
+        }
+      }
+    },
+    {
+      "name": "opening-and-fake-runtime",
+      "passed": true,
+      "openingId": "opening-keeper",
+      "openingSha256": "8a874c513b13bb585a8c175043b6cb5c8aa4c0fed250df86a478d2d40014445f",
+      "extensions": {
+        "stateUpdate": {
+          "status": "not_required"
+        },
+        "actionSuggestions": {
+          "status": "ready"
+        }
+      }
+    },
+    {
+      "name": "opening-and-fake-runtime",
+      "passed": true,
+      "openingId": "opening-boss",
+      "openingSha256": "519973c664768e0fd6107bda8eaeb5d4c5d6b4b0fec978364f1e92ded38775a4",
+      "extensions": {
+        "stateUpdate": {
+          "status": "not_required"
+        },
+        "actionSuggestions": {
+          "status": "ready"
+        }
+      }
+    },
+    {
+      "name": "export-rebuilds-manifest-from-database",
+      "passed": true
+    },
+    {
+      "name": "real-zip-export-and-reimport",
+      "passed": true,
+      "bytes": 566535
+    }
+  ],
+  "contextChecks": [
+    {
+      "call": 1,
+      "characters": 3,
+      "loreEntries": 4,
+      "completeNpcPrompts": 2,
+      "completeMaterialsOnce": true,
+      "playerResolvedTo": "掌柜",
+      "noAssetOrComponentPayload": true,
+      "contextCharacters": 6500
+    },
+    {
+      "call": 2,
+      "characters": 3,
+      "loreEntries": 4,
+      "completeNpcPrompts": 2,
+      "completeMaterialsOnce": true,
+      "playerResolvedTo": "掌柜",
+      "noAssetOrComponentPayload": true,
+      "contextCharacters": 10490
+    },
+    {
+      "call": 3,
+      "characters": 3,
+      "loreEntries": 4,
+      "completeNpcPrompts": 2,
+      "completeMaterialsOnce": true,
+      "playerResolvedTo": "掌柜",
+      "noAssetOrComponentPayload": true,
+      "contextCharacters": 10483
+    }
+  ]
+}
