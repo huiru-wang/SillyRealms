@@ -1,3 +1,4 @@
+import { readExportedCard } from './zip-helpers.js';
 import { fakeCredentials, configureWorldModel } from './fixtures/db-seed.js';
 import {readFileSync} from 'node:fs';
 import {expect,it} from 'vitest';
@@ -19,7 +20,7 @@ it('preserves message rules and source through import and export',async()=>{
     const form=new FormData();form.set('file',new File([JSON.stringify(withRender(message_render))],'world.json'));
     const response=await app.request('/api/v1/worlds/import',{method:'POST',body:form});expect(response.status).toBe(201);
     const body=await response.json() as {data:{item:{id:string}}};
-    const exported=await (await app.request(`/api/v1/worlds/${body.data.item.id}/export`)).json() as {data:{message_render:unknown}};
+    const exported=await readExportedCard(await app.request(`/api/v1/worlds/${body.data.item.id}/export`)) as {data:{message_render:unknown}};
     expect(exported.data.message_render).toEqual(message_render);
     expect(parseCard(world).data.message_render).toBeUndefined();
   } finally {db.close();}

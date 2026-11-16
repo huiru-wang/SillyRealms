@@ -5,15 +5,17 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { ErrorCodes } from '../common/error-codes.js';
 import { validateSnapshot } from '../domain/state/state.js';
-import { CardError,parseCard } from '../domain/world-card.js';
+import { CardError } from '../domain/world-card.js';
+import { Readable } from 'node:stream';
+import { importWorldFile, exportWorldPackage, exportReadStream, resolveWorldComponents } from '../infrastructure/world-files/world-package.js';
 import { worldFailure } from './world-failure.js';
 import { targetRoutes,tagNames,clearTags,importTags,transaction } from '../domain/tags.js';
 import { readWorld,WorldRepository } from '../repositories/world-repository.js';
-import { WorldFileStore,testWorldDataDir,validateWorldSourceName } from '../infrastructure/world-files/world-file-store.js';
+import { WorldFileStore,testWorldDataDir,validateWorldSourceName,WORLD_JSON_LIMIT,WORLD_ZIP_LIMIT } from '../infrastructure/world-files/world-file-store.js';
 
 /** RFC 5987 preserves non-ASCII upload names in browser downloads. */
 function downloadDisposition(name:string): string {
-  const fallback=/^[\x20-\x7e]+$/.test(name)?name.replace(/["\\]/g,'_'):'world.json';
+  const fallback=/^[\x20-\x7e]+$/.test(name)?name.replace(/["\\]/g,'_'):(/\.zip$/i.test(name)?'world.zip':'world.json');
   const encoded=encodeURIComponent(name).replace(/['()*]/g,char=>'%'+char.charCodeAt(0).toString(16).toUpperCase());
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
@@ -33,22 +35,18 @@ export function worldRoutes(
   targetRoutes(app,db,'world');
 
   app.post('/import',async c=>{
-    let id:string|undefined;
+    let id:string|undefined,persisted=false;
     try {
       const file=(await c.req.formData()).get('file');
-      if(!(file instanceof File)) throw new CardError('$','Expected JSON file');
+      if(!(file instanceof File)) throw new CardError('$','Expected JSON or ZIP file');
       let originalName:string;
-      try{originalName=validateWorldSourceName(file.name);}catch{throw new CardError('$.filename','Expected a safe JSON filename');}
-      if(file.size>10*1024*1024) return c.json(failure(ErrorCodes.FILE_TOO_LARGE, '最大文件大小为 10 MiB', { path: '$' }),413);
-      const rawBytes=new Uint8Array(await file.arrayBuffer());
-      let raw:unknown;
-      try {raw=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(rawBytes));}
-      catch {throw new CardError('$','Invalid JSON');}
-      const card=parseCard(raw);
+      try{originalName=validateWorldSourceName(file.name);}catch{throw new CardError('$.filename','Expected a safe JSON or ZIP filename');}
+      const limit=/\.zip$/i.test(originalName)?WORLD_ZIP_LIMIT:WORLD_JSON_LIMIT;
+      if(file.size>limit) return c.json(failure(ErrorCodes.FILE_TOO_LARGE, '最大文件大小为 '+limit/(1024*1024)+' MiB', { path: '$' }),413);
+      id=randomUUID();
+      const {card,saved}=await importWorldFile(files,id,file);
       const tags=card.data.tags??[];
       delete card.data.tags;
-      id=randomUUID();
-      const saved=await files.save(id,rawBytes,originalName);
       const currentId=id;
       try {
         transaction(db,()=>{
@@ -62,10 +60,12 @@ export function worldRoutes(
           importTags(db,'world',currentId,tags);
         });
       } catch (error) { await files.remove(currentId).catch(()=>{}); throw error; }
+      persisted=true;
       card.data.tags=tagNames(db,'world',currentId);
       const row=worlds.get(currentId)!;
       return c.json({item:{id:currentId,...card,defaultPresetId:row.default_preset_id,defaultApiModelConfigId:row.default_api_model_config_id},warnings:[]},201);
     } catch(error) {
+      if(id&&!persisted)await files.remove(id).catch(()=>{});
       const path=error instanceof CardError?error.path:'$',reason=error instanceof CardError?error.reason:'World import failed';
       return c.json(failure(ErrorCodes.INVALID_WORLD, `${path}: ${reason}`, { path, reason }),422);
     }
@@ -117,6 +117,14 @@ export function worldRoutes(
     } catch(error){return c.json(worldFailure(error),422);}
   });
 
+  app.get('/:id/components',async c=>{
+    const row=worlds.get(c.req.param('id'));
+    if(!row)return c.json(failure(ErrorCodes.WORLD_NOT_FOUND),404);
+    try {
+      return c.json(await resolveWorldComponents(files,String(row.id),readWorld(row).data.components));
+    }catch(error){return c.json(worldFailure(error),422);}
+  });
+
   app.get('/:id/source',async c=>{
     const row=worlds.get(c.req.param('id'));
     if(!row) return c.json(failure(ErrorCodes.WORLD_NOT_FOUND),404);
@@ -126,21 +134,25 @@ export function worldRoutes(
       if (createHash('sha256').update(bytes).digest('hex') !== row.source_sha256)
         return c.json(failure(ErrorCodes.WORLD_CORRUPT, '源文件校验和不匹配'),422);
       return c.newResponse(new Blob([Uint8Array.from(bytes)]),200,{
-        'Content-Type':'application/json; charset=utf-8',
+        'Content-Type':/\.zip$/i.test(String(row.source_file_path))?'application/zip':'application/json; charset=utf-8',
         'Content-Disposition':downloadDisposition(files.sourceFilename(String(row.id),String(row.source_file_path))),
       });
     } catch {return c.json(failure(ErrorCodes.WORLD_SOURCE_NOT_FOUND),404);}
   });
-  for(const exporting of [true,false]) app.get(exporting?'/:id/export':'/:id',c=>{
+  for(const exporting of [true,false]) app.get(exporting?'/:id/export':'/:id',async c=>{
     const row=worlds.get(c.req.param('id'));
     if(!row) return c.json(failure(ErrorCodes.WORLD_NOT_FOUND),404);
     try {
       const card=readWorld(row);
       card.data.tags=tagNames(db,'world',String(row.id));
       if(exporting){
-        const filename=row.source_kind==='imported' ? files.sourceFilename(String(row.id),String(row.source_file_path)) : (()=>{try{return validateWorldSourceName(card.data.name+'.json');}catch{return 'world.json';}})();
+        const base=row.source_kind==='imported' ? files.sourceFilename(String(row.id),String(row.source_file_path)).replace(/\.(json|zip)$/i,'') : card.data.name;
+        let filename:string;try{filename=validateWorldSourceName(base+'.zip');}catch{filename='world.zip';}
+        const exported=await exportWorldPackage(files,String(row.id),card);
         c.header('Content-Disposition',downloadDisposition(filename));
-        return c.json(card);
+        c.header('Content-Type','application/zip');
+        c.header('Cache-Control','no-store');
+        return c.newResponse(Readable.toWeb(exportReadStream(exported.path,exported.cleanup)) as ReadableStream<Uint8Array>);
       }
       return c.json({
         item:{id:row.id,...card,defaultPresetId:row.default_preset_id,defaultApiModelConfigId:row.default_api_model_config_id,createdAt:row.created_at,updatedAt:row.updated_at},

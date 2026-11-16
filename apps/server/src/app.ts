@@ -40,7 +40,9 @@ export function createApp(db: DatabaseSync, credentials: CredentialStore = new M
     }
     await next();
   });
-  app.use('/api/*', bodyLimit({maxSize:11 * 1024 * 1024,onError:c => c.json(failure(ErrorCodes.BODY_TOO_LARGE, '请求内容超过 11 MiB', { path: '$' }),413)}));
+  const ordinaryBodyLimit=bodyLimit({maxSize:11*1024*1024,onError:c=>c.json(failure(ErrorCodes.BODY_TOO_LARGE,'请求内容超过 11 MiB',{path:'$'}),413)});
+  const worldImportBodyLimit=bodyLimit({maxSize:257*1024*1024,onError:c=>c.json(failure(ErrorCodes.BODY_TOO_LARGE,'世界卡上传请求超过 257 MiB',{path:'$'}),413)});
+  app.use('/api/*',(c,next)=>(c.req.method==='POST'&&c.req.path==='/api/v1/worlds/import'?worldImportBodyLimit:ordinaryBodyLimit)(c,next));
   const provider = providerRoutes(db, credentials, gateway);
   const runtime = new SRRuntime(db, credentials, gateway);
   app.route('/api/v1/sessions', sessionRuntimeRoutes(db,runtime,shutdown.signal));

@@ -11,6 +11,7 @@ import {openDatabase} from '../src/infrastructure/database/database.js';
 import {createApp} from '../src/app.js';
 import {WorldFileStore} from '../src/infrastructure/world-files/world-file-store.js';
 import {seedWorld,fakeCredentials} from './fixtures/db-seed.js';
+import {seedOfflineWorld} from './fixtures/offline-world.js';
 import {tail} from './fixtures/runtime-v2.js';
 import type {ModelGateway} from '../src/runtime/model/pi-gateway.js';
 import type {Api,Model,AssistantMessageEvent} from '@earendil-works/pi-ai';
@@ -53,15 +54,17 @@ for(const [id,ui] of Object.entries({
 }))seedWorld(db,id,{spec:'world_card',spec_version:'0.1',data:{...data,name:id,stage_component:ui.main,components:[...data.components.filter((item:any)=>!ui.source.some(source=>source.id===item.id)),...ui.source]}});
 db.prepare('UPDATE app_settings SET default_preset_id=?,default_api_model_config_id=? WHERE id=1').run('sr-default-preset','test-model');
 const studioDir=fileURLToPath(new URL('../../studio/dist/',import.meta.url));
-const stageServer=serve({fetch:createStageApp(studioDir).fetch,hostname:'127.0.0.1',port:0});
+const worldFiles=new WorldFileStore(directory);
+const stageServer=serve({fetch:createStageApp(studioDir,worldFiles,id=>!!db.prepare('SELECT 1 FROM worlds WHERE id=?').get(id)).fetch,hostname:'127.0.0.1',port:0});
 if(!stageServer.listening)await new Promise<void>((resolve,reject)=>{stageServer.once('listening',resolve);stageServer.once('error',reject);});
 const stagePort=(stageServer.address() as {port:number}).port;
 const lanTestHost=process.env.SR_TEST_LAN_HOST;
 const allowedOrigins=new Set<string>();
-const app=createApp(db,fakeCredentials,gateway,new WorldFileStore(directory),allowedOrigins,new Set([`http://127.0.0.1:${stagePort}`,...(lanTestHost?[`http://${lanTestHost}:${stagePort}`]:[])]));
+const app=createApp(db,fakeCredentials,gateway,worldFiles,allowedOrigins,new Set([`http://127.0.0.1:${stagePort}`,...(lanTestHost?[`http://${lanTestHost}:${stagePort}`]:[])]));
 serveWebConfig(app,{origin:null,port:stagePort,entryPath:'/frame.html'});
 serveStudio(app,studioDir);
-const manifest:Record<string,string>={};
+const offline=await seedOfflineWorld(app);
+const manifest:Record<string,string>={stagePort:String(stagePort),offlineWorldId:offline.worldId,offlineSessionId:offline.sessionId};
 for(const worldId of ['browser-world','custom-world','cache-world','missing-main','broken-main','old-sdk','broken-message']){
  const response=await app.request('/api/v1/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({worldId,openingId:'opening',userCharacterId:'player'})});
  const body=await response.json() as any;if(!body.success)throw Error(JSON.stringify(body));manifest[worldId]=body.data.item.id;

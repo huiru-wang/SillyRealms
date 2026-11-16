@@ -50,7 +50,7 @@ const closeListeners=()=>Promise.all(servers.map(server=>new Promise<void>((reso
   if('closeIdleConnections' in server)server.closeIdleConnections();
 })));
 try {
-  await listen(createStageApp(studioDir).fetch,stage.port);
+  await listen(createStageApp(studioDir,worldFiles,id=>!!db.prepare('SELECT 1 FROM worlds WHERE id=?').get(id)).fetch,stage.port);
   await listen(app.fetch,port);
   console.log(`SillyRealms 本机访问: http://127.0.0.1:${port}`);
   console.log(`SillyRealms Stage: ${stage.origin??`http://127.0.0.1:${stage.port}`}`);

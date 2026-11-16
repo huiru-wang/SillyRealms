@@ -1,5 +1,6 @@
 import { ErrorCodes } from '../common/error-codes.js';
 import { z } from 'zod';
+import { parseSRAssetUri } from '@sillyrealms/sdk/assets';
 import { applyOpening, initialState } from './state/state.js';
 import { validateWhen } from './state/when.js';
 import { atomicStateSchema } from './state/atomic-schema.js';
@@ -50,9 +51,18 @@ const renderRule=z.object({
 const messageRender=z.object({
   rules:z.array(renderRule).max(100).superRefine(unique).optional(),
 }).strict();
-const componentSource=z.object({id:componentId,component:boundedBytes(1024*1024).refine(value=>value.trim().length>0,'Expected nonempty source')}).strict();
+const componentPath=z.string().superRefine((value,ctx)=>{
+  try {parseSRAssetUri(value,'components');} catch {ctx.addIssue({code:'custom',message:'Expected an sr-asset://components/ package path'});}
+});
+const componentSource=z.object({
+  id:componentId,
+  path:componentPath.optional(),
+  component:boundedBytes(1024*1024).optional(),
+}).strict().superRefine((value,ctx)=>{
+  if(value.path===undefined && !value.component?.trim())ctx.addIssue({code:'custom',message:'Expected path or nonempty component'});
+});
 const components=z.array(componentSource).max(100).superRefine(unique).superRefine((value,ctx)=>{
-  if(value.reduce((total,item)=>total+Buffer.byteLength(item.component,'utf8'),0)>2*1024*1024)ctx.addIssue({code:'custom',message:'Components exceed 2 MiB'});
+  if(value.reduce((total,item)=>total+Buffer.byteLength(item.component??'','utf8'),0)>2*1024*1024)ctx.addIssue({code:'custom',message:'Components exceed 2 MiB'});
 });
 const schema=z.object({spec:z.literal('world_card'),spec_version:z.literal('0.1'),data:z.object({
   name:id,description:componentView.optional(),tags:z.array(id).optional(),cover:z.string().optional(),

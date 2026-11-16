@@ -1,3 +1,4 @@
+import { readExportedCard } from './zip-helpers.js';
 import { seedSession, fakeCredentials, configureWorldModel } from './fixtures/db-seed.js';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
@@ -97,10 +98,10 @@ it('renames and removes tags in every referencing world', async () => {
   const before=db.prepare('SELECT characters_json FROM worlds WHERE id=?').get(world)?.characters_json;
   const update=await app.request(`/api/v1/tags/${tag.id}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({name:'renamed'})});expect(update.status).toBe(200);
   expect(db.prepare('SELECT characters_json FROM worlds WHERE id=?').get(world)?.characters_json).toBe(before);
-  expect((await (await app.request('/api/v1/worlds/'+world+'/export')).json() as {data:{tags:string[]}}).data.tags).toContain('renamed');
+  expect((await readExportedCard(await app.request('/api/v1/worlds/'+world+'/export'))).data.tags).toContain('renamed');
   expect((await app.request(`/api/v1/tags/${tag.id}`,{method:'DELETE'})).status).toBe(200);
   expect(db.prepare('SELECT characters_json FROM worlds WHERE id=?').get(world)?.characters_json).toBe(before);
-  expect((await (await app.request('/api/v1/worlds/'+world+'/export')).json() as {data:{tags:string[]}}).data.tags).not.toContain('renamed');
+  expect((await readExportedCard(await app.request('/api/v1/worlds/'+world+'/export'))).data.tags).not.toContain('renamed');
   db.close();
 });
 

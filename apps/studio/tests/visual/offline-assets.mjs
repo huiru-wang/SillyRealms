@@ -1,0 +1,42 @@
+/** The same real ZIP is used in Studio, readonly previews and the session renderer. */
+export async function checkOfflineAssets({origin,manifest,call,evaluate,until,navigate,click,frameUntil,shot,assert}) {
+  const worldId=manifest.offlineWorldId,sessionId=manifest.offlineSessionId;
+  assert(worldId&&sessionId,'Offline ZIP fixture missing');
+  const worldPath='/world-assets/'+worldId+'/';
+  await call('Emulation.setDeviceMetricsOverride',{width:1280,height:850,deviceScaleFactor:1,mobile:false});
+  await navigate('/worlds');
+  assert(await evaluate('document.querySelector(\'input[type="file"]\').accept.includes(".zip")'),'World importer does not accept ZIP');
+  await until('[...document.images].some(i=>i.src.includes('+JSON.stringify(worldPath)+')&&i.complete&&i.naturalWidth===320)');
+  await navigate('/worlds/'+worldId);
+  await until('[...document.images].some(i=>i.src.includes('+JSON.stringify(worldPath)+')&&i.complete&&i.naturalWidth===320)');
+  const preview=await frameUntil('document.querySelector("[data-offline-preview]")?.naturalWidth===320&&document.querySelector("[data-offline-audio]")?.readyState>=1','iframe[data-world-component]');
+  const media=await preview('(()=>{let isolated=false;try{void parent.document}catch{isolated=true}return {src:document.querySelector("[data-offline-preview]").src,audio:document.querySelector("[data-offline-audio]").currentSrc,isolated}})()');
+  assert(media.isolated&&new URL(media.src).origin!==origin&&media.src.includes(worldPath),'Preview resources/origin are wrong');
+  const audio=await fetch(media.audio,{headers:{Range:'bytes=0-43'}});
+  assert(audio.status===206&&audio.headers.get('content-range')==='bytes 0-43/8044','Audio range failed');await audio.arrayBuffer();
+  await shot('offline-world-detail-1280');
+  await click('开局');await frameUntil('document.querySelector("[data-offline-preview]")?.naturalWidth===320','iframe[data-world-component]');
+  await click('下一个开局');
+  await until('[...document.querySelectorAll("iframe[srcdoc]")].some(f=>[...(f.contentDocument?.images??[])].some(i=>i.alt==="静态离线图片"&&i.naturalWidth===320))');
+  await navigate('/sessions/'+sessionId);
+  let stage=await frameUntil('document.querySelector("[data-offline-stage-image]")?.naturalWidth===320&&document.querySelector("img[alt=开局离线图片]")?.naturalWidth===320');
+  assert(await stage('!!document.querySelector("[data-offline-weather]")&&!document.querySelector("[data-inline-fallback]")'),'File component priority or ./ID dependency failed');
+  await evaluate('(()=>{const e=document.querySelector("[contenteditable]");e.focus();document.execCommand("insertText",false,"继续探索雾港")})()');
+  await until('!document.querySelector("[aria-label=发送消息]").disabled');await click('发送消息');
+  stage=await frameUntil('document.querySelector("[data-offline-cg]")?.naturalWidth===320');
+  assert(await stage('document.querySelector("[data-offline-cg]").src.includes("/assets/images/cg/Badge.svg")'),'Regex groups did not select the packaged CG');
+  await shot('offline-stage-1280');
+  await call('Emulation.setDeviceMetricsOverride',{width:375,height:850,deviceScaleFactor:1,mobile:true});
+  await shot('offline-stage-375');assert(await evaluate('document.documentElement.scrollWidth<=innerWidth'),'Offline stage overflows mobile viewport');
+  await navigate('/worlds/'+worldId);await frameUntil('document.querySelector("[data-offline-preview]")?.naturalWidth===320','iframe[data-world-component]');await shot('offline-world-detail-375');
+  const exported=await fetch(origin+'/api/v1/worlds/'+worldId+'/export');
+  assert(exported.ok&&exported.headers.get('content-type')?.includes('application/zip'),'Offline world export is not ZIP');
+  const form=new FormData();form.set('file',new File([await exported.arrayBuffer()],'roundtrip.zip'));
+  const imported=await(await fetch(origin+'/api/v1/worlds/import',{method:'POST',body:form})).json();
+  assert(imported.success,'ZIP roundtrip import failed: '+JSON.stringify(imported));
+  const copied=imported.data.item;
+  assert(copied.id!==worldId&&copied.data.components.find(c=>c.id==='Main').path==='sr-asset://components/stage/Main.tsx','Export lost portable component paths');
+  const copyImage=new URL('/world-assets/'+copied.id+'/assets/images/cg/Badge.svg',media.src);
+  assert((await fetch(copyImage)).status===200,'Dynamic CG omitted from exported ZIP');
+  console.log('PASS: ZIP roundtrip, Unicode asset URLs, platform images, readonly preview/audio, static document, path-priority Stage, ./ID imports, WorldStory images and regex CG, 1280/375');
+}

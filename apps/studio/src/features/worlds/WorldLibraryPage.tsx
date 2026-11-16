@@ -19,7 +19,7 @@ export function WorldLibraryPage(){
   const {page,loading,error,more,retry}=usePaged(category,(cursor,signal)=>listWorlds(category,cursor,signal));
   useEffect(()=>{const c=new AbortController();setTagsError(false);listTags(c.signal).then(data=>setTags(data.items)).catch(()=>{if(!c.signal.aborted)setTagsError(true);});return()=>c.abort();},[tagRevision]);
   return <div className={styles.page}>
-    <header className={styles.header}><h1>世界卡</h1><button className="button" disabled={importing} onClick={()=>fileInput.current?.click()}><Upload size={17}/>{importing?'导入中…':'导入世界卡'}</button><input ref={fileInput} hidden aria-label="选择世界卡文件" type="file" accept=".json,application/json" disabled={importing} onChange={event=>{const file=event.target.files?.[0];if(file)void importWorld(file);event.target.value='';}}/></header>
+    <header className={styles.header}><h1>世界卡</h1><button className="button" disabled={importing} onClick={()=>fileInput.current?.click()}><Upload size={17}/>{importing?'导入中…':'导入世界卡'}</button><input ref={fileInput} hidden aria-label="选择世界卡文件" type="file" accept=".json,.zip,application/json,application/zip,application/x-zip-compressed" disabled={importing} onChange={event=>{const file=event.target.files?.[0];if(file)void importWorld(file);event.target.value='';}}/></header>
     <div className={styles.body}>{importError&&<p role="alert">{importError}</p>}
       <nav className={styles.categories} aria-label="世界分类">
         {[{id:'',name:'全部'},...tags].map(tag=><button className={[styles.category,category===tag.id?styles.categoryActive:''].join(' ')} key={tag.id} onClick={()=>setCategory(tag.id)} aria-pressed={category===tag.id}>{tag.name}</button>)}

@@ -10,6 +10,7 @@ import {checkSettings} from './settings.mjs';
 import {checkMobile} from './mobile.mjs';
 import {checkDensity} from './density.mjs';
 import {checkPresets} from './presets.mjs';
+import {checkOfflineAssets} from './offline-assets.mjs';
 const root=fileURLToPath(new URL('../../../..',import.meta.url));
 const temporary=await mkdtemp(join(tmpdir(),'sr-production-browser-'));
 const manifestPath=join(temporary,'manifest.json');
@@ -46,8 +47,28 @@ async function checkSessionRows(width,name){
  assert(Math.abs(metrics.width-metrics.list)<2&&metrics.gap<=13&&metrics.timeGap>=7&&metrics.timeGap<=20,'Session row width/right alignment: '+JSON.stringify(metrics));
  assert(await evaluate('(()=>{const title=document.querySelector("[data-session-row] strong"),before=title.textContent;title.textContent="很长的会话标题".repeat(35);const row=title.closest("[data-session-row]"),ok=row.scrollWidth<=row.clientWidth+1&&document.documentElement.scrollWidth<=innerWidth;title.textContent=before;return ok})()'),'Long session title overflows');
  if(width>=1000){
-  await call('Input.dispatchMouseEvent',{type:'mouseMoved',x:metrics.x,y:metrics.y});await delay(180);
-  assert(await evaluate('getComputedStyle(document.querySelector("[data-session-row]")).backgroundColor!=="rgba(0, 0, 0, 0)"'),'Hover does not cover action side of row: '+JSON.stringify(await evaluate('({hover:matchMedia("(hover:hover)").matches,rowHovered:document.querySelector("[data-session-row]").matches(":hover"),color:getComputedStyle(document.querySelector("[data-session-row]")).backgroundColor})')));
+  await evaluate('document.querySelector("[data-session-row]").scrollIntoView({block:"nearest",inline:"nearest",behavior:"instant"})');
+  // Layout may still move the action edge, and hover transitions start on a rendered frame.
+  let hoverSettled=false,hoverPoint={x:metrics.x,y:metrics.y,hitRow:false};
+  for(let attempt=0;attempt<40;attempt++){
+   hoverPoint=await evaluate('(()=>{const row=document.querySelector("[data-session-row]"),r=row.getBoundingClientRect(),x=r.right-6,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);return {x,y,hitRow:!!hit&&row.contains(hit)}})()');
+   if(hoverPoint.hitRow){
+    await call('Input.dispatchMouseEvent',{type:'mouseMoved',x:hoverPoint.x,y:hoverPoint.y});
+    hoverSettled=await evaluate('(()=>{const row=document.querySelector("[data-session-row]");getComputedStyle(row).backgroundColor;return row.matches(":hover")&&!row.getAnimations().some(animation=>animation.pending||animation.playState==="running")})()');
+    if(hoverSettled)break;
+   }
+   await delay(50);
+  }
+  const hovered=await evaluate('getComputedStyle(document.querySelector("[data-session-row]")).backgroundColor!=="rgba(0, 0, 0, 0)"');
+  assert(hovered&&hoverSettled,'Hover does not cover action side of row: '+(hovered&&hoverSettled?'':JSON.stringify(await evaluate(`(()=>{
+   const row=document.querySelector('[data-session-row]'),style=getComputedStyle(row),matched=[],point={x:${hoverPoint.x},y:${hoverPoint.y}},hit=document.elementFromPoint(point.x,point.y);
+   function inspect(rules,media=[]){for(const rule of rules){
+    if(rule.selectorText&&row.matches(rule.selectorText)&&(rule.style.background||rule.style.backgroundColor||rule.style.transition))matched.push({selector:rule.selectorText,css:rule.style.cssText,media});
+    if(rule.cssRules)inspect(rule.cssRules,rule.conditionText?[...media,{condition:rule.conditionText,matches:matchMedia(rule.conditionText).matches}]:media);
+   }}
+   for(const sheet of document.styleSheets){try{inspect(sheet.cssRules)}catch(error){matched.push({sheet:sheet.href,error:String(error)})}}
+   return {hover:matchMedia('(hover:hover)').matches,pointer:matchMedia('(pointer:fine)').matches,rowHovered:row.matches(':hover'),point,pointHitsRow:!!hit&&row.contains(hit),hit:hit?hit.tagName+'.'+hit.className:null,rect:row.getBoundingClientRect().toJSON(),viewport:{width:innerWidth,height:innerHeight},visibility:document.visibilityState,collapse:document.querySelector('[data-collapse-progress]')?.dataset.collapseProgress,className:row.className,theme:document.documentElement.dataset.theme,color:style.backgroundColor,surface:style.getPropertyValue('--surface'),rootSurface:getComputedStyle(document.documentElement).getPropertyValue('--surface'),transition:style.transition,animations:row.getAnimations().map(a=>({type:a.constructor.name,state:a.playState,pending:a.pending,currentTime:a.currentTime,timing:a.effect?.getComputedTiming()})),matched};
+  })()`))));
  }
  await shot(name+'-'+width);
 }
@@ -63,7 +84,10 @@ try{
  ws.addEventListener('message',event=>{const data=JSON.parse(event.data);if(data.method==='Runtime.exceptionThrown')exceptions.push(data.params.exceptionDetails.exception?.description??data.params.exceptionDetails.text);if(data.method==='Runtime.executionContextCreated')contexts.set(data.params.context.id,data.params.context);if(data.method==='Runtime.executionContextDestroyed')contexts.delete(data.params.executionContextId);if(data.id){const p=pending.get(data.id);if(p){clearTimeout(p.timer);pending.delete(data.id);data.error?p.reject(Error(JSON.stringify(data.error))):p.resolve(data.result);}}});
  await call('Page.enable');await call('Runtime.enable');
  await call('Network.enable');await call('Network.setCacheDisabled',{cacheDisabled:false});
- if(process.env.SR_BROWSER_ONLY==='presets'){
+ if(process.env.SR_BROWSER_ONLY==='offline-assets'){
+  await checkOfflineAssets({origin,manifest,call,evaluate,until,navigate,click,frameUntil,shot,assert});
+  assert(exceptions.length===0,'Browser exceptions: '+exceptions.join('\n'));
+ }else if(process.env.SR_BROWSER_ONLY==='presets'){
   await checkPresets({origin,call,evaluate,until,navigate,click,shot,assert,pointer,key,setTheme});
   assert(exceptions.length===0,'Browser exceptions: '+exceptions.join('\n'));
  }else if(process.env.SR_BROWSER_ONLY==='density'){
@@ -79,6 +103,7 @@ try{
   await checkModels({origin,call,evaluate,until,navigate,click,shot,assert,setTheme});
   assert(exceptions.length===0,'Browser exceptions: '+exceptions.join('\n'));
  }else{
+ await checkOfflineAssets({origin,manifest,call,evaluate,until,navigate,click,frameUntil,shot,assert});
  await call('Emulation.setDeviceMetricsOverride',{width:1280,height:850,deviceScaleFactor:1,mobile:false});
  await navigate('/sessions/'+manifest['cache-world']);
  const cacheMetrics=async()=>{
@@ -170,7 +195,7 @@ try{
   await click('展开世界概览');await until('Number(document.querySelector("[data-collapse-progress]").dataset.collapseProgress)<.01');
   await click('世界卡更多操作');await until('!!document.querySelector("[role=menu]")');assert(await evaluate('document.querySelector("[role=menu]").innerText.includes("导出世界卡")&&document.querySelector("[role=menu]").innerText.includes("删除世界卡")'),'World actions missing');await shot('production-world-menu-'+width);await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await until('!document.querySelector("[role=menu]")');
   await click('世界卡更多操作');await click('删除世界卡');await until('!!document.querySelector("[role=dialog]")');await click('取消');await until('!document.querySelector("[role=dialog]")');assert(await evaluate('document.activeElement?.getAttribute("aria-label")==="世界卡更多操作"'),'World delete cancel loses focus');
-  const exported=await(await fetch(origin+'/api/v1/worlds/browser-world/export')).json();assert(!('summary' in exported.data),'World export still contains summary');
+  const exported=await fetch(origin+'/api/v1/worlds/browser-world/export');assert(exported.ok&&exported.headers.get('content-type')?.includes('application/zip'),'World export must be ZIP');await exported.arrayBuffer();
   await click('会话');await checkSessionRows(width,'production-world-sessions');await pointer('[data-session-actions] button');assert(await evaluate('location.pathname.includes("/worlds/")&&document.querySelector("[data-session-actions] button").getAttribute("aria-expanded")==="true"'),'More action navigates instead of opening');await key('Escape');
   if(await evaluate('Number(document.querySelector("[data-collapse-progress]").dataset.collapseProgress)<.99')){await click('收起世界概览');await until('Number(document.querySelector("[data-collapse-progress]").dataset.collapseProgress)>.99');}
   await pointer('[data-role-strip=compact] [data-role-card=resident-1] [data-role-action=select]');await key('Home');await key('Enter');
@@ -268,7 +293,12 @@ try{
  await navigate('/sessions/'+manifest['custom-world']);const custom=await frameUntil('!!document.querySelector("[data-custom-status]")');assert(await custom('!document.querySelector(".sr-story")'),'Injected WorldStory into author stage');await custom('document.querySelector("button").click()');await until('document.querySelector("[contenteditable]")?.innerText.includes("来自作者舞台")');await shot('production-custom-stage');
  await navigate('/sessions/'+manifest['missing-main']);await frameUntil('document.body.innerText.includes("暮色落下")&&!document.querySelector("[data-component-badge]")');await until('document.body.innerText.includes("未找到舞台主组件")');
  await navigate('/sessions/'+manifest['broken-message']);await frameUntil('document.body.innerText.includes("暮色落下")&&!document.querySelector("[data-component-badge]")');
- await navigate('/worlds/broken-preview');await until('document.body.innerText.includes("组件加载失败")');await click('重试');await until('document.body.innerText.includes("组件加载失败")');await click('开局');await frameUntil('!!document.querySelector("[data-opening-preview]")','iframe[data-world-component]');
+ const brokenPreviewError='[...document.querySelectorAll("[role=alert]")].some(element=>element.textContent.includes("组件 BrokenPreview"))';
+ await navigate('/worlds/broken-preview');await until(brokenPreviewError);
+ assert(await evaluate('!document.querySelector("iframe[data-world-component]")'),'Broken preview retained an author iframe');
+ await click('重试');await until(brokenPreviewError);
+ assert(await evaluate('!document.querySelector("iframe[data-world-component]")'),'Broken preview retry retained an author iframe');
+ await click('开局');await frameUntil('!!document.querySelector("[data-opening-preview]")','iframe[data-world-component]');
  for(const id of ['broken-main','old-sdk']){await navigate('/sessions/'+manifest[id]);await until('!!document.querySelector(".stage-error")');assert(await evaluate('!document.querySelector("iframe[title=会话页面]")'),'Invalid author stage silently fell back');}
  await checkDensity({call,evaluate,until,navigate,click,shot,assert,pointer,key,frameUntil});
  await checkModels({origin,call,evaluate,until,navigate,click,shot,assert,setTheme});

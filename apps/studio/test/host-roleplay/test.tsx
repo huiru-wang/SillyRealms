@@ -22,6 +22,7 @@ class FakeEventSource {
   emit(type:string,runId:string){this.listeners[type]?.({data:JSON.stringify({runId,messages:[],errorCode:'PROVIDER_ERROR',errorMessage:'模拟失败'})} as MessageEvent);}
 }
 (globalThis as any).EventSource=FakeEventSource;
+const worldComponents=[{id:'main',component:"import React from 'react'; import {useSRSession} from '@sillyrealms/sdk'; export default function Story(){const session=useSRSession(); React.useEffect(()=>{session.setDraft('“第一轮”')},[session]); return <div>Story</div>}"}];
 const realFetch=window.fetch.bind(window);
 window.fetch=async(input, init)=>{
   const path=String(input);if(!path.startsWith('/api/')||path==='/api/v1/runtime/web-config')return realFetch(input,init);
@@ -32,7 +33,8 @@ window.fetch=async(input, init)=>{
   else if(path==='/api/v1/api-model-configs') data={items:[]};
   else if(path==='/api/v1/sessions/test') data={tipEntryId:'tip',worldId:'world',title:'测试',presetId:null,apiModelConfigId:null};
   else if(path==='/api/v1/sessions/test/usage'){usageRequests++;assert(init?.cache==='no-store','usage requests must bypass cached snapshots');if(failUsage)throw new Error('offline');data={cumulative:{inputTokens:usageTotal-32000,outputTokens:32000,totalTokens:usageTotal,cacheReadTokens:80000,cacheWriteTokens:15000,cacheHitRate:.32,complete:true,unknownCount:0},latestContext:{inputTokens:usageInput,contextWindowTokens:128000,ratio:usageInput/128000,modelId:'fake',stale:false,contextComposition:{systemBytes:1000,summaryBytes:500,historyBytes:3000}}};}
-  else if(path==='/api/v1/worlds/world') data={item:{data:{stage_component:'main',components:[{id:'main',component:"import React from 'react'; import {useSRSession} from '@sillyrealms/sdk'; export default function Story(){const session=useSRSession(); React.useEffect(()=>{session.setDraft('“第一轮”')},[session]); return <div>Story</div>}"}]}}};
+  else if(path==='/api/v1/worlds/world') data={item:{id:'world',data:{stage_component:'main',components:worldComponents}}};
+  else if(path==='/api/v1/worlds/world/components') data={items:worldComponents,errors:{}};
   else if(path==='/api/v1/sessions/test/state') data={global:{},session:{},message:{}};
   else if(path.startsWith('/api/v1/sessions/test/runs?')) data={runs:[],nextCursor:null,hasMore:false};
   else if(path==='/api/v1/sessions/test/runs'&&init?.method==='POST') {

@@ -1,6 +1,7 @@
-import {createContext,useContext,useMemo} from 'react';
+import React,{createContext,useContext,useMemo} from 'react';
 import type {StateValue} from './state-contract.js';
 import {renderWorldDocument} from './world-document/render.js';
+import {useSRAssetBaseUrl} from './asset-context.js';
 export type WorldStateQuery={path:string;scope?:'global'};
 /** Detail components have queries only. No implicit subscriptions or state mutations. */
 export interface SRWorldStateAPI {
@@ -15,6 +16,7 @@ export function useSRWorldStateAPI():SRWorldStateAPI {
 }
 /** Scriptless prose inside the already isolated creator document; retains safe author styles. */
 export function WorldDocumentContent({content}:{content:string}) {
-  const rendered=useMemo(()=>renderWorldDocument(content,{profile:'document'}),[content]);
-  return <div dangerouslySetInnerHTML={{__html:rendered.head+rendered.html}}/>;
+  const assetBaseUrl=useSRAssetBaseUrl();
+  const rendered=useMemo(()=>renderWorldDocument(content,{profile:'document',assetBaseUrl}),[content,assetBaseUrl]);
+  return <>{rendered.assetErrors.length>0&&<small role="status">{rendered.assetErrors.join('；')}</small>}<div dangerouslySetInnerHTML={{__html:rendered.head+rendered.html}}/></>;
 }

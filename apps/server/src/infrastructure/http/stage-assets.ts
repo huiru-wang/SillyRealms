@@ -1,6 +1,8 @@
 import {Hono} from 'hono';
 import {serveStatic} from '@hono/node-server/serve-static';
 import {normalize} from 'node:path/posix';
+import {worldAssetRoutes} from './world-assets.js';
+import type {WorldFileStore} from '../world-files/world-file-store.js';
 
 export interface StageConfig {origin:string|null;port:number;entryPath:'/frame.html'}
 
@@ -26,12 +28,12 @@ export function serveWebConfig(app:Hono,stage:StageConfig){
 }
 
 /** Only isolated renderers and built assets live on this origin. No API or SPA fallback. */
-export function createStageApp(directory:string):Hono {
+export function createStageApp(directory:string,files?:WorldFileStore,worldExists?:(id:string)=>boolean):Hono {
   const app=new Hono();
   app.use('*',async(c,next)=>{
     const path=assetPath(c.req.path);
     const renderer=path==='/frame.html'||path==='/world-component.html';
-    if(!['GET','HEAD'].includes(c.req.method)||(!renderer&&!path.startsWith('/assets/')))return c.text('Not Found',404);
+    if(!['GET','HEAD'].includes(c.req.method)||(!renderer&&!path.startsWith('/assets/')&&!(files&&path.startsWith('/world-assets/'))))return c.text('Not Found',404);
     await next();
     c.header('X-Content-Type-Options','nosniff');
     if(renderer){
@@ -40,6 +42,7 @@ export function createStageApp(directory:string):Hono {
       c.header('Content-Security-Policy','sandbox allow-scripts allow-same-origin');
     }
   });
+  if(files)app.route('/world-assets',worldAssetRoutes(files,worldExists));
   app.use('*',serveStatic({root:directory}));
   return app;
 }

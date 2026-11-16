@@ -7,6 +7,7 @@ import {useStoryConfiguration,type MessageComponentProps,type MessageMatch} from
 import type {ChatMessage} from './run-contract.js';
 import {canShowLiteralPlaceholder,protectedRanges,selectMessageMatches} from './message-ranges.js';
 import {updateMessageDOM} from './message-dom.js';
+import {useSRAssetBaseUrl} from './asset-context.js';
 
 function substitute(template:string,match:MessageMatch){
   return template.replace(/\$([$&]|\d{1,2}|<[^>]+>)/g,(whole,token:string)=>{
@@ -24,6 +25,7 @@ class ComponentBoundary extends React.Component<{children:React.ReactNode;fallba
 }
 export const MessageContent = React.memo(function MessageContent({message,runId}:{message:ChatMessage;runId:string}){
   const config=useStoryConfiguration();
+  const assetBaseUrl=useSRAssetBaseUrl();
   const [matches,setMatches]=useState<MessageMatch[]>([]),[targets,setTargets]=useState<Element[]>([]),[failed,setFailed]=useState(false),[warning,setWarning]=useState(false);
   const ref=useRef<HTMLDivElement>(null),nonce=useRef(Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join(''));
   useEffect(()=>{
@@ -85,8 +87,9 @@ export const MessageContent = React.memo(function MessageContent({message,runId}
       } else raw+=substitute(item.replacement.content,item);
     }
     raw+=plain(cursor,message.text.length);
-    return {html:renderWorldDocument(raw,{profile:'message',slots:new Set(portals.map(portal=>portal.key))}).html,portals,structuralWarning,missingComponent,instructions:parsed.instructionText};
-  },[message.id,message.role,message.text,message.origin,matches,config,runId,failed]);
+    const document=renderWorldDocument(raw,{profile:'message',slots:new Set(portals.map(portal=>portal.key)),assetBaseUrl});
+    return {html:document.html,assetErrors:document.assetErrors,portals,structuralWarning,missingComponent,instructions:parsed.instructionText};
+  },[message.id,message.role,message.text,message.origin,matches,config,runId,failed,assetBaseUrl]);
   useLayoutEffect(()=>{
     const container=ref.current;if(!container)return;
     const template=document.createElement('template');template.innerHTML=rendered.html;
@@ -94,7 +97,7 @@ export const MessageContent = React.memo(function MessageContent({message,runId}
     updateMessageDOM(container,template.content);
     setTargets(Array.from(container.querySelectorAll('[data-sr-slot]')));
   },[rendered]);
-  return <div className="sr-rich"><div ref={ref}/>{rendered.instructions.length>0&&<div className="sr-rp-instruction-panel"><span>叙事指令</span>{rendered.instructions.map((text,index)=><p key={index}>{text}</p>)}</div>}{failed&&<small role="status">消息展示规则处理失败，已显示原文</small>}{(warning||rendered.structuralWarning)&&<small role="status">部分消息展示规则无效，已保留原文</small>}{rendered.missingComponent&&<small role="status">消息组件不可用，已保留原文</small>}{rendered.portals.map(portal=>{
+  return <div className="sr-rich"><div ref={ref}/>{rendered.assetErrors.length>0&&<small role="status">{rendered.assetErrors.join('；')}</small>}{rendered.instructions.length>0&&<div className="sr-rp-instruction-panel"><span>叙事指令</span>{rendered.instructions.map((text,index)=><p key={index}>{text}</p>)}</div>}{failed&&<small role="status">消息展示规则处理失败，已显示原文</small>}{(warning||rendered.structuralWarning)&&<small role="status">部分消息展示规则无效，已保留原文</small>}{rendered.missingComponent&&<small role="status">消息组件不可用，已保留原文</small>}{rendered.portals.map(portal=>{
     const target=targets.find(node=>node.getAttribute('data-sr-slot')===portal.key);if(!target)return null;
     const Component=portal.component;return createPortal(<ComponentBoundary fallback={portal.props.match}><Component {...portal.props}/></ComponentBoundary>,target,portal.key);
   })}</div>;

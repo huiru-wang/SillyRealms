@@ -3,7 +3,8 @@ import {WorldComponentView} from './WorldComponentView';
 import {useEffect,useLayoutEffect,useRef,useState,type CSSProperties,type KeyboardEvent,type RefObject,type TouchEvent as ReactTouchEvent,type UIEvent,type WheelEvent as ReactWheelEvent} from 'react';
 import {Link,useParams} from 'react-router-dom';
 import {ArrowLeft,BookOpen,BookText,ChevronDown,ChevronLeft,ChevronRight,ChevronUp,Compass,Ellipsis,MessageCircle,Settings2,SlidersHorizontal} from 'lucide-react';
-import {WorldDocumentRenderer} from '@sillyrealms/sdk';
+import {WorldDocumentRenderer,useSRAssetBaseUrl} from '@sillyrealms/sdk';
+import {WorldAssetsProvider} from '../../world-assets';
 import {Modal} from '../../components/ui/Modal';
 import {getWorld,listSessions,safeImage,type Character,type WorldDetail} from './api/worlds';
 import {usePaged} from './api/usePaged';
@@ -48,6 +49,7 @@ function restoreRoleAnchor(strip:HTMLDivElement,anchor:RoleAnchor,expected:WeakM
   strip.scrollLeft=left;
 }
 function RoleStrip({characters,compact,active,onChoose,onInspect,stripRef}:{characters:readonly Character[];compact:boolean;active:number;onChoose:(i:number)=>void;onInspect:(i:number)=>void;stripRef:RefObject<HTMLDivElement|null>}){
+  const assetBaseUrl=useSRAssetBaseUrl();
   const navigateRoles=(event:KeyboardEvent<HTMLDivElement>)=>{
     if(event.altKey||event.ctrlKey||event.metaKey)return;
     const keys=['ArrowLeft','ArrowRight','Home','End'];
@@ -69,7 +71,7 @@ function RoleStrip({characters,compact,active,onChoose,onInspect,stripRef}:{char
   return <div className={[styles.roleStrip,compact?styles.roleStripCompact:''].join(' ')} ref={stripRef} role="group" aria-label="世界角色列表" data-role-strip={compact?'compact':'expanded'} onKeyDown={navigateRoles}>
     {characters.map((character,i)=><div key={character.id} className={[styles.role,active===i?styles.roleActive:''].join(' ')} data-role-card={character.id}>
       <button type="button" data-role-index={i} data-role-action="details" className={styles.roleProfile} title={character.name} aria-label={'查看'+character.name+'的介绍'} onClick={()=>onInspect(i)}>
-        <span className={styles.roleAvatar} aria-hidden="true">{safeImage(character.avatar)?<img src={safeImage(character.avatar)} alt=""/>:<span>{character.name.slice(0,1)}</span>}</span>
+        <span className={styles.roleAvatar} aria-hidden="true">{safeImage(character.avatar,assetBaseUrl)?<img src={safeImage(character.avatar,assetBaseUrl)} alt=""/>:<span>{character.name.slice(0,1)}</span>}</span>
         <span className={styles.roleName}>{character.name}</span>
       </button>
       {character.player_selectable&&<button type="button" className={styles.roleSelect} data-role-index={i} data-role-action="select" aria-label={(active===i?'已选中：':'扮演：')+character.name} aria-pressed={active===i} onClick={()=>onChoose(i)}>{active===i?'已选中':'可扮演'}</button>}
@@ -82,7 +84,7 @@ function SessionSection({worldId}:{worldId:string}){
   return <>
     {loading&&!page&&<p role="status">正在加载会话…</p>}
     {error&&<div role="alert" className={styles.emptySessions}><strong>无法加载会话</strong><button onClick={retry}>重试</button></div>}
-    {page&&page.items.length>0&&<div className={styles.sessionList}>{page.items.map(session=><SessionRow key={session.id} id={session.id} title={session.title} updatedAt={session.updatedAt} actions={<div className={styles.sessionActions} onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget))setMenu(null);}} onKeyDown={event=>{if(event.key==='Escape')setMenu(null);}}><button className={styles.moreButton} aria-label={(session.title||'未命名会话')+'的更多操作'} aria-expanded={menu===session.id} onClick={()=>setMenu(menu===session.id?null:session.id)}><Ellipsis size={20}/></button>{menu===session.id&&<div className={styles.moreMenu} role="status">暂无可用操作</div>}</div>}/>)}</div>}
+    {page&&page.items.length>0&&<div className={styles.sessionList}>{page.items.map(session=><SessionRow key={session.id} id={session.id} worldId={worldId} title={session.title} updatedAt={session.updatedAt} actions={<div className={styles.sessionActions} onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget))setMenu(null);}} onKeyDown={event=>{if(event.key==='Escape')setMenu(null);}}><button className={styles.moreButton} aria-label={(session.title||'未命名会话')+'的更多操作'} aria-expanded={menu===session.id} onClick={()=>setMenu(menu===session.id?null:session.id)}><Ellipsis size={20}/></button>{menu===session.id&&<div className={styles.moreMenu} role="status">暂无可用操作</div>}</div>}/>)}</div>}
     {!loading&&!error&&page?.items.length===0&&<div className={styles.emptySessions}><MessageCircle size={22} aria-hidden="true"/><strong>还没有会话</strong><p>在这个世界开始的故事会显示在这里。</p></div>}
     {page?.hasMore&&!error&&<button className={styles.actionButton} disabled={loading} onClick={more}>{loading?'加载中…':'加载更多'}</button>}
   </>;
@@ -124,10 +126,11 @@ export function WorldDetailPage(){
   useEffect(()=>{const c=new AbortController();setWorld(null);setError(false);if(worldId)getWorld(worldId,c.signal).then(result=>setWorld(result.item)).catch(()=>{if(!c.signal.aborted)setError(true);});else setError(true);return()=>c.abort();},[worldId,revision]);
   useEffect(()=>{const refresh=(event:Event)=>{const patch=(event as CustomEvent).detail;if(patch?.id===worldId)setWorld(previous=>previous?{...previous,...patch}:previous);};window.addEventListener('sr:world-config',refresh);return()=>window.removeEventListener('sr:world-config',refresh);},[worldId]);
   if(!world||world.id!==worldId)return <div className={styles.notFound}>{error?<><h1>无法加载世界卡</h1><p>世界卡可能不存在，或服务暂时不可用。</p><button className={styles.actionButton} onClick={()=>setRevision(n=>n+1)}>重试</button> <Link to="/worlds">返回世界卡</Link></>:<p role="status">正在加载世界卡…</p>}</div>;
-  return <WorldDetailView key={world.id} world={world}/>;
+  return <WorldAssetsProvider worldId={world.id}><WorldDetailView key={world.id} world={world}/></WorldAssetsProvider>;
 }
 function WorldDetailView({world}:{world:WorldDetail}){
   const worldId=world.id;
+  const assetBaseUrl=useSRAssetBaseUrl();
   const names=world.data.characters.map(character=>character.name);
   const [roleDialog,setRoleDialog]=useState<number|null>(null);
   const [selectedRole,setSelectedRole]=useState(()=>world.data.characters.findIndex(character=>character.player_selectable));
@@ -385,7 +388,7 @@ function WorldDetailView({world}:{world:WorldDetail}){
         </div>
         <div className={styles.worldActionsSlot}><WorldActions world={world}/></div>
         <div className={styles.overviewTop}>
-          {safeImage(world.data.cover)?<img className={styles.cover} src={safeImage(world.data.cover)} alt=""/>:<div className={styles.cover} aria-hidden="true"/>}
+          {safeImage(world.data.cover,assetBaseUrl)?<img className={styles.cover} src={safeImage(world.data.cover,assetBaseUrl)} alt=""/>:<div className={styles.cover} aria-hidden="true"/>}
           <div className={styles.worldText}>
             <h1 title={world.data.name}>{world.data.name}</h1>
             <div className={styles.metadata} aria-hidden={reducedMotion?progress>=.5:progress>=.35}>

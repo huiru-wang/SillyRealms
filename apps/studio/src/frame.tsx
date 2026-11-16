@@ -91,11 +91,11 @@ window.addEventListener('message',function receive(event){
               const candidate=load(id) as MessageComponent;
               if(candidate.srDisplay!==undefined&&candidate.srDisplay!=='inline'&&candidate.srDisplay!=='block')throw Error('消息组件显示类型无效');
               component=candidate;
-            }catch {port.postMessage({type:'message-error',component:id});}
+            }catch(error){port.postMessage({type:'message-error',component:id,message:error instanceof Error?error.message:String(error)});}
             return component;
           }});
         }
-        root.render(<Boundary key={payload.main??'official'}><AtomicContext.Provider value={{session,state}}><StoryContext.Provider value={{components,rules:payload.rules??[],state:payload.state??{},ready:()=>port.postMessage({type:'page-mounted'}),match:(text,role)=>command('message.match',{text,role})}}>{custom?<Mounted component={Component}/>:<Component/>}</StoryContext.Provider></AtomicContext.Provider></Boundary>);
+        root.render(<Boundary key={payload.main??'official'}><SDK.SRAssetProvider baseUrl={payload.assetBaseUrl??null}><AtomicContext.Provider value={{session,state}}><StoryContext.Provider value={{components,rules:payload.rules??[],state:payload.state??{},ready:()=>port.postMessage({type:'page-mounted'}),match:(text,role)=>command('message.match',{text,role})}}>{custom?<Mounted component={Component}/>:<Component/>}</StoryContext.Provider></AtomicContext.Provider></SDK.SRAssetProvider></Boundary>);
       } catch(error){port.postMessage({type:'ui-error',message:error instanceof Error?error.message:String(error)});}
     }
   };

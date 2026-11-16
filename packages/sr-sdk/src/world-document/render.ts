@@ -1,13 +1,28 @@
 import DOMPurify from 'dompurify';
 import {Marked} from 'marked';
+import {parseSRAssetBaseUrl, resolveSRAssetUrl, validatePackagePath} from '../asset-url.js';
 
+// Preserve Marked's existing entities so HTML parsing decodes them exactly once.
+// Literal angle brackets and quotes are still escaped before creating attributes.
+const escapeAttribute=(value:string)=>value.replace(/[<>"']|&(?!(#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|\w+);)/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]!));
 // GFM tasks are static content, never live form controls. Keep input forbidden.
-const markdown=new Marked({gfm:true,breaks:true,renderer:{checkbox:({checked})=>
-  `<span class="sr-task-marker" role="img" aria-label="${checked?'已完成':'未完成'}">${checked?'☑':'☐'}</span> `}});
+const markdown=new Marked({gfm:true,breaks:true,renderer:{
+  checkbox:({checked})=>`<span class="sr-task-marker" role="img" aria-label="${checked?'已完成':'未完成'}">${checked?'☑':'☐'}</span> `,
+  image({href,title,text,tokens}){
+    if(!/^sr-asset:/i.test(href))return false;
+    // Package paths are raw Unicode text. Marked's default encodeURI would turn
+    // these into percent escapes before our shared package parser sees them.
+    const alt=tokens?this.parser.parseInline(tokens,this.parser.textRenderer):text;
+    return `<img src="${escapeAttribute(href)}" alt="${escapeAttribute(alt)}"${title?` title="${escapeAttribute(title)}"`:''}>`;
+  },
+}});
 
 type Profile='document'|'message';
 const properties=new Set(['color','background-color','font-size','font-family','font-weight','font-style','line-height','text-align','text-decoration','letter-spacing','white-space','word-break','overflow-wrap','display','margin','margin-top','margin-bottom','margin-left','margin-right','padding','padding-top','padding-bottom','padding-left','padding-right','border','border-color','border-width','border-style','border-radius','max-width','min-width','width','height','opacity','box-sizing','vertical-align','list-style-type','text-indent']);
 const forbidden=['script','iframe','object','embed','form','input','button','select','textarea','link','meta','base','svg','math','video','audio','source'];
+// Keep the one package scheme through sanitization so the attribute pass can resolve it.
+// Unknown schemes remain forbidden; no sanitizer hooks or global configuration are used.
+const allowedURI=/^(?:(?:https?|mailto|sr-asset):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i;
 
 // CSSOM parses declarations before the whitelist is applied. Values containing escapes,
 // resource functions, variables or other functions are excluded even in isolated documents.
@@ -35,17 +50,26 @@ function cleanStylesheet(text:string):{css:string;removed:boolean} {
     return {css,removed:removed||!!text.trim()&&!css};
   } catch {return {css:'',removed:!!text.trim()};}
 }
-function safeUrl(value:string,kind:'link'|'image'):boolean {
+function safeUrl(value:string,kind:'link'|'image',assetBaseUrl?:string|null):boolean {
   const v=value.trim();
   if(!v||/[\u0000-\u0020\u007f]/.test(v))return false;
   if(kind==='link' && (v.startsWith('#')||v.startsWith('/')&&!v.startsWith('//')))return true;
-  try {const url=new URL(v,document.baseURI);return kind==='link'?['http:','https:','mailto:'].includes(url.protocol):url.protocol==='https:';}catch{return false;}
+  try {
+    const url=new URL(v,document.baseURI);
+    if(kind==='link')return ['http:','https:','mailto:'].includes(url.protocol);
+    if(url.protocol==='https:')return true;
+    if(!assetBaseUrl)return false;
+    const base=parseSRAssetBaseUrl(assetBaseUrl);
+    if(url.origin!==base.origin||!url.pathname.startsWith(base.pathname)||url.username||url.password)return false;
+    validatePackagePath(decodeURIComponent(url.pathname.slice(base.pathname.length)),'assets');
+    return true;
+  }catch{return false;}
 }
-export function renderWorldDocument(source:string,options:{profile:Profile;slots?:ReadonlySet<string>}):{html:string;head:string;full:boolean;removedStyles:boolean} {
+export function renderWorldDocument(source:string,options:{profile:Profile;slots?:ReadonlySet<string>;assetBaseUrl?:string|null}):{html:string;head:string;full:boolean;removedStyles:boolean;assetErrors:string[]} {
   const full=/^\s*(?:<!doctype\s+html\b|<html(?:\s|>))/i.test(source);
   const parsed=full?source:String(markdown.parse(source,{async:false,breaks:true}));
   // Keep style only long enough to parse it with CSSOM. Author metadata and executable content never survive.
-  const purified=DOMPurify.sanitize(parsed,{WHOLE_DOCUMENT:full,ADD_TAGS:options.profile==='document'?['style']:[],FORBID_TAGS:options.profile==='document'?forbidden:[...forbidden,'style'],FORBID_ATTR:['srcdoc','srcset']});
+  const purified=DOMPurify.sanitize(parsed,{WHOLE_DOCUMENT:full,ADD_TAGS:options.profile==='document'?['style']:[],FORBID_TAGS:options.profile==='document'?forbidden:[...forbidden,'style'],FORBID_ATTR:['srcdoc','srcset'],ALLOWED_URI_REGEXP:allowedURI});
   const doc=new DOMParser().parseFromString(purified,'text/html');
   for(const el of Array.from(doc.querySelectorAll('[data-sr-markdown="true"]'))){
     if(el.closest('pre,code,style,script'))continue;
@@ -56,11 +80,12 @@ export function renderWorldDocument(source:string,options:{profile:Profile;slots
       if(node.nodeType!==Node.TEXT_NODE||!node.textContent?.trim())continue;
       const html=String(markdown.parse(node.textContent,{async:false,breaks:true}));
       const template=doc.createElement('template');
-      template.innerHTML=DOMPurify.sanitize(html,{FORBID_TAGS:[...forbidden,'style'],FORBID_ATTR:['srcdoc','srcset']});
+      template.innerHTML=DOMPurify.sanitize(html,{FORBID_TAGS:[...forbidden,'style'],FORBID_ATTR:['srcdoc','srcset'],ALLOWED_URI_REGEXP:allowedURI});
       node.replaceWith(template.content);
     }
   }
   let removedStyles=false;
+  const assetErrors:string[]=[];
   const seenSlots=new Set<string>();
   for(const el of Array.from(doc.querySelectorAll('*'))){
     for(const attr of Array.from(el.attributes)){
@@ -79,7 +104,20 @@ export function renderWorldDocument(source:string,options:{profile:Profile;slots
       if(!safeUrl(el.getAttribute('href')??'','link'))el.removeAttribute('href');
       else {el.setAttribute('target','_blank');el.setAttribute('rel','noopener noreferrer');}
     }
-    if(el.hasAttribute('src')&&!safeUrl(el.getAttribute('src')??'','image'))el.removeAttribute('src');
+    if(el.hasAttribute('src')){
+      const value=el.getAttribute('src')??'';
+      if(/^sr-asset:/i.test(value.trim())){
+        try {
+          if(el.tagName!=='IMG')throw Error('此位置不支持包内资源');
+          el.setAttribute('src',resolveSRAssetUrl(value,options.assetBaseUrl)!);
+        }catch(error){
+          el.removeAttribute('src');
+          const reason=error instanceof Error?error.message:'包内图片地址无效';
+          if(assetErrors.length<3&&!assetErrors.includes(reason))assetErrors.push(reason);
+        }
+      }
+      if(el.hasAttribute('src')&&!safeUrl(el.getAttribute('src')??'','image',options.assetBaseUrl))el.removeAttribute('src');
+    }
     el.removeAttribute('srcset');
   }
   let head='';
@@ -87,5 +125,5 @@ export function renderWorldDocument(source:string,options:{profile:Profile;slots
     head=Array.from(doc.querySelectorAll('style')).map(el=>{const result=cleanStylesheet(el.textContent??'');removedStyles ||= result.removed;return result.css;}).filter(Boolean).map(css=>`<style>${css}</style>`).join('');
   }
   doc.querySelectorAll('style').forEach(el=>el.remove());
-  return {html:doc.body.innerHTML,head,full,removedStyles};
+  return {html:doc.body.innerHTML,head,full,removedStyles,assetErrors};
 }

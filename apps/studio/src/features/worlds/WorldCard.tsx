@@ -1,8 +1,9 @@
 import {MessageCircle} from 'lucide-react';
 import {safeImage,type WorldListItem} from './api/worlds';
 import styles from './WorldLibraryPage.module.css';
+import {useWorldAssetBaseUrl} from '../../world-assets';
 export function WorldCard({world,onClick}:{world:WorldListItem;onClick:()=>void}){
-  const cover=safeImage(world.cover),tags=world.tags.map(tag=>tag.name).join(' · ');
+  const cover=safeImage(world.cover,useWorldAssetBaseUrl(world.id)),tags=world.tags.map(tag=>tag.name).join(' · ');
   return <button className={styles.card} type="button" onClick={onClick} aria-label={'查看世界卡：'+world.name}>
     {cover&&<img className={styles.cover} src={cover} alt="" loading="lazy"/>}
     <span className={styles.cardScrim} aria-hidden="true"/>

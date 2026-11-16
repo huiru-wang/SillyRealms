@@ -5,6 +5,7 @@ import {useLoad} from './ui';
 import {useTheme} from '../hooks/useTheme';
 import {usePresetStore} from '../features/presets/PresetStore';
 import styles from './AppShell.module.css';
+import {WorldAssetImage} from '../world-assets';
 
 const NAV=[
   {title:'世界卡',path:'/worlds',Icon:BookOpen}
@@ -80,7 +81,7 @@ export function AppShell(){
             <h2 id="sessions-heading" className={styles.sectionTitle}><Link to="/sessions" title={labelsHidden?'会话列表':undefined} aria-label="会话列表" aria-current={sessionHeadingActive?(location.pathname==='/sessions'?'page':'location'):undefined} className={[styles.navItem,sessionHeadingActive?styles.navSelected:''].join(' ')}><MessageCircle size={20} strokeWidth={1.8} aria-hidden="true"/><span className={styles.navLabel} aria-hidden={labelsHidden}>会话列表</span></Link></h2>
             <div className={styles.shortcuts} inert={labelsHidden} aria-hidden={labelsHidden}>
             {sessionShortcuts.map((item:any)=><Link key={item.id} className={styles.sessionRow} data-session-shortcut={item.id} aria-current={location.pathname==='/sessions/'+item.id?'page':undefined} to={'/sessions/'+encodeURIComponent(item.id)}>
-              {item.cover&&<img src={item.cover} alt=""/>}<span className={styles.rowText}><strong>{item.title||'未命名会话'}</strong><small>{new Date(item.updatedAt).toLocaleDateString()}</small></span></Link>)}
+              {item.cover&&<WorldAssetImage source={item.cover} worldId={item.worldId} alt=""/>}<span className={styles.rowText}><strong>{item.title||'未命名会话'}</strong><small>{new Date(item.updatedAt).toLocaleDateString()}</small></span></Link>)}
             {sessions.error&&<button onClick={()=>void sessions.reload()}>会话加载失败，重试</button>}
             </div>
           </section>

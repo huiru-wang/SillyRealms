@@ -1,3 +1,4 @@
+import { readExportedCard } from './zip-helpers.js';
 import { afterEach, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, writeFileSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -75,7 +76,7 @@ it('holds app defaults, stores exact source bytes, and copies world defaults int
     const modelRemoval=await app.request('/api/v1/api-model-configs/model-b',{method:'DELETE'});
     expect(modelRemoval.status).toBe(409);
     expect(await modelRemoval.json()).toMatchObject({success:false,errorCode:'CONFIG_IN_USE'});
-    const exported=await (await app.request('/api/v1/worlds/'+id+'/export')).json() as any;
+    const exported=await readExportedCard(await app.request('/api/v1/worlds/'+id+'/export'));
     expect(exported.data.characters).toEqual(sample.data.characters);
     expect(exported.data.lorebook).toEqual(sample.data.lorebook);
     expect(exported.data).not.toHaveProperty('defaultApiModelConfigId');
@@ -98,7 +99,7 @@ it('rejects tampered original world source without mutating the structured card'
     expect(await res.json()).toMatchObject({success:false,errorCode:'WORLD_CORRUPT'});
     const reconstructed=await app.request('/api/v1/worlds/'+id+'/export');
     expect(reconstructed.status).toBe(200);
-    expect((await reconstructed.json() as any).data.name).toBe(sample.data.name);
+    expect((await readExportedCard(reconstructed)).data.name).toBe(sample.data.name);
   } finally {db.close();}
 });
 
@@ -119,8 +120,8 @@ it('keeps the original UTF-8 filename for source storage and normalized exports'
     expect(await source.text()).toBe(raw);
     const exported=await app.request('/api/v1/worlds/'+id+'/export');
     expect(exported.status).toBe(200);
-    expect(exported.headers.get('content-disposition')).toContain("filename*=UTF-8''"+encoded);
-    expect((await exported.json() as any).data.name).toBe(sample.data.name);
+    expect(exported.headers.get('content-disposition')).toContain("filename*=UTF-8''"+encodeURIComponent(originalName.replace(/\.json$/i,'.zip')));
+    expect((await readExportedCard(exported)).data.name).toBe(sample.data.name);
   } finally {db.close();}
 });
 

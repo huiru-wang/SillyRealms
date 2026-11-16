@@ -20,10 +20,14 @@
     "@earendil-works/pi-ai": "1.5.0",
     "@hono/node-server": "2.1.6",
     "@sillyrealms/roleplay": "workspace:*",
+    "@sillyrealms/sdk": "workspace:*",
     "acorn": "8.19.0",
+    "entities": "9.0.0",
     "hono": "4.13.16",
     "lodash": "4.18.1",
     "proper-lockfile": "4.1.2",
+    "yauzl": "3.4.0",
+    "yazl": "3.3.1",
     "zod": "4.6.7"
   },
   "devDependencies": {
@@ -31,6 +35,8 @@
     "@types/lodash": "4.17.27",
     "@types/node": "26.6.6",
     "@types/proper-lockfile": "4.1.4",
+    "@types/yauzl": "3.4.0",
+    "@types/yazl": "3.3.1",
     "eslint": "10.14.0",
     "tsx": "4.23.15",
     "typescript": "6.0.3",

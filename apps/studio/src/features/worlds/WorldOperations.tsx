@@ -1,4 +1,5 @@
 import {Select} from '../../components/ui/Select';
+import {useSRAssetBaseUrl} from '@sillyrealms/sdk';
 import {createPortal} from 'react-dom';
 import {Ellipsis} from 'lucide-react';
 import {useEffect,useRef,useState} from 'react';
@@ -11,6 +12,7 @@ import {Button} from '../../components/ui/Button';
 import styles from './WorldDetailPage.module.css';
 // Primary: start/save. Secondary: configuration. Uses Studio surface/text/spacing tokens.
 export function StartSession({world,openingId,characterId}:{world:WorldDetail;openingId:string;characterId?:string}){
+ const assetBaseUrl=useSRAssetBaseUrl();
  const role=world.data.characters.find(character=>character.id===characterId&&character.player_selectable);
  const opening=world.data.openings.find(item=>item.id===openingId);
  const [confirmation,setConfirmation]=useState<{openingId:string;openingName:string;characterId:string;characterName:string;avatar?:string}|null>(null);
@@ -31,7 +33,7 @@ export function StartSession({world,openingId,characterId}:{world:WorldDetail;op
   {confirmation&&<Modal title="开始会话" onClose={close} onBeforeClose={()=>!submitting.current} footer={<><Button className={styles.startAction} disabled={busy} onClick={close}>取消</Button><Button className={styles.startAction} tone="accent" disabled={busy} onClick={()=>void start()}>{busy?'正在创建…':'确认开始'}</Button></>}>
    <dl className={styles.startSummary} aria-busy={busy}>
     <div><dt>开局</dt><dd>{confirmation.openingName}</dd></div>
-    <div><dt>扮演角色</dt><dd><span className={styles.startAvatar} aria-hidden="true">{safeImage(confirmation.avatar)?<img src={safeImage(confirmation.avatar)} alt=""/>:confirmation.characterName.slice(0,1)}</span><span>{confirmation.characterName}</span></dd></div>
+    <div><dt>扮演角色</dt><dd><span className={styles.startAvatar} aria-hidden="true">{safeImage(confirmation.avatar,assetBaseUrl)?<img src={safeImage(confirmation.avatar,assetBaseUrl)} alt=""/>:confirmation.characterName.slice(0,1)}</span><span>{confirmation.characterName}</span></dd></div>
    </dl>
    {error&&<p className={styles.startFailure} role="alert">{error}</p>}
   </Modal>}

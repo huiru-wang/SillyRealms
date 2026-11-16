@@ -1,3 +1,5 @@
+import {resolveSRAssetUrl} from '@sillyrealms/sdk/assets';
+
 export type Page<T>={items:T[];hasMore:boolean;nextCursor:string|null};
 export type Tag={id:string;name:string};
 export type WorldListItem={id:string;name:string;cover:string|null;tags:Tag[];sessionCount:number};
@@ -5,9 +7,9 @@ export type Character={id:string;name:string;description?:string;avatar?:string;
 export type Opening={type?:'component';component?:string;id:string;name:string;content:string;initial_state?:Record<string,unknown>};
 export type StateDefinition={type:string;description?:string;initial:unknown;min?:number;max?:number};
 export type LoreEntry={id:string;title?:string;content:string;enabled?:boolean;load?:{mode?:'always'|'on_mention'|'never';keywords?:string[];order?:number}};
-export type WorldData={name:string;components?:Array<{id:string;component:string}>;stage_component?:string;description?:{type:'component';component:string};cover?:string;tags?:string[];characters:Character[];openings:Opening[];lorebook?:{entries:LoreEntry[]};state?:{scopes?:Record<string,Record<string,StateDefinition>>}};
+export type WorldData={name:string;components?:Array<{id:string;path?:string;component?:string}>;stage_component?:string;description?:{type:'component';component:string};cover?:string;tags?:string[];characters:Character[];openings:Opening[];lorebook?:{entries:LoreEntry[]};state?:{scopes?:Record<string,Record<string,StateDefinition>>}};
 export type WorldDetail={id:string;data:WorldData;defaultPresetId:string|null;defaultApiModelConfigId:string|null};
-export type Session={id:string;title:string|null;updatedAt:number;cover:string|null};
+export type Session={id:string;worldId:string;title:string|null;updatedAt:number;cover:string|null};
 export class ApiError extends Error { constructor(readonly code:string, message:string){super(message);} }
 async function get<T>(path:string,signal:AbortSignal):Promise<T>{
   const response=await fetch('/api/v1/'+path,{signal});
@@ -37,8 +39,12 @@ export function listSessions(id:string,cursor:string|null,signal:AbortSignal){
   const query=new URLSearchParams({worldId:id,limit:'20'});if(cursor)query.set('cursor',cursor);
   return get<Page<Session>>('sessions?'+query,signal).then(checkPage);
 }
-export function safeImage(value:string|null|undefined):string|undefined{
+export function safeImage(value:string|null|undefined,assetBaseUrl?:string|null):string|undefined{
   if(!value)return undefined;
+  if(value.startsWith('sr-asset:')){
+    if(!assetBaseUrl)return undefined;
+    try{return resolveSRAssetUrl(value,assetBaseUrl)??undefined;}catch{return undefined;}
+  }
   if(/^data:image\/(?:png|jpeg|gif|webp|avif);base64,[a-z0-9+/=\s]+$/i.test(value))return value;
   try {const url=new URL(value,location.origin);return ['http:','https:'].includes(url.protocol)?url.href:undefined;} catch{return undefined;}
 }

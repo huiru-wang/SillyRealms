@@ -9,7 +9,9 @@ import {stageURL} from './stage-url';
 import {RoleplayComposer} from './features/sessions/composer/RoleplayComposer';
 import {SessionTokenUsage} from './features/sessions/SessionTokenUsage';
 import {SessionSettingsDialog,type CapabilityView} from './features/sessions/SessionSettingsDialog';
+import {compileWorldComponents} from './features/worlds/compile-world-components';
 import {compileComponents} from '@sillyrealms/ui-compiler';
+import {worldAssetBaseUrl} from './world-assets';
 import {MessageMatcher} from './message-matcher';
 import {trimTrailingEmptyRoleplayLines} from '@sillyrealms/roleplay';
 import type {MessageRule} from '../../../packages/sr-sdk/src/story-context';
@@ -40,6 +42,7 @@ export function SessionHost({id}:{id:string}) {
   const fontPreferenceKey='sr:session:'+id+':reading-font-size';
   const [loaded,setLoaded]=useState(false);
   const [fatal,setFatal]=useState(false);
+  const [fatalMessage,setFatalMessage]=useState('');
   const [online,setOnline]=useState(false);
   const [mounted,setMounted]=useState(false);
   const [draft,setDraft]=useState('');
@@ -53,7 +56,8 @@ export function SessionHost({id}:{id:string}) {
   const expandButton=useRef<HTMLButtonElement>(null);
   const port=useRef<MessagePort|null>(null);
   const ready=useRef(false),connected=useRef(false),mountedRef=useRef(false),fatalRef=useRef(false),activeRef=useRef<string|null>(null),sendingRef=useRef(false);
-  const renderRef=useRef<{modules:{code:Record<string,string>;errors:Record<string,string>};main?:string;rules:unknown[];state:unknown}>({modules:{code:{},errors:{}},rules:[],state:{}}),loadedRef=useRef(false);
+  const renderRef=useRef<{worldId?:string;modules:{code:Record<string,string>;errors:Record<string,string>};main?:string;rules:unknown[];state:unknown}>({modules:{code:{},errors:{}},rules:[],state:{}}),loadedRef=useRef(false);
+  const renderPayload=useCallback((origin:string)=>{const {worldId,...render}=renderRef.current;return {type:'render',...render,assetBaseUrl:worldAssetBaseUrl(origin,worldId)};},[]);
   const suggestions=useMemo(()=>new ActionSuggestionStore(id,event=>port.current?.postMessage({type:'event',event})),[id]);
   const terminal=useRef(new Set<string>());
   const nonce=useMemo(()=>randomId(),[id]);
@@ -141,7 +145,8 @@ export function SessionHost({id}:{id:string}) {
     catch(error){setNotice(error instanceof Error?error.message:'停止失败');}
     finally {setStopping(false);}
   },[base]);
-  const block=useCallback(()=>{
+  const block=useCallback((message?:string)=>{
+    setFatalMessage(message||'请检查世界卡组件配置后重试。');
     fatalRef.current=true;mountedRef.current=false;setFatal(true);setMounted(false);setFontSize(fontSizeBeforeSettings.current);setSettingsOpen(false);setNotice('');
     if(activeRef.current)void stop(activeRef.current);
   },[stop]);
@@ -167,7 +172,7 @@ export function SessionHost({id}:{id:string}) {
   // Install the trusted handshake before a cached iframe can emit sr-ready.
   useLayoutEffect(()=>{
     ready.current=false;connected.current=false;mountedRef.current=false;fatalRef.current=false;activeRef.current=null;
-    draftRevision.current++;setDraft('');setExpanded(true);setFatal(false);setMounted(false);setLoaded(false);setOnline(false);setActiveRun(null);setNotice('');setSettingsOpen(false);setSettingsError('');setPresets([]);setModelConfigs([]);setModelConfig(null);setCapabilities(null);loadedRef.current=false;renderRef.current={modules:{code:{},errors:{}},rules:[],state:{}};terminal.current.clear();suggestions.reset();
+    draftRevision.current++;setDraft('');setExpanded(true);setFatal(false);setFatalMessage('');setMounted(false);setLoaded(false);setOnline(false);setActiveRun(null);setNotice('');setSettingsOpen(false);setSettingsError('');setPresets([]);setModelConfigs([]);setModelConfig(null);setCapabilities(null);loadedRef.current=false;renderRef.current={modules:{code:{},errors:{}},rules:[],state:{}};terminal.current.clear();suggestions.reset();
     const stream=new EventSource(`/api/${base}/events`);
     const matcher=new MessageMatcher();
     let recoverySequence=0;
@@ -244,7 +249,7 @@ export function SessionHost({id}:{id:string}) {
         const payload=message.data;
         if(payload.type==='ready-ack'){
           clearTimeout(stageTimer.current);setStageError('');
-          ready.current=true;if(loadedRef.current)channel.port1.postMessage({type:'render',...renderRef.current});
+          ready.current=true;if(loadedRef.current)channel.port1.postMessage(renderPayload(source.origin));
           channel.port1.postMessage({type:'theme',value:document.documentElement.dataset.theme??'light'});
           syncAppearance();
           if(connected.current)channel.port1.postMessage({type:'connected'});
@@ -252,8 +257,8 @@ export function SessionHost({id}:{id:string}) {
         else if(payload.type==='set-draft'){
           if(!fatalRef.current && typeof payload.text==='string' && payload.text.length<=100000){updateDraft(payload.text);setExpanded(true);}
         } else if(payload.type==='sdk-error')setNotice('SDK 错误：'+payload.message);
-        else if(payload.type==='message-error')setNotice('消息组件加载失败，将显示原文');
-        else if(payload.type==='ui-error')block();
+        else if(payload.type==='message-error')setNotice('消息组件 '+String(payload.component??'')+' 加载失败：'+String(payload.message??'请检查组件配置')+'，将显示原文');
+        else if(payload.type==='ui-error')block(String(payload.message??'世界卡组件运行失败'));
         else if(payload.type==='request'){
           try {
             if(new TextEncoder().encode(JSON.stringify(payload)).byteLength>2*1024*1024)throw Error('消息过大');
@@ -305,18 +310,18 @@ export function SessionHost({id}:{id:string}) {
       if(current.activeRun)restoreRun({...current.activeRun,runId:current.activeRun.runId??current.activeRun.id});
     }return api('v1/worlds/'+current.worldId);}).then(async world=>{
       const data=world.item.data;
-      const modules=await compileComponents(data.components??[]);
+      const modules=await compileWorldComponents(world.item,compileComponents);
       if(!gone&&data.stage_component&&!(data.components??[]).some((item:{id:string})=>item.id===data.stage_component))setNotice('未找到舞台主组件，已使用官方故事界面。');
-      if(!gone){renderRef.current={modules,main:data.stage_component,rules:data.message_render?.rules??[],state:data.state??{}};loadedRef.current=true;setLoaded(true);if(stageError)setNotice(current=>current===stageError?'':current);if(ready.current)port.current?.postMessage({type:'render',...renderRef.current});}
+      if(!gone){renderRef.current={worldId:world.item.id,modules,main:data.stage_component,rules:data.message_render?.rules??[],state:data.state??{}};loadedRef.current=true;setLoaded(true);if(stageError)setNotice(current=>current===stageError?'':current);if(ready.current&&stageSourceRef.current)port.current?.postMessage(renderPayload(stageSourceRef.current.origin));}
 
     }).catch(error=>{if(!gone){
       if(error instanceof ApiError){stageError=error.message;setNotice(stageError);}
-      else block();
+      else block(error instanceof Error?error.message:'组件加载失败');
     }}).finally(()=>{loadingStage=false;if(retryStage){retryStage=false;loadStage();}});
     };
     loadStage();loadSettings();
     return()=>{gone=true;themeObserver.disconnect();matcher.close();stream.close();port.current?.close();port.current=null;window.removeEventListener('message',listener);};
-  },[base,nonce,send,block,updateDraft,syncAppearance,suggestions]);
+  },[base,nonce,send,block,updateDraft,syncAppearance,suggestions,renderPayload]);
 
   useEffect(()=>{
     const abort=new AbortController();
@@ -381,7 +386,7 @@ export function SessionHost({id}:{id:string}) {
       </div>
     </header>
     <div ref={stageViewport} className={styles.stageSlot} aria-label="故事舞台">
-      {fatal?<div className="stage-error" role="alert"><h2>世界卡运行界面异常</h2><p>请检查世界卡组件配置后重试。</p><Link to="/sessions">返回会话列表</Link><button onClick={()=>location.reload()}>重新加载</button></div>:
+      {fatal?<div className="stage-error" role="alert"><h2>世界卡运行界面异常</h2><p>{fatalMessage}</p><Link to="/sessions">返回会话列表</Link><button onClick={()=>location.reload()}>重新加载</button></div>:
         stageError?<div className="stage-error" role="alert"><h2>故事舞台暂时无法连接</h2><p>{stageError}</p><button onClick={()=>setStageAttempt(value=>value+1)}>重试舞台</button></div>:
         stageSource?<iframe className={styles.preview} key={stageSource.nonce} ref={frame} title="会话页面" sandbox="allow-scripts allow-same-origin" src={stageSource.url} onLoad={onStageLoad}/>:<p role="status">正在连接故事舞台…</p>}
     </div>

@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.tsx",
+    "./assets": "./src/asset-url.ts",
     "./world-story.css": "./src/world-story.css"
   },
   "peerDependencies": {

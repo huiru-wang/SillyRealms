@@ -1,3 +1,4 @@
+import { readExportedCard } from './zip-helpers.js';
 import { fakeCredentials, configureWorldModel, seedModel } from './fixtures/db-seed.js';
 import { expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
@@ -63,7 +64,7 @@ it('imports text unchanged, strips unknown fields and rejects object description
     const extensions={source:{load:{mode:'unused'},regex_scripts:['archive']}};
     const res=await app.request('/api/v1/worlds/import',upload({...base,preset:sample,extensions,regex_scripts:['unused'],format:'html'}));
     const {data:{item}}=await res.json() as {data:{item:{id:string}}};
-    const exported=await (await app.request('/api/v1/worlds/'+item.id+'/export')).json();
+    const exported=await readExportedCard(await app.request('/api/v1/worlds/'+item.id+'/export'));
     expect(exported).toEqual({spec:'world_card',spec_version:'0.1',data:{...base,openings:[{id:'o',name:'港口',content:'{{user}} 到港'}],extensions,tags:[]}});
     expect(db.prepare('SELECT count(*) AS n FROM presets').get()?.n).toBe(1);
   } finally {db.close();}
@@ -146,7 +147,7 @@ it('round-trips the optional creator UI and validates V1 state writes',async()=>
     const imported=await app.request('/api/v1/worlds/import',upload({...base,state,components:[{id:'main',component:source},...base.components],stage_component:'main'}));
     expect(imported.status).toBe(201);const {data:{item}}=await imported.json() as {data:{item:{id:string}}};
     configureWorldModel(db,item.id);
-    const card=await (await app.request('/api/v1/worlds/'+item.id+'/export')).json() as {data:{components:Array<{id:string;component:string}>}};expect(card.data.components[0]?.component).toBe(source);
+    const card=await readExportedCard(await app.request('/api/v1/worlds/'+item.id+'/export')) as {data:{components:Array<{id:string;component:string}>}};expect(card.data.components[0]?.component).toBe(source);
     const session=await (await app.request('/api/v1/sessions',json('POST',{worldId:item.id,openingId:'o',userCharacterId:'p'}))).json() as {data:{item:{id:string}}};
     const url='/api/v1/sessions/'+session.data.item.id+'/state';
     expect((await app.request(url,json('PATCH',{updates:[{scope:'message',path:'hero.hp',value:7}]}))).status).toBe(200);

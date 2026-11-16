@@ -4,7 +4,7 @@ import * as JSXRuntime from 'react/jsx-runtime';
 import '@tailwindcss/browser';
 import {createModuleLoader} from '../../../packages/sr-ui-compiler/src/loader';
 import {WorldStateContext,WorldDocumentContent,useSRWorldStateAPI,type SRWorldStateAPI} from '../../../packages/sr-sdk/src/world-state';
-import {RichText} from '@sillyrealms/sdk';
+import {RichText,SRAssetProvider,useSRAssetUrl} from '@sillyrealms/sdk';
 import './world-component-frame.css';
 let port:MessagePort|undefined,sequence=0;
 const pending=new Map<number,{resolve:(value:any)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
@@ -18,10 +18,10 @@ function read(entries:Array<{path:string;scope?:'global'}>):Promise<any> {
 }
 const state:SRWorldStateAPI=Object.freeze({getState:async(path:string,scope?:'global')=>(await read([{path,scope}]))[0]?.value,batchGetState:read});
 // No session runtime, subscriptions, mutable state API, card object, or raw transport is exported.
-const sdk=Object.freeze({useSRWorldStateAPI,useSRStateAPI:useSRWorldStateAPI,WorldDocumentContent,RichText});
+const sdk=Object.freeze({useSRWorldStateAPI,useSRStateAPI:useSRWorldStateAPI,WorldDocumentContent,RichText,useSRAssetUrl});
 class Boundary extends React.Component<{children:React.ReactNode},{failed:boolean}> {
   state={failed:false};static getDerivedStateFromError(){return {failed:true};}
-  componentDidCatch(){port?.postMessage({type:'ui-error'});}
+  componentDidCatch(error:Error){port?.postMessage({type:'ui-error',message:error.message});}
   render(){return this.state.failed?null:this.props.children;}
 }
 const rootElement=document.getElementById('root')!,root=ReactDOMClient.createRoot(rootElement),nonce=location.hash.slice(1);
@@ -52,12 +52,12 @@ window.addEventListener('message',event=>{
         const load=createModuleLoader(data.modules.code,data.modules.errors,{'react':React,'react-dom/client':ReactDOMClient,'react/jsx-runtime':JSXRuntime,'@sillyrealms/sdk':sdk},(source,module,require)=>new Function('module','exports','require','React',source)(module,module.exports,require,React));
         const Component=load(data.entry);
         function Mounted(){React.useEffect(()=>{port?.postMessage({type:'mounted'});},[]);return <Component/>;}
-        root.render(<Boundary><WorldStateContext.Provider value={state}><Mounted/></WorldStateContext.Provider></Boundary>);
-      }catch{port?.postMessage({type:'ui-error'});}
+        root.render(<Boundary><SRAssetProvider baseUrl={data.assetBaseUrl??null}><WorldStateContext.Provider value={state}><Mounted/></WorldStateContext.Provider></SRAssetProvider></Boundary>);
+      }catch(error){port?.postMessage({type:'ui-error',message:error instanceof Error?error.message:String(error)});}
     }
   };
   port.start();port.postMessage({type:'ready'});
 });
 window.addEventListener('pagehide',()=>{resize.disconnect();for(const request of pending.values()){clearTimeout(request.timer);request.reject(Error('Component closed'));}pending.clear();port?.close();});
-window.addEventListener('error',()=>port?.postMessage({type:'ui-error'}));
-window.addEventListener('unhandledrejection',()=>port?.postMessage({type:'ui-error'}));
+window.addEventListener('error',event=>port?.postMessage({type:'ui-error',message:event.message||'组件运行错误'}));
+window.addEventListener('unhandledrejection',event=>port?.postMessage({type:'ui-error',message:event.reason instanceof Error?event.reason.message:'组件发生未处理的异步错误'}));

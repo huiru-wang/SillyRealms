@@ -4,6 +4,8 @@ import {api} from '../../api';
 import {randomId} from '../../random-id';
 import {worldComponentURL} from '../../stage-url';
 import {createPreviewCompiler} from './preview-compilation-cache';
+import {compileWorldComponents} from './compile-world-components';
+import {worldAssetBaseUrl} from '../../world-assets';
 import {worldStateQueries,readWorldState} from './world-component-protocol';
 import type {WorldDetail} from './api/worlds';
 
@@ -22,7 +24,7 @@ function MountedWorldComponent({world,entry,title,retry}:{world:WorldDetail;entr
     let gone=false,port:MessagePort|undefined,connected=false,ready=false,compiled:Awaited<ReturnType<typeof compileComponents>>|undefined;
     let expectedOrigin:string|undefined;
     const abort=new AbortController();
-    const fail=()=>{if(gone)return;setError('组件加载失败，请重试或检查世界卡组件。');gone=true;clearTimeout(timer);abort.abort();port?.close();};
+    const fail=(reason?:unknown)=>{if(gone)return;setError(reason instanceof Error?reason.message:typeof reason==='string'?reason:'组件加载失败，请重试或检查世界卡组件。');gone=true;clearTimeout(timer);abort.abort();port?.close();};
     const timer=setTimeout(fail,20000);
     onFrameLoad.current=()=>{
       if(gone||!expectedOrigin)return;
@@ -31,7 +33,7 @@ function MountedWorldComponent({world,entry,title,retry}:{world:WorldDetail;entr
       frame.current?.contentWindow?.postMessage({type:'sr-world-probe',nonce},expectedOrigin);
     };
     function appearance(){if(gone)return;const style=getComputedStyle(document.documentElement);port?.postMessage({type:'appearance',theme:document.documentElement.dataset.theme,colors:Object.fromEntries(['--text','--text-muted','--surface','--accent'].map(key=>[key,style.getPropertyValue(key).trim()]))});}
-    function render(){if(ready&&compiled){appearance();port?.postMessage({type:'render',entry,modules:compiled});}}
+    function render(){if(ready&&compiled){appearance();port?.postMessage({type:'render',entry,modules:compiled,assetBaseUrl:worldAssetBaseUrl(expectedOrigin,world.id)});}}
     const listener=(event:MessageEvent)=>{
       if(gone||connected||!expectedOrigin||event.source!==frame.current?.contentWindow||event.origin!==expectedOrigin||event.data?.type!=='sr-world-ready'||event.data.nonce!==nonce)return;
       connected=true;const channel=new MessageChannel();port=channel.port1;
@@ -39,7 +41,7 @@ function MountedWorldComponent({world,entry,title,retry}:{world:WorldDetail;entr
         if(gone||!data||typeof data!=='object')return;
         if(data.type==='ready'){ready=true;render();}
         else if(data.type==='mounted'){clearTimeout(timer);setLoaded(true);}
-        else if(data.type==='ui-error')fail();
+        else if(data.type==='ui-error')fail(data.message);
         else if(data.type==='resize'&&Number.isFinite(data.height)&&data.height>=0&&data.height<=100000)setHeight(Math.max(1,Math.ceil(data.height)));
         else if(data.type==='request'&&Number.isSafeInteger(data.id)){
           try {
@@ -54,7 +56,7 @@ function MountedWorldComponent({world,entry,title,retry}:{world:WorldDetail;entr
     };
     window.addEventListener('message',listener);
     const theme=new MutationObserver(appearance);theme.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme','style','class']});
-    void compilePreview(world.id,world.data.components??[]).then(value=>{if(!gone){compiled=value;render();}}).catch(fail);
+    void compileWorldComponents(world,sources=>compilePreview(world.id,sources),abort.signal).then(value=>{if(!gone){compiled=value;render();}}).catch(fail);
     void api('v1/runtime/web-config',{signal:abort.signal}).then(config=>{
       if(gone)return;
       const url=worldComponentURL(config,location.origin,nonce);

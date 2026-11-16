@@ -32,7 +32,8 @@ window.fetch=async(input,init)=>{
     data={tipEntryId:'a1',worldId:'world',title:'庄园来信',presetId:'preset',apiModelConfigId:'model',activeRun:active};
   }else if(path==='/api/v1/sessions/test/capabilities'){
     data={effective:{state_update:{enabled:true},action_suggestions:{enabled:true}}};
-  }else if(path==='/api/v1/worlds/world')data={item:{data:{characters:[],state:{scopes:{message:{score:{type:'number',initial:1}}}}}}};
+  }else if(path==='/api/v1/worlds/world')data={item:{id:'world',data:{characters:[],state:{scopes:{message:{score:{type:'number',initial:1}}}}}}};
+  else if(path==='/api/v1/worlds/world/components')data={items:[],errors:{}};
   else if(path==='/api/v1/sessions/test/state')data={global:{},session:{},message:{score:1}};
   else if(path.startsWith('/api/v1/sessions/test/runs?'))data={runs:[...history,...(active?.messages?[active]:[])],nextCursor:null,hasMore:false};
   else if(path.startsWith('/api/v1/sessions/test/runs/')){
