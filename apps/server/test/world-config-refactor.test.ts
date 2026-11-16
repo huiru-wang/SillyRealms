@@ -179,7 +179,7 @@ it('uses session-selected model for each run even after world defaults change',a
   };
   const gateway:ModelGateway={
     resolve:(_provider,id)=>({...model,id}),
-    supportsDirect:()=>true,toolVerified:()=>true,
+    supportsDirect:()=>true,
     stream:(selected)=>({
       async *[Symbol.asyncIterator]() {
         calls.push(selected.id);

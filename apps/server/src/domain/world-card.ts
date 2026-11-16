@@ -18,7 +18,7 @@ function keywords(rule:{mode?:string;keywords?:string[]},ctx:z.RefinementCtx) {
   if(rule.mode==='on_mention' && !rule.keywords?.length) ctx.addIssue({code:'custom',path:['keywords'],message:'Expected at least one keyword'});
 }
 const load=z.object(rules).superRefine(keywords);
-const loreLoad=z.object({...rules,anchor:z.enum(['personaInfo','characterInfo','worldState','userInput']).optional(),position:z.enum(['before','after']).optional(),order:z.number().int().optional()}).superRefine(keywords);
+const loreLoad=z.object({...rules,order:z.number().int().optional()}).superRefine(keywords);
 const character=z.object({id,name:nonblank,description:z.string().optional(),prompt:z.string().optional(),avatar:z.string().optional(),order:z.number().int().optional(),player_selectable:z.boolean().optional(),load:load.optional()});
 const componentId=z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$-]*$/);
 const componentView=z.object({type:z.literal('component'),component:componentId}).strict();

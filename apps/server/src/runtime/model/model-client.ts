@@ -59,7 +59,7 @@ export class ModelClient {
     let firstTextMs: number | undefined;
     let settled = false;
     if (meta && options.prepared && meta.phase !== 'summary') meta.inputIdentity = inputIdentity(model, context,
-      { mode: options.prepared.mode, strategy: options.prepared.strategy ?? 'rolling_summary', toolChoice: options.toolChoice });
+      { strategy: options.prepared.strategy ?? 'rolling_summary', toolChoice: options.toolChoice });
     if (meta) this.usage?.beginRequest(meta, model.id, model.contextWindow);
     debugLog('MODEL BEGIN', { provider: model.provider, model: model.id }, logOptions);
     debugLog('MODEL INPUT', { source: 'pi-context', systemPrompt: context.systemPrompt, messages: context.messages,

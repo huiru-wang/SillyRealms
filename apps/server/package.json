@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "eslint src test",
-    "reset:data": "tsx scripts/reset-local-data.ts --confirm-reset-sr-data"
+    "compact:run-metadata": "tsx scripts/compact-run-metadata.ts",
+    "reset:runtime": "tsx scripts/reset-runtime-data.ts --confirm-reset-runtime"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "1.5.0",

@@ -9,7 +9,7 @@
 | `setDraft(text)` | `void` | 替换平台输入草稿，不发送 |
 | `send(text)` | `Promise<{ runId, requestId }>` | 请求启动一次生成 |
 | `getHistoryRuns({ cursor?, limit? }?)` | `Promise<HistoryRunsResult>` | 按完整 Run 向前分页 |
-| `subscribe(listener)` | 取消订阅函数 | 接收 Run 快照、创建、增量与终态事件 |
+| `subscribe(listener)` | 取消订阅函数 | 接收 Run、临时行动建议与连接状态事件 |
 | `subscribe(listener, { includePhase: true })` | 取消订阅函数 | 额外接收 `run.phase` |
 
 没有公开的 `stop()`、读取／订阅草稿、切换会话、修改模型或直接调用工具的方法。停止和配置入口由可信 Host 提供。
@@ -96,7 +96,7 @@ type HistoryRunsResult = {
 
 ## Run 与生成阶段
 
-`Run` 包含 `id`、`status`、`messages`，以及可选的 `executionMode`、`phase`、`capabilities` 和 `extensions`。
+`Run` 包含 `id`、`status`、`messages`，以及可选的 `phase` 和 `extensions`。
 
 | `status` | 含义 |
 | --- | --- |
@@ -106,11 +106,11 @@ type HistoryRunsResult = {
 | `failed` | 本轮失败，可能仍有已保存正文 |
 | `stopped` | 本轮已停止 |
 
-`phase` 为 `preparing → narrative → extensions → finalized`，用来解释当前工作阶段，不替代 `status`。失败、停止或不同执行模式不保证逐阶段通知；准备失败也可能在没有 `run.created` 的情况下到达。
+`phase` 为 `preparing → narrative → extensions → finalized`，来自运行中内存或终态推导，用来解释当前工作阶段，不替代 `status`。失败或停止不保证逐阶段通知；准备失败也可能在没有 `run.created` 的情况下到达。
 
-`capabilities` 是本轮冻结的能力摘要，包含 revision、状态更新的 enabled/required，以及建议的 enabled/count。不要用一个旧 Run 的能力推断下一轮配置。
+Run 查询及事件不携带能力配置快照。Studio 会话设置从独立的会话能力接口读取当前预设的两个开关。
 
-当前阶段 Direct 模式由平台固定开启状态更新和行动建议。预设及会话中的 enabled 配置继续保存，但暂不影响 Direct 的有效开关；会话能力查询的 effective 返回两项开启，sources 返回 platform。建议数量和业务偏好仍采用预设配置。状态更新只有在本轮存在激活的可写 message 状态时才 required；没有可写状态时不要求该扩展块。Agent 模式不采用这项固定开启策略。
+状态更新和行动建议由会话绑定预设的 worldState/actionSuggestions 节点 enabled 决定，不提供会话覆盖或 Agent 模式。状态更新仅在本轮有激活的可写 message 根时 required；无可写根时省略整个世界状态提示。
 
 ## 事件
 
@@ -128,7 +128,7 @@ type HistoryRunsResult = {
 
 `run.delta.offset` 是 UTF-16 code unit 偏移，与 JavaScript 字符串索引一致，不是 UTF-8 字节数。缺口、重复和重叠不能当作普通字符串追加。终态消息可以覆盖此前临时显示的正文。
 
-订阅不自动重放历史，也不立即返回当前快照。读取历史前先订阅并暂存事件，再按 ID、偏移与终态权威合并。`SessionRuntime` 只分发事件，完整合并逻辑位于官方 WorldStory 内部。
+订阅不重放 Run 历史，也不立即返回 Run 快照；订阅时会收到当前连接状态，以及已收到且尚未失效的临时建议投影（如有）。读取历史前先订阅并暂存事件，再按 ID、偏移与终态权威合并。`SessionRuntime` 分发事件并保留当前临时建议和连接状态，完整合并逻辑位于官方 WorldStory 内部。
 
 下面示例仅观察挂载之后收到的事件，不用于判断页面刚打开时是否忙碌：
 
@@ -151,16 +151,24 @@ export default function RunEventNotice() {
 
 ## 扩展结果
 
-`RunExtensions.protocol` 当前为 `sr_extensions/v1`，包含两份结果：
+`RunExtensions` 只包含两项处理状态：
 
-| 结果 | 状态及辅助字段 |
+| 结果 | 字段 |
 | --- | --- |
-| `stateUpdate` | status：disabled / not_required / pending / unchanged / applied / partial / failed / cancelled；acceptedCount、changedPaths、skipped、warningCodes、可选 errorCode |
-| `actionSuggestions` | status：disabled / pending / ready / blocked / failed / cancelled；items、warningCodes、可选 errorCode 和 blockedBy |
+| `stateUpdate` | status：disabled / not_required / pending / unchanged / applied / partial / failed / cancelled |
+| `actionSuggestions` | status：disabled / pending / ready / blocked / failed / cancelled |
 
-`skipped` 每项有 index、errorCode、errorMessage；`blockedBy` 为 `state_partial` 或 `state_failed`。部分状态成功会阻止建议发布；建议单独失败不撤销已经通过的状态。`acceptedCount` 与实际改变路径数不一定相等，例如合法的重复值可能不造成变化。
+部分状态成功会阻止建议发布；建议单独失败不撤销已经通过的状态。接口不返回协议版本、数量、变更路径、逐项错误或诊断快照。Run 失败时通过顶层 `errorCode`、`errorMessage` 表达原因，不提供 failure/recovery 分类。
 
 SDK 提供这些结果供 UI 展示，不解析模型尾块，也不负责提交状态。正式 Direct 路径由 Server 解析和验证叙事扩展，不能将它描述为 SDK 内的工具循环。
+
+## 临时行动建议
+
+`action_suggestions.changed` 的 data 为 `{ sessionId, suggestions: { runId, messageId, items: string[] } | null }`。items 恰好三条，依次对应缓慢、中速、快速推进；绑定指定 assistant 消息展示。null 表示立即清除当前批次。
+
+`session.connection` 的 data 为 `{ connected: boolean }`。断线或正在核对最新 Run 时禁用建议按钮；连接确认后可继续选择仍有效的批次。点击建议只调用 setDraft，不自动发送。
+
+新一轮受理时清除建议；发送被拒绝时保留。已受理的新轮失败或取消，不恢复旧建议。建议文本只在 Host/SDK 当前内存中，历史、Run 查询、终态事件均不包含 items；刷新、离开或切换会话不会恢复。服务端事件不重试、不持久回放，提交成功后也可能因断线而没有展示建议。
 
 ## 错误处理边界
 

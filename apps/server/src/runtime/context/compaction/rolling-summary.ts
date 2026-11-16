@@ -6,6 +6,5 @@ export async function rollingSummary(input: CompactionInput, history: HistoryIte
   if (!selection.prefix.length) return undefined;
   const text = await input.summarize(input.oldSummary?.text ?? null, selection.prefix);
   return { ...selection, summary: { text, coveredThroughEntryId: selection.prefix.at(-1)!.id,
-    firstKeptEntryId: selection.kept[0]?.id, sourceFingerprint: historyFingerprint(input.history),
-    gaps: [...new Set([...(input.oldSummary?.gaps ?? []), ...selection.prefix.flatMap(item => item.gap ? [item.gap] : [])])].slice(-32) } };
+    firstKeptEntryId: selection.kept[0]?.id, sourceFingerprint: historyFingerprint(input.history) } };
 }

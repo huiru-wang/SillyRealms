@@ -58,7 +58,7 @@ it('shutdown stops an uncooperative model and commits the provisional story',asy
 it('shutdown settles accepted preparation while credentials are still pending',async()=>{
   let entered!:()=>void,release!:()=>void;
   const ready=new Promise<void>(resolve=>entered=resolve),gate=new Promise<void>(resolve=>release=resolve);
-  const {db,runtime}=runtimeFixture(textGateway('unused'),'direct',{
+  const {db,runtime}=runtimeFixture(textGateway('unused'),{
     ...fakeCredentials,get:async()=>{entered();await gate;return 'fake';},
   });
   try{

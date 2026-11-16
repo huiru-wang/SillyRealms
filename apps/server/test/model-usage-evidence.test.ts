@@ -45,7 +45,7 @@ it.each(['throw','terminal'] as const)('classifies known Provider overflow throu
   try{
     const run=await runtime.prepare('session','go','overflow','opening');await drain(run.stream);
     const status=runtime.status('session',run.runId);
-    expect(status).toMatchObject({status:'failed',errorCode:'PROVIDER_CONTEXT_WINDOW_EXCEEDED',failure:{stage:'generation',type:'context_window'},recovery:{inputSaved:true,action:'adjust_configuration'}});
+    expect(status).toMatchObject({status:'failed',errorCode:'PROVIDER_CONTEXT_WINDOW_EXCEEDED'});
     expect(JSON.stringify(status)).not.toContain('PRIVATE UPSTREAM');
     expect(new UsageStore(db).view('session').cumulative).toMatchObject({reportedCount:kind==='terminal'?1:0,unknownCount:kind==='throw'?1:0});
   }finally{db.close();}

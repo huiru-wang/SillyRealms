@@ -1,3 +1,6 @@
+import {tail,response} from './fixtures/runtime-v2.js';
+import {defaultPreset} from '../src/domain/preset/schema.js';
+import {insertPreset} from '../src/repositories/preset-repository.js';
 import {expect,it} from 'vitest';
 import type {Api,AssistantMessageEvent,Model} from '@earendil-works/pi-ai';
 import type {ModelGateway} from '../src/runtime/model/pi-gateway.js';
@@ -10,8 +13,8 @@ it('runs V1 state, message and events through a temporary database and fake prov
   const model:Model<Api>={id:'fake',name:'fake',provider:'fake',api:'openai-completions',baseUrl:'http://localhost',input:['text'],reasoning:false,contextWindow:32768,maxTokens:1024,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}};
   const credentials:CredentialStore={get:async()=> 'fake',set:async()=>{},deleteSync:()=>{}};
   let calls=0;
-  const result=(content:unknown[],stopReason:'stop'|'toolUse')=>({role:'assistant' as const,content,api:'openai-completions',provider:'fake',model:'fake',usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason,timestamp:0});
-  const gateway:ModelGateway={resolve:()=>model,supportsDirect:()=>true,toolVerified:()=>true,stream:()=>({async *[Symbol.asyncIterator](){calls++;if(calls===1){yield {type:'text_delta',contentIndex:0,delta:'故事开始',partial:{} as never} as AssistantMessageEvent;yield {type:'done',reason:'toolUse',message:result([{type:'text',text:'故事开始'},{type:'toolCall',id:'x',name:'update_state',arguments:{updates:[{path:'进度.阶段',value:'导入'}]}},{type:'toolCall',id:'bad',name:'update_state',arguments:{updates:[{path:'未知字段',value:1}]}}],'toolUse')} as AssistantMessageEvent;}else yield {type:'done',reason:'stop',message:result([{type:'text',text:'故事继续'}],'stop')} as AssistantMessageEvent;}})};
+  const raw='故事开始'+tail([{path:'进度.阶段',value:'导入'},{path:'未知字段',value:1}]);
+  const gateway:ModelGateway={resolve:()=>model,supportsDirect:()=>true,stream:()=>({async *[Symbol.asyncIterator](){calls++;yield {type:'text_delta',contentIndex:0,delta:raw,partial:{} as never} as AssistantMessageEvent;yield {type:'done',reason:'stop',message:response(raw)} as AssistantMessageEvent;}})};
   const app=createApp(db,credentials,gateway);
   const post=(value:unknown)=>({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(value)});
   try {
@@ -19,24 +22,19 @@ it('runs V1 state, message and events through a temporary database and fake prov
     const form=new FormData();form.set('file',new File([JSON.stringify(card)],'test.json'));
     const imported=await (await app.request('/api/v1/worlds/import',{method:'POST',body:form})).json() as {data:{item:{id:string}}};
     const worldId=imported.data.item.id;
-    const ids=['main','personaInfo','characterInfo','worldState','chatHistory','userInput','postHistory'];
-    const preset={name:'test',budget:{context_strategy:'standard',max_output_tokens:64},summary_prompt:'summary',nodes:ids.map(id=>({id,name:id,kind:'system',source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true}))};
+    const preset=defaultPreset();preset.name='test';preset.context_strategy={...preset.context_strategy,max_context_tokens:12000,max_output_tokens:64};
     db.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)').run('m','test','fake','fake','ref',1,1);
-    db.prepare('INSERT INTO presets(id,name,config_json,created_at,updated_at) VALUES(?,?,?,?,?)').run('preset','test',JSON.stringify(preset),1,1);
+    insertPreset(db,preset,'preset');
     db.prepare("UPDATE worlds SET default_preset_id=?,default_api_model_config_id='m' WHERE id=?").run('preset',worldId);
     const created=await (await app.request('/api/v1/sessions',post({worldId,openingId:'o',userCharacterId:'p'}))).json() as {data:{item:{id:string;tipEntryId:string}}};
     const session=created.data.item;
-    expect((await app.request('/api/v1/sessions/'+session.id,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({executionMode:'agent'})})).status).toBe(200);
     const events=await app.request(`/api/v1/sessions/${session.id}/events`);const reader=events.body!.getReader();
     const sent=await app.request(`/api/v1/sessions/${session.id}/runs`,post({text:'继续',requestId:'123e4567-e89b-42d3-a456-426614174000',expectedTipEntryId:session.tipEntryId}));
     expect(sent.status).toBe(202);expect((await sent.json() as {success:boolean}).success).toBe(true);
     let text='';while(!text.includes('event: run.completed')&&!text.includes('event: run.failed')){const part=await reader.read();if(part.done)break;text+=new TextDecoder().decode(part.value);}
-    expect(text).toContain('event: run.created');expect(text).toContain('event: run.delta');expect(text).toContain('event: state.changed');expect(calls).toBe(2);
-    expect(text).toContain('event: tool.failed');
-    expect(text).toContain('"toolCallId":"bad"');
-    expect(text).toContain('"errorCode":"STATE_ROOT_NOT_ACTIVE"');
+    expect(text).toContain('event: run.created');expect(text).toContain('event: run.delta');expect(text).toContain('event: state.changed');expect(calls).toBe(1);
+    expect(text).toContain('"stateUpdate":{"status":"partial"}');expect(text).not.toContain('STATE_ROOT_NOT_ACTIVE');
     expect(text).not.toContain('event: run.failed');
-    expect(text.indexOf('event: tool.failed')).toBeLessThan(text.indexOf('event: run.completed'));
     const state=await (await app.request(`/api/v1/sessions/${session.id}/state`)).json() as {data:{message:{进度:{阶段:string}}}};
     expect(state.data.message.进度.阶段).toBe('导入');
     const history=await (await app.request(`/api/v1/sessions/${session.id}/runs`)).json() as {data:{runs:Array<{messages:Array<{text:string}>}>}};

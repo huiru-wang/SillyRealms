@@ -22,7 +22,7 @@ it('merges consecutive assistant messages for display across streamed and comple
 });
 
 it('keeps terminal results authoritative over late preparation, delta and created events',()=>{
-  const done=applyRunEvent([],{event:'run.completed',data:{runId:'r',messages:[{id:'a',role:'assistant',text:'final'}],executionMode:'direct',phase:'finalized'}});
+  const done=applyRunEvent([],{event:'run.completed',data:{runId:'r',messages:[{id:'a',role:'assistant',text:'final'}],phase:'finalized'}});
   expect(applyRunEvent(done,{event:'run.phase',data:{runId:'r',phase:'preparing'}})).toBe(done);
   expect(applyRunEvent(done,{event:'run.delta',data:{runId:'r',messageId:'a',text:'late'}})).toBe(done);
   expect(applyRunEvent(done,{event:'run.created',data:{runId:'r',messages:[]}})).toBe(done);

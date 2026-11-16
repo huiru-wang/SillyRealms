@@ -5,7 +5,7 @@ export async function checkModels({origin,call,evaluate,until,navigate,click,sho
   const result=await response.json();assert(response.ok,'Model fixture request failed: '+path);return result.data;
  };
  const catalog=await request('providers/models');
- const {id:ignoredId,...preset}=(await request('presets/sr-default-preset')).item;
+ const preset=await request('presets/default');
  for(const name of ['导航预设 A','导航预设 B'])await request('presets','POST',{...preset,name});
  const provider=catalog.providers.find(p=>p.models.length);
  const created=[];

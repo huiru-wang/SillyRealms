@@ -1,6 +1,6 @@
 # SR 预设、上下文与后置处理实施任务
 
-更新：2026-11-16。状态：全部待实施。依据 [目标架构](./sr-context-output-runtime-refactor-v8.md)，由单一 agent 按依赖实施并独立复核。
+更新：2026-11-16。状态：T00–T08 已完成；目标代码、数据库切换、文档与独立复核均已验收。依据 [目标架构](./sr-context-output-runtime-refactor-v8.md)，由单一 agent 按依赖实施并独立复核。
 
 ## 1. 任务拆分
 
@@ -41,3 +41,24 @@
 独立复核沿“预设 → 上下文 → 压缩 → PostprocessPlan → 解析 → 候选 → 提交 → 前端结果”检查单一配置来源及失败边界。实现完成后再同步正式文档；实施过程中同步记录任务状态；最终不保留废弃代码和兼容路径。
 
 废弃清理按方案第7节逐项核销，并作为T08的阻塞验收项；不通过保留legacy文件或旧字段绕过检查。
+
+## 实施记录
+
+- 基线提交：`ef8821a`，业务修改前提交，未推送。
+- 已接入八列预设、统一编译器、单次摘要、独立标签后置处理与 Host 临时建议。
+- 旧 Agent/工具循环、外层协议实现、兼容字段与旧迁移测试已移除；目标数据库 v6，通过显式持锁脚本切换。
+- 全量检查：`pnpm typecheck`、`pnpm lint`、Server Vitest 全部 254 项、`pnpm build` 通过。构建仅有既有大 chunk 提示，无错误。
+- 浏览器检查：production、mobile、composer、host-roleplay、runtime-v2、worldstory-font、world-document 全部通过。检查包含真实 HTTP/SSE、离线模型、节点模板与展开预览、开关保存、临时建议、375px/1280px 布局及隔离边界。
+- 独立复核修复了重连旧请求误清除新建议的竞态，统一预设指纹；补充迟到请求、断线与恢复测试。
+- 实际数据库已显式切换为 v6：移除旧 sessions 2、entries 2、presets 1、run_preparations 0；初始化默认预设。保留 worlds 2、api_model_configs 1、世界状态/组件/原始来源引用和世界标签，逐项与备份比较，integrity_check 和 foreign_key_check 通过。
+- 切换备份：`db/before-runtime-v6-1794764078783.sqlite`。未调用真实付费模型，未推送。
+- 已同步根目录及 Server/Studio 的 AGENTS、预设使用说明、世界卡和 SDK 文档；删除本领域被替代的方案与旧预设原型。
+
+## Run 元数据精简验收（2026-11-16）
+
+- 已端到端删除运行配置快照、重复 ID/phase/errorMessage、capabilities、failure/recovery 分类、协议字段、逐项处理诊断和消息级重复状态；同步更新生成器、持久化、中断恢复、HTTP/SSE、Host、SDK 与测试。
+- extensions 只持久化并返回 stateUpdate.status、actionSuggestions.status；去重、摘要覆盖边界、开场标记保留，执行中的冻结权限和状态基线仍在内存校验。
+- 新增 compact-run-metadata 离线清理工具：目录锁、备份、事务、原始消息/状态/用量/编辑时间保全、重复执行无变化，异常完整回滚。
+- 验证：typecheck、lint、257 项 Server 测试、build、runtime-v2 浏览器及 production 整站浏览器通过；覆盖 375px/1280px、临时建议与断线恢复。仅使用离线模型；构建有既有 chunk 大小提示。
+- 本地清理已执行：当前库 6 条 Entry 均已符合精简格式，无准备记录，实际重写数为 0；全部数据与清理前备份一致，完整性和外键检查通过。备份为 db/before-run-metadata-1794764966972.sqlite。
+- 按用户要求停止 SR 本地服务；清理期间开发服务重新启动导致锁拒绝，未写入数据；随后关闭开发进程并成功清理。完成时保持 3000/3001/5174/5175 无监听，未重启服务。

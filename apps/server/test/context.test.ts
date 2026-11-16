@@ -1,83 +1,40 @@
-import { expect, it } from 'vitest';
-import { resolveBudget } from '../src/domain/preset-budget.js';
-
-it('caps explicit input budgets at eighty percent and reserves output separately', () => {
-  const model = { contextWindow: 200000, maxTokens: 100000 };
-  expect(resolveBudget({ max_context_tokens: 160000, max_output_tokens: 4096 }, model).max_context_tokens).toBe(160000);
-  expect(() => resolveBudget({ max_context_tokens: 160001, max_output_tokens: 4096 }, model)).toThrow();
-  expect(() => resolveBudget({ max_context_tokens: 160000, max_output_tokens: 50000 }, model)).toThrow();
-  expect(resolveBudget({ context_strategy: 'extended', max_output_tokens: 4096 }, model).max_context_tokens).toBe(160000);
+import {expect,it} from 'vitest';
+import {contextFixture} from './fixtures/context.js';
+import {compileContext} from '../src/runtime/context/node-compiler.js';
+import {resolveBudget} from '../src/domain/preset-budget.js';
+it('compiles source-bound nodes in preset order with original history roles and post-input rules',()=>{
+ const input=contextFixture(),context=compileContext(input),text=JSON.stringify(context.messages);
+ for(const content of ['PLAYER','NPC','LORE','SESSION_BACKGROUND','SUMMARY','OLD_USER','OLD_STORY','CURRENT forest','奖励增加10'])expect(text).toContain(content);
+ for(const content of ['GLOBAL_PRIVATE','PRIVATE_DESCRIPTION','HIDDEN','readonly_state','sr_extensions'])expect(text).not.toContain(content);
+ const order=context.trace.filter(t=>t.messages.length).map(t=>t.nodeId);
+ expect(order).toEqual(['main','personaInfo','characterInfo','worldInfo','chatHistory','userInput','worldState','actionSuggestions']);
+ const history=context.trace.find(t=>t.nodeId==='chatHistory')!.messages;
+ expect(history.map(m=>m.role)).toEqual(['system','user','assistant']);
+ expect(context.activeRoots).toEqual(['score']);expect(context.postprocess.state_update.required).toBe(true);
+ expect(Object.isFrozen(context.messages)).toBe(true);
 });
-import { buildContext } from '../src/runtime/context/prompt-builder.js';
-import { estimateContextComposition } from '../src/runtime/context/context-manager.js';
-
-it('builds literal content against its supplied activation snapshot', () => {
-  const world = { characters:[{id:'player',player_selectable:true,prompt:'{{user}}'},{id:'npc',prompt:'NPC',load:{mode:'on_mention',keywords:['forest']}}], lorebook:{entries:[{id:'entry',content:'LITERAL <% danger %>',load:{mode:'on_mention',keywords:['forest'],anchor:'characterInfo',position:'before'}}]} };
-  const views = { global:{}, session:{}, message:{} };
-  const nodes = [{id:'personaInfo',kind:'system' as const,role:'system' as const,enabled:true},{id:'characterInfo',kind:'system' as const,role:'system' as const,enabled:true},{id:'chatHistory',kind:'system' as const,role:'auto' as const,enabled:true},{id:'userInput',kind:'system' as const,role:'user' as const,enabled:true}];
-  const context = buildContext(world,nodes,'player',views,[{role:'user',text:'forest'}],'hello');
-  const messages = context.messages([]);
-  expect(JSON.stringify(messages)).toContain('Default');
-  expect(JSON.stringify(messages)).toContain('LITERAL <% danger %>');
-  expect(JSON.stringify(messages)).toContain('NPC');
-  expect(messages.filter(m => m.role === 'user')).toHaveLength(1);
+it('node switches control prompt and parser together; no active root omits all state instructions',()=>{
+ for(const state of [false,true])for(const suggestions of [false,true]){
+  const input=contextFixture();input.nodes.find(n=>n.id==='worldState')!.enabled=state;input.nodes.find(n=>n.id==='actionSuggestions')!.enabled=suggestions;
+  const context=compileContext(input),text=JSON.stringify(context.messages);
+  expect(text.includes('<state_update>')).toBe(state);expect(text.includes('<action_suggestions>')).toBe(suggestions);
+  expect(context.postprocess.state_update.enabled).toBe(state);expect(context.postprocess.action_suggestions.enabled).toBe(suggestions);
+ }
+ const input=contextFixture();input.world.state!.scopes.message!.score!.load={mode:'never'};
+ const context=compileContext(input);expect(context.activeRoots).toEqual([]);expect(context.trace.find(t=>t.nodeId==='worldState')!.messages).toEqual([]);
+ expect(context.messages.some(message=>typeof message.content==='string'&&message.content.startsWith('<世界状态>\n'))).toBe(false);
 });
-
-it('builds the worldState node in preset order with active rules and current values',()=>{
-  const world={characters:[{id:'p',name:'玩家',player_selectable:true}],state:{scopes:{
-    global:{setting:{type:'json',initial:{year:42},description:'场景背景，仅供读取'}},
-    message:{hero:{type:'json',initial:{hp:10,people:{}},description:'伤害后调整；people 存角色姓名'},hidden:{type:'json',initial:{secret:'hidden-value'},load:{mode:'on_mention',keywords:['never-match']}}}
-  }}};
-  const nodes=[{id:'main',kind:'system' as const,role:'system' as const,enabled:true,content:'起始指令'}, {id:'worldState',kind:'system' as const,role:'system' as const,enabled:true},{id:'userInput',kind:'system' as const,role:'user' as const,enabled:true}];
-  const result=buildContext(world,nodes,'p',{global:{setting:{year:42}},session:{},message:{hero:{hp:7,people:{}},hidden:{secret:'hidden-value'}}},[],'继续');
-  const output=result.messages([]);expect(output.map(m=>m.role)).toEqual(['system','system','system','user']);
-  const text=String(output[2]?.content);expect(text).toContain('update_state');expect(text).toContain('【状态更新判断】');expect(text).toContain('【可更新状态】');expect(text).toContain('【只读状态】');expect(text).toContain('伤害后调整');expect(text).toContain('角色姓名');expect(text).toContain('hero（可更新；message；json）');expect(text).toContain('"hp":7');expect(text).toContain('"year":42');expect(text).not.toContain('hidden-value');
-  const disabled=buildContext(world,nodes.map(n=>n.id==='worldState'?{...n,enabled:false}:n),'p',{global:{setting:{year:42}},session:{},message:{hero:{hp:7,people:{}},hidden:{secret:'hidden-value'}}},[],'继续');expect(disabled.messages([]).map(m=>m.role)).toEqual(['system','system','system','user']);
+it('activation uses only supplied retained history and input',()=>{
+ const input=contextFixture();input.input='continue';
+ expect(JSON.stringify(compileContext(input).messages)).not.toContain('NPC');
+ input.history.push({id:'recent',role:'user',text:'forest'});
+ expect(JSON.stringify(compileContext(input).messages)).toContain('NPC');
+ input.world.characters[0]!.load={mode:'never'};
+ expect(JSON.stringify(compileContext(input).messages)).not.toContain('PLAYER');
 });
-
-
-it('uses prompt only and applies load to the selected player',()=>{
-  const nodes=[{id:'personaInfo',kind:'system' as const,role:'system' as const,enabled:true},{id:'characterInfo',kind:'system' as const,role:'system' as const,enabled:true}];
-  const world={characters:[{id:'p',player_selectable:true,description:'PRIVATE DISPLAY',prompt:'PLAYER PROMPT',load:{mode:'never'}},{id:'n',description:'DISPLAY ONLY'},{id:'x',prompt:'NPC PROMPT'}]};
-  const output=JSON.stringify(buildContext(world,nodes,'p',{global:{},session:{},message:{}},[],'').messages([]));
-  expect(output).not.toContain('PRIVATE DISPLAY');expect(output).not.toContain('DISPLAY ONLY');expect(output).not.toContain('PLAYER PROMPT');expect(output).toContain('NPC PROMPT');
-});
-
-it('logs each dynamic load in one line only when debugging is enabled',async()=>{
-  const {vi}=await import('vitest');
-  const old=process.env.SILLYREALMS_DEBUG;
-  const log=vi.spyOn(console,'log').mockImplementation(()=>{});
-  try {
-    process.env.SILLYREALMS_DEBUG='1';
-    const world={characters:[{id:'p',player_selectable:true,prompt:'player',load:{mode:'never'}},{id:'npc',prompt:'npc',load:{mode:'on_mention',keywords:['forest'],when:'getState("hero.hp") > 0'}}],lorebook:{entries:[{id:'l',content:'lore',load:{mode:'always'}}]},state:{scopes:{message:{hero:{type:'json',initial:{hp:1},load:{mode:'never'}}}}}};
-    buildContext(world,[],'p',{global:{},session:{},message:{hero:{hp:1}}},[],'forest');
-    const lines=log.mock.calls.map(c=>String(c[0]));
-    expect(lines).toHaveLength(4);
-    expect(lines.every(line=>!line.includes('\n'))).toBe(true);
-    expect(lines.join(' ')).not.toContain('forest');
-    expect(lines.join(' ')).not.toContain('hero.hp');
-    const records=lines.map(line=>JSON.parse(line.split(' | ')[1]!));
-    expect(records).toContainEqual(expect.objectContaining({category:'角色',keywordCount:1,when:true,active:true}));
-    expect(lines.some(line=>line.includes('世界书')&&line.includes('always'))).toBe(true);
-    expect(records).toContainEqual(expect.objectContaining({category:'状态',mode:'never',active:false}));
-    log.mockClear(); delete process.env.SILLYREALMS_DEBUG;
-    buildContext(world,[],'p',{global:{},session:{},message:{hero:{hp:1}}},[],'forest');
-    expect(log).not.toHaveBeenCalled();
-  } finally { if(old===undefined)delete process.env.SILLYREALMS_DEBUG;else process.env.SILLYREALMS_DEBUG=old; log.mockRestore(); }
-});
-
-
-it('estimates context composition in system, summary, history order without claiming exact provider tokens',()=>{
-  const world={characters:[{id:'p',name:'玩家',player_selectable:true}],lorebook:{entries:[]}};
-  const nodes=[{id:'main',kind:'system' as const,role:'system' as const,enabled:true,content:'系统设定'},{id:'chatHistory',kind:'system' as const,role:'auto' as const,enabled:true},{id:'userInput',kind:'system' as const,role:'user' as const,enabled:true}];
-  const context=buildContext(world,nodes,'p',{global:{},session:{},message:{}},[],'');
-  const composition=estimateContextComposition(context,[
-    {id:'summary',role:'assistant',text:'压缩摘要'},
-    {id:'history-1',role:'user',text:'历史用户消息'},
-    {id:'history-2',role:'assistant',text:'历史叙事'},
-  ],'本轮输入');
-  expect(composition.systemBytes).toBeGreaterThan(0);
-  expect(composition.summaryBytes).toBeGreaterThan(0);
-  expect(composition.historyBytes).toBeGreaterThan(composition.summaryBytes);
-  expect(estimateContextComposition(context,[], '本轮输入').summaryBytes).toBe(0);
+it('caps numeric input budget at 80% and reserves output plus safety',()=>{
+ const base={strategy:'rolling_summary' as const,max_context_tokens:160000,max_output_tokens:4096},model={contextWindow:200000,maxTokens:100000};
+ expect(resolveBudget(base,model)).toEqual(base);
+ expect(()=>resolveBudget({...base,max_context_tokens:160001},model)).toThrow();
+ expect(()=>resolveBudget({...base,max_output_tokens:50000},model)).toThrow();
 });

@@ -17,7 +17,7 @@ export function historyRuns(db:DatabaseSync, sessionId:string, tip:string, limit
     for(const row of rows) {
       const ext=JSON.parse(String(row.ext_data));
       if(ext.run?.status) { result=publicRunResult(ext.run); status=String(result.status); }
-      if(row.type!=='message' || (row.role!=='user' && row.role!=='assistant') || ext.nonNarrative) continue;
+      if(row.type!=='message' || (row.role!=='user' && row.role!=='assistant')) continue;
       const message=JSON.parse(String(row.payload)).message;
       const text=typeof message.content==='string' ? message.content : (message.content??[]).filter((part:{type:string})=>part.type==='text').map((part:{text:string})=>part.text).join('');
       if(text) messages.push({id:String(row.id),role:row.role,text,...(ext.origin==='opening'?{origin:'opening' as const}:{})});

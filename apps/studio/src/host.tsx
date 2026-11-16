@@ -1,3 +1,4 @@
+import {ActionSuggestionStore} from './features/sessions/action-suggestions';
 import React,{useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import {ArrowLeft,ChevronDown,ChevronUp,Send,Square,Settings2} from 'lucide-react';
 import {Link} from 'react-router-dom';
@@ -7,7 +8,7 @@ import {randomId} from './random-id';
 import {stageURL} from './stage-url';
 import {RoleplayComposer} from './features/sessions/composer/RoleplayComposer';
 import {SessionTokenUsage} from './features/sessions/SessionTokenUsage';
-import {SessionSettingsDialog,type CapabilityView,type CapabilityOverrides} from './features/sessions/SessionSettingsDialog';
+import {SessionSettingsDialog,type CapabilityView} from './features/sessions/SessionSettingsDialog';
 import {compileComponents} from '@sillyrealms/ui-compiler';
 import {MessageMatcher} from './message-matcher';
 import {trimTrailingEmptyRoleplayLines} from '@sillyrealms/roleplay';
@@ -25,11 +26,8 @@ export function SessionHost({id}:{id:string}) {
   const [settingsTitle,setSettingsTitle]=useState('');
   const [settingsPreset,setSettingsPreset]=useState('');
   const [settingsModel,setSettingsModel]=useState('');
-  const [mode,setMode]=useState<'direct'|'agent'>('direct');
-  const [settingsMode,setSettingsMode]=useState<'direct'|'agent'>('direct');
   const [capabilities,setCapabilities]=useState<CapabilityView|null>(null);
   const [capabilitiesLoading,setCapabilitiesLoading]=useState(false);
-  const [overrides,setOverrides]=useState<CapabilityOverrides>({state_update:null,action_suggestions:null});
   const [phase,setPhase]=useState('preparing');
   const phaseRef=useRef('preparing');
   const [settingsSaving,setSettingsSaving]=useState(false);
@@ -56,6 +54,7 @@ export function SessionHost({id}:{id:string}) {
   const port=useRef<MessagePort|null>(null);
   const ready=useRef(false),connected=useRef(false),mountedRef=useRef(false),fatalRef=useRef(false),activeRef=useRef<string|null>(null),sendingRef=useRef(false);
   const renderRef=useRef<{modules:{code:Record<string,string>;errors:Record<string,string>};main?:string;rules:unknown[];state:unknown}>({modules:{code:{},errors:{}},rules:[],state:{}}),loadedRef=useRef(false);
+  const suggestions=useMemo(()=>new ActionSuggestionStore(id,event=>port.current?.postMessage({type:'event',event})),[id]);
   const terminal=useRef(new Set<string>());
   const nonce=useMemo(()=>randomId(),[id]);
   const [stageAttempt,setStageAttempt]=useState(0),[stageError,setStageError]=useState('');
@@ -159,15 +158,16 @@ export function SessionHost({id}:{id:string}) {
       if(fatalRef.current)throw Error('世界卡数据异常');
       const result=await api(`${base}/runs`,{method:'POST',body:json({text,requestId:randomId(),expectedTipEntryId:current.tipEntryId})});
       if(fatalRef.current){void stop(result.runId);throw Error('世界卡数据异常');}
+      suggestions.accepted(result.runId);
       if(!terminal.current.has(result.runId)){activeRef.current=result.runId;setActiveRun(result.runId);}
       return result;
     } finally {sendingRef.current=false;setSending(false);}
-  },[base,stop]);
+  },[base,stop,suggestions]);
 
   // Install the trusted handshake before a cached iframe can emit sr-ready.
   useLayoutEffect(()=>{
     ready.current=false;connected.current=false;mountedRef.current=false;fatalRef.current=false;activeRef.current=null;
-    draftRevision.current++;setDraft('');setExpanded(true);setFatal(false);setMounted(false);setLoaded(false);setOnline(false);setActiveRun(null);setNotice('');setSettingsOpen(false);setSettingsError('');setPresets([]);setModelConfigs([]);setModelConfig(null);setCapabilities(null);loadedRef.current=false;renderRef.current={modules:{code:{},errors:{}},rules:[],state:{}};terminal.current.clear();
+    draftRevision.current++;setDraft('');setExpanded(true);setFatal(false);setMounted(false);setLoaded(false);setOnline(false);setActiveRun(null);setNotice('');setSettingsOpen(false);setSettingsError('');setPresets([]);setModelConfigs([]);setModelConfig(null);setCapabilities(null);loadedRef.current=false;renderRef.current={modules:{code:{},errors:{}},rules:[],state:{}};terminal.current.clear();suggestions.reset();
     const stream=new EventSource(`/api/${base}/events`);
     const matcher=new MessageMatcher();
     let recoverySequence=0;
@@ -176,6 +176,7 @@ export function SessionHost({id}:{id:string}) {
       const {input:_input,...publicResult}=result;
       if(['completed','failed','stopped'].includes(result.status)){
         terminal.current.add(result.runId);
+        suggestions.settled(result.runId,result.status,result.messages??[]);
         if(activeRef.current===result.runId){activeRef.current=null;setActiveRun(null);}
         port.current?.postMessage({type:'event',event:{event:'run.'+result.status,data:{...publicResult,messages:result.messages??[]}}});
       }else if(!terminal.current.has(result.runId)){
@@ -183,19 +184,24 @@ export function SessionHost({id}:{id:string}) {
         phaseRef.current=result.phase??'preparing';setPhase(phaseRef.current);
         port.current?.postMessage({type:'event',event:{event:'run.snapshot',data:{runId:result.runId,
           status:result.status??'preparing',messages:result.messages??[],phase:phaseRef.current,
-          executionMode:result.executionMode,capabilities:result.capabilities,extensions:result.extensions}}});
+          extensions:result.extensions}}});
       }
     };
     const recover=async()=>{
-      const sequence=++recoverySequence,known=activeRef.current;
+      if(!connected.current)return;
+      const sequence=++recoverySequence,known=activeRef.current,suggestionVersion=suggestions.version;
       try {
         const current=await api(base);
-        if(gone||sequence!==recoverySequence)return;
+        if(gone||!connected.current||sequence!==recoverySequence)return;
+        const latest=await api(base+'/runs?limit=1');
+        if(gone||!connected.current||sequence!==recoverySequence)return;
+        suggestions.verifyLatest(current.activeRun?.id??latest.runs?.at(-1)?.id,suggestionVersion);
+        port.current?.postMessage({type:'event',event:{event:'session.connection',data:{connected:true}}});
         const runId=current.activeRun?.runId??current.activeRun?.id??known;
         if(runId){
           try {
             const result=await api(base+'/runs/'+encodeURIComponent(runId));
-            if(!gone&&sequence===recoverySequence)restoreRun({...result,runId});
+            if(!gone&&sequence===recoverySequence&&suggestionVersion===suggestions.version)restoreRun({...result,runId});
           }catch(error){
             // A preparation task has no durable entry until startRun. After a
             // restart, authoritative absence releases its transient UI state.
@@ -210,13 +216,16 @@ export function SessionHost({id}:{id:string}) {
       }catch{if(!gone)setNotice('运行状态恢复失败，请重新连接后重试');}
     };
     stream.onopen=()=>{connected.current=true;void recover();loadStage();loadSettings();setOnline(true);setUsageRevision(value=>value+1);if(ready.current)port.current?.postMessage({type:'connected'});};
-    stream.onerror=()=>{connected.current=false;setOnline(false);};
+    stream.onerror=()=>{recoverySequence++;connected.current=false;setOnline(false);port.current?.postMessage({type:'event',event:{event:'session.connection',data:{connected:false}}});};
     stream.addEventListener('usage.updated',()=>setUsageRevision(value=>value+1));
-    for(const name of ['run.created','run.phase','run.delta','run.completed','run.failed','run.stopped','state.changed'])stream.addEventListener(name,(event:MessageEvent)=>{
+    for(const name of ['run.created','run.phase','run.delta','run.completed','run.failed','run.stopped','state.changed','action_suggestions.changed'])stream.addEventListener(name,(event:MessageEvent)=>{
       try {
         const data=JSON.parse(event.data);
+        if(name==='action_suggestions.changed'){suggestions.receive(data);return;}
+        if(name==='run.created'||name==='run.phase')suggestions.accepted(data.runId);
         if(name.startsWith('run.') && typeof data.runId==='string'){
           if(['run.completed','run.failed','run.stopped'].includes(name)){
+            suggestions.settled(data.runId,name.slice(4),data.messages??[]);
             terminal.current.add(data.runId);if(terminal.current.size>100){const oldest=terminal.current.values().next().value!;terminal.current.delete(oldest);}
             if(activeRef.current===data.runId){activeRef.current=null;setActiveRun(null);}
             if(name==='run.failed')setNotice(String(data.errorMessage??'未知错误'));
@@ -239,7 +248,7 @@ export function SessionHost({id}:{id:string}) {
           channel.port1.postMessage({type:'theme',value:document.documentElement.dataset.theme??'light'});
           syncAppearance();
           if(connected.current)channel.port1.postMessage({type:'connected'});
-        } else if(payload.type==='page-mounted'){if(!fatalRef.current){mountedRef.current=true;setMounted(true);void recover();}}
+        } else if(payload.type==='page-mounted'){if(!fatalRef.current){mountedRef.current=true;setMounted(true);suggestions.publish();void recover();}}
         else if(payload.type==='set-draft'){
           if(!fatalRef.current && typeof payload.text==='string' && payload.text.length<=100000){updateDraft(payload.text);setExpanded(true);}
         } else if(payload.type==='sdk-error')setNotice('SDK 错误：'+payload.message);
@@ -292,7 +301,7 @@ export function SessionHost({id}:{id:string}) {
     void api(base).then(current=>{if(!gone){
       setTitle(current.title??'');
       setPreset(current.presetId??null);
-      setModelConfig(current.apiModelConfigId??null);setMode(current.executionMode??'agent');
+      setModelConfig(current.apiModelConfigId??null);
       if(current.activeRun)restoreRun({...current.activeRun,runId:current.activeRun.runId??current.activeRun.id});
     }return api('v1/worlds/'+current.worldId);}).then(async world=>{
       const data=world.item.data;
@@ -307,7 +316,7 @@ export function SessionHost({id}:{id:string}) {
     };
     loadStage();loadSettings();
     return()=>{gone=true;themeObserver.disconnect();matcher.close();stream.close();port.current?.close();port.current=null;window.removeEventListener('message',listener);};
-  },[base,nonce,send,block,updateDraft,syncAppearance]);
+  },[base,nonce,send,block,updateDraft,syncAppearance,suggestions]);
 
   useEffect(()=>{
     const abort=new AbortController();
@@ -324,19 +333,15 @@ export function SessionHost({id}:{id:string}) {
   async function submit(value?:string){if(fatal||!online||!loaded||!mounted||sending||activeRun)return;const text=trimTrailingEmptyRoleplayLines(value??draft);if(!text.trim())return;const revision=draftRevision.current;try{await send(text);if(draftRevision.current===revision)updateDraft('');}catch(error){setNotice(error instanceof Error?error.message:'发送失败');}}
   async function saveSettings(){
     setSettingsSaving(true);setSettingsError('');
-    const configChanged=settingsTitle.trim()!==title||settingsPreset!==(preset??'')||settingsModel!==(modelConfig??'')||settingsMode!==mode;
+    const configChanged=settingsTitle.trim()!==title||settingsPreset!==(preset??'')||settingsModel!==(modelConfig??'');
     if(configChanged&&(!settingsPreset||!settingsModel||activeRun||sending)){
       setSettingsError(!settingsPreset||!settingsModel?'修改会话配置时必须选择预设和 API 模型':'生成过程中不能修改会话配置');
       setSettingsSaving(false);return;
     }
     try{
       if(configChanged){
-        await api(base,{method:'PATCH',body:json({title:settingsTitle.trim()||null,presetId:settingsPreset,apiModelConfigId:settingsModel,executionMode:settingsMode})});
-        setTitle(settingsTitle.trim());setPreset(settingsPreset);setModelConfig(settingsModel);setMode(settingsMode);
-      }
-      if(capabilities&&(overrides.state_update!==(capabilities.overrides.state_update??null)||overrides.action_suggestions!==(capabilities.overrides.action_suggestions??null))){
-        const updated=await api(base+'/capabilities',{method:'PATCH',body:json({expectedRevision:capabilities.revision,overrides})});
-        setCapabilities(updated);
+        await api(base,{method:'PATCH',body:json({title:settingsTitle.trim()||null,presetId:settingsPreset,apiModelConfigId:settingsModel})});
+        setTitle(settingsTitle.trim());setPreset(settingsPreset);setModelConfig(settingsModel);
       }
       fontSizeBeforeSettings.current=settingsFontSize;setFontSize(settingsFontSize);
       try {localStorage.setItem(fontPreferenceKey,String(settingsFontSize));}
@@ -351,11 +356,10 @@ export function SessionHost({id}:{id:string}) {
   const currentPreset=presets.find(p=>p.id===preset)?.name??'未选择预设';
   const currentModel=modelConfigs.find(m=>m.id===modelConfig)?.name??'未选择模型';
   function openSettings(){
-    setSettingsTitle(title);setSettingsPreset(preset??'');setSettingsModel(modelConfig??'');setSettingsMode(mode);setSettingsError('');
+    setSettingsTitle(title);setSettingsPreset(preset??'');setSettingsModel(modelConfig??'');setSettingsError('');
     setCapabilitiesLoading(true);
     void api(base+'/capabilities').then(value=>{
-      if(typeof value.revision!=='number')throw Error('能力设置不可用');
-      setCapabilities(value);setOverrides({state_update:value.overrides.state_update??null,action_suggestions:value.overrides.action_suggestions??null});
+      setCapabilities(value);
     }).catch(()=>setCapabilities(null)).finally(()=>setCapabilitiesLoading(false));
     fontSizeBeforeSettings.current=fontSize;setSettingsFontSize(fontSize);setSettingsOpen(true);
   }
@@ -363,7 +367,7 @@ export function SessionHost({id}:{id:string}) {
     setFontSize(fontSizeBeforeSettings.current);setSettingsFontSize(fontSizeBeforeSettings.current);
     setSettingsOpen(false);
   }
-  const settingsConfigChanged=settingsTitle.trim()!==title||settingsPreset!==(preset??'')||settingsModel!==(modelConfig??'')||settingsMode!==mode;
+  const settingsConfigChanged=settingsTitle.trim()!==title||settingsPreset!==(preset??'')||settingsModel!==(modelConfig??'');
   const canSaveSettings=!settingsSaving&&(!settingsConfigChanged||(!activeRun&&!sending&&!!settingsPreset&&!!settingsModel));
   const stateLabel=fatal?'舞台异常':stageError?'舞台未连接':!online?'正在连接':activeRun?({preparing:'准备中',narrative:'生成中',extensions:'整理中'} as Record<string,string>)[phase]??'生成中':'已连接';
   return <section ref={detail} className={styles.detail} data-session-detail={id}>
@@ -394,9 +398,8 @@ export function SessionHost({id}:{id:string}) {
       </div>}
     </div>
     {settingsOpen&&<SessionSettingsDialog
-      title={settingsTitle} preset={settingsPreset} model={settingsModel} mode={settingsMode}
-      capabilities={capabilities} overrides={overrides} capabilitiesLoading={capabilitiesLoading}
-      onModeChange={setSettingsMode} onOverridesChange={setOverrides}
+      title={settingsTitle} preset={settingsPreset} model={settingsModel}
+      capabilities={capabilities} capabilitiesLoading={capabilitiesLoading}
       presets={presets} models={modelConfigs} fontSize={settingsFontSize}
       saving={settingsSaving} error={settingsError} disabled={!!activeRun||sending} canSave={canSaveSettings}
       onTitleChange={setSettingsTitle} onPresetChange={setSettingsPreset} onModelChange={setSettingsModel}

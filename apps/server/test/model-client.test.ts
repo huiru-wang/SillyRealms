@@ -14,7 +14,7 @@ it('stops waiting for an uncooperative provider without consuming late responses
   let release!: () => void;
   const gateway: ModelGateway = {
     resolve: () => model,
-    supportsDirect:()=>true,toolVerified: () => true,
+    supportsDirect:()=>true,
     stream: () => ({
       [Symbol.asyncIterator]() {
         let nextCount = 0;

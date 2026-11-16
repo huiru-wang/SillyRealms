@@ -2,7 +2,7 @@ import { ErrorCodes } from '../../common/error-codes.js';
 import { updateAtomicState, type AtomicStateDefinition } from './atomic-state.js';
 import type { Json } from './state.js';
 
-/** Shared domain permission boundary for tools and narrative candidates. */
+/** Shared domain permission boundary for narrative candidates. */
 export function applyRuntimeStateUpdate(workspace: Record<string, Json>, fields: Record<string, AtomicStateDefinition>,
   active: ReadonlySet<string>, path: string | string[], value: unknown): void {
   const parts = typeof path === 'string' ? path.split('.') : path;

@@ -1,3 +1,5 @@
+import {defaultPreset} from '../src/domain/preset/schema.js';
+import {insertPreset} from '../src/repositories/preset-repository.js';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, it } from 'vitest';
@@ -27,13 +29,7 @@ function seed() {
       openings: [{ id: 'opening', name: 'start', content: 'start' }] },
   });
   db.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)').run('config', 'test', 'fake', 'fake', 'ref', now, now);
-  db.prepare('INSERT INTO presets(id,name,config_json,created_at,updated_at) VALUES(?,?,?,?,?)')
-    .run('preset', 'test', JSON.stringify({
-      name: 'test', budget: { context_strategy:'standard', max_output_tokens: 64 }, summary_prompt: 'summary',
-      nodes: ['main', 'personaInfo', 'characterInfo', 'worldState', 'chatHistory', 'userInput', 'postHistory']
-        .map(id => ({ id, kind: 'system', role: id === 'chatHistory' ? 'auto' : id === 'userInput' ? 'user' : 'system',
-          enabled: true, content: id === 'main' ? 'hello' : '' })),
-    }), now, now);
+  const preset=defaultPreset();preset.name='test';preset.context_strategy={...preset.context_strategy,max_context_tokens:12000,max_output_tokens:64};insertPreset(db,preset,'preset');
   seedSession(db, 'session', 'world', 'preset', 'player', 'opening-entry', null, '{}', now, now, 'config');
   db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,state,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
     .run('opening-entry', 'session', null, 'opening-run', 1, 'message', 'assistant', 0, now,
@@ -137,7 +133,7 @@ it.each([
     append(db, assistant, `run-${i}`, 3 + i * 2, 'assistant', 'message', user);
     parent = assistant;
   }
-  db.prepare("UPDATE presets SET config_json=json_set(config_json,'$.budget',json(?))").run(JSON.stringify({strategy:'rolling_summary',max_context_tokens:12000,max_output_tokens:64}));
+  db.prepare("UPDATE presets SET context_strategy=json_patch(context_strategy,json(?))").run(JSON.stringify({strategy:'rolling_summary',max_context_tokens:12000,max_output_tokens:64}));
   // Current input measurement controls compaction, independent of the preceding request's usage.
   db.prepare('UPDATE entries SET payload=? WHERE id=?').run(
     JSON.stringify({message:{role:'assistant',content:'故事'.repeat(compress?7000:20)}}), 'assistant-0');
@@ -150,7 +146,7 @@ it.each([
   }
   let calls = 0;
   const gateway: ModelGateway = {
-    resolve: () => model, supportsDirect:()=>true,toolVerified: () => true,
+    resolve: () => model, supportsDirect:()=>true,
     stream: () => ({async *[Symbol.asyncIterator]() {
       calls++;
       yield {type:'text_delta',delta:'response',contentIndex:0,partial:{} as never} as AssistantMessageEvent;
@@ -174,7 +170,7 @@ it('serves two Session dimensions through the server route and records real mode
   const db = seed();
   const gateway: ModelGateway = {
     resolve: () => model,
-    supportsDirect:()=>true,toolVerified: () => true,
+    supportsDirect:()=>true,
     stream: () => ({
       async *[Symbol.asyncIterator]() {
         yield { type: 'text_delta', delta: 'response', contentIndex: 0, partial: {} as never } as AssistantMessageEvent;
@@ -187,7 +183,7 @@ it('serves two Session dimensions through the server route and records real mode
     }),
   };
   const credentials: CredentialStore = { async get() { return 'test'; }, async set() {}, deleteSync() {} };
-  db.prepare("UPDATE presets SET config_json=json_set(config_json,'$.budget.max_context_tokens',16000) WHERE id='sr-default-preset'").run();
+  db.prepare("UPDATE presets SET context_strategy=json_set(context_strategy,'$.max_context_tokens',16000) WHERE id='sr-default-preset'").run();
   const app = createApp(db, credentials, gateway);
   expect((await app.request('/api/v1/sessions/unknown/usage')).status).toBe(404);
   const start = await app.request('/api/v1/sessions/session/runs', {
@@ -213,105 +209,5 @@ it('serves two Session dimensions through the server route and records real mode
   });
   const user = db.prepare('SELECT metrics_json FROM entries WHERE run_id=? AND role=?').get(id, 'user');
   expect(JSON.parse(String(user?.metrics_json)).run).toMatchObject({ accounted: true, totalTokens: 1680 });
-  db.close();
-});
-
-it('migrates an existing database in place without resetting previously stored rows', async () => {
-  const { mkdtempSync, rmSync } = await import('node:fs');
-  const { join } = await import('node:path');
-  const { tmpdir } = await import('node:os');
-  const folder = mkdtempSync(join(tmpdir(), 'sr-usage-migrate-')), file = join(folder, 'legacy.sqlite');
-  try {
-    // Recreate the pre-feature schema by dropping only the two new columns,
-    // preserving every other real table, index and trigger.
-    const legacy = openDatabase(file);
-    legacy.prepare('INSERT INTO presets(id,name,config_json,created_at,updated_at) VALUES(?,?,?,?,?)')
-      .run('legacy-preset', 'legacy', '{}', 1, 1);
-    seedWorld(legacy, 'legacy-world', {
-      spec: 'world_card', spec_version: '0.1',
-      data: { name: 'legacy', characters: [{ id: 'player', name: 'player', player_selectable: true }],
-        openings: [{ id: 'start', name: 'start', content: 'old text' }] },
-    });
-    legacy.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)').run('legacy-config', 'old', 'fake', 'fake', 'ref', 1, 1);
-    seedSession(legacy, 'old-session', 'legacy-world', 'legacy-preset', 'player', 'old-entry',
-      'retained', '{}', 1, 1, 'legacy-config');
-    legacy.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-      .run('old-entry', 'old-session', null, 'old-run', 1, 'message', 'assistant', 0, 1,
-        '{"message":{"role":"assistant","content":"old text"}}', '{}');
-    legacy.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-      .run('old-user', 'old-session', 'old-entry', 'old-run', 2, 'message', 'user', 0, 2,
-        '{"message":{"role":"user","content":"continue"}}', '{"run":{"status":"completed"}}');
-    legacy.exec('ALTER TABLE entries DROP COLUMN metrics_json; ALTER TABLE sessions DROP COLUMN usage_json;');
-    legacy.close();
-    const migrated = openDatabase(file);
-    expect(migrated.prepare("SELECT title,usage_json FROM sessions WHERE id='old-session'").get()?.title).toBe('retained');
-    expect(JSON.parse(String(migrated.prepare("SELECT usage_json FROM sessions WHERE id='old-session'").get()?.usage_json))
-      .historicalUsageUnknown).toBe(true);
-    expect(new UsageStore(migrated).view('old-session').cumulative.complete).toBe(false);
-    expect(migrated.prepare("SELECT metrics_json FROM entries WHERE id='old-entry'").get()?.metrics_json).toBe(null);
-    migrated.close();
-    const again = openDatabase(file);
-    expect(again.prepare("SELECT title FROM sessions WHERE id='old-session'").get()?.title).toBe('retained');
-    again.close();
-  } finally { rmSync(folder, { recursive: true, force: true }); }
-});
-
-it('counts every request in the tool loop and uses the last continuation context', async () => {
-  const db = openDatabase(':memory:');
-  seedWorld(db, 'state-world', {
-    spec: 'world_card', spec_version: '0.1', data: {
-      name: 'state-world',
-      characters: [{ id: 'player', name: 'player', player_selectable: true }],
-      openings: [{ id: 'opening', name: 'opening', content: 'hello' }],
-      state: { schema_version: 1, scopes: { message: {
-        mood: { type: 'string', initial: 'normal', description: 'Update when changed' },
-      } } },
-    },
-  });
-  const credentials: CredentialStore = { async get() { return 'test'; }, async set() {}, deleteSync() {} };
-  let callCount = 0;
-  const gateway: ModelGateway = {
-    resolve: () => model,
-    supportsDirect:()=>true,toolVerified: () => true,
-    stream: () => ({
-      async *[Symbol.asyncIterator]() {
-        const first = ++callCount === 1;
-        const message = {
-          role: 'assistant', api: 'openai-completions', provider: 'fake', model: 'fake',
-          content: first ? [{ type: 'text', text: 'story' },{ type: 'toolCall', id: 'state', name: 'update_state', arguments: { updates: [] } }]
-            : [{ type: 'text', text: 'story' }],
-          usage: first ? tokenUsage(600, 50, 400, 100) : tokenUsage(800, 80, 400, 100),
-          stopReason: first ? 'toolUse' : 'stop', timestamp: Date.now(),
-        };
-        yield { type: 'done', reason: first ? 'toolUse' : 'stop', message } as AssistantMessageEvent;
-      },
-    }),
-  };
-  db.prepare("UPDATE presets SET config_json=json_set(config_json,'$.budget.max_context_tokens',16000) WHERE id='sr-default-preset'").run();
-  const app = createApp(db, credentials, gateway);
-  const create = await app.request('/api/v1/sessions', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ worldId: 'state-world', openingId: 'opening', userCharacterId: 'player' }),
-  });
-  expect(create.status).toBe(201);
-  const session = (await create.json() as { data: { item: { id: string; tipEntryId: string } } }).data.item;
-  expect((await app.request('/api/v1/sessions/'+session.id,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({executionMode:'agent'})})).status).toBe(200);
-  const { SRRuntime } = await import('../src/runtime/sr-runtime.js');
-  const runtime = new SRRuntime(db, credentials, gateway);
-  const { runId, stream } = await runtime.prepare(session.id, 'continue', randomUUID(), session.tipEntryId);
-  const reader = stream.getReader();
-  while (!(await reader.read()).done) { /* drain */ }
-  expect(runtime.status(session.id, runId)?.status).toBe('completed');
-  expect(new UsageStore(db).view(session.id)).toMatchObject({
-    cumulative: {
-      inputTokens: 2400, outputTokens: 130, totalTokens: 2530,
-      cacheReadTokens: 800, cacheWriteTokens: 200, reportedCount: 2,
-    },
-    latestContext: { inputTokens: 1300, outputTokens:80, contextWindowTokens: 32768, stale: false },
-  });
-  const entries = db.prepare("SELECT metrics_json FROM entries WHERE session_id=? AND role='assistant' AND run_id=?")
-    .all(session.id, runId);
-  const phases = entries.map(row => JSON.parse(String(row.metrics_json)).phase);
-  expect(phases).toEqual(['generation','continuation']);
   db.close();
 });

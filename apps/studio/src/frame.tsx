@@ -72,7 +72,7 @@ window.addEventListener('message',function receive(event){
       void state.refresh().catch(error=>port.postMessage({type:'sdk-error',message:error instanceof Error?error.message:'状态读取失败'}));
     } else if(payload.type==='event') {
       if(payload.event?.event==='state.changed')state.accept(payload.event as StateEvent);
-      else if(String(payload.event?.event??'').startsWith('run.'))session.accept(payload.event as SessionRunEvent);
+      else if(['action_suggestions.changed','session.connection'].includes(payload.event?.event)||String(payload.event?.event??'').startsWith('run.'))session.accept(payload.event as SessionRunEvent);
     } else if(payload.type==='render') {
       try {
         let Component:React.ComponentType=PendingOfficial;

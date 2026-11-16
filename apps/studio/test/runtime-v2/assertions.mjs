@@ -35,10 +35,17 @@ export async function verifyRuntime(call,pause){
     }while(Date.now()<deadline);
     throw Error('runtime-v2: timed out waiting for '+label+'; frame='+await frameEval('document.body.innerText'));
   };
+  await waitForFrame('!!document.querySelector("[data-message-id=a1]")','initial history');
+  assert(await frameEval('document.querySelectorAll(".sr-suggestions button").length')===0,'history does not reconstruct suggestions');
+  await evaluate('__runtimeTest.publish()');
   for(let i=0;i<150;i++){if(await frameEval('document.querySelectorAll(".sr-suggestions button").length')===3)break;await pause(100);}
   const available=await frameEval('document.querySelectorAll(".sr-suggestions button:not(:disabled)").length');
   if(available!==3)throw Error('runtime-v2 initial render: '+JSON.stringify({available,frame:await frameEval('document.body.innerText'),host:await evaluate('document.querySelector(".host")?.innerText')}));
-  assert(available===3,'restores suggestions from persisted results');
+  assert(available===3,'displays the transient event bound to the assistant message');
+  await evaluate('__runtimeTest.disconnect()');await pause(100);
+  assert(await frameEval('document.querySelectorAll(".sr-suggestions button:disabled").length')===3,'disconnect disables transient suggestions');
+  await evaluate('__runtimeTest.reconnect()');
+  await waitForFrame('document.querySelectorAll(".sr-suggestions button:not(:disabled)").length===3','verified suggestions after reconnect');
   const screenshot=async name=>{
     if(!process.env.SR_QA_SCREENSHOT_DIR)return;
     await mkdir(process.env.SR_QA_SCREENSHOT_DIR,{recursive:true});
@@ -54,7 +61,7 @@ export async function verifyRuntime(call,pause){
     assert(story.scroll<=story.width+1&&story.buttons.every(right=>right<=story.width+1),width+'px suggestion buttons fit the viewport');
     await screenshot('runtime-story-'+width);
     await evaluate('document.querySelector("[aria-label=会话设置]").click()');await pause(150);
-    assert(await evaluate('document.querySelectorAll(".host-capability-settings select").length')===2,'shows inherited capability controls at '+width+'px');
+    assert(await evaluate('document.querySelectorAll(".host-capability-settings select").length')===0,'shows preset-controlled capabilities at '+width+'px');
     await screenshot('runtime-settings-'+width);
     await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
     await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await pause(100);
@@ -67,13 +74,11 @@ export async function verifyRuntime(call,pause){
   await evaluate('(()=>{const e=document.querySelector("[contenteditable]");e.focus();document.execCommand("insertText",false,"之后编辑")})()');await pause(100);
   assert(!await evaluate('!!document.querySelector(".host-draft-undo")'),'Studio keeps draft editing inside the composer');
   await evaluate('__runtimeTest.begin()');await pause(150);
-  assert(await frameEval('document.querySelectorAll(".sr-suggestions button:not(:disabled)").length')===0,'starting a new Run disables historical suggestions');
+  assert(await frameEval('document.querySelectorAll(".sr-suggestions button").length')===0,'starting a new Run clears suggestions');
   await evaluate('document.querySelector("[aria-label=会话设置]").click()');await pause(150);
-  assert(await evaluate('[...document.querySelectorAll(".host-settings-fields label")].find(e=>e.textContent.startsWith("执行模式")).querySelector("select").disabled'),'busy mode cannot be changed');
-  assert(await evaluate('document.querySelector(".host-current-capabilities").innerText.includes("本轮使用：状态更新开启")'),'shows the frozen current Run settings separately from next-run overrides');
-  await evaluate('(()=>{const e=document.querySelector(".host-capability-settings select");e.value="false";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await pause(80);
-  await evaluate('document.querySelector(".host-settings-dialog-footer .primary").click()');await pause(120);
-  assert(await evaluate('__runtimeTest.calls.some(c=>c.path.endsWith("/capabilities")&&c.body.overrides.state_update===false)'),'capability overrides can be saved while busy for the next Run');
+  assert(await evaluate('document.querySelector("[aria-label=预设][role=combobox]").disabled'),'busy session configuration cannot be changed');
+  assert(!await evaluate('!!document.querySelector("[aria-label=执行模式]")'),'no retired execution mode control');
+  await evaluate('document.querySelector(".host-settings-dialog-footer .secondary").click()');await pause(120);
   await frameEval('window.__oldParagraph=document.querySelector(".sr-rich p")');
   await evaluate('__runtimeTest.stream("稳定段落。\\n\\n正在")');
   // Delta delivery crosses the iframe channel and may use WorldStory's 100ms

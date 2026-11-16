@@ -6,9 +6,9 @@
 - Creator components use @sillyrealms/sdk and card-local ./ID static imports only; runtime does not support the retired alias. Session Stage and world introduction/opening previews use the dedicated asset origin with sandbox="allow-scripts allow-same-origin" and their existing CSP; preview runtime/Host authorization remains readonly. Keep exact origin/source/nonce MessageChannel validation and one React instance per document.
 - Stage selection depends solely on resolving stage_component. Missing target uses WorldStory; present but broken target fails. Author components need not include WorldStory. Message components resolve from components even with the official stage.
 - Preserve the glass composer, measured bottom inset, editable next draft during generation, revision-based clearing, Lexical/IME/history and format semantics. setDraft does not send or add a separate undo banner.
-- Preset saves use Server numeric budgets and preserve legacy system content and capability settings. Errors retain edits; deleting referenced configurations must fail visibly.
+- Preset saves use the eight-column contract and If-Match ETags. Six fixed nodes stay enabled; worldState/actionSuggestions use their node enabled flags. View full prompts and optional read-only candidate previews. Errors retain edits; deleting referenced configurations must fail visibly.
 - Run root typecheck/lint/test/build and applicable browser suites. pnpm test:browser uses isolated API/storage and an offline test Provider; never use real user DB or paid calls for routine verification. Inspect 375/1280 screenshots and report untested flows.
-- World prose uses description only, never summary. Lore rows show policy/position/enabled state with one bounded reading pane open at a time. World export/delete belong in the title's more menu; preserve focus return and delete confirmation. Use the existing semantic theme and shared page-header spacing.
+- World prose uses description only, never summary. Lore rows show policy/world-book placement/enabled state with one bounded reading pane open at a time. World export/delete belong in the title's more menu; preserve focus return and delete confirmation. Use the existing semantic theme and shared page-header spacing.
 
 ## Interaction invariants (2026-11-10 refinement)
 
@@ -29,3 +29,7 @@
 - Session usage summaries must fit completely or collapse to “用量”, based on available toolbar space; never ellipsize token counts. Center bar labels vertically and keep the cache-hit rate on the cumulative legend row. Presentation changes do not change Server usage accounting or the byte-based context composition.
 
 - Detail previews alone reuse source-keyed compilation promises in a bounded in-memory cache; changed source invalidates, failures retry, and fresh iframes discard component state/media on switches. Static world documents and session compilation are unchanged.
+
+- Host owns the transient action-suggestion batch. Clear it on accepted Run, preserve on rejected send, reject stale/duplicate events, and never reconstruct from history/storage. Forward action_suggestions.changed and session.connection through SRSessionAPI; WorldStory binds buttons to the assistant message and only fills drafts.
+
+- Run metadata is minimal: entries keep requestId, run status/errorCode and two extension statuses; opening origin and summary coverage are retained. No persisted runtime snapshots, capabilities, protocol, per-item diagnostics or duplicate IDs/phases/error messages. HTTP/SSE derive phase and error text; Host/SDK consume only the two extension statuses. Offline metadata cleanup uses scripts/compact-run-metadata.ts under the data-directory lock.

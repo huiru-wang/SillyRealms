@@ -26,6 +26,7 @@ const realFetch=window.fetch.bind(window);
 window.fetch=async(input, init)=>{
   const path=String(input);if(!path.startsWith('/api/')||path==='/api/v1/runtime/web-config')return realFetch(input,init);
   if(path==='/api/v1/worlds/world'&&failNextWorldRead){failNextWorldRead=false;return new Response('',{status:500});}
+  if(path==='/api/v1/sessions/test/capabilities')return new Response(JSON.stringify({success:false,errorCode:'PRESET_NOT_SELECTED',errorMessage:'请选择预设',data:null}),{status:422,headers:{'Content-Type':'application/json'}});
   let data: unknown = {};
   if(path.startsWith('/api/v1/presets?')) data={items:[],hasMore:false};
   else if(path==='/api/v1/api-model-configs') data={items:[]};

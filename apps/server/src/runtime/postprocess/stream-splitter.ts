@@ -1,4 +1,4 @@
-export const EXTENSION_OPEN = '<sr_extensions>';
+const MARKERS=['<state_update','<action_suggestions','<sr_extensions'];
 export const MAX_TAIL_BYTES = 262_144;
 
 /** Bounded marker look-behind. Once a tail starts, text can never become visible again. */
@@ -22,14 +22,18 @@ export class ExtensionStreamSplitter {
     if (this.hidden) { this.capture(chunk); return ''; }
     const text = this.prefix + chunk;
     this.prefix = '';
-    const index = text.indexOf(EXTENSION_OPEN);
+    const lower=text.toLowerCase();
+    let index=-1;
+    for(let i=0;i<text.length;i++){
+      if(MARKERS.some(marker=>lower.startsWith(marker,i)&&/^[\s/>]/u.test(text.slice(i+marker.length)))){index=i;break;}
+    }
     if (index >= 0) {
       this.hidden = true;
       this.capture(text.slice(index));
       return text.slice(0, index);
     }
-    let keep = Math.min(text.length, EXTENSION_OPEN.length - 1);
-    while (keep > 0 && !EXTENSION_OPEN.startsWith(text.slice(-keep))) keep--;
+    let keep = Math.min(text.length, Math.max(...MARKERS.map(m=>m.length)));
+    while (keep > 0 && !MARKERS.some(marker=>marker.startsWith(text.slice(-keep).toLowerCase()))) keep--;
     this.prefix = keep ? text.slice(-keep) : '';
     return keep ? text.slice(0, -keep) : text;
   }

@@ -86,7 +86,7 @@ export function sessionRuntimeRoutes(db:DatabaseSync,runtime:SRRuntime,shutdown?
           });
         } else if(event==='run.updated' && payload.status==='stopped')send('run.stopped',{...publicResult(),runId,messages:messages(runId)});
         else if(event==='state.changed' && typeof payload.path==='string')send('state.changed',payload);
-        else if(event==='tool.failed')send('tool.failed',payload);
+        else if(event==='action_suggestions.changed')send(event,payload);
         else if(event==='run.phase')send('run.phase',{runId,phase:payload.phase});
         else if(event==='usage.updated')send('usage.updated',payload);
       });

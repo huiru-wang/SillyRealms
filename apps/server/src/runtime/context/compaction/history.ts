@@ -1,7 +1,7 @@
 import { parseRoleplay } from '@sillyrealms/roleplay';
 import { fingerprint } from '../../config.js';
 
-export type HistoryItem = { id: string; role: 'user' | 'assistant'; text: string; gap?: string };
+export type HistoryItem = { id: string; role: 'user' | 'assistant'; text: string };
 /** Opening assistant content is its own earliest group; subsequent groups are complete user turns. */
 export function historyGroups(history: HistoryItem[]): HistoryItem[][] {
   const groups: HistoryItem[][] = [];

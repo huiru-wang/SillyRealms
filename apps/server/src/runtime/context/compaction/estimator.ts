@@ -36,7 +36,7 @@ export function estimateContext(context: Context): number {
   if (!Number.isSafeInteger(result)) throw new RuntimeError(ErrorCodes.CONTEXT_MEASUREMENT_UNSUPPORTED);
   return result;
 }
-export function inputIdentity(model: Model<Api>, context: Context, options: { mode: string; strategy: string; toolChoice?: ToolChoice }): InputIdentity {
+export function inputIdentity(model: Model<Api>, context: Context, options: { strategy: string; toolChoice?: ToolChoice }): InputIdentity {
   return { version: ESTIMATOR_VERSION, settings: fingerprint({ model, ...options, systemPrompt: context.systemPrompt, tools: context.tools }),
     messages: context.messages.map(message => {
       const { timestamp: _time, ...value } = message;

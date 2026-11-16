@@ -1,7 +1,9 @@
+import {defaultPreset} from '../src/domain/preset/schema.js';
+import {insertPreset} from '../src/repositories/preset-repository.js';
 import { seedWorld, seedSession } from './fixtures/db-seed.js';
 import {expect,it} from 'vitest';
 import type {Api,AssistantMessageEvent,Context,Model} from '@earendil-works/pi-ai';
-import {SR_SYSTEM_MAIN} from '../src/runtime/context/system-main.js';
+const SR_SYSTEM_MAIN=defaultPreset().config_json.nodes[0]!.prompt.parts.filter(p=>p.type==='text').map(p=>p.value).join('');
 import type {CredentialStore} from '../src/infrastructure/credentials/store.js';
 import type {ModelGateway} from '../src/runtime/model/pi-gateway.js';
 import {createApp} from '../src/app.js';
@@ -13,11 +15,10 @@ const post=(data:unknown)=>({method:'POST',headers:{'content-type':'application/
 function setup(gateway:ModelGateway,presetId:string|null='preset'){
   const db=openDatabase(':memory:'),now=Date.now();
   const card={spec:'world_card',spec_version:'0.1',data:{name:'测试',characters:[{id:'p',name:'玩家',player_selectable:true}],openings:[{id:'o',name:'开局',content:'开场'}]}};
-  const ids=['main','personaInfo','characterInfo','worldState','chatHistory','userInput','postHistory'];
-  const preset={name:'测试',budget:{context_strategy:'standard',max_output_tokens:64},summary_prompt:'摘要',nodes:ids.map(id=>({id,name:id,kind:'system',source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true}))};
+  const preset=defaultPreset();preset.name='test';preset.context_strategy={...preset.context_strategy,max_context_tokens:12000,max_output_tokens:64};
   seedWorld(db,'world',card);
   db.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)').run('config','测试','fake','fake','ref',now,now);
-  db.prepare('INSERT INTO presets(id,name,config_json,created_at,updated_at) VALUES(?,?,?,?,?)').run('preset','测试',JSON.stringify(preset),now,now);
+  insertPreset(db,preset,'preset');
   seedSession(db,'session','world',presetId,'p','opening',null,'{}',now,now,'config');
   db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,state,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('opening','session',null,'opening-run',1,'message','assistant',0,now,JSON.stringify({message:{role:'assistant',content:'开场'}}),'[]',JSON.stringify({run:{status:'completed'}}));
   return {db,app:createApp(db,credentials,gateway)};
@@ -31,7 +32,7 @@ async function until(reader:ReadableStreamDefaultReader<Uint8Array>,name:string)
 }
 
 it('keeps committed partial text when an active V1 run is stopped',async()=>{
- const gateway:ModelGateway={resolve:()=>model,supportsDirect:()=>true,toolVerified:()=>true,stream:(_model,_context,{signal})=>({async *[Symbol.asyncIterator](){yield {type:'text_delta',delta:'部分回复',contentIndex:0,partial:{} as never} as AssistantMessageEvent;await new Promise<void>(resolve=>{if(signal.aborted)resolve();else signal.addEventListener('abort',()=>resolve(),{once:true});});}})};
+ const gateway:ModelGateway={resolve:()=>model,supportsDirect:()=>true,stream:(_model,_context,{signal})=>({async *[Symbol.asyncIterator](){yield {type:'text_delta',delta:'部分回复',contentIndex:0,partial:{} as never} as AssistantMessageEvent;await new Promise<void>(resolve=>{if(signal.aborted)resolve();else signal.addEventListener('abort',()=>resolve(),{once:true});});}})};
  const {db,app}=setup(gateway);let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
  try {
   reader=(await app.request('/api/v1/sessions/session/events')).body!.getReader();
@@ -48,7 +49,7 @@ it('keeps committed partial text when an active V1 run is stopped',async()=>{
 });
 
 it('refuses creating a new session when the world default preset is not set',async()=>{
- const gateway:ModelGateway={resolve:()=>model,supportsDirect:()=>true,toolVerified:()=>true,stream:()=>({async *[Symbol.asyncIterator](){throw Error('Provider must not run');}})};
+ const gateway:ModelGateway={resolve:()=>model,supportsDirect:()=>true,stream:()=>({async *[Symbol.asyncIterator](){throw Error('Provider must not run');}})};
  const {db,app}=setup(gateway);
  try {
   expect((await app.request('/api/v1/worlds/world',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({defaultPresetId:null})})).status).toBe(200);
@@ -64,7 +65,7 @@ it('sends one SR-RP v1 User Message after the immutable platform System Main',as
  let captured:Context|undefined;
  const gateway:ModelGateway={
   resolve:()=>model,
-  supportsDirect:()=>true,toolVerified:()=>true,
+  supportsDirect:()=>true,
   stream:(_model,context)=>{
    captured=context;
    return {async *[Symbol.asyncIterator](){

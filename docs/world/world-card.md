@@ -159,10 +159,8 @@ flowchart LR
 | load 专用字段 | 值 | 运行语义 |
 | --- | --- | --- |
 | `order` | integer | 激活条目的排序键，默认 0；同值保持条目数组顺序 |
-| `anchor` | `personaInfo / characterInfo / worldState / userInput` | Agent 模式中的插入锚点，默认 characterInfo |
-| `position` | `before / after` | Agent 模式中相对锚点的位置，默认 after |
 
-**当前默认 Direct 模式**把所有激活的世界书条目按 `load.order` 和原数组顺序放入 `world_info`。anchor、position 仍保存、展示和导出，但不控制 Direct 模式中的实际插入位置。不要把界面显示的位置标签理解为当前所有运行模式都按此定位。
+激活的世界书条目按 load.order 和原数组顺序进入预设 worldInfo 节点。世界书不包含世界介绍；不使用锚点或前后位置字段。
 
 条目展示与模型加载分开：在详情页打开条目不会自动触发它进入上下文，禁用加载也不会删除正文。
 
@@ -231,7 +229,7 @@ flowchart LR
 
 message 状态不是每条消息都重置为 initial。它沿当前历史读取最近状态快照，更新由运行时验证和持久化。Direct 模式还取决于 state_update 能力、合法扩展输出以及成功提交；声明状态项并不保证每轮一定写入。
 
-Direct 模式给模型的当前状态按 writable_state / readonly_state 分组，每行一个 JSON 状态对象，显式提供 path、scope、type、value、description 及适用的 min/max。只有已激活的状态进入列表；当前阶段固定开启状态更新和行动建议。模型先生成故事，再通过完整的 sr_extensions 信封返回本轮所需子块；提示中的空骨架和完整示例使用代码围栏展示，模型实际输出不带围栏。更新项的 reason 可选，省略不会产生警告；路径和值仍须通过服务端校验。
+开启预设 worldState 节点时，模型看到“状态 key：当前值”和“状态 key：description/type/min/max”。只包含已激活的可更新 message 状态；世界共享值不自动注入，会话状态以 chatHistory 中的背景说明呈现。JSON 状态的子字段业务规则写在该状态 description 中，服务端不会执行自然语言 check。正文后顺序输出独立的 state_update 和 action_suggestions 标签，不使用外层信封；关闭对应节点时不要求该块。reason 可选，状态路径、类型和范围仍由服务端校验。
 
 会话 SDK 的写入同样会被 Server 校验，并受忙碌锁等运行约束限制；不能绕过类型、路径、数值范围和生命周期规则。模型权限与 SDK 权限不可混用。
 
@@ -486,7 +484,7 @@ ID 重复、空必填文本、没有可扮演角色、没有开局、类型不�
           "title": "港口的规矩",
           "content": "雾港日落后关闭外港。旧灯塔每夜点亮三次，第三次之后禁止出海。",
           "enabled": true,
-          "load": { "mode": "always", "order": 0, "anchor": "characterInfo", "position": "after" }
+          "load": { "mode": "always", "order": 0 }
         }
       ]
     },
@@ -579,7 +577,7 @@ ID 重复、空必填文本、没有可扮演角色、没有开局、类型不�
 | 字段存储与读取 | [world-repository.ts](/Users/wanghuiru/Workspace/SillyRealms/apps/server/src/repositories/world-repository.ts) |
 | 导入、导出、原始附件、世界状态 API | [worlds.ts](/Users/wanghuiru/Workspace/SillyRealms/apps/server/src/routes/worlds.ts) |
 | 会话创建与首条开局消息 | [sessions.ts](/Users/wanghuiru/Workspace/SillyRealms/apps/server/src/routes/sessions.ts) |
-| 加载与模型上下文 | [activation.ts](/Users/wanghuiru/Workspace/SillyRealms/apps/server/src/runtime/context/activation.ts)、[prompt-builder.ts](/Users/wanghuiru/Workspace/SillyRealms/apps/server/src/runtime/context/prompt-builder.ts) |
+| 加载与模型上下文 | [activation.ts](/Users/wanghuiru/Workspace/SillyRealms/apps/server/src/runtime/context/activation.ts)、[node-compiler.ts](/Users/wanghuiru/Workspace/SillyRealms/apps/server/src/runtime/context/node-compiler.ts) |
 | 状态声明与 when | [atomic-schema.ts](/Users/wanghuiru/Workspace/SillyRealms/apps/server/src/domain/state/atomic-schema.ts)、[when.ts](/Users/wanghuiru/Workspace/SillyRealms/apps/server/src/domain/state/when.ts) |
 | 状态值与开局覆盖 | [atomic-state.ts](/Users/wanghuiru/Workspace/SillyRealms/apps/server/src/domain/state/atomic-state.ts)、[state.ts](/Users/wanghuiru/Workspace/SillyRealms/apps/server/src/domain/state/state.ts) |
 | 组件依赖限制 | [modules.ts](/Users/wanghuiru/Workspace/SillyRealms/packages/sr-ui-compiler/src/modules.ts) |

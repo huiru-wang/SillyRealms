@@ -1,3 +1,4 @@
+import type {ActionSuggestions} from './run-contract.js';
 import React,{useCallback,useEffect,useLayoutEffect,useId,useMemo,useRef,useState} from 'react';
 import {useSRSession,useSRStateAPI} from './atomic-context.js';
 import {useStoryConfiguration} from './story-context.js';
@@ -62,33 +63,32 @@ function StatePanel({close,restoreFocus,overlay,id}:{close:()=>void;restoreFocus
     :<aside ref={aside} id={id} className="sr-story-state" aria-labelledby={id+'-title'}>{content}</aside>;
 }
 
-function RunFeedback({run,current,onChoose}:{run:Run;current:boolean;onChoose:(text:string)=>void}){
+function RunFeedback({run}:{run:Run}){
   const suggestions=run.extensions?.actionSuggestions;
   const state=run.extensions?.stateUpdate;
   const busy=run.status==='preparing'||run.status==='running';
   return <>
     {busy&&<p className="sr-thinking" role="status">{run.phase==='extensions'?'正文已生成，正在处理状态与建议…':run.phase==='preparing'?'正在准备上下文…':'正在生成故事…'}</p>}
     {run.status==='failed'&&!run.messages.some(message=>message.role==='assistant'&&message.text)&&<p className="sr-error">本次生成失败，本轮没有已保存的正文。</p>}
-    {run.status==='stopped'&&<p className="sr-thinking">已停止生成{run.executionMode==='direct'?'，本轮未提交状态更新。':''}</p>}
+    {run.status==='stopped'&&<p className="sr-thinking">已停止生成，本轮未提交状态更新。</p>}
     {state?.status==='partial'&&<p className="sr-thinking">部分状态更新未通过校验，已保存有效部分，本轮不提供行动建议。</p>}
     {state?.status==='disabled'&&<p className="sr-thinking">本轮未启用状态更新。</p>}
     {suggestions?.status==='failed'&&run.status==='completed'&&<p className="sr-thinking">本轮行动建议不可用，可以继续输入。</p>}
-    {suggestions?.status==='ready'&&suggestions.items.length>0&&<section className="sr-suggestions" aria-label="行动建议">
-      <span>{current&&run.status==='completed'?'选择一项填入草稿':'此前的行动建议'}</span>
-      <div>{suggestions.items.map((item,index)=><button key={index} disabled={!current||run.status!=='completed'} title={!current?'故事已推进，此建议已失效':undefined} onClick={()=>onChoose(item)}>{item}</button>)}</div>
-    </section>}
+
   </>;
 }
-const StoryRun = React.memo(function StoryRun({run,current,onChoose}:{run:Run;current:boolean;onChoose:(text:string)=>void}) {
+const StoryRun = React.memo(function StoryRun({run,suggestions,connected,onChoose}:{run:Run;suggestions:ActionSuggestions|null;connected:boolean;onChoose:(text:string)=>void}) {
   const messages = useMemo(() => displayMessages(run.messages), [run.messages]);
   return <>{messages.map(message=><article className={'sr-message '+message.role} data-message-id={message.id} key={message.id}>
     <span className="sr-message-source">{message.role==='user'?'我':'故事'}</span>
     <div className="sr-story-content"><MessageContent message={message} runId={run.id}/></div>
-  </article>)}<RunFeedback run={run} current={current} onChoose={onChoose}/></>;
+    {suggestions?.messageId===message.id&&<section className="sr-suggestions" aria-label="行动建议"><span>选择一项填入草稿</span><div>{suggestions.items.map(item=><button key={item} disabled={!connected} onClick={()=>onChoose(item)}>{item}</button>)}</div></section>}
+  </article>)}<RunFeedback run={run}/></>;
 });
 export function WorldStory({showState=true}:{showState?:boolean}={}){
   const session=useSRSession(),config=useStoryConfiguration();
   const panelId=useId();
+  const [suggestions,setSuggestions]=useState<ActionSuggestions|null>(null),[connected,setConnected]=useState(false);
   const [runs,setRuns]=useState<Run[]>([]),[cursor,setCursor]=useState<string|null>(null),[more,setMore]=useState(false),[loading,setLoading]=useState(true),[error,setError]=useState('');
   const [stateOpen,setStateOpen]=useState(false),[docked,setDocked]=useState(false);
   const [retry,setRetry]=useState(0),[loadingMore,setLoadingMore]=useState(false),[historyError,setHistoryError]=useState('');
@@ -206,6 +206,8 @@ export function WorldStory({showState=true}:{showState?:boolean}={}){
     };
     const unsubscribe=session.subscribe(event=>{
       if(!live)return;
+      if(event.event==='action_suggestions.changed'){setSuggestions(event.data.suggestions);return;}
+      if(event.event==='session.connection'){setConnected(event.data.connected);return;}
       pending.push(event);
       if(!initial&&['run.completed','run.failed','run.stopped'].includes(event.event)){
         cancelFrame();updateRuns(mergeInitial(runsRef.current,pending.splice(0)));setError('');return;
@@ -326,7 +328,7 @@ export function WorldStory({showState=true}:{showState?:boolean}={}){
         {loading&&<p className="sr-story-empty" role="status">正在加载故事…</p>}
         {error&&<p className="sr-error" role="alert">{error} <button type="button" onClick={()=>setRetry(value=>value+1)}>重试</button></p>}
         {!loading&&!error&&!runs.length&&<p className="sr-story-empty">故事尚未开始。</p>}
-        {runs.map(run=><StoryRun key={run.id} run={run} current={runs.at(-1)?.id===run.id} onChoose={chooseSuggestion}/>)}
+        {runs.map(run=><StoryRun key={run.id} run={run} suggestions={suggestions?.runId===run.id?suggestions:null} connected={connected} onChoose={chooseSuggestion}/>)}
       </div>
       {showLatest&&<div className="sr-story-latest"><button className="sr-more" type="button" onClick={latest}>回到最新 <span aria-hidden="true">↓</span></button></div>}
     </div>

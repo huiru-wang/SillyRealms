@@ -102,6 +102,7 @@ try {
       }
       if(name==='runtime-v2'){const {verifyRuntime}=await import('../runtime-v2/assertions.mjs');await verifyRuntime(call,pause);}
       if(name==='worldstory-font'){
+        await waitFor('!!document.querySelector("iframe")','story frame mounted');
         let frameSession=null,frameContextId=null,frameId=null;
         const iframeUrl=(await call('Runtime.evaluate',{expression:'document.querySelector("iframe")?.getAttribute("src")',returnByValue:true})).result.value;
         for(let i=0;i<150&&!frameSession&&!frameId;i++){

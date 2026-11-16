@@ -1,3 +1,5 @@
+import {defaultPreset} from '../../src/domain/preset/schema.js';
+import {updatePreset} from '../../src/repositories/preset-repository.js';
 import type { Api, AssistantMessage, AssistantMessageEvent, Model } from '@earendil-works/pi-ai';
 import { openDatabase } from '../../src/infrastructure/database/database.js';
 import { SRRuntime } from '../../src/runtime/sr-runtime.js';
@@ -14,25 +16,25 @@ export function response(text:string,stopReason:AssistantMessage['stopReason']='
     stopReason,timestamp:1};
 }
 export function textGateway(text:string,opts:{chunks?:string[];reason?:AssistantMessage['stopReason'];finalOnly?:boolean}={}):ModelGateway {
-  return {resolve:()=>testModel,supportsDirect:()=>true,toolVerified:()=>true,
+  return {resolve:()=>testModel,supportsDirect:()=>true,
     stream:()=>({async *[Symbol.asyncIterator](){
       if(!opts.finalOnly)for(const delta of opts.chunks??[text])yield {type:'text_delta',delta,contentIndex:0,partial:{} as never} as AssistantMessageEvent;
       const message=response(text,opts.reason);
       yield {type:'done',reason:message.stopReason,message} as AssistantMessageEvent;
     }})};
 }
-export function runtimeFixture(gateway:ModelGateway,mode:'direct'|'agent'='direct',credentials:CredentialStore=fakeCredentials){
+export function runtimeFixture(gateway:ModelGateway,credentials:CredentialStore=fakeCredentials){
   const db=openDatabase(':memory:');
   seedWorld(db,'world',{spec:'world_card',spec_version:'0.1',data:{
     name:'Test',characters:[{id:'p',name:'Player',player_selectable:true}],
     openings:[{id:'o',name:'Start',content:'opening'}],
     state:{schema_version:1,scopes:{message:{score:{type:'number',initial:0,min:0}}}},
   }});
-  const preset=JSON.parse(String(db.prepare('SELECT config_json FROM presets WHERE id=?').get('sr-default-preset')!.config_json));
-  preset.capabilities={state_update:{enabled:true,prompt:''},action_suggestions:{enabled:true,count:3,prompt:''}};
-  preset.budget={strategy:'rolling_summary',max_context_tokens:Math.min(16000,Math.floor(gateway.resolve('fake','fake')!.contextWindow*.8)),max_output_tokens:128};
-  db.prepare('UPDATE presets SET config_json=? WHERE id=?').run(JSON.stringify(preset),'sr-default-preset');
-  seedSession(db,'session','world','sr-default-preset','p','opening',null,'{}',1,1,'test-model',mode);
+  const preset=defaultPreset();
+  preset.context_strategy.max_context_tokens=Math.min(16000,Math.floor(gateway.resolve('fake','fake')!.contextWindow*.6));
+  preset.context_strategy.max_output_tokens=128;
+  updatePreset(db,'sr-default-preset',preset);
+  seedSession(db,'session','world','sr-default-preset','p','opening',null,'{}',1,1,'test-model');
   db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,state,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
     .run('opening','session',null,'opening-run',1,'message','assistant',0,1,JSON.stringify({message:{role:'assistant',content:'opening'}}),'[{"key":"score","value":0}]','{"run":{"status":"completed"}}');
   const runtime=new SRRuntime(db,credentials,gateway);
@@ -44,5 +46,5 @@ export async function drain(stream:ReadableStream<Uint8Array>){
   finally {reader.releaseLock();}
 }
 export function tail(updates:unknown=[],suggestions:unknown=['观察四周','询问来意','留在原地']){
-  return '<sr_extensions><state_update>'+JSON.stringify(updates)+'</state_update><action_suggestions>'+JSON.stringify(suggestions)+'</action_suggestions></sr_extensions>';
+  return '<state_update>'+JSON.stringify(updates)+'</state_update><action_suggestions>'+JSON.stringify(suggestions)+'</action_suggestions>';
 }

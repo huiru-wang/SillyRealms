@@ -39,3 +39,4 @@ data/
 apps/studio/tests/visual/output/
 # Local design-check reports, screenshots, and disposable browser profiles
 .taste-skill/
+log/

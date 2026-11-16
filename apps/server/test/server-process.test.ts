@@ -42,6 +42,7 @@ it('creates the default database in the project db directory regardless of worki
   const serverDir = join(dir, 'apps', 'server');
   mkdirSync(serverDir, { recursive: true });
   cpSync('src', join(serverDir, 'src'), { recursive: true });
+  cpSync('resources', join(serverDir,'resources'), {recursive:true});
   cpSync('package.json', join(serverDir, 'package.json'));
   symlinkSync(resolve('node_modules'), join(serverDir, 'node_modules'), 'dir');
   const listener = createServer();

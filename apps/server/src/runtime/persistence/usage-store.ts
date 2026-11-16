@@ -1,12 +1,12 @@
-import { errorInfo, ErrorCodes } from '../../common/error-codes.js';
-import { runFailure } from '../../domain/session/run-failure.js';
+import { ErrorCodes } from '../../common/error-codes.js';
+import { storedRunResult } from '../../domain/session/run-result.js';
 import type { InputIdentity, InputBaseline } from '../context/compaction/estimator.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Usage } from '@earendil-works/pi-ai';
 import { readAncestors } from '../../domain/session/ancestors.js';
 
-export type ModelPhase = 'summary' | 'generation' | 'continuation' | 'state_review';
+export type ModelPhase = 'summary' | 'generation';
 export type ContextComposition = { systemBytes: number; summaryBytes: number; historyBytes: number };
 export type RequestMeta = {
   sessionId: string; runId: string; requestId: string; requestIndex?: number;
@@ -195,7 +195,7 @@ export class UsageStore {
       let latest: SessionUsage['latestContext'] = null;
       let latestNarrative: RequestMetrics | undefined;
       for (const item of requests.values()) {
-        if (item.phase === 'generation' || item.phase === 'continuation') {
+        if (item.phase === 'generation') {
           if (!latestNarrative || item.startedAt >= latestNarrative.startedAt) latestNarrative = item;
         }
         if (item.usageStatus === 'reported' && item.usage) {
@@ -235,8 +235,8 @@ export class UsageStore {
       }
       if (!user && status !== 'completed') {
         const saved = prep ? JSON.parse(String(prep.result_json)) : {};
-        const result = { ...saved, ...terminal, runId, status, phase: 'finalized',
-          ...(status === 'interrupted' ? { ...errorInfo(ErrorCodes.RUN_INTERRUPTED), ...runFailure(ErrorCodes.RUN_INTERRUPTED, 'preparation', prep?.input_text != null) } : {}) };
+        const {status: _storedStatus, ...result} = storedRunResult({ ...saved, ...terminal, status,
+          ...(status === 'interrupted' ? { errorCode: ErrorCodes.RUN_INTERRUPTED } : {}) });
         if (prep) this.db.prepare("UPDATE run_preparations SET status=?,finished_at=?,result_json=?,metrics_json=?,accounted=1 WHERE run_id=? AND status='preparing'")
           .run(status, Date.now(), JSON.stringify(result), JSON.stringify({ requests: [...requests.values()], totals }), runId);
         else this.db.prepare('INSERT INTO run_preparations(run_id,session_id,request_id,expected_tip_entry_id,input_text,status,created_at,finished_at,result_json,metrics_json,accounted) VALUES(?,?,?,?,NULL,?,?,?,?,?,1)')

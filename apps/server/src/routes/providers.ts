@@ -45,8 +45,8 @@ export function providerRoutes(db: DatabaseSync, credentials: CredentialStore, g
       const key = await credentials.get(String(row.credential_ref));
       if (!key) return c.json(failure(ErrorCodes.CREDENTIAL_NOT_CONFIGURED),422);
       if (!gateway.verify) return c.json(failure(ErrorCodes.PROVIDER_TEST_UNAVAILABLE),422);
-      const toolVerified = await gateway.verify(String(row.provider_id),String(row.model_id),key);
-      return c.json({ok:true,toolVerified});
+      await gateway.verify(String(row.provider_id),String(row.model_id),key);
+      return c.json({ok:true});
     } catch { return c.json(failure(ErrorCodes.PROVIDER_TEST_FAILED),502); }
   });
   configs.patch('/:id', async c => {

@@ -5,12 +5,10 @@ import { RuntimeError } from '../shared/errors.js';
 import type { ContextPolicy } from '../types.js';
 
 type RequestBase = {
-  model: Model<Api>; purpose: 'generation' | 'continuation' | 'summary'; fingerprint: string;
+  model: Model<Api>; purpose: 'generation' | 'summary'; fingerprint: string;
   wireFingerprint?: string; strategy?: string; output: number; temperature?: number;
 };
-export type PreparedRequest =
-  | (RequestBase & { mode: 'direct'; context: Omit<Context, 'tools'> & { tools?: never }; toolChoice?: never })
-  | (RequestBase & { mode: 'agent'; context: Context; toolChoice?: ToolChoice });
+export type PreparedRequest = RequestBase & {context:Omit<Context,'tools'> & {tools?:never}};
 export function hashRequest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
@@ -32,6 +30,6 @@ export function assertPreparedRequest(request: PreparedRequest, model: Model<Api
 }): void {
   if (request.fingerprint !== requestFingerprint(model, context, options))
     throw new RuntimeError(ErrorCodes.PREPARED_REQUEST_CHANGED);
-  if (request.mode === 'direct' && (context.tools?.length || options.toolChoice !== undefined))
+  if (context.tools?.length || options.toolChoice !== undefined)
     throw new RuntimeError(ErrorCodes.INVALID_TOOL_CALL);
 }

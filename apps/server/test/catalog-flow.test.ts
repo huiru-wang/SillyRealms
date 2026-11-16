@@ -4,7 +4,8 @@ import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/infrastructure/database/database.js';
 import {readFileSync} from 'node:fs';
 const sample=JSON.parse(readFileSync(new URL('./fixtures/preset.json',import.meta.url),'utf8'));
-import { buildContext } from '../src/runtime/context/prompt-builder.js';
+import {compileContext} from '../src/runtime/context/node-compiler.js';
+import {contextFixture} from './fixtures/context.js';
 
 const json=(method:string, body:unknown)=>({method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
 const base={name:'Harbor',description:{type:'component',component:'Intro'},components:[{id:'Intro',component:'export default function Intro(){return null}'}],characters:[{id:'p',name:'水手',player_selectable:true}],openings:[{id:'o',name:'港口',content:'{{user}} 到港',format:'html'}]};
@@ -116,14 +117,9 @@ it('filters tags, copies independent world defaults to sessions and protects ref
   } finally {db.close();}
 });
 it('renders author text once while preserving input, history and runtime state values',()=>{
-  const views={global:{},session:{},message:{}};
-  const context=buildContext({characters:[{id:'hero',name:'A$&',player_selectable:true,prompt:'{{user}} / {{char}}'}]},[
-    {id:'personaInfo',kind:'system',role:'system',enabled:true},
-    {id:'chatHistory',kind:'system',role:'auto',enabled:true},
-    {id:'userInput',kind:'system',role:'user',enabled:true}
-  ],'hero',views,[],'{{user}} now');
-  expect(context.messages([{role:'user',text:'{{user}} before'}]).slice(1).map(m=>m.content)).toEqual(['A$& / {{char}}','{{user}} before','{{user}} now']);
-  expect(context.render('summary {{user}}')).toBe('summary A$&');
+  const input=contextFixture();input.world.characters[0]!.name='A$&';input.world.characters[0]!.prompt='{{user}} / {{char}}';input.input='{{user}} now';input.history=[{id:'old',role:'user',text:'{{user}} before'}];
+  const context=compileContext(input),text=JSON.stringify(context.messages);
+  expect(text).toContain('A$& / {{char}}');expect(text).toContain('{{user}} before');expect(text).toContain('{{user}} now');
 });
 
 it('rolls back imported worlds and tag names together and reports corrupt stored data without repairing it',async()=>{

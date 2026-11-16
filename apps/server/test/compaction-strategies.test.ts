@@ -5,7 +5,7 @@ import { estimateContext, estimateText, estimateInitial, inputIdentity } from '.
 import type { CompactionInput } from '../src/runtime/context/compaction/types.js';
 import type { HistoryItem } from '../src/runtime/context/compaction/history.js';
 import { testModel, response } from './fixtures/runtime-v2.js';
-import { budgetInputSchema, mergeBudget, publicBudget, resolveBudget } from '../src/domain/preset-budget.js';
+import { budgetSchema, resolveBudget } from '../src/domain/preset-budget.js';
 
 function fixture(strategy: 'rolling_summary' | 'sliding_window', history: HistoryItem[]): CompactionInput {
   const preview = (items: HistoryItem[]): Context => ({ messages: [
@@ -14,8 +14,8 @@ function fixture(strategy: 'rolling_summary' | 'sliding_window', history: Histor
     { role: 'user', content: 'current input', timestamp: 0 },
   ] });
   return { history, policy: { budget: { strategy, max_context_tokens: 1000, max_output_tokens: 128 },
-    safetyMarginTokens: 1024, keepRecentTurns: 5, summary: { inputRatio: .75, maxOutputTokens: 2048 } },
-    preview, identity: context => inputIdentity(testModel, context, { mode: 'direct', strategy }),
+    safetyMarginTokens: 1024, keepRecentTurns: 5, summary: { prompt: 'summarize', inputRatio: .75, maxOutputTokens: 2048 } },
+    preview, identity: context => inputIdentity(testModel, context, { strategy }),
     summarize: vi.fn(async () => 'concise summary') };
 }
 const turns = (count: number, size = 600): HistoryItem[] => Array.from({ length: count }, (_, i) => [
@@ -83,17 +83,9 @@ it('reuses real usage only for a proven prefix and rejects changes in instructio
   expect(estimateInitial(context, { ...identity, settings: 'different model or strategy' }, baseline).method).toBe('full_estimate');
   expect(estimateText('abc汉😀')).toBe(6);
 });
-it('preserves legacy provenance only internally and validates explicit model caps', () => {
-  const old = mergeBudget({ context_strategy: 'compact', max_output_tokens: 100 }, { max_output_tokens: 200 });
-  expect(old).toMatchObject({ legacyWindow: 131072, max_context_tokens: 129848 });
-  expect(publicBudget(old)).not.toHaveProperty('legacyWindow');
-  const explicit = mergeBudget(old, { strategy: 'sliding_window', max_context_tokens: 25000 });
-  expect(explicit).not.toHaveProperty('legacyWindow');
-  expect(resolveBudget(explicit, { contextWindow: 32768, maxTokens: 4096 })).toEqual(explicit);
-  expect(() => resolveBudget(explicit, { contextWindow: 16000, maxTokens: 4096 })).toThrow();
-  for (const value of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
-    expect(budgetInputSchema.safeParse({ max_context_tokens: value, max_output_tokens: 100 }).success).toBe(false);
-  }
-  expect(budgetInputSchema.safeParse({ ...explicit, legacyWindow: 131072 }).success).toBe(false);
-  expect(() => mergeBudget(old, { context_strategy: 'compact', max_context_tokens: 100 })).toThrow();
+it('validates numeric model caps without legacy fields',()=>{
+ const budget={strategy:'rolling_summary' as const,max_context_tokens:25000,max_output_tokens:200};
+ expect(resolveBudget(budget,{contextWindow:32768,maxTokens:4096})).toEqual(budget);
+ expect(()=>resolveBudget(budget,{contextWindow:16000,maxTokens:4096})).toThrow();
+ for(const value of [0,-1,1.5,Number.MAX_SAFE_INTEGER+1])expect(budgetSchema.safeParse({...budget,max_context_tokens:value}).success).toBe(false);
 });

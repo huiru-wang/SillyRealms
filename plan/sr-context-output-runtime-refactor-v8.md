@@ -1,6 +1,6 @@
 # SR 预设、上下文与后置处理目标架构
 
-更新：2026-11-16。状态：方案，待实施。配套 [实施任务](./sr-context-output-runtime-refactor-v8-tasks.md)。
+更新：2026-11-16。状态：已实施，包含 Run 元数据精简。配套 [实施任务](./sr-context-output-runtime-refactor-v8-tasks.md)。
 
 会话通过 `preset_id` 绑定预设。每轮读取并冻结一份配置，用它构建上下文、选择压缩策略，并决定世界状态与行动建议后置处理。
 
@@ -153,7 +153,7 @@ flowchart TD
 
 配置和来源在首次异步等待前冻结。预设修改只影响下一轮；本轮提示词与处理器使用同一个快照。配置执行指纹覆盖模型参数、上下文策略和全部节点内容。
 
-同一个上下文编译入口服务于候选预览、预算估算和最终请求。压缩后重新确定可写状态，并产生 `PostprocessPlan`：启用哪些节点、状态是否必需、允许更新的根及协议版本。它是运行时派生结果，不再保存一套独立能力开关。
+同一个上下文编译入口服务于候选预览、预算估算和最终请求。压缩后重新确定可写状态，并产生 `PostprocessPlan`：启用哪些节点、状态是否必需、允许更新的根及预设指纹。它是运行时派生结果，不再保存一套独立能力开关。
 
 实际 Provider 请求保持上述角色和顺序；不支持用户消息后 system 的模型适配应明确报错。叙事只执行一次 Direct 请求，不注册工具、不进入工具循环；摘要使用下一节的简单消息构建。
 
@@ -229,15 +229,20 @@ assistant  已有摘要（如有）
   - type：json
 
 输出要求：
+回复必须包含叙事正文和状态更新块，缺少状态更新块即视为回复未完成。
 - 先完成叙事正文，再依据本轮正文中实际发生的事件更新状态。
-- 遵守各状态的 description、type 和适用的 min/max。
+- 遵守各状态的 description、type 和适用的 min/max，只更新当前状态中列出的状态。
 - 不结算计划、猜测或行动建议，不重复结算历史事件。
-- path 使用给定状态 key，子路径用英文句点连接，不使用数组下标。
-- value 是完整新值，不是差额；替换对象时保留仍需存在的内容。
+- path 使用给定状态 key，子路径用英文句点连接，不使用数组下标；子路径的父对象必须存在。
+- value 是完整新值，不是差额或合并补丁；替换对象或数组时保留仍需存在的内容。
 - 删除属性时替换所属对象，null 不表示删除。
-- 正文后输出一个 state_update 块，最多100项；没有变化时输出 []。
-- 每项包含 path、value，可选简短 reason；只输出发生变化的项。
-- 如需行动建议块，将其放在状态块之后。最后一个数据块后不再追加正文。
+- 每轮正文后必须输出且仅输出一个 <state_update> 块，内容为合法 JSON 数组，最多100项。
+- 有状态变化时，输出符合更新规则的更新数组；没有状态变化时，也必须输出 <state_update>[]</state_update>。
+- 不得因变化较小、不确定或认为冗余而省略该块；无法确定的变化不要写入，但必须保留更新块。
+- 每项只包含 path、value，以及可选的简短 reason；只输出发生变化的项。
+- 使用正确的 JSON 数字、布尔值或 null，不把它们写成字符串；不使用注释、重复键、尾逗号或省略号。
+- 如果同时提供了 <行动建议> 指令，必须在状态更新块之后继续输出行动建议块；否则在状态更新块结束后立即结束回复。
+- 所有要求的数据块输出完整后，回复才算完成；不得只输出正文，最后一个数据块后不再追加正文。
 - 实际数据块不用代码围栏或外层标签；正文要展示保留标签时使用 HTML 实体。
 
 输出格式（仅参考结构，不照抄事件和数值）：
@@ -251,7 +256,7 @@ assistant  已有摘要（如有）
 
 节点开启且存在可写状态时，状态块必需；没有变化提交 `[]`。没有可写状态时直接跳过本轮 worldState 节点，不注入任何替代提示，也不要求或执行状态块；运行诊断可标记为 `not_required`。是否存在状态按获准的状态项数量判断，值为0、false、空字符串或空对象不表示状态不存在。
 
-更新先应用到工作副本：合法项按顺序执行，无效项跳过并报告；重复路径依次生效。缺少 reason 不算失败。处理器只产生候选状态，不直接写数据库。
+更新先应用到工作副本：合法项按顺序执行，无效项跳过并标记 partial；重复路径依次生效。缺少 reason 不算失败。处理器只产生候选状态，不直接写数据库。
 
 ### 4.2 行动建议
 
@@ -271,9 +276,10 @@ assistant  已有摘要（如有）
 - 每条不超过50个字符，不附加速度标签或解释。
 
 输出要求：
-- 正文后输出一个 action_suggestions 块，内容为三个字符串的 JSON 数组。
-- 本轮需要 state_update 时，将建议块放在它之后。
-- 实际数据块不用代码围栏或外层标签，最后一个数据块后不再追加正文。
+- 每轮回复必须输出且仅输出一个 <action_suggestions> 块，内容为三个字符串的 JSON 数组，依次对应缓慢、中速、快速推进。
+- 完整回复的固定顺序：同时存在 <世界状态> 指令时，叙事正文 → state_update → action_suggestions；不存在 <世界状态> 指令时，叙事正文 → action_suggestions。
+- 所有要求的数据块输出完整后，回复才算完成。不得只输出正文，不得省略数据块。
+- 实际数据块不使用外层标签或 Markdown 代码围栏；最后一个数据块结束后立即结束回复，不再追加正文。
 - 正文要展示保留标签时使用 HTML 实体。
 
 输出格式（按当前情境重新生成内容）：
@@ -322,13 +328,13 @@ Host 只在当前会话内存中维护一组 `{runId, messageId, items}`，通�
 
 Host 记录当前已接受的 Run 身份：同一 Run 的迟到202不得清除它刚生成的建议；新 Run 开始后拒绝旧 Run 的迟到建议。仅在匹配的最新 Run 已完成、对应 assistant 消息可信时展示。普通重渲染及同一 Host 下的组件挂载可复用当前内存投影，不算新的历史展示；不写 localStorage、sessionStorage 或 IndexedDB。
 
-持久化投影与临时建议载荷分开：Run 结果只保存处理状态、数量及错误码等诊断，不保存 items、原始建议块或候选副本；`ready` 只表示生成校验成功，不表示客户端必然收到。HTTP Run 查询、历史分页、恢复快照和 Run 终态事件均不携带建议文本。建议事件没有持久回放或送达重试，提交后若连接中断，可能不展示建议，但不影响正文与状态。
+持久化投影与临时建议载荷分开：Run 结果只保存两项处理状态；运行失败仅保留顶层错误码，不保存 items、原始建议块或候选副本；`ready` 只表示生成校验成功，不表示客户端必然收到。HTTP Run 查询、历史分页、恢复快照和 Run 终态事件均不携带建议文本。建议事件没有持久回放或送达重试，提交后若连接中断，可能不展示建议，但不影响正文与状态。
 
 废弃格式的会话、Run、历史建议及其恢复数据在切换时清除；不提供旧建议读取或旧协议恢复入口。
 
 ### 4.4 解析与执行顺序
 
-模型返回“正文 → 本轮需要的 state_update → 本轮需要的 action_suggestions”，不要求 `<sr_extensions>` 外层。运行结果协议为 `sr-output-blocks/v1`，不通过模型文本猜测协议版本。
+模型返回“正文 → 本轮需要的 state_update → 本轮需要的 action_suggestions”，不要求 `<sr_extensions>` 外层。输出格式固定为上述两个独立标签；运行结果不存储或返回 protocol 字段。
 
 1. 切分器把流式正文交给界面，将保留数据块放入有界尾部缓冲；进入尾部后不再回流正文。关闭节点的意外数据块也不会展示成正文或触发处理。
 2. 等待模型正常结束，校验流式与最终文本一致、正文非空、无工具调用，再处理完整尾部。截断、失败或提交前取消均丢弃候选。
@@ -379,6 +385,7 @@ Direct 使用上述后置处理。摘要只返回文本，不注册工具、不�
 ```text
 apps/server/
   resources/presets/default.json             # 完整默认预设数据
+  scripts/reset-runtime-data.ts              # 持锁清理旧运行数据，初始化目标结构
   src/
     domain/preset/
       schema.ts                              # 预设、节点及动态来源校验
@@ -412,7 +419,7 @@ apps/server/
           sliding-window.ts                  # 连续历史后缀
           summary-generator.ts               # 压缩prompt＋chatHistory
       postprocess/
-        contracts.ts                         # 持久诊断与临时建议分开定义
+        contracts.ts                         # 持久处理状态与临时建议分开定义
         registry.ts                          # 两个节点与处理器固定映射
         stream-splitter.ts                    # 可见正文/隐藏尾部
         parser.ts                            # 标签顺序与词法边界
@@ -432,7 +439,9 @@ apps/server/
         pi-gateway.ts                        # Provider适配与请求顺序校验
       sr-runtime.ts                          # 受理、提交、一次性建议事件
   test/
-    presets.test.ts                          # 配置与导入导出
+    preset-v2.test.ts                        # 配置、导入导出与预览
+    runtime-reset.test.ts                    # 显式清理与存储保全
+    action-suggestions.test.ts               # 一次性事件与不落库
     context.test.ts                          # 节点编译与真实请求顺序
     compaction-lifecycle.test.ts             # 压缩流程与摘要隔离
     narrative-extensions.test.ts             # 解析、校验及失败规则
@@ -444,16 +453,17 @@ apps/studio/src/
     adapter.ts                               # API与编辑数据转换
     PresetStore.tsx                          # 保存、冲突、草稿
     PresetLibraryPage.tsx                    # 节点及策略设置
-    PromptEditorDialog.tsx                   # 完整提示词查看
+    PromptEditorDialog.tsx                   # 主提示/摘要/自定义文本编辑
+    PromptPreview.tsx                        # 模板展开后的候选内容查看
   features/sessions/
     action-suggestions.ts                    # Host临时建议状态及失效规则
     SessionSettingsDialog.tsx                # 节点派生能力展示
   host.tsx                                   # SSE接收、受理清除、消息通道
   frame.tsx                                  # 可信Host事件接入SDK
-apps/studio/test/action-suggestions/          # 临时展示、清除与竞态用例
+apps/studio/test/runtime-v2/                 # 临时展示、清除与竞态浏览器用例
 
 packages/sr-sdk/src/
-  run-contract.ts                            # 建议事件；Run诊断不含items
+  run-contract.ts                            # 建议事件；Run仅保留处理状态
   session-runtime.ts                         # 订阅和当前临时投影
   story-history.ts                           # 历史reducer不保存建议
   world-story.tsx                            # 绑定消息ID展示当前建议
@@ -489,3 +499,12 @@ packages/sr-sdk/src/
 删除前核对调用方；新模块切换通过定向验证后删除旧实现，不长期双轨运行。通用状态校验、加载规则、取消/事务/Usage、iframe 安全等仍被目标架构使用的能力保留。清理清单不扩大为删除无关世界卡或模型数据。
 
 验收必须证明：目标默认文件能导入；无旧运行入口及隐式回退；无废弃数据库列与旧运行记录；无建议文本落库；模型测试不依赖工具；全链路检查通过。
+
+## 8. Run 元数据精简
+
+- 用户 Entry 的 ext_data 只保留 requestId 与 run；run 只含 status、失败时的 errorCode、两项 extensions.status。
+- 普通 assistant Entry 的 ext_data 为 {}；开场保留 origin=opening；compaction 只保留 summary.coveredThroughEntryId。
+- 删除 runtime 配置/权限/预算/压缩/诊断快照、重复 runId/phase/errorMessage、消息级状态及 nonNarrative 分支。重复提交保护统一使用 run.status；状态基线与冻结权限仍在执行内存中校验。
+- run_preparations 的 ID、状态、输入使用已有列，result_json 只保存错误码等简要结果，不重复存储列数据。
+- Run HTTP/SSE 与 SDK 只暴露 phase、两项处理状态及顶层错误；phase、errorMessage 在返回时推导。能力设置仅从独立会话能力接口读取 enabled。
+- scripts/compact-run-metadata.ts 在停服持锁后备份并事务精简已有元数据，保留消息、状态、链路、用量和编辑时间；无运行时兼容分支。

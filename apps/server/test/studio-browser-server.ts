@@ -17,7 +17,7 @@ import type {Api,Model,AssistantMessageEvent} from '@earendil-works/pi-ai';
 const directory=mkdtempSync(join(tmpdir(),'sr-studio-browser-'));
 const db=openDatabase(':memory:');
 const model:Model<Api>={id:'fake',name:'Offline test',provider:'fake',api:'openai-completions',baseUrl:'http://localhost',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:131072,maxTokens:8192};
-const gateway:ModelGateway={resolve:()=>model,supportsDirect:()=>true,toolVerified:()=>true,stream:(_model,_context,{signal})=>({async *[Symbol.asyncIterator](){
+const gateway:ModelGateway={resolve:()=>model,supportsDirect:()=>true,stream:(_model,_context,{signal})=>({async *[Symbol.asyncIterator](){
  const text='故事继续。旅人走过长街，看见远处的灯火。 <Badge/>'+tail();
  for(const delta of ['故事继续。','旅人走过长街，','看见远处的灯火。 <Badge/>',tail()]){if(signal.aborted)return;await new Promise(resolve=>setTimeout(resolve,350));yield {type:'text_delta',delta,contentIndex:0,partial:{} as never} as AssistantMessageEvent;}
  if(!signal.aborted)yield {type:'done',reason:'stop',message:{role:'assistant',content:[{type:'text',text}],api:'openai-completions',provider:'fake',model:'fake',usage:{input:120,output:30,cacheRead:0,cacheWrite:0,totalTokens:150,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()}} as AssistantMessageEvent;

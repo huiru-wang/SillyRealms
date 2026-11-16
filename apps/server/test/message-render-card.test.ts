@@ -4,7 +4,8 @@ import {expect,it} from 'vitest';
 import {createApp} from '../src/app.js';
 import {openDatabase} from '../src/infrastructure/database/database.js';
 import {parseCard} from '../src/domain/world-card.js';
-import {buildContext} from '../src/runtime/context/prompt-builder.js';
+import {compileContext} from '../src/runtime/context/node-compiler.js';
+import {defaultPreset} from '../src/domain/preset/schema.js';
 
 const world=JSON.parse(readFileSync(new URL('./fixtures/world-card.json',import.meta.url),'utf8'));
 const source="function Cover(){return null} export default Cover";
@@ -57,8 +58,8 @@ it('initializes the opening state and keeps display rules out of narrative conte
     const history=await (await app.request(`${base}/runs`)).json() as {data:{runs:Array<{messages:Array<{role:'user'|'assistant';text:string}>}>}};
     const messages=history.data.runs.flatMap(run=>run.messages);
     expect(messages[0]?.text).toBe('<Cover/>');
-    const context=buildContext(example.data,[{id:'chatHistory',kind:'system',role:'auto',enabled:true}], 'player',snapshot.data,messages,'继续');
-    expect(JSON.stringify(context.messages(messages))).toContain('<Cover/>');
-    expect(JSON.stringify(context.messages(messages))).not.toContain('function Cover');
+    const context=compileContext({world:example.data as any,nodes:defaultPreset().config_json.nodes,playerId:'player',views:snapshot.data as any,history:messages.map((m,i)=>({...m,id:String(i)})),input:'继续',presetHash:'test'});
+    expect(JSON.stringify(context.messages)).toContain('<Cover/>');
+    expect(JSON.stringify(context.messages)).not.toContain('function Cover');
   } finally {db.close();}
 });

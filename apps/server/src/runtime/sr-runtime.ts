@@ -1,13 +1,12 @@
 import { historyRuns } from '../domain/session/history-runs.js';
-import { runFailure, type FailureStage } from '../domain/session/run-failure.js';
 import { isDeepStrictEqual } from 'node:util';
 import { validateSnapshot } from '../domain/state/state.js';
-import { resolveRuntimeConfig, publicCapabilities } from './config.js';
-import { initialExtensions, rejectExtensions } from './narrative/extension-contract.js';
+import { resolveRuntimeConfig } from './config.js';
+import { initialExtensions, rejectExtensions, persistableExtensions } from './postprocess/contracts.js';
 import { DirectRunner } from './runners/direct-runner.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { ErrorCodes, isErrorCode, normalizeError } from '../common/error-codes.js';
+import { ErrorCodes, normalizeError } from '../common/error-codes.js';
 import { debugEnabled, debugLog, withDebugContext } from '../common/debug.js';
 import type { CredentialStore } from '../infrastructure/credentials/store.js';
 import type { ModelGateway } from './model/pi-gateway.js';
@@ -17,8 +16,6 @@ import { ModelClient } from './model/model-client.js';
 import { UsageStore, RunAccounting } from './persistence/usage-store.js';
 import { RunPostProcessor } from './persistence/run-post-processor.js';
 import { ContextManager } from './context/context-manager.js';
-import { ToolExecutor } from './tools/tool-executor.js';
-import { AgentRunner } from './runners/agent-runner.js';
 import type { RunTask, RunEvent, RunnerArgs, RunnerResult } from './types.js';
 
 export { RuntimeError } from './shared/errors.js';
@@ -33,7 +30,6 @@ export class SRRuntime {
   private closing = false;
   private store: RunStore;
   private context: ContextManager;
-  private runner: AgentRunner;
   private direct: DirectRunner;
   private client: ModelClient;
   private usage: UsageStore;
@@ -46,9 +42,6 @@ export class SRRuntime {
       this.emit(sessionId, 'usage.updated', { sessionId, runId }));
     const client = this.client = new ModelClient(gateway, this.usage, credentials);
     this.context = new ContextManager(this.store, client);
-    this.runner = new AgentRunner(this.store, client, new ToolExecutor(),
-      (sessionId, event, payload) => this.emit(sessionId, event, payload),
-      this.usage, this.context);
     this.direct = new DirectRunner(this.store, client, this.usage, (id, event, payload) => this.emit(id, event, payload));
   }
   onEvent(listener: RunEvent) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
@@ -66,7 +59,7 @@ export class SRRuntime {
   busy(sessionId: string) { return this.active.has(sessionId) || this.deleting.has(sessionId); }
   activeRun(sessionId: string) {
     const task = this.active.get(sessionId);
-    return task ? { id: task.runId, status: task.status, phase: task.phase ?? 'preparing', executionMode: task.config?.execution.mode, capabilities: task.capabilities } : null;
+    return task ? { id: task.runId, status: task.status, phase: task.phase ?? 'preparing' } : null;
   }
 
   start(sessionId: string, text: string, requestId: string, tip: string) {
@@ -135,8 +128,8 @@ export class SRRuntime {
   status(sessionId: string, runId: string) {
     const stored = this.store.status(sessionId, runId);
     const task = this.active.get(sessionId);
-    if (stored) return task?.runId === runId && ['preparing', 'running'].includes(stored.status) ? { ...stored, messages: [...(stored.messages ?? []), ...(task.liveMessage ? [{ ...task.liveMessage }] : [])], phase: task.phase ?? 'preparing', executionMode: task.config?.execution.mode, capabilities: task.capabilities } : stored;
-    return task?.runId === runId ? { runId, messages: task.liveMessage ? [{ ...task.liveMessage }] : [], status: task.status, phase: task.phase ?? 'preparing', executionMode: task.config?.execution.mode, capabilities: task.capabilities } : null;
+    if (stored) return task?.runId === runId && ['preparing', 'running'].includes(stored.status) ? { ...stored, messages: [...(stored.messages ?? []), ...(task.liveMessage ? [{ ...task.liveMessage }] : [])], phase: task.phase ?? 'preparing' } : stored;
+    return task?.runId === runId ? { runId, messages: task.liveMessage ? [{ ...task.liveMessage }] : [], status: task.status, phase: task.phase ?? 'preparing' } : null;
   }
 
   history(sessionId: string, tip: string, limit: number, cursor?: string) {
@@ -211,9 +204,6 @@ export class SRRuntime {
       debugLog('RUN BEGIN', { sessionId, runId, requestId, expectedTipEntryId: expectedTip });
       if (task.stopped) throw new RuntimeError(ErrorCodes.RUN_STOPPED);
       const config = resolveRuntimeConfig(this.store, this.client, sessionId);
-      task.config = config;
-      task.capabilities = publicCapabilities(config);
-      this.store.updatePreparation(runId, { executionMode: config.execution.mode, capabilities: task.capabilities });
       const prepared = await this.context.prepare({
         sessionId, input, runId, requestId, expectedTip, signal: controller.signal, runContext, config,
       });
@@ -221,22 +211,14 @@ export class SRRuntime {
       const userId = randomUUID();
       this.store.startRun({
         sessionId, expectedTip, runId, userId, input, requestId,
-        summary: prepared.summary, generation: prepared.summaryGeneration, diagnostics: prepared.diagnostics,
-        publicRun: { executionMode: config.execution.mode, phase: 'narrative',
-          capabilities: publicCapabilities(config, prepared.active),
-          ...(config.execution.mode === 'direct' ? { extensions: initialExtensions(config.extensions, prepared.active) } : {}) },
-        runtimeSnapshot: { version: config.version, mode: config.execution.mode, presetId: config.preset.id,
-          presetHash: config.preset.hash, modelId: config.model.definition.id, configId: config.model.configId,
-          contextPolicy: config.contextPolicy, capabilityRevision: config.capabilityRevision,
-          extensions: config.extensions, baselineHash: prepared.execution.state.baselineHash,
-          active: [...prepared.active], preparation: prepared.execution.progress.preparationReport },
+        summary: prepared.summary,
+        publicRun: { extensions: persistableExtensions(initialExtensions(prepared.postprocess)) },
       });
       try { this.usage.attachCompaction(sessionId, runId); }
       catch (error) { debugLog('摘要统计关联失败', { sessionId, runId, errorCode: normalizeError(error).errorCode }); }
       prepared.execution.progress.latestEntryId = userId;
       task.status = 'running';
       task.phase = prepared.execution.progress.phase = 'narrative';
-      task.capabilities = publicCapabilities(config, prepared.active);
       this.emit(sessionId, 'run.updated', { runId, status: 'running', tipEntryId: userId });
       this.emit(sessionId, 'message.created', {
         runId, message: { id: userId, role: 'user', text: input, status: 'completed', createdAt: Date.now() },
@@ -254,15 +236,10 @@ export class SRRuntime {
       // A persisted acceptance can report even an immediate configuration failure as an asynchronous Run terminal.
       if (accepted) await Promise.resolve();
       const failure = normalizeError(error);
-      const causeCode = error instanceof RuntimeError ? error.details?.causeCode : undefined;
       const terminal = { runId, status: task.stopped ? 'stopped' : 'failed', phase: 'finalized',
-        executionMode: task.config?.execution.mode, capabilities: task.capabilities,
-        ...(task.stopped ? { recovery: { inputSaved: accepted, action: 'resubmit' } } : {
-          ...failure, ...runFailure(failure.errorCode, 'preparation', accepted, causeCode) }) };
+        ...(task.stopped ? {} : failure) };
       let settled = false;
-      try { if (accepted) settled = this.postProcessor.process(runContext, task.stopped ? 'stopped' : 'failed', {
-        ...terminal, ...(isErrorCode(causeCode) ? { diagnostics: { causeCode } } : {}),
-      }); }
+      try { if (accepted) settled = this.postProcessor.process(runContext, task.stopped ? 'stopped' : 'failed', terminal); }
       catch (postError) { debugLog('Run 后置处理失败', { sessionId, runId, errorCode: normalizeError(postError).errorCode }); }
       finally { release(); }
       if (settled) this.emit(sessionId, 'run.updated', terminal);
@@ -275,7 +252,7 @@ export class SRRuntime {
   private async executeRun(args: RunnerArgs, release: () => void): Promise<void> {
     let result: RunnerResult;
     try {
-      result = await (args.prepared.config.execution.mode === 'direct' ? this.direct : this.runner).execute(args);
+      result = await this.direct.execute(args);
     } catch (error) {
       result = { outcome: args.task.stopped ? 'stopped' : 'failed',
         failure: args.task.stopped ? null : normalizeError(error),
@@ -292,28 +269,26 @@ export class SRRuntime {
   /** The only finalization and Run-level settlement path. No await between cancellation and commit. */
   private finishRun(args: RunnerArgs, candidate: RunnerResult): void {
     const { prepared, sessionId, runId, userId, task, runContext } = args;
-    const { execution, config } = prepared;
+    const { execution } = prepared;
     let result = candidate;
     if (task.stopped) result = { ...result, outcome: 'stopped', failure: null,
       ...(result.extensions ? { extensions: rejectExtensions(result.extensions, true) } : {}) };
-    let allowState = config.execution.mode === 'agent' ? result.outcome !== 'failed'
-      : result.outcome === 'completed' && !!result.extensions &&
+    let allowState = result.outcome === 'completed' && !!result.extensions &&
         ['applied', 'unchanged', 'partial'].includes(result.extensions.stateUpdate.status);
-    let failureStage: FailureStage = execution.progress.modelPhase ?? 'generation';
-    const publicFields = () => ({ ...(result.failure ? runFailure(result.failure.errorCode, failureStage, true) : {}), executionMode: config.execution.mode, phase: 'finalized',
-      capabilities: task.capabilities, ...(result.extensions ? { extensions: result.extensions } : {}) });
+    const publicFields = () => ({ phase: 'finalized',
+      ...(result.extensions ? { extensions: persistableExtensions(result.extensions) } : {}) });
     let committed = false;
     let stage: 'validation' | 'commit' = 'validation';
     try {
       if (allowState) validateSnapshot(prepared.worldState, 'message', result.workspace);
       stage = 'commit';
-      committed = this.store.finalize(sessionId, userId, result.partialId, result.outcome, result.workspace, result.failure, {
+      committed = this.store.finalize(sessionId, userId, result.outcome, result.workspace, result.failure, {
         expectedTip: execution.progress.latestEntryId, baselineHash: execution.state.baselineHash,
-        allowState, pendingMessage: task.liveMessage, publicRun: publicFields(), diagnostics: { extensions: result.diagnostics, preparation: execution.progress.preparationReport, summaryCalls: execution.progress.summaryCalls },
+        allowState, pendingMessage: task.liveMessage, publicRun: publicFields(),
       });
       if (!committed) return; // The stored terminal result already won; never notify or settle twice.
     } catch (error) {
-      allowState = false; failureStage = 'commit';
+      allowState = false;
       const failure = normalizeError(error, stage === 'validation' ? ErrorCodes.INVALID_STATE_UPDATE : ErrorCodes.STATE_COMMIT_FAILED);
       result = { ...result, outcome: 'failed', failure,
         ...(result.extensions ? { extensions: rejectExtensions(result.extensions, false, failure.errorCode) } : {}) };
@@ -341,6 +316,9 @@ export class SRRuntime {
     try { tipEntryId = this.store.tip(sessionId); } catch { /* Already committed outcome remains authoritative. */ }
     this.emit(sessionId, 'run.updated', { runId, status: result.outcome,
       tipEntryId, ...publicFields(), ...(result.failure ?? {}) });
+    if(committed&&result.outcome==='completed'&&result.partialId&&result.extensions?.actionSuggestions.status==='ready'){
+      this.emit(sessionId,'action_suggestions.changed',{sessionId,suggestions:{runId,messageId:result.partialId,items:result.extensions.actionSuggestions.items}});
+    }
   }
 
 }

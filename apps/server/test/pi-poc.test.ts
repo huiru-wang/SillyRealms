@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PiGateway, requiredToolChoice } from '../src/runtime/model/pi-gateway.js';
-import { stateTool } from '../src/runtime/tools/state-tool.js';
+import { PiGateway } from '../src/runtime/model/pi-gateway.js';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions';
 import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript';
@@ -69,9 +68,9 @@ describe('Pi SDK contract PoC', () => {
     vi.stubGlobal('fetch',async (_input:unknown,init:RequestInit) => { wasCalled=true; sentBody=JSON.parse(String(init.body)); return new Response(chunks.map(c=>`data: ${JSON.stringify(c)}\n\n`).join('')+'data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}}); });
     try {
       const events=[];
-      for await (const event of gateway.stream(selected!,{messages:[{role:'user',content:'hello',timestamp:0}],tools:[stateTool]},{apiKey:'fake',signal:new AbortController().signal,maxTokens:20,toolChoice:requiredToolChoice(selected!)})) events.push(event.type);
+      for await (const event of gateway.stream(selected!,{messages:[{role:'user',content:'hello',timestamp:0}]},{apiKey:'fake',signal:new AbortController().signal,maxTokens:20})) events.push(event.type);
       expect(wasCalled).toBe(true); expect(events).toContain('text_delta'); expect(events).toContain('done');
-      expect(sentBody).toMatchObject({tool_choice:'required'});
+      expect(sentBody).not.toHaveProperty('tools');
       const output=String(log.mock.calls[0]?.[0]); const logged=JSON.parse(output.split(' | ')[1]!);
       expect(logged).toMatchObject({provider:'deepseek',model:'deepseek-flash',fingerprint:expect.any(String)});
       expect(logged.payload).toEqual(sentBody);
@@ -79,31 +78,6 @@ describe('Pi SDK contract PoC', () => {
       expect(output).not.toMatch(/[\r\n]/);
       expect(JSON.stringify(logged)).not.toContain('fake');
     } finally { if(oldDebug===undefined)delete process.env.SILLYREALMS_DEBUG;else process.env.SILLYREALMS_DEBUG=oldDebug;log.mockRestore(); vi.unstubAllGlobals(); }
-  });
-  it('replays tool calls and results in order to the provider transport', async () => {
-    let payload:Record<string,unknown>|undefined;
-    const mockFetch:typeof fetch=async (_input,init)=>{
-      payload=JSON.parse(String(init?.body)) as Record<string,unknown>;
-      const chunks=[{id:'t',object:'chat.completion.chunk',created:1,model:'mock',choices:[{index:0,delta:{role:'assistant',content:'ok'},finish_reason:null}]},{id:'t',object:'chat.completion.chunk',created:1,model:'mock',choices:[{index:0,delta:{},finish_reason:'stop'}]}];
-      return new Response(chunks.map(c=>`data: ${JSON.stringify(c)}\n\n`).join('')+'data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}});
-    };
-    const context=normalizeContext({messages:[
-      {role:'user',content:'go',timestamp:0},
-      {role:'assistant',content:[{type:'toolCall',id:'call_1',name:'update_state',arguments:{path:'x',value:1}}],api:'openai-completions',provider:'openai',model:'mock',usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'toolUse',timestamp:0},
-      {role:'toolResult',toolCallId:'call_1',toolName:'update_state',content:[{type:'text',text:'{\"ok\":true}'}],isError:false,timestamp:0},
-    ],tools:[{name:'update_state',description:'Set state',parameters:{type:'object',properties:{path:{type:'string'},value:{type:'number'}}}}]});
-    const stream=streamSimple(model,context,{apiKey:'fake',fetch:mockFetch});
-    for await (const _event of stream) { /* drain */ }
-    const messages=payload?.messages as Array<{role:string;tool_call_id?:string}>;
-    expect(messages.map(m=>m.role)).toEqual(['user','assistant','tool']);
-    expect(messages[2]?.tool_call_id).toBe('call_1');
-  });
-  it('records tool capability only after a successful tool probe', async () => {
-    const gateway=new PiGateway();expect(gateway.toolVerified('deepseek','deepseek-flash')).toBe(false);
-    const chunks=[{id:'test',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'call_1',type:'function',function:{name:'update_state',arguments:'{\"updates\":[{\"path\":\"test.value\",\"value\":1}]}'}}]},finish_reason:null}]},{id:'test',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]}];
-    vi.stubGlobal('fetch',async()=>new Response(chunks.map(c=>`data: ${JSON.stringify(c)}\n\n`).join('')+'data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}}));
-    try { expect(await gateway.verify('deepseek','deepseek-flash','fake')).toBe(true); expect(gateway.toolVerified('deepseek','deepseek-flash')).toBe(true); }
-    finally { vi.unstubAllGlobals(); }
   });
   it('propagates an abort signal through the SDK stream', async () => {
     const controller=new AbortController();
@@ -123,4 +97,10 @@ describe('Pi SDK contract PoC', () => {
     expect(catalog.getProviders().length).toBeGreaterThan(0);
     expect(catalog.getModels('openai').length).toBeGreaterThan(0);
   });
+});
+it('connection verification uses only fixed plain text and never loads a preset or tool',async()=>{
+ const gateway=new PiGateway();let sent:any;
+ const chunks=[{id:'test',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{role:'assistant',content:'连接成功'},finish_reason:null}]},{id:'test',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{},finish_reason:'stop'}]}];
+ vi.stubGlobal('fetch',async(_input:unknown,init:RequestInit)=>{sent=JSON.parse(String(init.body));return new Response(chunks.map(c=>'data: '+JSON.stringify(c)+'\n\n').join('')+'data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}});});
+ try{expect(await gateway.verify('deepseek','deepseek-flash','fake')).toBe(true);expect(sent.messages).toEqual([{role:'user',content:'请回复：连接成功。'}]);expect(sent).not.toHaveProperty('tools');}finally{vi.unstubAllGlobals();}
 });

@@ -108,7 +108,7 @@ it('logs partial provider output once on cancellation with its call index', asyn
   }});
   const client = new ModelClient(gateway);
   const stream = client.events(testModel,{messages:[]},{apiKey:'private-key',signal:controller.signal,maxTokens:100},
-    {sessionId:'s',runId:'r',requestId:'q',requestIndex:2,phase:'continuation'});
+    {sessionId:'s',runId:'r',requestId:'q',requestIndex:2,phase:'generation'});
   await stream.next(); const pending = stream.next(); controller.abort(); await pending;
   const output = log.mock.calls.map(([value])=>String(value)).filter(line=>line.includes('MODEL OUTPUT'));
   expect(output).toHaveLength(1); expect(output[0]).toContain('requestIndex=2');

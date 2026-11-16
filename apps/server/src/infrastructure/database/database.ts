@@ -1,44 +1,24 @@
 import { DatabaseSync } from 'node:sqlite';
-import { migrateWorldComponents } from '../../domain/world-components-migration.js';
-import { readWorld } from '../../repositories/world-repository.js';
-import { normalizeCapabilities } from '../../runtime/config.js';
+import { defaultPreset } from '../../domain/preset/schema.js';
+import { insertPreset } from '../../repositories/preset-repository.js';
 import { UsageStore } from '../../runtime/persistence/usage-store.js';
+export const DATABASE_VERSION=6;
+/** Target schema only. Obsolete runtime data is removed by the explicit reset command. */
+export function openDatabase(path:string):DatabaseSync {
+ const db=new DatabaseSync(path);
+ const version=Number(db.prepare('PRAGMA user_version').get()?.user_version??0);
+ const existed=!!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='worlds'").get();
+ if((existed&&version!==DATABASE_VERSION)||version>DATABASE_VERSION){db.close();throw new Error('DATABASE_RESET_REQUIRED');}
+ db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; BEGIN IMMEDIATE');
+ try {
+ createSchema(db);
+ db.exec('PRAGMA user_version=6; COMMIT');return db;
+ }catch(error){db.exec('ROLLBACK');db.close();throw error;}
+}
 
-
-/** Versioned schema migration. Service startup holds the data-directory lock. */
-export function openDatabase(path: string): DatabaseSync {
-  const db = new DatabaseSync(path);
-  const existed = !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='worlds'").get();
-  const version = Number(db.prepare('PRAGMA user_version').get()?.user_version ?? 0);
-  if (version > 5 || (existed && version < 1)) {
-    db.close();
-    throw new Error(version > 5 ? 'DATABASE_VERSION_UNSUPPORTED' : 'OLD_DATABASE_UNSUPPORTED: 旧数据库需要独立迁移，未改动任何数据');
-  }
-  if (existed && version >= 2) {
-    const columns = db.prepare("SELECT name FROM pragma_table_info('sessions')").all().map(row => row.name);
-    if (!['execution_mode', 'capability_overrides_json', 'capability_revision'].every(name => columns.includes(name))) {
-      db.close(); throw new Error('DATABASE_SCHEMA_VERSION_MISMATCH');
-    }
-  }
-  if (existed && version >= 3) {
-    const columns = db.prepare("SELECT name FROM pragma_table_info('run_preparations')").all().map(row => row.name);
-    if (!['run_id', 'session_id', 'request_id', 'expected_tip_entry_id', 'input_text', 'status', 'created_at', 'finished_at', 'result_json', 'metrics_json', 'accounted'].every(name => columns.includes(name))) {
-      db.close(); throw new Error('DATABASE_SCHEMA_VERSION_MISMATCH');
-    }
-  }
-  // SQLite snapshots committed WAL pages before any upgrade.
-  if (existed && version < 5 && path !== ':memory:') {
-    try { db.prepare('VACUUM INTO ?').run(path + '.backup-v' + version + '-' + Date.now()); }
-    catch (error) { db.close(); throw error; }
-  }
-  if (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='worlds'").get() &&
-      !db.prepare("SELECT name FROM pragma_table_info('worlds') WHERE name='characters_json'").get()) {
-    db.close();
-    throw new Error('OLD_DATABASE_UNSUPPORTED: 请先停服并显式重建旧 SR 数据库');
-  }
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE');
-  try {
-  db.exec(`
+/** Create and seed the target schema inside the caller's transaction. */
+export function createSchema(db:DatabaseSync):void {
+ db.exec(`
     CREATE TABLE IF NOT EXISTS worlds (
       id TEXT PRIMARY KEY,
       spec TEXT NOT NULL CHECK(spec='world_card'),
@@ -76,7 +56,10 @@ export function openDatabase(path: string): DatabaseSync {
       credential_ref TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS presets (
-      id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, config_json TEXT NOT NULL CHECK(json_valid(config_json)),
+      id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT,
+      model_parameters TEXT NOT NULL CHECK(json_valid(model_parameters)),
+      context_strategy TEXT NOT NULL CHECK(json_valid(context_strategy)),
+      config_json TEXT NOT NULL CHECK(json_valid(config_json)),
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS app_settings (
@@ -90,9 +73,6 @@ export function openDatabase(path: string): DatabaseSync {
       preset_id TEXT NOT NULL REFERENCES presets(id) ON DELETE RESTRICT,
       api_model_config_id TEXT NOT NULL REFERENCES api_model_configs(id) ON DELETE RESTRICT,
       user_character_id TEXT NOT NULL,
-      execution_mode TEXT NOT NULL DEFAULT 'direct' CHECK(execution_mode IN ('direct','agent')),
-      capability_overrides_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(capability_overrides_json) AND json_type(capability_overrides_json)='object'),
-      capability_revision INTEGER NOT NULL DEFAULT 0 CHECK(capability_revision>=0),
       tip_entry_id TEXT, title TEXT, state TEXT NOT NULL CHECK(json_valid(state) AND json_type(state) = 'object'),
       usage_json TEXT NOT NULL DEFAULT '{"cumulative":{"inputTokens":0,"outputTokens":0,"totalTokens":0,"cacheReadTokens":0,"cacheWriteTokens":0,"reportedCount":0,"unknownCount":0},"latestContext":null,"pendingRun":null}'
         CHECK(json_valid(usage_json) AND json_type(usage_json)='object'),
@@ -109,7 +89,7 @@ export function openDatabase(path: string): DatabaseSync {
     );
     CREATE TABLE IF NOT EXISTS entries (
       id TEXT PRIMARY KEY, session_id TEXT NOT NULL, parent_id TEXT, run_id TEXT NOT NULL,
-      seq INTEGER NOT NULL, type TEXT NOT NULL CHECK(type IN ('message','compaction','branch_summary')),
+      seq INTEGER NOT NULL, type TEXT NOT NULL CHECK(type IN ('message','compaction')),
       role TEXT, branch_count INTEGER NOT NULL DEFAULT 0 CHECK(branch_count >= 0), timestamp INTEGER NOT NULL,
       payload TEXT NOT NULL CHECK(json_valid(payload) AND json_type(payload) = 'object'),
       state TEXT CHECK(state IS NULL OR (json_valid(state) AND json_type(state) = 'array')),
@@ -118,7 +98,7 @@ export function openDatabase(path: string): DatabaseSync {
       created_at INTEGER NOT NULL DEFAULT (CAST(unixepoch('subsec')*1000 AS INTEGER)),
       updated_at INTEGER NOT NULL DEFAULT (CAST(unixepoch('subsec')*1000 AS INTEGER)),
       UNIQUE(session_id, seq),
-      CHECK((type = 'message' AND role IN ('user','assistant','toolResult') AND role IS NOT NULL)
+      CHECK((type = 'message' AND role IN ('user','assistant') AND role IS NOT NULL)
         OR (type != 'message' AND role IS NULL))
     );
     CREATE TRIGGER IF NOT EXISTS touch_entry AFTER UPDATE OF payload,ext_data,state,branch_count ON entries
@@ -134,76 +114,12 @@ export function openDatabase(path: string): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_entries_role ON entries(session_id, role, seq);
     CREATE INDEX IF NOT EXISTS idx_tags_type_sort ON tags(type, sort_order, name);
     CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at, id);
-  `);
-  // Additive, idempotent migration for existing local databases. Preserve user rows.
-  // Each ALTER is guarded by the actual column list; never reset data to upgrade metrics.
-    if (!db.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name='usage_json'").get()) {
-      db.exec(`ALTER TABLE sessions ADD COLUMN usage_json TEXT NOT NULL DEFAULT
-        '{"cumulative":{"inputTokens":0,"outputTokens":0,"totalTokens":0,"cacheReadTokens":0,"cacheWriteTokens":0,"reportedCount":0,"unknownCount":0},"latestContext":null,"pendingRun":null}'
-        CHECK(json_valid(usage_json) AND json_type(usage_json)='object')`);
-      // No reliable request-level records exist for old runs; do not call
-      // historical zeros a complete lifetime total.
-      db.exec(`UPDATE sessions SET usage_json=json_set(usage_json,'$.historicalUsageUnknown',json('true'))
-        WHERE EXISTS (SELECT 1 FROM entries WHERE entries.session_id=sessions.id
-          AND (entries.role='user' OR entries.type='compaction'))`);
-    }
-    if (!db.prepare("SELECT 1 FROM pragma_table_info('entries') WHERE name='metrics_json'").get())
-      db.exec("ALTER TABLE entries ADD COLUMN metrics_json TEXT CHECK(metrics_json IS NULL OR (json_valid(metrics_json) AND json_type(metrics_json)='object'))");
-
-  const builtinNames:Record<string,string> = {main:'叙事风格',personaInfo:'玩家设定',characterInfo:'角色设定',worldState:'世界状态',chatHistory:'聊天历史',userInput:'玩家输入',postHistory:'历史后置'};
-  const defaultNodes = ['main','personaInfo','characterInfo','worldState','chatHistory','userInput','postHistory']
-    .map(id=>({id,name:builtinNames[id]!,kind:'system',source:id,role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true,
-      ...(['main','postHistory'].includes(id)?{content:''}:{})}));
-  const defaultPreset = {
-    name:'标准叙事', capabilities: normalizeCapabilities(undefined), budget:{strategy:'rolling_summary',max_context_tokens:32768,max_output_tokens:2048},
-    summary_prompt:'概述故事迄今发生的关键事件、角色、状态和未解决的线索，保持准确简洁。',
-    nodes:defaultNodes,
-  };
-  const now=Date.now();
-  db.prepare('INSERT OR IGNORE INTO presets(id,name,config_json,created_at,updated_at) VALUES(?,?,?,?,?)')
-    .run('sr-default-preset',defaultPreset.name,JSON.stringify(defaultPreset),now,now);
-  // Version 2 is additive. Preserve text, world sources, state and explicit modes.
-    if (!db.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name='execution_mode'").get()) {
-      db.exec("ALTER TABLE sessions ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'agent' CHECK(execution_mode IN ('direct','agent'))");
-      db.exec("UPDATE sessions SET execution_mode='direct' WHERE EXISTS (SELECT 1 FROM entries WHERE entries.session_id=sessions.id AND (json_extract(ext_data,'$.run.extensions.protocol')='sr_extensions/v1' OR json_extract(ext_data,'$.narrative.protocol')='sr_extensions/v1'))");
-    }
-    if (!db.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name='capability_overrides_json'").get())
-      db.exec("ALTER TABLE sessions ADD COLUMN capability_overrides_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(capability_overrides_json) AND json_type(capability_overrides_json)='object')");
-    if (!db.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name='capability_revision'").get())
-      db.exec("ALTER TABLE sessions ADD COLUMN capability_revision INTEGER NOT NULL DEFAULT 0 CHECK(capability_revision>=0)");
-    if (version < 2) {
-      for (const row of db.prepare('SELECT id,config_json FROM presets').all()) {
-        const config = JSON.parse(String(row.config_json));
-        config.capabilities = normalizeCapabilities(config.capabilities);
-        db.prepare('UPDATE presets SET config_json=? WHERE id=?').run(JSON.stringify(config), String(row.id));
-      }
-      db.exec('PRAGMA user_version = 2');
-    }
-  // V4 removes only the deprecated world-card summary; narrative summaries are unchanged.
-  if (version < 4) {
-    if (db.prepare("SELECT 1 FROM pragma_table_info('worlds') WHERE name='summary'").get()) db.exec('ALTER TABLE worlds DROP COLUMN summary');
-    db.exec('PRAGMA user_version = 4');
-  }
-  if (version < 5) {
-    if (db.prepare("SELECT 1 FROM pragma_table_info('worlds') WHERE name='ui_json'").get()) {
-      const updates=db.prepare('SELECT * FROM worlds').all().map(row=>{
-        const converted=migrateWorldComponents({description:row.description??undefined,openings:JSON.parse(String(row.openings_json)),ui:row.ui_json==null?undefined:JSON.parse(String(row.ui_json))});
-        const description=converted.description===undefined?null:JSON.stringify(converted.description);
-        const components=JSON.stringify(converted.components),stage=converted.stage_component??null,openings=JSON.stringify(converted.openings);
-        readWorld({...row,description,components,stage_component:stage,openings_json:openings});
-        return {id:String(row.id),description,components,stage,openings};
-      });
-      db.exec('ALTER TABLE worlds RENAME COLUMN ui_json TO components; ALTER TABLE worlds ADD COLUMN stage_component TEXT');
-      const update=db.prepare('UPDATE worlds SET components=?,stage_component=?,description=?,openings_json=? WHERE id=?');
-      for(const row of updates)update.run(row.components,row.stage,row.description,row.openings,row.id);
-    }
-    db.exec('PRAGMA user_version = 5');
-  }
-  db.prepare('INSERT OR IGNORE INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,?,?,?,?)')
-    .run('sr-default-preset',null,now,now);
-  db.exec('COMMIT');
-  return db;
-  } catch (error) { db.exec('ROLLBACK'); db.close(); throw error; }
+ `);
+ const now=Date.now();
+ if(!db.prepare('SELECT 1 FROM presets').get())insertPreset(db,defaultPreset(),'sr-default-preset');
+ const presetId=String(db.prepare('SELECT id FROM presets ORDER BY created_at,id LIMIT 1').get()!.id);
+ db.prepare('INSERT OR IGNORE INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,?,?,?,?)').run(presetId,null,now,now);
+ db.exec('PRAGMA user_version=6');
 }
 
 /** Runs that were in flight at process death cannot resume their in-memory workspaces. */
@@ -224,13 +140,10 @@ export function recoverInterrupted(db: DatabaseSync): void {
         ELSE json_extract(ext_data,'$.run.extensions.stateUpdate.status') END,
       '$.run.extensions.actionSuggestions.status', CASE
         WHEN json_extract(ext_data,'$.run.extensions.actionSuggestions.status')='pending' THEN 'blocked'
-        ELSE json_extract(ext_data,'$.run.extensions.actionSuggestions.status') END,
-      '$.run.phase','finalized','$.runtime.finalized',json('true'))
+        ELSE json_extract(ext_data,'$.run.extensions.actionSuggestions.status') END)
       WHERE role='user' AND json_extract(ext_data,'$.run.status')='running'
-        AND json_extract(ext_data,'$.run.extensions.protocol')='sr_extensions/v1';
-    UPDATE entries SET ext_data = json_set(ext_data, '$.run.status', 'interrupted')
-      WHERE role = 'user' AND json_extract(ext_data, '$.run.status') = 'running';
-    UPDATE entries SET ext_data = json_set(ext_data, '$.status', 'interrupted')
-      WHERE json_extract(ext_data, '$.origin') = 'stream_partial' AND json_extract(ext_data, '$.status') = 'streaming';
+        AND json_type(ext_data,'$.run.extensions')='object';
+    UPDATE entries SET ext_data = json_set(ext_data, '$.run.status', 'interrupted', '$.run.errorCode', 'RUN_INTERRUPTED')
+      WHERE role='user' AND json_extract(ext_data,'$.run.status')='running';
   `);
 }

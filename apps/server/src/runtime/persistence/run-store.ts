@@ -4,7 +4,7 @@ import { ErrorCodes, errorInfo, type PublicError } from '../../common/error-code
 import { RuntimeError } from '../shared/errors.js';
 import { readAncestors } from '../../domain/session/ancestors.js';
 import { fingerprint } from '../config.js';
-import { publicRunResult } from '../../domain/session/run-result.js';
+import { publicRunResult, storedRunResult } from '../../domain/session/run-result.js';
 import type { SummaryCandidate } from '../types.js';
 import { decodeMessageState, type Json } from '../../domain/state/state.js';
 import { historyFingerprint, type HistoryItem } from '../context/compaction/history.js';
@@ -24,7 +24,7 @@ export class RunStore {
     return this.db.prepare('SELECT * FROM sessions WHERE id=?').get(id) as RunRow | undefined;
   }
   preset(id: string): RunRow | undefined {
-    return this.db.prepare('SELECT config_json FROM presets WHERE id=?').get(id) as RunRow | undefined;
+    return this.db.prepare('SELECT * FROM presets WHERE id=?').get(id) as RunRow | undefined;
   }
   modelConfig(id: string): RunRow | undefined {
     return this.db.prepare('SELECT * FROM api_model_configs WHERE id=?').get(id) as RunRow | undefined;
@@ -61,8 +61,6 @@ export class RunStore {
   }
   narrative(row: RunRow): HistoryItem[] {
     if (row.type !== 'message' || !['user', 'assistant'].includes(row.role)) return [];
-    const ext = JSON.parse(String(row.ext_data));
-    if (ext.nonNarrative) return [];
     const message = JSON.parse(String(row.payload)).message;
     if (!message || message.role !== row.role) throw new RuntimeError(ErrorCodes.ENTRY_ROLE_MISMATCH);
     const text = typeof message.content === 'string' ? message.content :
@@ -98,29 +96,21 @@ export class RunStore {
     try { const value = work(); this.db.exec('COMMIT'); return value; }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
-  private appendAtomic(sessionId: string, runId: string, type: string, role: string | null, payload: object, ext: object): string {
-    return this.transaction(() => this.append(sessionId, String(this.tip(sessionId)), runId, type, role, payload, ext));
-  }
   beginPreparation(args: { sessionId: string; runId: string; requestId: string; expectedTip: string; input: string }, beginJournal: () => void): void {
     this.transaction(() => {
       if (this.duplicate(args.sessionId, args.requestId)) throw new RuntimeError(ErrorCodes.REQUEST_ALREADY_EXISTS);
       if (this.tip(args.sessionId) !== args.expectedTip) throw new RuntimeError(ErrorCodes.TIP_CONFLICT);
       beginJournal();
       this.db.prepare('INSERT INTO run_preparations(run_id,session_id,request_id,expected_tip_entry_id,input_text,status,created_at,result_json) VALUES(?,?,?,?,?,?,?,?)')
-        .run(args.runId, args.sessionId, args.requestId, args.expectedTip, args.input, 'preparing', Date.now(), JSON.stringify({ runId: args.runId, phase: 'preparing' }));
+        .run(args.runId, args.sessionId, args.requestId, args.expectedTip, args.input, 'preparing', Date.now(), '{}');
     });
-  }
-  updatePreparation(runId: string, metadata: Record<string, unknown>): void {
-    this.db.prepare("UPDATE run_preparations SET result_json=json_patch(result_json,?) WHERE run_id=? AND status='preparing'")
-      .run(JSON.stringify(metadata), runId);
   }
   startRun(args: {
     sessionId: string; expectedTip: string; runId: string; userId: string; input: string; requestId: string;
     summary?: SummaryCandidate;
-    generation: Array<{ request: unknown; response: string }>;
-    diagnostics: unknown; publicRun?: Record<string, unknown>; runtimeSnapshot?: Record<string, unknown>;
+    publicRun?: Record<string, unknown>;
   }): void {
-    const { sessionId, runId, input, requestId, userId, summary, generation, diagnostics } = args;
+    const { sessionId, runId, input, requestId, userId, summary } = args;
     this.transaction(() => {
       if (this.tip(sessionId) !== args.expectedTip) throw new RuntimeError(ErrorCodes.TIP_CONFLICT);
       const prep = this.db.prepare("SELECT input_text,request_id,expected_tip_entry_id FROM run_preparations WHERE run_id=? AND session_id=? AND status='preparing'").get(runId, sessionId);
@@ -135,38 +125,28 @@ export class RunStore {
       }
       let tip = args.expectedTip;
       if (summary) tip = this.append(sessionId, tip, runId, 'compaction', null, { summary: summary.text },
-        { summary: { kind: 'sillyrealms.summary', coveredThroughEntryId: summary.coveredThroughEntryId, gaps: summary.gaps ?? [], generation } });
+        { summary: { coveredThroughEntryId: summary.coveredThroughEntryId } });
       this.append(sessionId, tip, runId, 'message', 'user',
         { message: { role: 'user', content: input, timestamp: Date.now() } },
-        { requestId, run: { runId, status: 'running', ...args.publicRun }, runtime: { ...args.runtimeSnapshot, diagnostics, finalized: false } }, userId);
+        { requestId, run: storedRunResult({ status: 'running', ...args.publicRun }) }, userId);
       this.db.prepare('DELETE FROM run_preparations WHERE run_id=?').run(runId);
     });
   }
-  completeAssistant(sessionId: string, runId: string, message: object, text: string, streamedId: string | null, streamedText: string): string {
-    return this.transaction(() => {
-      const append = (value: object, ext: object, id?: string) =>
-        this.append(sessionId, String(this.tip(sessionId)), runId, 'message', 'assistant', { message: value }, ext, id);
-      if (streamedId && text !== streamedText) {
-        append({ role: 'assistant', content: [{ type: 'text', text: streamedText }] }, { origin: 'stream_partial', status: 'completed' }, streamedId);
-        return append(message, { origin: 'pi', status: 'completed', nonNarrative: true });
-      }
-      return append(message, { origin: 'pi', status: 'completed' }, streamedId ?? undefined);
-    });
+  completeAssistant(sessionId: string, runId: string, message: object, streamedId: string | null): string {
+    return this.transaction(()=>this.append(sessionId,String(this.tip(sessionId)),runId,'message','assistant',
+      {message},{},streamedId??undefined));
   }
-  appendToolResult(sessionId: string, runId: string, message: object): void {
-    this.appendAtomic(sessionId, runId, 'message', 'toolResult', { message }, {});
-  }
-  finalize(sessionId: string, userId: string, partialId: string | null, outcome: RunOutcome,
+  finalize(sessionId: string, userId: string, outcome: RunOutcome,
     workspace: Record<string, Json>, runFailure: PublicError | null = null, options: {
       expectedTip?: string; baselineHash?: string; allowState?: boolean;
-      publicRun?: Record<string, unknown>; diagnostics?: unknown;
+      publicRun?: Record<string, unknown>;
       pendingMessage?: { id: string; role: 'assistant'; text: string };
     } = {}): boolean {
     return this.transaction(() => {
       const user = this.db.prepare('SELECT * FROM entries WHERE id=? AND session_id=? AND role=?').get(userId, sessionId, 'user');
       if (!user) throw new RuntimeError(ErrorCodes.RUN_NOT_FOUND);
       const ext = JSON.parse(String(user.ext_data));
-      if (ext.runtime?.finalized || ext.run.status !== 'running') return false;
+      if (ext.run.status !== 'running') return false;
       const tip = this.tip(sessionId);
       if (options.expectedTip && tip !== options.expectedTip) throw new RuntimeError(ErrorCodes.TIP_CONFLICT);
       const tipRow = this.db.prepare('SELECT run_id FROM entries WHERE id=? AND session_id=?').get(tip, sessionId);
@@ -180,16 +160,10 @@ export class RunStore {
         const message = options.pendingMessage;
         this.append(sessionId, String(tip), String(user.run_id), 'message', 'assistant',
           { message: { role: 'assistant', content: [{ type: 'text', text: message.text }] } },
-          { origin: 'stream_partial', status: outcome }, message.id);
+          {}, message.id);
       }
-      if (partialId) {
-        const row = this.db.prepare('SELECT ext_data FROM entries WHERE id=? AND run_id=?').get(partialId, String(user.run_id));
-        if (row) this.db.prepare('UPDATE entries SET ext_data=? WHERE id=?')
-          .run(JSON.stringify({ ...JSON.parse(String(row.ext_data)), status: outcome }), partialId);
-      }
-      ext.run = { ...ext.run, ...options.publicRun, status: outcome, phase: 'finalized' };
-      if (outcome === 'failed') Object.assign(ext.run, runFailure ?? errorInfo(ErrorCodes.INTERNAL_ERROR));
-      ext.runtime = { ...ext.runtime, finalized: true, diagnostics: options.diagnostics };
+      ext.run = storedRunResult({ ...ext.run, ...options.publicRun, status: outcome,
+        ...(outcome === 'failed' ? { errorCode: runFailure?.errorCode ?? ErrorCodes.INTERNAL_ERROR } : {}) });
       this.db.prepare('UPDATE entries SET ext_data=? WHERE id=?').run(JSON.stringify(ext), userId);
       if (options.allowState ?? outcome !== 'failed') {
         this.db.prepare('UPDATE entries SET state=? WHERE id=?').run(
@@ -203,10 +177,8 @@ export class RunStore {
       const user = this.db.prepare('SELECT ext_data FROM entries WHERE id=?').get(userId);
       if (user) {
         const ext = JSON.parse(String(user.ext_data));
-        if (ext.runtime?.finalized || ext.run.status !== 'running') return false;
-        ext.run = { ...ext.run, ...publicRun, status: 'failed', phase: 'finalized' };
-        ext.runtime = { ...ext.runtime, finalized: true };
-        Object.assign(ext.run, runFailure);
+        if (ext.run.status !== 'running') return false;
+        ext.run = storedRunResult({ ...ext.run, ...publicRun, status: 'failed', errorCode: runFailure.errorCode });
         this.db.prepare('UPDATE entries SET ext_data=? WHERE id=?').run(JSON.stringify(ext), userId);
         return true;
       }

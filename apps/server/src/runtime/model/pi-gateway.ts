@@ -3,17 +3,7 @@ import { ErrorCodes, normalizeError, type ErrorCode } from '../../common/error-c
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import { debugLog, type DebugContext } from '../../common/debug.js';
 import { hashRequest } from '../context/budget.js';
-import { stateTool } from '../tools/state-tool.js';
 import type { AssistantMessageEvent, AssistantMessage, Context, Model, Api, ToolChoice } from '@earendil-works/pi-ai';
-
-/** Map mandatory tool choice to the provider's wire protocol when supported. */
-export function requiredToolChoice(model: Model<Api>): ToolChoice | undefined {
-  if (model.api === 'openai-completions' || model.api === 'openai-responses' ||
-      model.api === 'mistral-conversations' || model.api === 'openai-codex-responses') return 'required' as ToolChoice;
-  if (model.api === 'anthropic-messages' || model.api === 'google-generative-ai' ||
-      model.api === 'google-vertex' || model.api === 'bedrock-converse-stream') return 'any' as ToolChoice;
-  return undefined;
-}
 
 /** Keep the verified Direct ordering adaptation independent of token estimation. */
 function supportsDeepSeekMidConversationSystem(model: Model<Api>): boolean {
@@ -28,14 +18,12 @@ export interface ModelGateway {
   preview?(model: Model<Api>, context: Context, options: { maxTokens: number; temperature?: number; toolChoice?: ToolChoice; signal?: AbortSignal }): Promise<string | undefined>;
   usageReported?(message: AssistantMessage): boolean;
   supportsDirect?(model: Model<Api>): boolean;
-  toolVerified(provider: string, model: string): boolean;
   verify?(provider: string, model: string, apiKey: string): Promise<boolean>;
 }
 export class PiGateway implements ModelGateway {
   private models = builtinModels();
   private usageEvidence = new WeakMap<AssistantMessage, boolean>();
   usageReported(message: AssistantMessage): boolean { return this.usageEvidence.get(message) === true; }
-  private verified = new Set<string>();
   resolve(provider:string, model:string) {
     const value = this.models.getModel(provider, model);
     if (!value) return undefined;
@@ -91,20 +79,18 @@ export class PiGateway implements ModelGateway {
     }
     if (changed) throw new RuntimeError(ErrorCodes.PREPARED_REQUEST_CHANGED);
   }
-  toolVerified(provider:string, model:string) { return this.verified.has(`${provider}\0${model}`); }
   async verify(provider:string, id:string, apiKey:string):Promise<boolean> {
     const model = this.resolve(provider,id); if (!model) throw new Error(ErrorCodes.MODEL_NOT_FOUND);
     const controller = new AbortController(); const timeout = setTimeout(()=>controller.abort(),30000);
     try {
-      let done = false, called = false;
-      const context:Context = { messages:[{role:'user',content:'Write one short narrative sentence, then call update_state with {updates:[{path:"test.value",value:1}]}. Do not write after the tool.',timestamp:Date.now()}], tools:[stateTool] };
+      let done = false;
+      const context:Context = { messages:[{role:'user',content:'请回复：连接成功。',timestamp:Date.now()}] };
       for await (const event of this.stream(model,context,{apiKey,signal:controller.signal,maxTokens:128})) {
         if (event.type === 'error') throw new Error(ErrorCodes.PROVIDER_TEST_FAILED);
-        if (event.type === 'done') { done = true; called = event.message.content.some(p => p.type === 'toolCall' && p.name === 'update_state' && !p.argumentsError && Array.isArray(p.arguments.updates) && p.arguments.updates.length === 1 && p.arguments.updates[0]?.path === 'test.value' && p.arguments.updates[0]?.value === 1); }
+        if (event.type === 'done') done = event.message.stopReason === 'stop' && event.message.content.some(p => p.type === 'text' && !!p.text.trim()) && !event.message.content.some(p => p.type === 'toolCall');
       }
       if (!done) throw new Error(ErrorCodes.PROVIDER_TEST_FAILED);
-      if (called) this.verified.add(`${provider}\0${id}`);
-      return called;
+      return true;
     } finally { clearTimeout(timeout); }
   }
 }

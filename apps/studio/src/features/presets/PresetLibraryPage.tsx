@@ -1,3 +1,4 @@
+import {PromptPreview} from './PromptPreview';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -14,17 +15,9 @@ const STRATEGIES: { id: ContextStrategy; label: string; hint: string }[] = [
   { id: 'rolling_summary', label: '滚动摘要', hint: '达到输入预算后，用摘要整理较早历史；预算还须满足实际模型窗口和输出预留。' },
   { id: 'sliding_window', label: '滑动窗口', hint: '达到输入预算后，保留连续的最近历史，不调用摘要模型。' },
 ];
-const SOURCES = [
-  { id: 'platform', name: '平台叙事规则', role: 'System', detail: '平台提供的叙事与输出约定，始终位于第一条消息，保证各世界采用一致的基础规则。' },
-  { id: 'persona', name: '玩家设定', role: 'System', detail: '来自当前世界中选定的玩家角色。角色正文在世界卡的角色配置中维护，运行时按当前选择注入。' },
-  { id: 'characters', name: '角色设定', role: 'System', detail: '来自当前激活的其他角色。运行时按各角色的加载规则选择内容，每轮可能不同。' },
-  { id: 'lore', name: '世界书', role: 'System', detail: '来自世界卡内已激活的世界书条目，按配置顺序组成独立的世界信息消息。' },
-  { id: 'summary', name: '历史摘要', role: 'Assistant', detail: '由上下文压缩生成，存在时加入。可通过本页的压缩提示词调整摘要方式，已经产生的摘要属于会话数据。' },
-  { id: 'history', name: '对话历史', role: 'Auto', detail: '使用会话中保留的历史消息，维持每条消息的 User / Assistant 角色与时间顺序。' },
-  { id: 'state', name: '当前状态与输出规则', role: 'System', detail: '平台在历史之后注入本轮权威状态和输出约定。内容由当前世界状态生成，位置固定。' },
-  { id: 'input', name: '当前输入', role: 'User', detail: '来自玩家本轮输入，始终只出现一次，并位于消息序列的最后。' },
-] as const;
-type Source = typeof SOURCES[number];
+// Primary: node order and prompt content. Save remains the single primary action.
+// Reuse Presets.module.css spacing, typography and Studio theme tokens.
+type Source = {id:string;name:string;role:string;kind:string;enabled:boolean;prompt:{parts:Array<{type:string;value?:string;name?:string}>}};
 type Dialog = { kind: 'style' | 'summary' } | { kind: 'custom'; node: PresetCustomNode; isNew: boolean } | { kind: 'source'; source: Source } | { kind: 'deletePreset' } | { kind: 'deleteNode'; node: PresetCustomNode };
 type DropTarget = { id: string; after: boolean };
 type Drag = { id: string; pointerId: number; startY: number; x: number; y: number; active: boolean; target: DropTarget | null; frame: number; handle: HTMLButtonElement; dispose: () => void };
@@ -225,14 +218,14 @@ export function PresetLibraryPage() {
     setDialog({ kind: 'custom', isNew: true, node: { id: globalThis.crypto?.randomUUID?.() ?? 'node-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2), name: '', role: 'system', content: '', enabled: true } });
   }
   function sourceRow(source: Source) {
-    return <button type="button" className={styles.sourceRow} key={source.id} onClick={() => setDialog({ kind: 'source', source })}>
+    return <div className={styles.nodeRow} key={source.id} data-disabled={!source.enabled}>
       <LockKeyhole size={13} className={styles.lockIcon} aria-hidden="true" />
-      <span className={styles.sourceName}>{source.name}</span>
+      <button type="button" className={styles.nodeMain} onClick={() => setDialog({ kind: 'source', source })}><span>{source.name}</span><small>查看提示词</small></button>
       <span className={styles.nodeRole}>{source.role}</span>
-      <span className={styles.sourceMeta}>{source.id === 'platform' ? '固定' : '动态'}</span>
-      <ChevronRight size={14} aria-hidden="true" />
-    </button>;
+      {source.kind==='postprocess'?<Switch checked={source.enabled} label={'启用'+source.name} onChange={()=>update({raw:{...preset!.raw,config_json:{...preset!.raw.config_json,nodes:preset!.raw.config_json.nodes.map((n:Source)=>n.id===source.id?{...n,enabled:!n.enabled}:n)}}})}/>:<span className={styles.nodeRole}>始终启用</span>}
+    </div>;
   }
+
   function applyPrompt(value: PromptValue) {
     if (!preset || !dialog) return;
     if (dialog.kind === 'style') update({ style: { ...preset.style, content: value.content } });
@@ -315,7 +308,6 @@ export function PresetLibraryPage() {
           <section className={styles.formSection}>
             <div className={styles.sectionHeading}><h3>提示词编排</h3><button type="button" className={styles.textButton} aria-label="添加自定义节点" onClick={openCustom}><Plus size={15} />自定义节点</button></div>
             <div className={styles.nodeStack}>
-              {sourceRow(SOURCES[0])}
               <div className={styles.nodeRow} data-disabled={!preset.style.enabled}>
                 <span className={styles.nodeLead}><SlidersHorizontal size={15} /></span>
                 <button type="button" className={styles.nodeMain} aria-label="编辑叙事风格" onClick={() => setDialog({ kind: 'style' })}><span>叙事风格</span><small>{preset.style.enabled ? (preset.style.content.trim() ? '编辑提示词' : '空内容') : '已关闭'}</small></button>
@@ -351,9 +343,9 @@ export function PresetLibraryPage() {
                 </div>)}
                 {!preset.customNodes.length && <button type="button" className={styles.emptyNodes} onClick={openCustom}><Plus size={15} />添加自定义提示词</button>}
               </div>
-              {SOURCES.slice(1).map(sourceRow)}
+              {preset.raw.config_json.nodes.filter((n:Source)=>n.kind!=='text'&&n.id!=='main').map(sourceRow)}
             </div>
-            <p className={styles.fieldHelp}>自定义节点在叙事风格之后生效，可拖动排序。Direct 内置消息位置固定；Agent 保留服务端节点编排。</p>
+            <p className={styles.fieldHelp}>自定义节点在叙事风格之后生效，可拖动排序。固定节点按列表顺序构建上下文，世界状态与行动建议在用户输入之后。</p>
           </section>
           <details className={styles.advanced}><summary><span>高级设置</span><ChevronDown size={15} /></summary>
             <label className={styles.field}>温度<input aria-label="温度" type="number" min={0} max={2} step="any" value={preset.temperature} onChange={event => update({ temperature: Number(event.target.value) })} /></label>
@@ -370,11 +362,11 @@ export function PresetLibraryPage() {
       title={dialog.kind === 'style' ? '叙事风格' : dialog.kind === 'summary' ? '压缩提示词' : dialog.kind === 'custom' && dialog.isNew ? '添加自定义节点' : '编辑自定义节点'}
       metadata={dialog.kind === 'custom'}
       initialValue={dialog.kind === 'custom' ? dialog.node : { name: '', role: 'system', content: dialog.kind === 'style' ? preset.style.content : preset.summaryPrompt }}
-      description={dialog.kind === 'style' ? '设定叙事的人称、节奏与表达方式。留空时沿用世界与故事自身的风格。' : dialog.kind === 'summary' ? '用于整理较早的故事内容，保留人物关系、关键事件与尚未完成的线索。' : '自定义提示词位于叙事风格之后，按列表中的顺序参与编排。'}
+      description={dialog.kind === 'style' ? '设定基础叙事规则、人称、节奏与表达方式。' : dialog.kind === 'summary' ? '用于整理较早的故事内容，保留人物关系、关键事件与尚未完成的线索。' : '自定义提示词位于叙事风格之后，按列表中的顺序参与编排。'}
       onApply={applyPrompt} onClose={() => setDialog(null)} />}
     {dialog?.kind === 'source' && <Modal title={dialog.source.name} onClose={() => setDialog(null)}>
-      <p>{dialog.source.detail}</p><div className={styles.sourceInfo}><span>消息角色</span><strong>{dialog.source.role}</strong></div>
-      <div className={styles.sourceInfo}><span>编排位置</span><strong>固定</strong></div>
+      <pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',maxHeight:'60vh',overflow:'auto'}}>{dialog.source.prompt.parts.map(p=>p.type==='text'?p.value:'{{'+p.name+'}}').join('')}</pre><div className={styles.sourceInfo}><span>消息角色</span><strong>{dialog.source.role}</strong></div>
+      <div className={styles.sourceInfo}><span>编排位置</span><strong>固定</strong></div>{preset&&<PromptPreview key={dialog.source.id} preset={preset} nodeId={dialog.source.id}/>}
     </Modal>}
     {preset && dialog?.kind === 'deletePreset' && <Modal title="删除预设" onClose={() => setDialog(null)}
       footer={<div className={styles.dialogActions}><Button onClick={() => setDialog(null)}>取消</Button><Button onClick={() => {

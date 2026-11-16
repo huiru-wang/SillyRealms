@@ -13,9 +13,8 @@ export function displayMessages(messages: ChatMessage[]): ChatMessage[] {
 const terminal = (run?: Run) => !!run && ['completed', 'failed', 'stopped'].includes(run.status);
 const phases = { preparing: 0, narrative: 1, extensions: 2, finalized: 3 };
 function metadata(value: RunMetadata): RunMetadata {
-  return { ...(value.executionMode ? { executionMode: value.executionMode } : {}),
+  return {
     ...(value.phase ? { phase: value.phase } : {}),
-    ...(value.capabilities ? { capabilities: value.capabilities } : {}),
     ...(value.extensions ? { extensions: value.extensions } : {}) };
 }
 function mergeMessages(current: ChatMessage[], snapshot: ChatMessage[]) {
@@ -38,6 +37,7 @@ export function hasDeltaGap(runs: Run[], event: SessionRunEvent): boolean {
 }
 /** Snapshots, buffered events and live events share one reducer. Offsets are UTF-16 code units. */
 export function applyRunEvent(runs: Run[], event: SessionRunEvent): Run[] {
+  if(event.event==='action_suggestions.changed'||event.event==='session.connection')return runs;
   const { runId } = event.data;
   const previous = runs.find(run => run.id === runId);
   const nonterminal = ['run.phase', 'run.delta', 'run.created'].includes(event.event) ||
@@ -75,7 +75,7 @@ export function applyRunEvent(runs: Run[], event: SessionRunEvent): Run[] {
 }
 export function mergeInitial(runs: Run[], events: SessionRunEvent[]): Run[] {
   const initialIds = new Set(runs.map(run => run.id));
-  return events.reduce((items, event) => initialIds.has(event.data.runId) && event.event === 'run.delta' &&
+  return events.reduce((items, event) => event.event === 'run.delta' && initialIds.has(event.data.runId) &&
     event.data.offset === undefined ? items : applyRunEvent(items, event), runs);
 }
 /** Refresh the newest page while retaining already loaded older pages and newer deltas. */

@@ -1,3 +1,4 @@
+import {updatePreset} from '../src/repositories/preset-repository.js';
 import { afterEach,expect,it,vi } from 'vitest';
 import { runtimeFixture,textGateway,tail,drain } from './fixtures/runtime-v2.js';
 import { UsageStore } from '../src/runtime/persistence/usage-store.js';
@@ -16,7 +17,7 @@ it.each([false,true])('Direct sends one tool-free request and publishes only cle
     expect(await drain(run.stream)).toBe('你好😀。');
     const result=runtime.status('session',run.runId);
     expect(calls).toHaveLength(1);expect(calls[0].context).not.toHaveProperty('tools');expect(calls[0].options.toolChoice).toBeUndefined();
-    expect(result).toMatchObject({status:'completed',executionMode:'direct',phase:'finalized',extensions:{stateUpdate:{status:'applied',acceptedCount:1},actionSuggestions:{status:'ready'}}});
+    expect(result).toMatchObject({status:'completed',phase:'finalized',extensions:{stateUpdate:{status:'applied'},actionSuggestions:{status:'ready'}}});
     expect(JSON.stringify(result)).not.toContain('PRIVATE_REASON');expect(JSON.stringify(result)).not.toContain('sr_extensions>');
     expect(events.filter(e=>e.event==='run.phase').map(e=>e.payload.phase)).toContain('extensions');
     expect(events.filter(e=>e.event==='state.changed')).toHaveLength(1);
@@ -67,10 +68,10 @@ it('isolates usage attachment failure and notification exceptions from committed
 });
 it('cancels preparing even when credential storage never resolves',async()=>{
   const credentials={...fakeCredentials,get:()=>new Promise<string|null>(()=>{})};
-  const {db,runtime}=runtimeFixture(textGateway('unused'), 'direct', credentials);
+  const {db,runtime}=runtimeFixture(textGateway('unused'), credentials);
   try{
     const started=await runtime.start('session','go','request','opening');
-    expect(runtime.activeRun('session')).toMatchObject({id:started.runId,status:'preparing',executionMode:'direct'});
+    expect(runtime.activeRun('session')).toMatchObject({id:started.runId,status:'preparing'});
     const result=await runtime.stop('session',started.runId);
     expect(result?.status).toBe('stopped');expect(runtime.busy('session')).toBe(false);
     expect(db.prepare("SELECT count(*) AS count FROM entries WHERE role='user'").get()!.count).toBe(0);
@@ -106,12 +107,12 @@ it('keeps configuration frozen across asynchronous payload preview and permits i
   const {db,runtime,preset}=runtimeFixture(gateway);
   try {
     const preparing=runtime.prepare('session','go','request','opening');await ready;
-    preset.capabilities.state_update.enabled=false;
-    db.prepare('UPDATE presets SET config_json=?').run(JSON.stringify(preset));
+    preset.config_json.nodes.find(n=>n.id==='worldState')!.enabled=false;
+    updatePreset(db,'sr-default-preset',preset);
     release();const run=await preparing;await drain(run.stream);
-    expect(runtime.status('session',run.runId)).toMatchObject({capabilities:{stateUpdate:{enabled:true}},extensions:{stateUpdate:{status:'unchanged'}}});
+    expect(runtime.status('session',run.runId)).toMatchObject({extensions:{stateUpdate:{status:'unchanged'}}});
     const user=db.prepare("SELECT id FROM entries WHERE run_id=? AND role='user'").get(run.runId)!;
-    expect(new RunStore(db).finalize('session',String(user.id),null,'failed',{score:999},null)).toBe(false);
+    expect(new RunStore(db).finalize('session',String(user.id),'failed',{score:999},null)).toBe(false);
     expect(runtime.status('session',run.runId)?.status).toBe('completed');
   }finally{db.close();}
 });
