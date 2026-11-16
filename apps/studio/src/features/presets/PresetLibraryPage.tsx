@@ -2,7 +2,7 @@ import {PromptPreview} from './PromptPreview';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronRight, Copy, FileText, GripVertical, Layers3, LockKeyhole, MoreHorizontal, Plus, SlidersHorizontal, Star, Trash2, Undo2 } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronRight, Copy, FileText, GripVertical, Layers3, LockKeyhole, MoreHorizontal, Plus, SlidersHorizontal, Star, Trash2, Undo2 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import type { ContextStrategy, PresetCustomNode, StudioPreset } from './types';
@@ -12,8 +12,8 @@ import type { PromptValue } from './PromptEditorDialog';
 import styles from './Presets.module.css';
 
 const STRATEGIES: { id: ContextStrategy; label: string; hint: string }[] = [
-  { id: 'rolling_summary', label: '滚动摘要', hint: '达到输入预算后，用摘要整理较早历史；预算还须满足实际模型窗口和输出预留。' },
-  { id: 'sliding_window', label: '滑动窗口', hint: '达到输入预算后，保留连续的最近历史，不调用摘要模型。' },
+  { id: 'rolling_summary', label: '滚动摘要', hint: '整理较早对话，保留最近内容。' },
+  { id: 'sliding_window', label: '滑动窗口', hint: '保留最近对话，移出较早内容。' },
 ];
 // Primary: node order and prompt content. Save remains the single primary action.
 // Reuse Presets.module.css spacing, typography and Studio theme tokens.
@@ -22,8 +22,14 @@ type Dialog = { kind: 'style' | 'summary' } | { kind: 'custom'; node: PresetCust
 type DropTarget = { id: string; after: boolean };
 type Drag = { id: string; pointerId: number; startY: number; x: number; y: number; active: boolean; target: DropTarget | null; frame: number; handle: HTMLButtonElement; dispose: () => void };
 
-function Switch({ checked, label, onChange }: { checked: boolean; label: string; onChange: () => void }) {
-  return <button type="button" role="switch" aria-checked={checked} aria-label={label} className={styles.switchButton} onClick={onChange}>
+function roleLabel(role: string) {
+  return role === 'auto' ? '原始角色' : role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+function Switch({ checked, label, onChange, id, describedBy }: {
+  checked: boolean; label: string; onChange: () => void; id?: string; describedBy?: string;
+}) {
+  return <button id={id} type="button" role="switch" aria-checked={checked} aria-label={label} aria-describedby={describedBy} className={styles.switchButton} onClick={onChange}>
     <span className={styles.switchTrack}><span /></span>
   </button>;
 }
@@ -60,6 +66,11 @@ export function PresetLibraryPage() {
     setDialog(null); setMenu(null); setError(''); setStatus('');
     return () => { if (element && selectedId) positions.current.set(selectedId, element.scrollTop); };
   }, [selectedId]);
+  useEffect(() => {
+    if (!error) return;
+    setStatus('');
+    contentRef.current?.scrollTo({ top: 0, behavior: 'instant' });
+  }, [error]);
   useEffect(() => {
     if (!status) return;
     const timer = window.setTimeout(() => setStatus(''), 3200);
@@ -218,11 +229,21 @@ export function PresetLibraryPage() {
     setDialog({ kind: 'custom', isNew: true, node: { id: globalThis.crypto?.randomUUID?.() ?? 'node-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2), name: '', role: 'system', content: '', enabled: true } });
   }
   function sourceRow(source: Source) {
-    return <div className={styles.nodeRow} key={source.id} data-disabled={!source.enabled}>
-      <LockKeyhole size={13} className={styles.lockIcon} aria-hidden="true" />
-      <button type="button" className={styles.nodeMain} onClick={() => setDialog({ kind: 'source', source })}><span>{source.name}</span><small>查看提示词</small></button>
-      <span className={styles.nodeRole}>{source.role}</span>
-      {source.kind==='postprocess'?<Switch checked={source.enabled} label={'启用'+source.name} onChange={()=>update({raw:{...preset!.raw,config_json:{...preset!.raw.config_json,nodes:preset!.raw.config_json.nodes.map((n:Source)=>n.id===source.id?{...n,enabled:!n.enabled}:n)}}})}/>:<span className={styles.nodeRole}>始终启用</span>}
+    const optional = source.kind === 'postprocess';
+    return <div className={styles.nodeRow} key={source.id} data-preset-node={source.id} data-disabled={!source.enabled}>
+      <span className={styles.nodeLead} aria-hidden="true"><FileText size={16} /></span>
+      <button type="button" className={styles.nodeMain} aria-label={'查看提示词：' + source.name} onClick={() => setDialog({ kind: 'source', source })}>
+        <span title={source.name}>{source.name}</span>
+        <small>{roleLabel(source.role)} · {optional ? '后置处理' : '始终启用'}{!source.enabled && ' · 已关闭'}</small>
+      </button>
+      {optional
+        ? <Switch checked={source.enabled} label={'启用' + source.name} onChange={() => update({
+          raw: { ...preset!.raw, config_json: { ...preset!.raw.config_json,
+            nodes: preset!.raw.config_json.nodes.map((node: Source) => node.id === source.id ? { ...node, enabled: !node.enabled } : node),
+          } },
+        })} />
+        : <span className={styles.nodeFixed} title="始终启用" aria-hidden="true"><LockKeyhole size={14} /></span>}
+      <span className={styles.nodeTrailing} aria-hidden="true" />
     </div>;
   }
 
@@ -284,38 +305,67 @@ export function PresetLibraryPage() {
         </div>
         {preset ? <form id={formId} key={preset.id} ref={contentRef} noValidate onSubmit={save} className={styles.editorContent} data-preset-content tabIndex={0} aria-label="预设配置内容">
           {error && <p className={styles.formError} role="alert">{error}</p>}
-          <section className={styles.formSection}>
-            <h3>基本信息</h3>
+          <section className={styles.formSection} aria-labelledby={formId + '-basic'} data-preset-section="basic">
+            <div className={styles.sectionHeading}><h3 id={formId + '-basic'}>基本信息</h3></div>
             <div className={styles.basicFields}>
               <label className={styles.field}>预设名称<input ref={nameRef} aria-label="预设名称" required value={preset.name} onChange={event => update({ name: event.target.value })} /></label>
               <label className={styles.field}>预设描述<input aria-label="预设描述" placeholder="简短描述这个预设的叙事方式" value={preset.description} onChange={event => update({ description: event.target.value })} /></label>
             </div>
           </section>
-          <section className={styles.formSection}>
-            <h3>上下文</h3>
-            <fieldset className={styles.strategyField}><legend>上下文策略</legend>
-              <div className={styles.strategies}>{STRATEGIES.map(strategy => <label key={strategy.id} className={styles.strategyChoice}>
-                <input type="radio" name={'strategy-' + preset.id} value={strategy.id} checked={preset.contextStrategy === strategy.id} onChange={() => update({ contextStrategy: strategy.id })} />
-                <span>{strategy.label}</span>
-              </label>)}</div>
-              <p className={styles.fieldHelp}>{STRATEGIES.find(strategy => strategy.id === preset.contextStrategy)?.hint}</p>
-            </fieldset>
-            <div className={styles.budgetRow}><label className={styles.field}>最大上下文输入<div className={styles.numberField}><input aria-label="最大上下文输入" type="number" min={2} step={1} value={preset.maxContextTokens||''} onChange={event=>update({maxContextTokens:Number(event.target.value)})}/><span>tokens</span></div></label>
-              <label className={styles.field}>最大输出长度<div className={styles.numberField}><input aria-label="最大输出长度" type="number" required min={1} step={1} value={preset.maxOutputTokens || ''} onChange={event => update({ maxOutputTokens: Number(event.target.value) })} /><span>tokens</span></div></label>
-              <button type="button" className={styles.summaryButton} onClick={() => setDialog({ kind: 'summary' })}><FileText size={16} /><span><strong>压缩提示词</strong><small>{preset.summaryPrompt.trim() ? '已配置' : '未填写'}</small></span><ChevronRight size={15} /></button>
+          <section className={styles.formSection} aria-labelledby={formId + '-model'} data-preset-section="model">
+            <div className={styles.sectionHeading}><h3 id={formId + '-model'}>模型参数</h3></div>
+            <div className={styles.settingsGroup}>
+              <div className={styles.parameterRow}>
+                <div className={styles.settingCopy}>
+                  <label htmlFor={formId + '-temperature'}>温度</label>
+                  <p id={formId + '-temperature-help'}>较低的值更稳定，较高的值增加变化。</p>
+                </div>
+                <input className={styles.parameterInput} id={formId + '-temperature'} aria-label="温度" aria-describedby={formId + '-temperature-help'} type="number" required min={0} max={2} step="any" value={preset.temperature} onChange={event => update({ temperature: Number(event.target.value) })} />
+              </div>
+              <div className={styles.parameterRow}>
+                <div className={styles.settingCopy}>
+                  <label htmlFor={formId + '-thinking'}>深度思考</label>
+                  <p id={formId + '-thinking-help'}>对支持思考的模型生效，通常需要更长时间。</p>
+                </div>
+                <Switch id={formId + '-thinking'} checked={preset.thinkingEnabled} label="开启深度思考" describedBy={formId + '-thinking-help'} onChange={() => update({ thinkingEnabled: !preset.thinkingEnabled })} />
+              </div>
             </div>
           </section>
-          <section className={styles.formSection}>
-            <div className={styles.sectionHeading}><h3>提示词编排</h3><button type="button" className={styles.textButton} aria-label="添加自定义节点" onClick={openCustom}><Plus size={15} />自定义节点</button></div>
+          <section className={styles.formSection} aria-labelledby={formId + '-context'} data-preset-section="context">
+            <div className={styles.sectionHeading}><h3 id={formId + '-context'}>上下文</h3></div>
+            <fieldset className={styles.strategyField}><legend>历史整理方式</legend>
+              <div className={styles.strategies}>{STRATEGIES.map(strategy => <label key={strategy.id} className={styles.strategyChoice}>
+                <input type="radio" name={'strategy-' + preset.id} value={strategy.id} checked={preset.contextStrategy === strategy.id} onChange={() => update({ contextStrategy: strategy.id })} />
+                <span className={styles.strategyBody}>
+                  <span className={styles.strategyTitle}><strong>{strategy.label}</strong><span className={styles.strategyCheck} aria-hidden="true"><Check size={12} /></span></span>
+                  <small>{strategy.hint}</small>
+                </span>
+              </label>)}</div>
+            </fieldset>
+            <div className={styles.budgetRow}>
+              <label className={styles.field}>最大上下文输入<div className={styles.numberField}><input aria-label="最大上下文输入" type="number" required min={2} step={1} value={preset.maxContextTokens || ''} onChange={event => update({ maxContextTokens: Number(event.target.value) })} /><span>tokens</span></div></label>
+              <label className={styles.field}>最大输出长度<div className={styles.numberField}><input aria-label="最大输出长度" type="number" required min={1} step={1} value={preset.maxOutputTokens || ''} onChange={event => update({ maxOutputTokens: Number(event.target.value) })} /><span>tokens</span></div></label>
+            </div>
+            <button type="button" className={styles.summaryButton} onClick={() => setDialog({ kind: 'summary' })}>
+              <FileText size={16} aria-hidden="true" /><span><strong>压缩提示词</strong><small>{preset.contextStrategy === 'sliding_window' ? '滑动窗口不使用摘要' : '编辑整理历史时使用的提示词'}</small></span><ChevronRight size={16} aria-hidden="true" />
+            </button>
+          </section>
+          <section className={styles.formSection} aria-labelledby={formId + '-nodes'} data-preset-section="nodes">
+            <div className={styles.sectionHeading}>
+              <h3 id={formId + '-nodes'}>提示词编排</h3>
+              <button type="button" className={styles.textButton} aria-label="添加自定义节点" onClick={openCustom}><Plus size={15} />自定义节点</button>
+            </div>
             <div className={styles.nodeStack}>
-              <div className={styles.nodeRow} data-disabled={!preset.style.enabled}>
-                <span className={styles.nodeLead}><SlidersHorizontal size={15} /></span>
-                <button type="button" className={styles.nodeMain} aria-label="编辑叙事风格" onClick={() => setDialog({ kind: 'style' })}><span>叙事风格</span><small>{preset.style.enabled ? (preset.style.content.trim() ? '编辑提示词' : '空内容') : '已关闭'}</small></button>
-                <span className={styles.nodeRole}>System</span>
-                <span className={styles.nodeRole}>始终启用</span>
+              <div className={styles.nodeRow} data-preset-node="main">
+                <span className={styles.nodeLead} aria-hidden="true"><SlidersHorizontal size={16} /></span>
+                <button type="button" className={styles.nodeMain} aria-label="编辑叙事风格" onClick={() => setDialog({ kind: 'style' })}>
+                  <span>叙事风格</span><small>System · 始终启用</small>
+                </button>
+                <span className={styles.nodeFixed} title="始终启用" aria-hidden="true"><LockKeyhole size={14} /></span>
+                <span className={styles.nodeTrailing} aria-hidden="true" />
               </div>
               <div className={styles.customGroup} ref={groupRef} data-custom-group>
-                {preset.customNodes.map((node, index) => <div key={node.id} className={styles.customRow} data-custom-node={node.id} data-disabled={!node.enabled}
+                {preset.customNodes.map((node, index) => <div key={node.id} className={styles.customRow} data-preset-node={node.id} data-custom-node={node.id} data-disabled={!node.enabled}
                   data-dragging={dragId === node.id} data-drop={drop?.id === node.id ? (drop.after ? 'after' : 'before') : undefined}>
                   <button type="button" className={styles.dragHandle} aria-label={'拖动节点：' + node.name} title="拖动排序，或使用方向键上移、下移"
                     onPointerDown={event => beginDrag(event, node.id)}
@@ -324,9 +374,8 @@ export function PresetLibraryPage() {
                       if (event.key === 'Escape' && drag.current) { event.preventDefault(); cancelCurrentDrag(); }
                     }}><GripVertical size={16} /></button>
                   <button type="button" className={styles.nodeMain} aria-label={'编辑节点：' + node.name} onClick={() => setDialog({ kind: 'custom', node, isNew: false })}>
-                    <span title={node.name}>{node.name}</span><small>{!node.enabled ? '已关闭' : node.content.trim() ? '自定义' : '空内容'}</small>
+                    <span title={node.name}>{node.name}</span><small>{roleLabel(node.role)} · 自定义{!node.enabled && ' · 已关闭'}</small>
                   </button>
-                  <span className={styles.nodeRole}>{node.role[0].toUpperCase() + node.role.slice(1)}</span>
                   <Switch checked={node.enabled} label={'启用节点：' + node.name} onChange={() => changeNode(node.id, current => ({ ...current, enabled: !current.enabled }))} />
                   <div className={styles.menuAnchor} data-preset-menu>
                     <button type="button" className={styles.nodeMore} aria-label={'更多节点操作：' + node.name} aria-expanded={menu === node.id} data-menu-trigger={node.id} onClick={event => {
@@ -341,16 +390,11 @@ export function PresetLibraryPage() {
                     </div>}
                   </div>
                 </div>)}
-                {!preset.customNodes.length && <button type="button" className={styles.emptyNodes} onClick={openCustom}><Plus size={15} />添加自定义提示词</button>}
               </div>
-              {preset.raw.config_json.nodes.filter((n:Source)=>n.kind!=='text'&&n.id!=='main').map(sourceRow)}
+              {preset.raw.config_json.nodes.filter((node: Source) => node.kind !== 'text' && node.id !== 'main').map(sourceRow)}
             </div>
-            <p className={styles.fieldHelp}>自定义节点在叙事风格之后生效，可拖动排序。固定节点按列表顺序构建上下文，世界状态与行动建议在用户输入之后。</p>
+            <p className={styles.fieldHelp}>按列表顺序构建提示词。自定义节点在叙事风格之后，可拖动排序。</p>
           </section>
-          <details className={styles.advanced}><summary><span>高级设置</span><ChevronDown size={15} /></summary>
-            <label className={styles.field}>温度<input aria-label="温度" type="number" min={0} max={2} step="any" value={preset.temperature} onChange={event => update({ temperature: Number(event.target.value) })} /></label>
-            <p className={styles.fieldHelp}>较低的值让表达更稳定，较高的值增加变化。</p>
-          </details>
         </form> : <div className={styles.emptyEditor}><Layers3 size={32} /><h2>{presetId ? '找不到这个预设' : '从一个预设开始'}</h2><p>{presetId ? '预设可能已被删除，请返回列表选择。' : '创建预设，设置你的叙事风格。'}</p><Button onClick={presetId ? () => navigate('/presets') : create}>{presetId ? '返回预设列表' : '新建预设'}</Button></div>}
       </section>
     </div>

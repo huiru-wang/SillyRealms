@@ -28,8 +28,9 @@ it('rejects invalid output reserves and fingerprints every request-affecting inp
   expect(()=>assertPreparedRequest(request,testModel,{...context,tools:[stateTool]},options)).toThrow();
   expect(()=>assertPreparedRequest(request,testModel,context,{maxTokens:129})).toThrow();
   expect(()=>assertPreparedRequest(request,testModel,context,{...options,temperature:.1})).toThrow();
+  expect(()=>assertPreparedRequest(request,testModel,context,{...options,reasoning:'medium'})).toThrow();
 });
-it('previews the same real Pi payload it sends, preserving fixed Direct order with no tool fields',async()=>{
+it.each([false,true])('previews the same real Pi payload, preserving Direct order with thinking=%s',async thinkingEnabled=>{
   const gateway=new PiGateway(),model=gateway.resolve('deepseek','deepseek-flash')!;
   const built=compileContext(contextFixture());
   const context:Context={messages:built.messages};
@@ -39,10 +40,15 @@ it('previews the same real Pi payload it sends, preserving fixed Direct order wi
       {id:'t',object:'chat.completion.chunk',created:1,model:'deepseek-flash',choices:[{index:0,delta:{},finish_reason:'stop'}]}];
     return new Response(chunks.map(c=>'data: '+JSON.stringify(c)+'\n\n').join('')+'data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}});
   });vi.stubGlobal('fetch',mock);
-  const wireFingerprint=await gateway.preview(model,context,{maxTokens:64});expect(mock).not.toHaveBeenCalled();
-  for await(const _event of gateway.stream(model,context,{apiKey:'fake',signal:new AbortController().signal,maxTokens:64,wireFingerprint})){}
+  const options={maxTokens:64,reasoning:thinkingEnabled?'medium' as const:undefined};
+  const wireFingerprint=await gateway.preview(model,context,options);expect(mock).not.toHaveBeenCalled();
+  const opposite=await gateway.preview(model,context,{...options,reasoning:thinkingEnabled?undefined:'medium'});
+  expect(opposite).not.toBe(wireFingerprint);
+  for await(const _event of gateway.stream(model,context,{...options,apiKey:'fake',signal:new AbortController().signal,wireFingerprint})){}
   expect(mock).toHaveBeenCalledTimes(1);expect(hashRequest(sent)).toBe(wireFingerprint);
   expect(sent).not.toHaveProperty('tools');expect(sent).not.toHaveProperty('tool_choice');
+  expect(sent.thinking).toEqual({type:thinkingEnabled?'enabled':'disabled'});
+  if(thinkingEnabled)expect(sent.reasoning_effort).toBe('high');else expect(sent).not.toHaveProperty('reasoning_effort');
   const contents=sent.messages.map((m:any)=>typeof m.content==='string'?m.content:JSON.stringify(m.content));
   const index=(needle:string)=>contents.findIndex((value:string)=>value.includes(needle));
   const nodeIndex=(tag:string)=>contents.findIndex((value:string)=>value.startsWith(`${tag}\n`));

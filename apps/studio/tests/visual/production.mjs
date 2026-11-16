@@ -9,6 +9,7 @@ import {checkModels} from './models.mjs';
 import {checkSettings} from './settings.mjs';
 import {checkMobile} from './mobile.mjs';
 import {checkDensity} from './density.mjs';
+import {checkPresets} from './presets.mjs';
 const root=fileURLToPath(new URL('../../../..',import.meta.url));
 const temporary=await mkdtemp(join(tmpdir(),'sr-production-browser-'));
 const manifestPath=join(temporary,'manifest.json');
@@ -62,7 +63,10 @@ try{
  ws.addEventListener('message',event=>{const data=JSON.parse(event.data);if(data.method==='Runtime.exceptionThrown')exceptions.push(data.params.exceptionDetails.exception?.description??data.params.exceptionDetails.text);if(data.method==='Runtime.executionContextCreated')contexts.set(data.params.context.id,data.params.context);if(data.method==='Runtime.executionContextDestroyed')contexts.delete(data.params.executionContextId);if(data.id){const p=pending.get(data.id);if(p){clearTimeout(p.timer);pending.delete(data.id);data.error?p.reject(Error(JSON.stringify(data.error))):p.resolve(data.result);}}});
  await call('Page.enable');await call('Runtime.enable');
  await call('Network.enable');await call('Network.setCacheDisabled',{cacheDisabled:false});
- if(process.env.SR_BROWSER_ONLY==='density'){
+ if(process.env.SR_BROWSER_ONLY==='presets'){
+  await checkPresets({origin,call,evaluate,until,navigate,click,shot,assert,pointer,key,setTheme});
+  assert(exceptions.length===0,'Browser exceptions: '+exceptions.join('\n'));
+ }else if(process.env.SR_BROWSER_ONLY==='density'){
   await checkDensity({call,evaluate,until,navigate,click,shot,assert,pointer,key,frameUntil});
   assert(exceptions.length===0,'Browser exceptions: '+exceptions.join('\n'));
  }else if(process.env.SR_BROWSER_ONLY==='mobile'){

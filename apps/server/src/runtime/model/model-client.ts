@@ -1,5 +1,5 @@
 import { inputIdentity } from '../context/compaction/estimator.js';
-import type { Api, AssistantMessage, AssistantMessageEvent, Context, Model, ToolChoice } from '@earendil-works/pi-ai';
+import type { Api, AssistantMessage, AssistantMessageEvent, Context, Model, ThinkingLevel, ToolChoice } from '@earendil-works/pi-ai';
 import { providerErrorCode, type ModelGateway } from './pi-gateway.js';
 import type { UsageStore, RequestMeta, RequestMetrics } from '../persistence/usage-store.js';
 import { debugEnabled, debugLog } from '../../common/debug.js';
@@ -35,13 +35,13 @@ export class ModelClient {
   async checkCredential(ref: string, signal?: AbortSignal): Promise<void> {
     if (!await abortable(Promise.resolve(this.credentials?.get(ref)), signal)) throw new RuntimeError(ErrorCodes.CREDENTIAL_NOT_CONFIGURED);
   }
-  async preview(model: Model<Api>, context: Context, options: { maxTokens: number; temperature?: number; toolChoice?: ToolChoice; signal?: AbortSignal }): Promise<string | undefined> {
+  async preview(model: Model<Api>, context: Context, options: { maxTokens: number; temperature?: number; reasoning?: ThinkingLevel; toolChoice?: ToolChoice; signal?: AbortSignal }): Promise<string | undefined> {
     return abortable(Promise.resolve(this.gateway.preview?.(model, context, options)), options.signal);
   }
 
   /** Stop awaiting providers which ignore cancellation; discard late responses. */
   async *events(model: Model<Api>, context: Context, options: {
-    apiKey?: string; credentialRef?: string; prepared?: PreparedRequest; signal: AbortSignal; maxTokens: number; temperature?: number; toolChoice?: ToolChoice;
+    apiKey?: string; credentialRef?: string; prepared?: PreparedRequest; signal: AbortSignal; maxTokens: number; temperature?: number; reasoning?: ThinkingLevel; toolChoice?: ToolChoice;
   }, meta?: RequestMeta): AsyncGenerator<AssistantMessageEvent> {
     if (options.prepared) assertPreparedRequest(options.prepared, model, context, options);
     if (options.signal.aborted) return;
@@ -59,11 +59,11 @@ export class ModelClient {
     let firstTextMs: number | undefined;
     let settled = false;
     if (meta && options.prepared && meta.phase !== 'summary') meta.inputIdentity = inputIdentity(model, context,
-      { strategy: options.prepared.strategy ?? 'rolling_summary', toolChoice: options.toolChoice });
+      { strategy: options.prepared.strategy ?? 'rolling_summary', reasoning: options.reasoning, toolChoice: options.toolChoice });
     if (meta) this.usage?.beginRequest(meta, model.id, model.contextWindow);
     debugLog('MODEL BEGIN', { provider: model.provider, model: model.id }, logOptions);
     debugLog('MODEL INPUT', { source: 'pi-context', systemPrompt: context.systemPrompt, messages: context.messages,
-      tools: context.tools, maxOutputTokens: options.maxTokens, temperature: options.temperature, toolChoice: options.toolChoice }, logOptions);
+      tools: context.tools, maxOutputTokens: options.maxTokens, temperature: options.temperature, reasoning: options.reasoning, toolChoice: options.toolChoice }, logOptions);
     const finish = (status: RequestMetrics['status'], usage?: import('@earendil-works/pi-ai').Usage) => {
       if (settled) return;
       settled = true;

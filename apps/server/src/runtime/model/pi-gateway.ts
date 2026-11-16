@@ -3,7 +3,7 @@ import { ErrorCodes, normalizeError, type ErrorCode } from '../../common/error-c
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import { debugLog, type DebugContext } from '../../common/debug.js';
 import { hashRequest } from '../context/budget.js';
-import type { AssistantMessageEvent, AssistantMessage, Context, Model, Api, ToolChoice } from '@earendil-works/pi-ai';
+import type { AssistantMessageEvent, AssistantMessage, Context, Model, Api, ThinkingLevel, ToolChoice } from '@earendil-works/pi-ai';
 
 /** Keep the verified Direct ordering adaptation independent of token estimation. */
 function supportsDeepSeekMidConversationSystem(model: Model<Api>): boolean {
@@ -14,8 +14,8 @@ function supportsDeepSeekMidConversationSystem(model: Model<Api>): boolean {
 
 export interface ModelGateway {
   resolve(provider: string, model: string): Model<Api> | undefined;
-  stream(model: Model<Api>, context: Context, options: { apiKey:string; signal:AbortSignal; maxTokens:number; temperature?:number; toolChoice?:ToolChoice; wireFingerprint?:string; debugContext?:DebugContext }): AsyncIterable<AssistantMessageEvent>;
-  preview?(model: Model<Api>, context: Context, options: { maxTokens: number; temperature?: number; toolChoice?: ToolChoice; signal?: AbortSignal }): Promise<string | undefined>;
+  stream(model: Model<Api>, context: Context, options: { apiKey:string; signal:AbortSignal; maxTokens:number; temperature?:number; reasoning?:ThinkingLevel; toolChoice?:ToolChoice; wireFingerprint?:string; debugContext?:DebugContext }): AsyncIterable<AssistantMessageEvent>;
+  preview?(model: Model<Api>, context: Context, options: { maxTokens: number; temperature?: number; reasoning?: ThinkingLevel; toolChoice?: ToolChoice; signal?: AbortSignal }): Promise<string | undefined>;
   usageReported?(message: AssistantMessage): boolean;
   supportsDirect?(model: Model<Api>): boolean;
   verify?(provider: string, model: string, apiKey: string): Promise<boolean>;
@@ -35,7 +35,7 @@ export class PiGateway implements ModelGateway {
   supportsDirect(model: Model<Api>): boolean {
     return model.api === 'openai-completions' && (model as Model<'openai-completions'>).compat?.supportsMidConvoSystemMessages === true;
   }
-  async preview(model: Model<Api>, context: Context, options: { maxTokens: number; temperature?: number; toolChoice?: ToolChoice; signal?: AbortSignal }): Promise<string | undefined> {
+  async preview(model: Model<Api>, context: Context, options: { maxTokens: number; temperature?: number; reasoning?: ThinkingLevel; toolChoice?: ToolChoice; signal?: AbortSignal }): Promise<string | undefined> {
     // Only adapters with an injectable fetch transport can be previewed without network access.
     if (!['openai-completions', 'openai-responses', 'anthropic-messages', 'google-generative-ai'].includes(model.api)) return undefined;
     let payload: unknown;
@@ -46,7 +46,7 @@ export class PiGateway implements ModelGateway {
     if (payload === undefined) throw new RuntimeError(ErrorCodes.PREPARED_REQUEST_CHANGED);
     return hashRequest(payload);
   }
-  async *stream(model:Model<Api>, context:Context, options:{apiKey:string;signal:AbortSignal;maxTokens:number;temperature?:number;toolChoice?:ToolChoice;wireFingerprint?:string;debugContext?:DebugContext}) {
+  async *stream(model:Model<Api>, context:Context, options:{apiKey:string;signal:AbortSignal;maxTokens:number;temperature?:number;reasoning?:ThinkingLevel;toolChoice?:ToolChoice;wireFingerprint?:string;debugContext?:DebugContext}) {
     let changed = false, reported = false;
     let providerFailure: ErrorCode | undefined;
     const stream = this.models.streamSimple(model,context,{...options,maxRetries:0,onProviderStreamEvent: (raw: unknown) => {

@@ -2,7 +2,8 @@
   "name": "标准叙事",
   "description": "基于会话绑定的预设构建上下文。默认使用滚动摘要，启用世界状态更新和缓慢、中速、快速三个行动建议。",
   "model_parameters": {
-    "temperature": 1
+    "temperature": 1,
+    "thinking_enabled": false
   },
   "context_strategy": {
     "strategy": "rolling_summary",

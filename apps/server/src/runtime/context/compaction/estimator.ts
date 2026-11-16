@@ -1,4 +1,4 @@
-import type { Context, Message, Model, Api, ToolChoice } from '@earendil-works/pi-ai';
+import type { Context, Message, Model, Api, ThinkingLevel, ToolChoice } from '@earendil-works/pi-ai';
 import { fingerprint } from '../../config.js';
 import { ErrorCodes } from '../../../common/error-codes.js';
 import { RuntimeError } from '../../shared/errors.js';
@@ -36,7 +36,7 @@ export function estimateContext(context: Context): number {
   if (!Number.isSafeInteger(result)) throw new RuntimeError(ErrorCodes.CONTEXT_MEASUREMENT_UNSUPPORTED);
   return result;
 }
-export function inputIdentity(model: Model<Api>, context: Context, options: { strategy: string; toolChoice?: ToolChoice }): InputIdentity {
+export function inputIdentity(model: Model<Api>, context: Context, options: { strategy: string; reasoning?: ThinkingLevel; toolChoice?: ToolChoice }): InputIdentity {
   return { version: ESTIMATOR_VERSION, settings: fingerprint({ model, ...options, systemPrompt: context.systemPrompt, tools: context.tools }),
     messages: context.messages.map(message => {
       const { timestamp: _time, ...value } = message;

@@ -38,7 +38,8 @@ export class ContextManager {
     const {snapshot,history,oldSummary,messageState,world}=captureSources(this.store,sessionId,expectedTip,input);
     const compile=(items:HistoryItem[])=>compileContext({...snapshot,nodes:config.preset.nodes,history:items,presetHash:config.preset.hash});
     const preview=(items:HistoryItem[]):Context=>({messages:compile(items).messages});
-    const identity=(context:Context)=>inputIdentity(model,context,{strategy:config.contextPolicy.budget.strategy});
+    const identity=(context:Context)=>inputIdentity(model,context,{strategy:config.contextPolicy.budget.strategy,
+      reasoning:config.generation.thinkingEnabled&&model.reasoning?'medium':undefined});
     const baseline = JSON.parse(String(session.usage_json)).latestContext?.baseline as InputBaseline | undefined;
     // Every source above is captured before the first credential/model await.
     await this.client.checkCredential(config.model.credentialRef, signal);
@@ -49,7 +50,7 @@ export class ContextManager {
           if (summaryCalls++) throw new RuntimeError(ErrorCodes.SUMMARY_FAILED);
           const request = await this.request(config, { messages }, 'summary', config.contextPolicy.summary.maxOutputTokens, signal);
           return this.client.events(model, request.context, { credentialRef: config.model.credentialRef, signal,
-            maxTokens: request.output, temperature: request.temperature, prepared: request }, args.runContext.request('summary'));
+            maxTokens: request.output, temperature: request.temperature, reasoning: request.reasoning, prepared: request }, args.runContext.request('summary'));
         } }),
     });
     if (signal.aborted) throw new RuntimeError(ErrorCodes.RUN_STOPPED);
@@ -71,9 +72,11 @@ export class ContextManager {
   private async request(config: RuntimeConfig, context: Context, purpose: PreparedRequest['purpose'], output: number,
     signal: AbortSignal): Promise<PreparedRequest> {
     if (signal.aborted) throw new RuntimeError(ErrorCodes.RUN_STOPPED);
-    const model = config.model.definition, options = { maxTokens: output, temperature: config.generation.temperature };
+    const model = config.model.definition;
+    const reasoning = config.generation.thinkingEnabled && model.reasoning ? 'medium' as const : undefined;
+    const options = { maxTokens: output, temperature: config.generation.temperature, reasoning };
     const request = { purpose, model, context: deepFreeze(context), output,
-      temperature: options.temperature, strategy: config.contextPolicy.budget.strategy,
+      temperature: options.temperature, reasoning: options.reasoning, strategy: config.contextPolicy.budget.strategy,
       fingerprint: requestFingerprint(model, context, options), wireFingerprint: await this.client.preview(model, context, { ...options, signal }) };
     if (context.tools?.length) throw new RuntimeError(ErrorCodes.INVALID_TOOL_CALL);
     return deepFreeze(request) as PreparedRequest;

@@ -1,21 +1,21 @@
 import { createHash } from 'node:crypto';
-import type { Api, Context, Model, ToolChoice } from '@earendil-works/pi-ai';
+import type { Api, Context, Model, ThinkingLevel, ToolChoice } from '@earendil-works/pi-ai';
 import { ErrorCodes } from '../../common/error-codes.js';
 import { RuntimeError } from '../shared/errors.js';
 import type { ContextPolicy } from '../types.js';
 
 type RequestBase = {
   model: Model<Api>; purpose: 'generation' | 'summary'; fingerprint: string;
-  wireFingerprint?: string; strategy?: string; output: number; temperature?: number;
+  wireFingerprint?: string; strategy?: string; output: number; temperature?: number; reasoning?: ThinkingLevel;
 };
 export type PreparedRequest = RequestBase & {context:Omit<Context,'tools'> & {tools?:never}};
 export function hashRequest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 export function requestFingerprint(model: Model<Api>, context: Context, options: {
-  maxTokens: number; temperature?: number; toolChoice?: ToolChoice;
+  maxTokens: number; temperature?: number; reasoning?: ThinkingLevel; toolChoice?: ToolChoice;
 }): string {
-  return hashRequest({ model, context, output: options.maxTokens, temperature: options.temperature, toolChoice: options.toolChoice });
+  return hashRequest({ model, context, output: options.maxTokens, temperature: options.temperature, reasoning: options.reasoning, toolChoice: options.toolChoice });
 }
 export function summaryInputLimit(model: Model<Api>, policy: ContextPolicy): number {
   const ratio = policy.summary.inputRatio;
@@ -26,7 +26,7 @@ export function summaryInputLimit(model: Model<Api>, policy: ContextPolicy): num
   return limit;
 }
 export function assertPreparedRequest(request: PreparedRequest, model: Model<Api>, context: Context, options: {
-  maxTokens: number; temperature?: number; toolChoice?: ToolChoice;
+  maxTokens: number; temperature?: number; reasoning?: ThinkingLevel; toolChoice?: ToolChoice;
 }): void {
   if (request.fingerprint !== requestFingerprint(model, context, options))
     throw new RuntimeError(ErrorCodes.PREPARED_REQUEST_CHANGED);

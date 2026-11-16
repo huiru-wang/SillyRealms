@@ -25,7 +25,7 @@ export const configSchema=z.object({schemaVersion:z.literal(2),nodes:z.array(nod
  if(nodes.some((n,i)=>n.kind==='text'&&(i<1||i>ids.indexOf('personaInfo'))))bad('Custom nodes must follow main');
 });
 export const contextStrategySchema=budgetSchema.extend({summary_prompt:z.string().trim().min(1)}).strict();
-export const presetSchema=z.object({name:z.string().trim().min(1),description:z.string().nullable(),model_parameters:z.object({temperature:z.number().min(0).max(2).optional()}).strict(),context_strategy:contextStrategySchema,config_json:configSchema}).strict();
+export const presetSchema=z.object({name:z.string().trim().min(1),description:z.string().nullable(),model_parameters:z.object({temperature:z.number().min(0).max(2).optional(),thinking_enabled:z.boolean().default(false)}).strict(),context_strategy:contextStrategySchema,config_json:configSchema}).strict();
 export type PresetNode=z.infer<typeof nodeSchema>;
 export type PresetConfig=z.infer<typeof presetSchema>;
 export function defaultPreset():PresetConfig {return presetSchema.parse(JSON.parse(readFileSync(new URL('../../../resources/presets/default.json',import.meta.url),'utf8')));}

@@ -12,7 +12,7 @@ import type { PostprocessPlan, RunExtensions, RunPhase } from './postprocess/con
 
 export type RuntimeConfig = Readonly<{
   model: Readonly<{ configId: string; credentialRef: string; definition: Model<Api> }>;
-  generation: Readonly<{ maxOutputTokens: number; temperature?: number }>;
+  generation: Readonly<{ maxOutputTokens: number; temperature?: number; thinkingEnabled: boolean }>;
   preset: Readonly<{ id: string; hash: string; nodes: PresetNode[] }>;
   contextPolicy: ContextPolicy;
 }>;

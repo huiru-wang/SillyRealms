@@ -29,7 +29,7 @@ export class DirectRunner {
       const meta = runContext.request('generation', prepared.contextComposition);
       for await (const event of this.client.events(prepared.model, request.context, {
         credentialRef: config.model.credentialRef, signal: task.controller.signal,
-        maxTokens: request.output, temperature: request.temperature, prepared: request,
+        maxTokens: request.output, temperature: request.temperature, reasoning: request.reasoning, prepared: request,
       }, meta)) {
         if (task.stopped) break;
         if (event.type === 'text_delta') {
