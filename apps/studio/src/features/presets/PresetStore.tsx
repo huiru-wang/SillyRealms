@@ -23,6 +23,12 @@ function useStore(){
  const mutate=async<T,>(fn:()=>Promise<T>):Promise<T>=>{if(pending.current)throw Error('正在保存，请稍候');pending.current=true;setBusy(true);setError('');try{return await fn();}catch(e){setError(e instanceof Error?e.message:'操作失败');throw e;}finally{pending.current=false;setBusy(false);}};
  const insert=(raw:any)=>{const p=fromServer(raw);change(s=>({...s,order:[p.id,...s.order.filter(id=>id!==p.id)],savedById:{...s.savedById,[p.id]:p},draftById:{...s.draftById,[p.id]:clone(p)}}));return p.id;};
  const createPreset=()=>mutate(async()=>{const defaults=await api('v1/presets/default');const result=await api('v1/presets',{method:'POST',body:json({...defaults,name:'未命名预设'})});return insert(result.item);});
+ const getDefaultPrompt=async(nodeId:string):Promise<string>=>{
+  const defaults=await api('v1/presets/default');
+  const node=defaults.config_json.nodes.find((item:{id:string;prompt:string})=>item.id===nodeId);
+  if(!node||typeof node.prompt!=='string')throw Error('找不到此节点的默认提示词。');
+  return node.prompt;
+ };
  const importPreset=(text:string)=>mutate(async()=>{const result=await api('v1/presets/import',{method:'POST',body:text});return insert(result.item);});
  const savePreset=(id:string)=>mutate(async()=>{const p=clone(current.current.draftById[id]);const error=getPresetValidationError(p);if(error)throw Error(error);await api('v1/presets/'+encodeURIComponent(id),{method:'PATCH',headers:{'If-Match':p.raw.etag},body:json(presetPatch(p))});const result=await api('v1/presets/'+encodeURIComponent(id));const saved=fromServer(result.item);change(s=>({...s,savedById:{...s.savedById,[id]:saved},draftById:{...s.draftById,[id]:JSON.stringify(s.draftById[id])===JSON.stringify(p)?clone(saved):{...s.draftById[id],raw:saved.raw}}}));return true;});
  const duplicatePreset=(id:string)=>mutate(async()=>{const p=current.current.draftById[id];const error=getPresetValidationError(p);if(error)throw Error(error);const result=await api('v1/presets',{method:'POST',body:json({...presetPatch(p),name:p.name+' 副本'})});return insert(result.item);});
@@ -32,7 +38,7 @@ function useStore(){
  const revertPreset=(id:string)=>change(s=>({...s,draftById:{...s.draftById,[id]:clone(s.savedById[id])}}));
  const isDirty=(id:string)=>JSON.stringify(state.draftById[id])!==JSON.stringify(state.savedById[id]);
  const dirty=state.order.some(isDirty);useEffect(()=>{if(!dirty)return;const warn=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);},[dirty]);
- return {...state,presets:state.order.map(id=>state.draftById[id]),loading,error,busy,reload,importPreset,createPreset,savePreset,duplicatePreset,deletePreset,setDefaultPreset,editPreset,revertPreset,isDirty};
+ return {...state,presets:state.order.map(id=>state.draftById[id]),loading,error,busy,reload,getDefaultPrompt,importPreset,createPreset,savePreset,duplicatePreset,deletePreset,setDefaultPreset,editPreset,revertPreset,isDirty};
 }
 const Context=createContext<ReturnType<typeof useStore>|null>(null);
 export function PresetProvider({children}:{children:ReactNode}){const store=useStore();return <Context.Provider value={store}>{children}</Context.Provider>;}

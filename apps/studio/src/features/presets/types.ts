@@ -1,10 +1,11 @@
 export type ContextStrategy = 'rolling_summary' | 'sliding_window';
-export type PresetRole = 'system' | 'user' | 'assistant';
-export type PresetCustomNode = {
+export type PresetRole = 'system' | 'user' | 'assistant' | 'auto';
+export type PresetNode = {
   id: string;
   name: string;
+  kind: 'system' | 'postprocess' | 'text';
   role: PresetRole;
-  content: string;
+  prompt: string;
   enabled: boolean;
 };
 export type StudioPreset = {
@@ -17,7 +18,6 @@ export type StudioPreset = {
   temperature: number;
   thinkingEnabled: boolean;
   summaryPrompt: string;
-  style: { content: string; enabled: boolean };
-  customNodes: PresetCustomNode[];
+  nodes: PresetNode[];
   raw: Record<string, any>;
 };

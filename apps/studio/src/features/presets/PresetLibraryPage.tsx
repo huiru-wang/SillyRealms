@@ -1,11 +1,10 @@
-import {PromptPreview} from './PromptPreview';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronRight, Copy, FileText, GripVertical, Layers3, LockKeyhole, MoreHorizontal, Plus, SlidersHorizontal, Star, Trash2, Undo2 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
-import type { ContextStrategy, PresetCustomNode, StudioPreset } from './types';
+import type { ContextStrategy, PresetNode, StudioPreset } from './types';
 import { getPresetValidationError, usePresetStore } from './PresetStore';
 import { PromptEditorDialog } from './PromptEditorDialog';
 import type { PromptValue } from './PromptEditorDialog';
@@ -17,8 +16,7 @@ const STRATEGIES: { id: ContextStrategy; label: string; hint: string }[] = [
 ];
 // Primary: node order and prompt content. Save remains the single primary action.
 // Reuse Presets.module.css spacing, typography and Studio theme tokens.
-type Source = {id:string;name:string;role:string;kind:string;enabled:boolean;prompt:{parts:Array<{type:string;value?:string;name?:string}>}};
-type Dialog = { kind: 'style' | 'summary' } | { kind: 'custom'; node: PresetCustomNode; isNew: boolean } | { kind: 'source'; source: Source } | { kind: 'deletePreset' } | { kind: 'deleteNode'; node: PresetCustomNode };
+type Dialog = { kind: 'summary' } | { kind: 'node'; node: PresetNode; isNew: boolean; insertAt?: number } | { kind: 'deletePreset' } | { kind: 'deleteNode'; node: PresetNode };
 type DropTarget = { id: string; after: boolean };
 type Drag = { id: string; pointerId: number; startY: number; x: number; y: number; active: boolean; target: DropTarget | null; frame: number; handle: HTMLButtonElement; dispose: () => void };
 
@@ -36,7 +34,7 @@ function Switch({ checked, label, onChange, id, describedBy }: {
 
 export function PresetLibraryPage() {
   const store = usePresetStore();
-  const { presets, draftById, defaultPresetId, isDirty, editPreset, savePreset, revertPreset, createPreset, duplicatePreset, deletePreset, setDefaultPreset } = store;
+  const { presets, draftById, defaultPresetId, isDirty, editPreset, savePreset, revertPreset, createPreset, duplicatePreset, deletePreset, setDefaultPreset, getDefaultPrompt } = store;
   const { presetId } = useParams<{ presetId?: string }>();
   const selectedId = presetId ?? defaultPresetId ?? presets[0]?.id;
   const preset = selectedId && Object.hasOwn(draftById, selectedId) ? draftById[selectedId] : undefined;
@@ -124,17 +122,17 @@ export function PresetLibraryPage() {
   }
   function select(id:string){navigate('/presets/'+encodeURIComponent(id));}
   function create(){void perform(async()=>{const id=await createPreset();select(id);requestAnimationFrame(()=>nameRef.current?.select());});}
-  function changeNode(id: string, transform: (node: PresetCustomNode) => PresetCustomNode) {
-    if (preset) editPreset(preset.id, current => ({ ...current, customNodes: current.customNodes.map(node => node.id === id ? transform(node) : node) }));
+  function changeNode(id: string, transform: (node: PresetNode) => PresetNode) {
+    if (preset) editPreset(preset.id, current => ({ ...current, nodes: current.nodes.map(node => node.id === id ? transform(node) : node) }));
   }
   function moveNode(id: string, offset: number) {
     if (!preset) return;
-    const from = preset.customNodes.findIndex(node => node.id === id);
+    const from = preset.nodes.findIndex(node => node.id === id);
     const to = from + offset;
-    if (from < 0 || to < 0 || to >= preset.customNodes.length) return;
-    const next = [...preset.customNodes];
+    if (from < 0 || to < 0 || to >= preset.nodes.length || preset.nodes[from].kind !== 'text') return;
+    const next = [...preset.nodes];
     const [node] = next.splice(from, 1); next.splice(to, 0, node);
-    update({ customNodes: next });
+    update({ nodes: next });
     setStatus(node.name + '已移至第 ' + (to + 1) + ' 位');
     setMenu(null);
     requestAnimationFrame(() => {
@@ -151,10 +149,10 @@ export function PresetLibraryPage() {
   }
   function targetAt(x: number, y: number, id: string): DropTarget | null {
     if (!inDragArea(x, y)) return null;
-    const rows = [...(groupRef.current?.querySelectorAll<HTMLElement>('[data-custom-node]') ?? [])].filter(row => row.dataset.customNode !== id);
+    const rows = [...(groupRef.current?.querySelectorAll<HTMLElement>('[data-preset-node]') ?? [])].filter(row => row.dataset.presetNode !== id);
     if (!rows.length) return null;
     const before = rows.find(row => y < row.getBoundingClientRect().top + row.offsetHeight / 2);
-    return before ? { id: before.dataset.customNode!, after: false } : { id: rows.at(-1)!.dataset.customNode!, after: true };
+    return before ? { id: before.dataset.presetNode!, after: false } : { id: rows.at(-1)!.dataset.presetNode!, after: true };
   }
   function trackPointer(event: PointerEvent) {
     const current = drag.current;
@@ -177,7 +175,7 @@ export function PresetLibraryPage() {
     const current: Drag = { id, pointerId: event.pointerId, startY: event.clientY, x: event.clientX, y: event.clientY, active: false, target: null, frame: 0, handle, dispose: () => { } };
     drag.current = current;
     // Document listeners also finish a drag if pointer capture is lost or the
-    // release lands outside the handle/custom group.
+    // release lands outside the handle/node list.
     const move = (pointer: PointerEvent) => trackPointer(pointer);
     const up = (pointer: PointerEvent) => endDrag(pointer);
     const cancel = (pointer: PointerEvent) => endDrag(pointer, true);
@@ -215,47 +213,79 @@ export function PresetLibraryPage() {
     }
     const target = !cancel && current.active ? targetAt(event.clientX, event.clientY, current.id) : null;
     if (target && preset) {
-      const nodes = preset.customNodes.filter(node => node.id !== current.id);
-      const item = preset.customNodes.find(node => node.id === current.id);
+      const nodes = preset.nodes.filter(node => node.id !== current.id);
+      const item = preset.nodes.find(node => node.id === current.id);
       const targetIndex = nodes.findIndex(node => node.id === target.id);
-      if (item && targetIndex >= 0) {
+      if (item?.kind === 'text' && targetIndex >= 0) {
         nodes.splice(targetIndex + (target.after ? 1 : 0), 0, item);
-        update({ customNodes: nodes }); setStatus('节点顺序已更新');
+        update({ nodes }); setStatus('节点顺序已更新');
       }
     }
     setDragId(null); setDrop(null);
   }
-  function openCustom() {
-    setDialog({ kind: 'custom', isNew: true, node: { id: globalThis.crypto?.randomUUID?.() ?? 'node-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2), name: '', role: 'system', content: '', enabled: true } });
+  function openCustom(insertAt = preset?.nodes.length ?? 0) {
+    setDialog({ kind: 'node', isNew: true, insertAt, node: {
+      id: globalThis.crypto?.randomUUID?.() ?? 'node-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2),
+      name: '', kind: 'text', role: 'system', prompt: '', enabled: true,
+    } });
   }
-  function sourceRow(source: Source) {
-    const optional = source.kind === 'postprocess';
-    return <div className={styles.nodeRow} key={source.id} data-preset-node={source.id} data-disabled={!source.enabled}>
-      <span className={styles.nodeLead} aria-hidden="true"><FileText size={16} /></span>
-      <button type="button" className={styles.nodeMain} aria-label={'查看提示词：' + source.name} onClick={() => setDialog({ kind: 'source', source })}>
-        <span title={source.name}>{source.name}</span>
-        <small>{roleLabel(source.role)} · {optional ? '后置处理' : '始终启用'}{!source.enabled && ' · 已关闭'}</small>
+  function nodeRow(node: PresetNode, index: number) {
+    const custom = node.kind === 'text', optional = node.kind === 'postprocess', menuKey = 'node:' + node.id;
+    return <div className={styles.nodeRow} key={node.id} data-preset-node={node.id}
+      data-custom-node={custom ? node.id : undefined} data-disabled={!node.enabled}
+      data-dragging={dragId === node.id} data-drop={drop?.id === node.id ? (drop.after ? 'after' : 'before') : undefined}>
+      {custom ? <button type="button" className={styles.dragHandle} aria-label={'拖动节点：' + node.name} title="拖动排序，或使用方向键上移、下移"
+        onPointerDown={event => beginDrag(event, node.id)}
+        onKeyDown={event => {
+          if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {event.preventDefault(); cancelCurrentDrag(); moveNode(node.id, event.key === 'ArrowUp' ? -1 : 1);}
+          if (event.key === 'Escape' && drag.current) {event.preventDefault(); cancelCurrentDrag();}
+        }}><GripVertical size={16} /></button>
+        : <span className={styles.nodeLead} aria-hidden="true">{node.id === 'main' ? <SlidersHorizontal size={16} /> : <FileText size={16} />}</span>}
+      <button type="button" className={styles.nodeMain} aria-label={node.id === 'main' ? '编辑叙事风格' : '编辑节点：' + node.name}
+        onClick={() => setDialog({kind: 'node', node, isNew: false})}>
+        <span title={node.name}>{node.name}</span>
+        <small>{roleLabel(node.role)} · {custom ? '自定义' : optional ? '后置处理' : '始终启用'}{!node.enabled && ' · 已关闭'}</small>
       </button>
-      {optional
-        ? <Switch checked={source.enabled} label={'启用' + source.name} onChange={() => update({
-          raw: { ...preset!.raw, config_json: { ...preset!.raw.config_json,
-            nodes: preset!.raw.config_json.nodes.map((node: Source) => node.id === source.id ? { ...node, enabled: !node.enabled } : node),
-          } },
-        })} />
+      {custom || optional
+        ? <Switch checked={node.enabled} label={custom ? '启用节点：' + node.name : '启用' + node.name}
+          onChange={() => changeNode(node.id, current => ({...current, enabled: !current.enabled}))} />
         : <span className={styles.nodeFixed} title="始终启用" aria-hidden="true"><LockKeyhole size={14} /></span>}
-      <span className={styles.nodeTrailing} aria-hidden="true" />
+      <div className={styles.menuAnchor} data-preset-menu>
+        <button type="button" className={styles.nodeMore} aria-label={'更多节点操作：' + node.name} aria-expanded={menu === menuKey} data-menu-trigger={menuKey} onClick={event => {
+          const edge = contentRef.current?.getBoundingClientRect().bottom ?? innerHeight;
+          setMenuAbove(event.currentTarget.getBoundingClientRect().bottom + (custom ? 280 : 110) > edge);
+          setMenu(menu === menuKey ? null : menuKey);
+        }}><MoreHorizontal size={16} /></button>
+        {menu === menuKey && <div className={styles.menuPanel} data-placement={menuAbove ? 'above' : 'below'} role="group" aria-label="节点操作">
+          {custom && <>
+            <button type="button" autoFocus disabled={index === 0} onClick={() => moveNode(node.id, -1)}><ArrowUp size={14} />上移</button>
+            <button type="button" disabled={index === preset!.nodes.length - 1} onClick={() => moveNode(node.id, 1)}><ArrowDown size={14} />下移</button>
+            <div className={styles.menuDivider} />
+          </>}
+          <button type="button" autoFocus={!custom} onClick={() => {focusMenuTrigger(menuKey); setMenu(null); openCustom(index);}}><Plus size={14} />在上方插入</button>
+          <button type="button" onClick={() => {focusMenuTrigger(menuKey); setMenu(null); openCustom(index + 1);}}><Plus size={14} />在下方插入</button>
+          {custom && <>
+            <div className={styles.menuDivider} />
+            <button type="button" onClick={() => {focusMenuTrigger(menuKey); setDialog({kind: 'deleteNode', node}); setMenu(null);}}><Trash2 size={14} />删除节点</button>
+          </>}
+        </div>}
+      </div>
     </div>;
   }
 
   function applyPrompt(value: PromptValue) {
     if (!preset || !dialog) return;
-    if (dialog.kind === 'style') update({ style: { ...preset.style, content: value.content } });
-    if (dialog.kind === 'summary') update({ summaryPrompt: value.content });
-    if (dialog.kind === 'custom') {
-      const next = { ...dialog.node, ...value };
-      if (dialog.isNew) update({ customNodes: [...preset.customNodes, next] });
-      else changeNode(next.id, () => next);
-      if (dialog.isNew) requestAnimationFrame(() => groupRef.current?.lastElementChild?.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }));
+    if (dialog.kind === 'summary') update({ summaryPrompt: value.prompt });
+    if (dialog.kind === 'node') {
+      const next = dialog.node.kind === 'text' ? {...dialog.node, ...value} : {...dialog.node, prompt: value.prompt};
+      if (dialog.isNew) {
+        const nodes = [...preset.nodes];
+        nodes.splice(dialog.insertAt ?? nodes.length, 0, next);
+        update({nodes});
+        requestAnimationFrame(() => groupRef.current?.querySelector<HTMLElement>('[data-preset-node="' + CSS.escape(next.id) + '"]')?.scrollIntoView({
+          block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+        }));
+      } else changeNode(next.id, () => next);
     }
   }
 
@@ -353,47 +383,12 @@ export function PresetLibraryPage() {
           <section className={styles.formSection} aria-labelledby={formId + '-nodes'} data-preset-section="nodes">
             <div className={styles.sectionHeading}>
               <h3 id={formId + '-nodes'}>提示词编排</h3>
-              <button type="button" className={styles.textButton} aria-label="添加自定义节点" onClick={openCustom}><Plus size={15} />自定义节点</button>
+              <button type="button" className={styles.textButton} aria-label="添加自定义节点" onClick={() => openCustom()}><Plus size={15} />自定义节点</button>
             </div>
-            <div className={styles.nodeStack}>
-              <div className={styles.nodeRow} data-preset-node="main">
-                <span className={styles.nodeLead} aria-hidden="true"><SlidersHorizontal size={16} /></span>
-                <button type="button" className={styles.nodeMain} aria-label="编辑叙事风格" onClick={() => setDialog({ kind: 'style' })}>
-                  <span>叙事风格</span><small>System · 始终启用</small>
-                </button>
-                <span className={styles.nodeFixed} title="始终启用" aria-hidden="true"><LockKeyhole size={14} /></span>
-                <span className={styles.nodeTrailing} aria-hidden="true" />
-              </div>
-              <div className={styles.customGroup} ref={groupRef} data-custom-group>
-                {preset.customNodes.map((node, index) => <div key={node.id} className={styles.customRow} data-preset-node={node.id} data-custom-node={node.id} data-disabled={!node.enabled}
-                  data-dragging={dragId === node.id} data-drop={drop?.id === node.id ? (drop.after ? 'after' : 'before') : undefined}>
-                  <button type="button" className={styles.dragHandle} aria-label={'拖动节点：' + node.name} title="拖动排序，或使用方向键上移、下移"
-                    onPointerDown={event => beginDrag(event, node.id)}
-                    onKeyDown={event => {
-                      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); cancelCurrentDrag(); moveNode(node.id, event.key === 'ArrowUp' ? -1 : 1); }
-                      if (event.key === 'Escape' && drag.current) { event.preventDefault(); cancelCurrentDrag(); }
-                    }}><GripVertical size={16} /></button>
-                  <button type="button" className={styles.nodeMain} aria-label={'编辑节点：' + node.name} onClick={() => setDialog({ kind: 'custom', node, isNew: false })}>
-                    <span title={node.name}>{node.name}</span><small>{roleLabel(node.role)} · 自定义{!node.enabled && ' · 已关闭'}</small>
-                  </button>
-                  <Switch checked={node.enabled} label={'启用节点：' + node.name} onChange={() => changeNode(node.id, current => ({ ...current, enabled: !current.enabled }))} />
-                  <div className={styles.menuAnchor} data-preset-menu>
-                    <button type="button" className={styles.nodeMore} aria-label={'更多节点操作：' + node.name} aria-expanded={menu === node.id} data-menu-trigger={node.id} onClick={event => {
-                      const edge = contentRef.current?.getBoundingClientRect().bottom ?? innerHeight;
-                      setMenuAbove(event.currentTarget.getBoundingClientRect().bottom + 154 > edge);
-                      setMenu(menu === node.id ? null : node.id);
-                    }}><MoreHorizontal size={16} /></button>
-                    {menu === node.id && <div className={styles.menuPanel} data-placement={menuAbove ? 'above' : 'below'} role="group" aria-label="节点操作">
-                      <button type="button" autoFocus disabled={index === 0} onClick={() => moveNode(node.id, -1)}><ArrowUp size={14} />上移</button>
-                      <button type="button" disabled={index === preset.customNodes.length - 1} onClick={() => moveNode(node.id, 1)}><ArrowDown size={14} />下移</button>
-                      <button type="button" onClick={() => { focusMenuTrigger(node.id); setDialog({ kind: 'deleteNode', node }); setMenu(null); }}><Trash2 size={14} />删除节点</button>
-                    </div>}
-                  </div>
-                </div>)}
-              </div>
-              {preset.raw.config_json.nodes.filter((node: Source) => node.kind !== 'text' && node.id !== 'main').map(sourceRow)}
+            <div className={styles.nodeStack} ref={groupRef} data-preset-nodes>
+              {preset.nodes.map(nodeRow)}
             </div>
-            <p className={styles.fieldHelp}>按列表顺序构建提示词。自定义节点在叙事风格之后，可拖动排序。</p>
+            <p className={styles.fieldHelp}>按列表顺序构建提示词。自定义节点可插入任意位置，系统节点保持先后顺序。</p>
           </section>
         </form> : <div className={styles.emptyEditor}><Layers3 size={32} /><h2>{presetId ? '找不到这个预设' : '从一个预设开始'}</h2><p>{presetId ? '预设可能已被删除，请返回列表选择。' : '创建预设，设置你的叙事风格。'}</p><Button onClick={presetId ? () => navigate('/presets') : create}>{presetId ? '返回预设列表' : '新建预设'}</Button></div>}
       </section>
@@ -401,17 +396,16 @@ export function PresetLibraryPage() {
     <div className={styles.srOnly} role="status" aria-live="polite">{status}</div>
     {status && <div className={styles.toast} aria-hidden="true"><Check size={14} />{status}</div>}
 
-    {preset && dialog && (dialog.kind === 'style' || dialog.kind === 'summary' || dialog.kind === 'custom') && <PromptEditorDialog
-      key={dialog.kind === 'custom' ? dialog.node.id : dialog.kind}
-      title={dialog.kind === 'style' ? '叙事风格' : dialog.kind === 'summary' ? '压缩提示词' : dialog.kind === 'custom' && dialog.isNew ? '添加自定义节点' : '编辑自定义节点'}
-      metadata={dialog.kind === 'custom'}
-      initialValue={dialog.kind === 'custom' ? dialog.node : { name: '', role: 'system', content: dialog.kind === 'style' ? preset.style.content : preset.summaryPrompt }}
-      description={dialog.kind === 'style' ? '设定基础叙事规则、人称、节奏与表达方式。' : dialog.kind === 'summary' ? '用于整理较早的故事内容，保留人物关系、关键事件与尚未完成的线索。' : '自定义提示词位于叙事风格之后，按列表中的顺序参与编排。'}
+    {preset && dialog && (dialog.kind === 'summary' || dialog.kind === 'node') && <PromptEditorDialog
+      key={dialog.kind === 'node' ? dialog.node.id : dialog.kind}
+      title={dialog.kind === 'summary' ? '压缩提示词' : dialog.isNew ? '添加自定义节点' : dialog.node.name}
+      metadata={dialog.kind === 'node' && dialog.node.kind === 'text'}
+      nodeId={dialog.kind === 'node' ? dialog.node.id : undefined}
+      initialValue={dialog.kind === 'node' ? dialog.node : {name: '', role: 'system', prompt: preset.summaryPrompt}}
+      description={dialog.kind === 'summary' ? '整理较早的故事内容，保留人物关系、关键事件与尚未完成的线索。'
+        : dialog.node.kind === 'text' ? '设置消息角色，编写提示词并插入所需的系统变量。' : '编辑此节点的提示词，系统变量会在每轮生成时填入。'}
+      onRestore={dialog.kind === 'node' && dialog.node.kind !== 'text' ? () => getDefaultPrompt(dialog.node.id) : undefined}
       onApply={applyPrompt} onClose={() => setDialog(null)} />}
-    {dialog?.kind === 'source' && <Modal title={dialog.source.name} onClose={() => setDialog(null)}>
-      <pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',maxHeight:'60vh',overflow:'auto'}}>{dialog.source.prompt.parts.map(p=>p.type==='text'?p.value:'{{'+p.name+'}}').join('')}</pre><div className={styles.sourceInfo}><span>消息角色</span><strong>{dialog.source.role}</strong></div>
-      <div className={styles.sourceInfo}><span>编排位置</span><strong>固定</strong></div>{preset&&<PromptPreview key={dialog.source.id} preset={preset} nodeId={dialog.source.id}/>}
-    </Modal>}
     {preset && dialog?.kind === 'deletePreset' && <Modal title="删除预设" onClose={() => setDialog(null)}
       footer={<div className={styles.dialogActions}><Button onClick={() => setDialog(null)}>取消</Button><Button onClick={() => {
         const remaining = presets.filter(item => item.id !== preset.id);
@@ -422,13 +416,13 @@ export function PresetLibraryPage() {
     </Modal>}
     {preset && dialog?.kind === 'deleteNode' && <Modal title="删除节点" onClose={() => setDialog(null)}
       footer={<div className={styles.dialogActions}><Button onClick={() => setDialog(null)}>取消</Button><Button onClick={() => {
-        const index = preset.customNodes.findIndex(node => node.id === dialog.node.id);
-        const remaining = preset.customNodes.filter(node => node.id !== dialog.node.id);
+        const index = preset.nodes.findIndex(node => node.id === dialog.node.id);
+        const remaining = preset.nodes.filter(node => node.id !== dialog.node.id);
         const next = remaining[index] ?? remaining.at(-1);
-        update({ customNodes: remaining }); setDialog(null);
+        update({ nodes: remaining }); setDialog(null);
         requestAnimationFrame(() => {
           const target = next
-            ? groupRef.current?.querySelector<HTMLButtonElement>('[data-custom-node="' + CSS.escape(next.id) + '"] button[aria-label^="拖动节点："]')
+            ? groupRef.current?.querySelector<HTMLButtonElement>('[data-preset-node="' + CSS.escape(next.id) + '"] button[aria-label^="编辑"]')
             : document.querySelector<HTMLButtonElement>('button[aria-label="添加自定义节点"]');
           target?.focus({ preventScroll: true }); target?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
         });

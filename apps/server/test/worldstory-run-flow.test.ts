@@ -3,7 +3,7 @@ import {insertPreset} from '../src/repositories/preset-repository.js';
 import { seedWorld, seedSession } from './fixtures/db-seed.js';
 import {expect,it} from 'vitest';
 import type {Api,AssistantMessageEvent,Context,Model} from '@earendil-works/pi-ai';
-const SR_SYSTEM_MAIN=defaultPreset().config_json.nodes[0]!.prompt.parts.filter(p=>p.type==='text').map(p=>p.value).join('');
+const SR_SYSTEM_MAIN=defaultPreset().config_json.nodes[0]!.prompt;
 import type {CredentialStore} from '../src/infrastructure/credentials/store.js';
 import type {ModelGateway} from '../src/runtime/model/pi-gateway.js';
 import {createApp} from '../src/app.js';

@@ -1,8 +1,7 @@
 import type { Context } from '@earendil-works/pi-ai';
 import { ErrorCodes } from '../../common/error-codes.js';
 import {captureSources} from './snapshot.js';
-import { compileContext, estimateNarrativeItemSize, estimateMessageBytes } from './node-compiler.js';
-import type { CompiledContext } from './contracts.js';
+import { compileContext } from './node-compiler.js';
 import { prepareForRun } from './compaction/index.js';
 import { generateSummary } from './compaction/summary-generator.js';
 import type { HistoryItem } from './compaction/history.js';
@@ -11,17 +10,10 @@ import { RuntimeError } from '../shared/errors.js';
 import type { PreparedRun, RuntimeConfig, ExecutionContext } from '../types.js';
 import type { RunStore } from '../persistence/run-store.js';
 import type { ModelClient } from '../model/model-client.js';
-import type { ContextComposition, RunAccounting } from '../persistence/usage-store.js';
+import type { RunAccounting } from '../persistence/usage-store.js';
 import { deepFreeze, fingerprint } from '../config.js';
 import { requestFingerprint, summaryInputLimit, type PreparedRequest } from './budget.js';
 export { summaryNarrative } from './compaction/history.js';
-
-export function estimateContextComposition(context: CompiledContext, history: HistoryItem[], input: string): ContextComposition {
-  const systemMessages = context.trace.filter(row => row.nodeId !== 'chatHistory' && row.nodeId !== 'userInput').flatMap(row => row.messages);
-  const summary = history.find(item => item.id === 'summary');
-  return { systemBytes: estimateMessageBytes(systemMessages), summaryBytes: summary ? estimateNarrativeItemSize(summary) : 0,
-    historyBytes: history.filter(item => item.id !== 'summary').reduce((sum, item) => sum + estimateNarrativeItemSize(item), 0) + estimateNarrativeItemSize({ role: 'user', text: input }) };
-}
 
 export class ContextManager {
   constructor(private store: RunStore, private client: ModelClient) {}
@@ -66,7 +58,7 @@ export class ContextManager {
     };
     return { config, execution, model, compiled:context,postprocess:context.postprocess,
       worldState: world.state, active,
-      contextComposition: estimateContextComposition(context, result.history, input), summary: result.summary };
+      contextComposition: context.composition, summary: result.summary };
 
   }
   private async request(config: RuntimeConfig, context: Context, purpose: PreparedRequest['purpose'], output: number,

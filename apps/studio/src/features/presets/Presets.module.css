@@ -78,7 +78,7 @@
 .summaryButton small{font-size:12px;line-height:18px;color:var(--text-secondary)}
 .textButton{display:inline-flex;align-items:center;gap:5px;min-height:44px;padding:0 8px;font-size:12px;border-radius:var(--radius-xs);color:var(--text-secondary);transition:background var(--motion-fast)}
 .nodeStack{border:1px solid var(--stroke);border-radius:var(--radius-md);background:var(--surface)}
-.nodeRow,.customRow{
+.nodeRow{
   display:grid;grid-template-columns:44px minmax(0,1fr) 44px 44px;align-items:center;position:relative;
   min-width:0;min-height:66px;padding:0 4px;border-bottom:1px solid var(--stroke);
   transition:background var(--motion-fast),opacity var(--motion-fast);
@@ -95,14 +95,13 @@
 .switchTrack span{display:block;width:10px;height:10px;border-radius:50%;background:var(--text-muted);transition:transform var(--motion-fast),background var(--motion-fast)}
 .switchButton[aria-checked="true"] .switchTrack{background:var(--accent);border-color:transparent}
 .switchButton[aria-checked="true"] .switchTrack span{transform:translateX(12px);background:var(--sidebar-bg)}
-.nodeRow[data-disabled="true"] .nodeMain>span,.customRow[data-disabled="true"] .nodeMain>span{color:var(--text-muted)}
-.customGroup{display:flex;flex-direction:column;gap:0;margin:0;padding:0;border:0;min-width:0}
+.nodeRow[data-disabled="true"] .nodeMain>span{color:var(--text-muted)}
 .dragHandle{display:grid;place-items:center;width:44px;min-height:44px;color:var(--text-muted);border-radius:var(--radius-xs);cursor:grab;touch-action:none;user-select:none}
 .dragHandle:active{cursor:grabbing}
-.customRow[data-dragging="true"]{opacity:.5;background:var(--accent-soft)}
-.customRow[data-drop]::after{content:"";position:absolute;left:0;right:0;height:2px;background:var(--accent);pointer-events:none;z-index:2}
-.customRow[data-drop="before"]::after{top:-1px}
-.customRow[data-drop="after"]::after{bottom:-1px}
+.nodeRow[data-dragging="true"]{opacity:.5;background:var(--accent-soft)}
+.nodeRow[data-drop]::after{content:"";position:absolute;left:0;right:0;height:2px;background:var(--accent);pointer-events:none;z-index:2}
+.nodeRow[data-drop="before"]::after{top:-1px}
+.nodeRow[data-drop="after"]::after{bottom:-1px}
 .nodeMore{display:grid;place-items:center;width:44px;height:44px;color:var(--text-muted);border-radius:var(--radius-xs);transition:background var(--motion-fast)}
 .menuAnchor{position:relative;flex-shrink:0}
 .menuPanel{position:absolute;right:0;top:calc(100% + 4px);z-index:8;min-width:168px;padding:5px;background:var(--surface-raised);border:1px solid var(--stroke-strong);border-radius:var(--radius-sm);box-shadow:var(--drop-shadow);animation:menu-in var(--motion-reveal) var(--ease-standard)}
@@ -129,13 +128,25 @@
 .nodeFields{display:grid;grid-template-columns:minmax(0,1fr) 145px;gap:16px}
 .promptInput{min-height:240px;resize:vertical;line-height:1.85!important}
 .promptMeta{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:var(--text-muted);margin-top:-10px}
-.sourceInfo{display:flex;align-items:center;justify-content:space-between;gap:16px;border-top:1px solid var(--stroke);padding:12px 0;font-size:12px}
-.sourceInfo strong{font-weight:500}
+.promptIntro{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.promptIntro>button{min-height:44px;flex-shrink:0;font-size:12px}
+.variableHelp{border-top:1px solid var(--stroke);padding-top:4px}
+.variableHelp summary{min-height:44px;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);cursor:pointer;list-style:none}
+.variableHelp summary::before{content:"+";font-size:16px;width:12px;color:var(--text-muted)}
+.variableHelp[open] summary::before{content:"−"}
+.variableHelp summary:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:var(--radius-xs)}
+.variableList{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}
+.variableList button{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:3px;min-height:52px;min-width:0;padding:8px;border-radius:var(--radius-xs);text-align:left}
+.variableList button:disabled{opacity:.5}
+.variableList span{font-size:12px;color:var(--text-secondary)}
+.variableList code{font-size:11px;color:var(--text-muted);overflow-wrap:anywhere}
+.variableHelp p{font-size:12px;line-height:1.7;color:var(--text-muted);margin:10px 0 0}
+@media(hover:hover) and (pointer:fine){.variableList button:not(:disabled):hover{background:var(--surface-hover)}}
 @keyframes menu-in{from{opacity:0;translate:0 -3px}to{opacity:1;translate:0 0}}
 @media(hover:hover) and (pointer:fine){
  .presetItem:not([aria-pressed="true"]):hover,.iconButton:hover,.textButton:hover,.nodeMore:hover,.menuPanel button:not(:disabled):hover,.menuPanel a:hover{background:var(--surface-hover)}
  .summaryButton:hover{background:var(--surface-hover);border-color:var(--stroke-strong)}
- .nodeRow:has(.nodeMain:hover),.customRow:has(.nodeMain:hover){background:var(--surface-hover)}
+ .nodeRow:has(.nodeMain:hover){background:var(--surface-hover)}
  .strategyChoice input:not(:checked):hover+.strategyBody{background:var(--surface-hover);border-color:var(--stroke-strong)}
  .dragHandle:hover{color:var(--text)}
 }
@@ -184,8 +195,9 @@
  .parameterRow .switchButton{margin-right:-4px}
  .strategies,.budgetRow{gap:12px}
  .strategyBody{padding:12px 10px}
- .nodeRow,.customRow{min-height:70px}
+ .nodeRow{min-height:70px}
  .nodeFields{grid-template-columns:minmax(0,1fr) 108px;gap:12px}
+ .promptIntro{align-items:flex-start;flex-direction:column;gap:8px}
  .dialogActions{flex-wrap:wrap}
  .dialogHint,.discardMessage{width:100%;margin:0 0 3px}
  .promptInput{min-height:270px}
@@ -198,9 +210,9 @@
 @media(max-width:360px){
  .budgetRow{grid-template-columns:minmax(0,1fr)}
  .editorActions>button{padding-inline:11px}
- .nodeRow,.customRow{grid-template-columns:44px minmax(0,1fr) 44px 44px}
+ .nodeRow{grid-template-columns:44px minmax(0,1fr) 44px 44px}
 }
 @media(prefers-reduced-motion:reduce){
- .page,.presetItem,.iconButton,.field input,.field textarea,.parameterInput,.strategyBody,.strategyCheck,.summaryButton,.textButton,.nodeRow,.customRow,.nodeMore,.switchTrack,.switchTrack span{transition:none}
+ .page,.presetItem,.iconButton,.field input,.field textarea,.parameterInput,.strategyBody,.strategyCheck,.summaryButton,.textButton,.nodeRow,.nodeMore,.switchTrack,.switchTrack span{transition:none}
  .menuPanel,.toast{animation:none}
 }

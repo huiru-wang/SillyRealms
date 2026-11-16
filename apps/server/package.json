@@ -13,6 +13,7 @@
     "test": "vitest run",
     "lint": "eslint src test",
     "compact:run-metadata": "tsx scripts/compact-run-metadata.ts",
+    "migrate:presets": "tsx scripts/migrate-preset-templates.ts",
     "reset:runtime": "tsx scripts/reset-runtime-data.ts --confirm-reset-runtime"
   },
   "dependencies": {
