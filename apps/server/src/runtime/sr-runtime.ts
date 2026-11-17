@@ -6,7 +6,7 @@ import { initialExtensions, rejectExtensions, persistableExtensions } from './po
 import { DirectRunner } from './runners/direct-runner.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { ErrorCodes, normalizeError } from '../common/error-codes.js';
+import { stateErrorDetails, ErrorCodes, normalizeError } from '../common/error-codes.js';
 import { debugEnabled, debugLog, withDebugContext } from '../common/debug.js';
 import type { CredentialStore } from '../infrastructure/credentials/store.js';
 import type { ModelGateway } from './model/pi-gateway.js';
@@ -275,13 +275,22 @@ export class SRRuntime {
       ...(result.extensions ? { extensions: rejectExtensions(result.extensions, true) } : {}) };
     let allowState = result.outcome === 'completed' && !!result.extensions &&
         ['applied', 'unchanged', 'partial'].includes(result.extensions.stateUpdate.status);
+    if (allowState) {
+      try { validateSnapshot(prepared.worldState, 'message', result.workspace); }
+      catch(error) {
+        allowState = false;
+        const failure=normalizeError(error,ErrorCodes.INVALID_STATE_UPDATE), detail=stateErrorDetails(error);
+        const diagnostic={scope:'message' as const,errorCode:failure.errorCode,
+          ...(detail?{statePath:detail.path,...(detail.rulePath?{rulePath:detail.rulePath}:{})}:{})};
+        debugLog('状态快照校验失败',{sessionId,runId,diagnostic});
+        result = { ...result, workspace: structuredClone(execution.state.baseline),
+          extensions: { ...result.extensions!, stateUpdate: { status: 'failed', errorCode: failure.errorCode, diagnostics:[diagnostic] } } };
+      }
+    }
     const publicFields = () => ({ phase: 'finalized',
       ...(result.extensions ? { extensions: persistableExtensions(result.extensions) } : {}) });
     let committed = false;
-    let stage: 'validation' | 'commit' = 'validation';
     try {
-      if (allowState) validateSnapshot(prepared.worldState, 'message', result.workspace);
-      stage = 'commit';
       committed = this.store.finalize(sessionId, userId, result.outcome, result.workspace, result.failure, {
         expectedTip: execution.progress.latestEntryId, baselineHash: execution.state.baselineHash,
         allowState, pendingMessage: task.liveMessage, publicRun: publicFields(),
@@ -289,7 +298,7 @@ export class SRRuntime {
       if (!committed) return; // The stored terminal result already won; never notify or settle twice.
     } catch (error) {
       allowState = false;
-      const failure = normalizeError(error, stage === 'validation' ? ErrorCodes.INVALID_STATE_UPDATE : ErrorCodes.STATE_COMMIT_FAILED);
+      const failure = normalizeError(error, ErrorCodes.STATE_COMMIT_FAILED);
       result = { ...result, outcome: 'failed', failure,
         ...(result.extensions ? { extensions: rejectExtensions(result.extensions, false, failure.errorCode) } : {}) };
       let saved = false;

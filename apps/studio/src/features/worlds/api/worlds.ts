@@ -1,13 +1,14 @@
 import {resolveSRAssetUrl} from '@sillyrealms/sdk/assets';
+import type {StateSchema} from '@sillyrealms/sdk/state-validation';
+export type {StateDefinition} from '@sillyrealms/sdk/state-validation';
 
 export type Page<T>={items:T[];hasMore:boolean;nextCursor:string|null};
 export type Tag={id:string;name:string};
 export type WorldListItem={id:string;name:string;cover:string|null;tags:Tag[];sessionCount:number};
 export type Character={id:string;name:string;description?:string;avatar?:string;player_selectable?:boolean};
 export type Opening={type?:'component';component?:string;id:string;name:string;content:string;initial_state?:Record<string,unknown>};
-export type StateDefinition={type:string;description?:string;initial:unknown;min?:number;max?:number};
 export type LoreEntry={id:string;title?:string;content:string;enabled?:boolean;load?:{mode?:'always'|'on_mention'|'never';keywords?:string[];order?:number}};
-export type WorldData={name:string;components?:Array<{id:string;path?:string;component?:string}>;stage_component?:string;description?:{type:'component';component:string};cover?:string;tags?:string[];characters:Character[];openings:Opening[];lorebook?:{entries:LoreEntry[]};state?:{scopes?:Record<string,Record<string,StateDefinition>>}};
+export type WorldData={name:string;components?:Array<{id:string;path?:string;component?:string}>;stage_component?:string;description?:{type:'component';component:string};cover?:string;tags?:string[];characters:Character[];openings:Opening[];lorebook?:{entries:LoreEntry[]};state?:StateSchema};
 export type WorldDetail={id:string;data:WorldData;defaultPresetId:string|null;defaultApiModelConfigId:string|null};
 export type Session={id:string;worldId:string;title:string|null;updatedAt:number;cover:string|null};
 export class ApiError extends Error { constructor(readonly code:string, message:string){super(message);} }

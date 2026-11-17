@@ -2,17 +2,20 @@ import { DatabaseSync } from 'node:sqlite';
 import { defaultPreset } from '../../domain/preset/schema.js';
 import { insertPreset } from '../../repositories/preset-repository.js';
 import { UsageStore } from '../../runtime/persistence/usage-store.js';
-export const DATABASE_VERSION=6;
+export const DATABASE_VERSION=7;
 /** Target schema only. Obsolete runtime data is removed by the explicit reset command. */
 export function openDatabase(path:string):DatabaseSync {
  const db=new DatabaseSync(path);
  const version=Number(db.prepare('PRAGMA user_version').get()?.user_version??0);
- const existed=!!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='worlds'").get();
- if((existed&&version!==DATABASE_VERSION)||version>DATABASE_VERSION){db.close();throw new Error('DATABASE_RESET_REQUIRED');}
+ const empty=!db.prepare("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 1").get();
+ if(!(version===0&&empty)&&version!==DATABASE_VERSION){
+  db.close();
+  throw new Error(`DATABASE_RESET_REQUIRED: schema v${version} cannot be opened as v${DATABASE_VERSION}; stop the server and run pnpm --filter @sillyrealms/server reset:runtime, or recreate the database`);
+ }
  db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; BEGIN IMMEDIATE');
  try {
  createSchema(db);
- db.exec('PRAGMA user_version=6; COMMIT');return db;
+ db.exec('COMMIT');return db;
  }catch(error){db.exec('ROLLBACK');db.close();throw error;}
 }
 
@@ -119,7 +122,7 @@ export function createSchema(db:DatabaseSync):void {
  if(!db.prepare('SELECT 1 FROM presets').get())insertPreset(db,defaultPreset(),'sr-default-preset');
  const presetId=String(db.prepare('SELECT id FROM presets ORDER BY created_at,id LIMIT 1').get()!.id);
  db.prepare('INSERT OR IGNORE INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,?,?,?,?)').run(presetId,null,now,now);
- db.exec('PRAGMA user_version=6');
+ db.exec(`PRAGMA user_version=${DATABASE_VERSION}`);
 }
 
 /** Runs that were in flight at process death cannot resume their in-memory workspaces. */

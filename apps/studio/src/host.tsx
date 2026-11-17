@@ -1,4 +1,6 @@
+import {isPostprocessError} from '../../../packages/sr-sdk/src/postprocess-feedback';
 import {ActionSuggestionStore} from './features/sessions/action-suggestions';
+import {stateManifest} from './features/sessions/state-manifest';
 import React,{useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import {ArrowLeft,ChevronDown,ChevronUp,Send,Square,Settings2} from 'lucide-react';
 import {Link} from 'react-router-dom';
@@ -19,6 +21,7 @@ import type {MessageRule} from '../../../packages/sr-sdk/src/story-context';
 /** Trusted bridge: it forwards commands and events without holding state or history snapshots. */
 export function SessionHost({id}:{id:string}) {
   const [notice,setNotice]=useState('');
+  const debugRef=useRef(false);
   const [title,setTitle]=useState('');
   const [preset,setPreset]=useState<string|null>(null);
   const [modelConfig,setModelConfig]=useState<string|null>(null);
@@ -57,7 +60,7 @@ export function SessionHost({id}:{id:string}) {
   const port=useRef<MessagePort|null>(null);
   const ready=useRef(false),connected=useRef(false),mountedRef=useRef(false),fatalRef=useRef(false),activeRef=useRef<string|null>(null),sendingRef=useRef(false);
   const renderRef=useRef<{worldId?:string;modules:{code:Record<string,string>;errors:Record<string,string>};main?:string;rules:unknown[];state:unknown}>({modules:{code:{},errors:{}},rules:[],state:{}}),loadedRef=useRef(false);
-  const renderPayload=useCallback((origin:string)=>{const {worldId,...render}=renderRef.current;return {type:'render',...render,assetBaseUrl:worldAssetBaseUrl(origin,worldId)};},[]);
+  const renderPayload=useCallback((origin:string)=>{const {worldId,...render}=renderRef.current;return {type:'render',...render,debug:debugRef.current,assetBaseUrl:worldAssetBaseUrl(origin,worldId)};},[]);
   const suggestions=useMemo(()=>new ActionSuggestionStore(id,event=>port.current?.postMessage({type:'event',event})),[id]);
   const terminal=useRef(new Set<string>());
   const nonce=useMemo(()=>randomId(),[id]);
@@ -233,7 +236,7 @@ export function SessionHost({id}:{id:string}) {
             suggestions.settled(data.runId,name.slice(4),data.messages??[]);
             terminal.current.add(data.runId);if(terminal.current.size>100){const oldest=terminal.current.values().next().value!;terminal.current.delete(oldest);}
             if(activeRef.current===data.runId){activeRef.current=null;setActiveRun(null);}
-            if(name==='run.failed')setNotice(String(data.errorMessage??'未知错误'));
+            if(name==='run.failed'&&(debugRef.current||!isPostprocessError(data.errorCode)))setNotice(String(data.errorMessage??'未知错误'));
           } else if(!terminal.current.has(data.runId)){activeRef.current=data.runId;setActiveRun(data.runId);if(data.phase){phaseRef.current=data.phase;setPhase(data.phase);}}
         }
         port.current?.postMessage({type:'event',event:{event:name,data}});
@@ -312,7 +315,7 @@ export function SessionHost({id}:{id:string}) {
       const data=world.item.data;
       const modules=await compileWorldComponents(world.item,compileComponents);
       if(!gone&&data.stage_component&&!(data.components??[]).some((item:{id:string})=>item.id===data.stage_component))setNotice('未找到舞台主组件，已使用官方故事界面。');
-      if(!gone){renderRef.current={worldId:world.item.id,modules,main:data.stage_component,rules:data.message_render?.rules??[],state:data.state??{}};loadedRef.current=true;setLoaded(true);if(stageError)setNotice(current=>current===stageError?'':current);if(ready.current&&stageSourceRef.current)port.current?.postMessage(renderPayload(stageSourceRef.current.origin));}
+      if(!gone){renderRef.current={worldId:world.item.id,modules,main:data.stage_component,rules:data.message_render?.rules??[],state:stateManifest(data.state)};loadedRef.current=true;setLoaded(true);if(stageError)setNotice(current=>current===stageError?'':current);if(ready.current&&stageSourceRef.current)port.current?.postMessage(renderPayload(stageSourceRef.current.origin));}
 
     }).catch(error=>{if(!gone){
       if(error instanceof ApiError){stageError=error.message;setNotice(stageError);}
@@ -325,9 +328,10 @@ export function SessionHost({id}:{id:string}) {
 
   useEffect(()=>{
     const abort=new AbortController();
-    resetStageConnection();setStageSource(null);setStageError('');
+    resetStageConnection();setStageSource(null);setStageError('');debugRef.current=false;
     void api('v1/runtime/web-config',{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(10000)])}).then(config=>{
       if(abort.signal.aborted)return;
+      debugRef.current=config.debug===true;
       const mountNonce=nonce+'.'+stageAttempt,url=stageURL(config,location.origin,mountNonce);
       setStageSource({url:url.href,origin:url.origin,nonce:mountNonce});
       stageTimer.current=setTimeout(()=>failStage('故事舞台加载超时，请确认服务可用后重试。'),10000);

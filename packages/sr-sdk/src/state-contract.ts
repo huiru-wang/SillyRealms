@@ -7,7 +7,18 @@ export type StateEvent = {
   data: { path: string; scope: StateScope; value: StateValue };
 };
 
-/** Proposed atomic state contract. The runtime bridge is implemented separately. */
+/** Each SDK write has its own transaction and field-level failure, matching the HTTP contract. */
+export type StateWriteResult = {
+  path: string;
+  scope: StateScope;
+  stateScope?: StateScope;
+  statePath?: string;
+  rulePath?: string;
+} & (
+  { success: true; errorCode: null; errorMessage: '' } |
+  { success: false; errorCode: string; errorMessage: string }
+);
+
 export interface SRStateAPI {
   getState(path: string, scope?: StateScope): Promise<StateValue | undefined>;
   batchGetState(entries: Array<{ path: string; scope?: StateScope }>): Promise<Array<{
@@ -15,17 +26,7 @@ export interface SRStateAPI {
     scope: StateScope;
     value: StateValue | undefined;
   }>>;
-  updateState(path: string, value: StateValue, scope?: StateScope): Promise<Array<{
-    path: string;
-    scope: StateScope;
-    success: boolean;
-    message: string;
-  }>>;
-  batchUpdateState(entries: Array<{ path: string; value: StateValue; scope?: StateScope }>): Promise<Array<{
-    path: string;
-    scope: StateScope;
-    success: boolean;
-    message: string;
-  }>>;
+  updateState(path: string, value: StateValue, scope?: StateScope): Promise<StateWriteResult[]>;
+  batchUpdateState(entries: Array<{ path: string; value: StateValue; scope?: StateScope }>): Promise<StateWriteResult[]>;
   subscribe(listener: (event: StateEvent) => void): () => void;
 }

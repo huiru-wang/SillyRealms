@@ -66,6 +66,8 @@ export class DirectRunner {
       if (splitter.incompletePrefix) throw new RuntimeError(ErrorCodes.EXTENSION_PROTOCOL_INVALID);
       const processed=processResponse(splitter.tail,prepared.postprocess,structuredClone(execution.state.baseline),execution.state.modules);
       workspace=processed.workspace;extensions=processed.extensions;
+      if(extensions.stateUpdate.diagnostics?.length)
+        debugLog('状态更新校验未通过',{sessionId,runId,diagnostics:extensions.stateUpdate.diagnostics});
       // Persist only clean text, never the provider's hidden tail or reasoning content.
       const clean: AssistantMessage = { ...final, content: [{ type: 'text', text: writer.text }] };
       const savedId = this.store.completeAssistant(sessionId, runId, clean, writer.id);
@@ -73,9 +75,7 @@ export class DirectRunner {
       task.liveMessage = undefined;
       try { this.usage.attachEntry(sessionId, runId, meta.requestId, savedId); }
       catch (error) { debugLog('用量关联失败', { runId, errorCode: normalizeError(error).errorCode }); }
-      if (extensions.stateUpdate.status === 'failed') return { outcome: 'failed',
-        failure: normalizeError(new RuntimeError(extensions.stateUpdate.errorCode as typeof ErrorCodes.STATE_UPDATE_INVALID)),
-        partialId: savedId, workspace, extensions };
+      // Plugin failures belong to their own results, not the narrative Run outcome.
       return { outcome: 'completed', failure: null, partialId: savedId, workspace, extensions };
     } catch (error) {
       const cancelled = task.stopped;

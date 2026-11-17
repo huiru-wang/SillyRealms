@@ -1,8 +1,9 @@
-import type { SRStateAPI, StateEvent, StateScope, StateValue } from './state-contract.js';
+import type { SRStateAPI, StateEvent, StateScope, StateValue, StateWriteResult } from './state-contract.js';
+import {isSafeStateKey} from './state-validation.js';
 
 type Snapshot = Record<StateScope, Record<string, StateValue>>;
 type Entry = { path:string; scope?:StateScope; value:StateValue };
-type Result = { path:string; scope:StateScope; success:boolean; message:string };
+type Result = StateWriteResult;
 type Transport = { read():Promise<Snapshot>; write(entries:Entry[]):Promise<Result[]> };
 
 /** Local Hook state; explicit reads always go through the server transport. */
@@ -57,7 +58,7 @@ export class StateRuntime implements SRStateAPI {
   }
   private replace(scope:StateScope,path:string,value:StateValue) {
     const parts=path.split('.');
-    if(parts.some(part=>!part || ['__proto__','prototype','constructor'].includes(part)))return;
+    if(parts.some(part=>!isSafeStateKey(part)))return;
     const snapshot=structuredClone(this.snapshot);
     let current:Record<string,StateValue>=snapshot[scope];
     for(const part of parts.slice(0,-1)) {

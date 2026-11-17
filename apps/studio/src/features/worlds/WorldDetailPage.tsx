@@ -10,7 +10,7 @@ import {getWorld,listSessions,safeImage,type Character,type WorldDetail} from '.
 import {usePaged} from './api/usePaged';
 import {StartSession,WorldConfig,WorldActions} from './WorldOperations';
 import {LoreList} from './LoreList';
-import {StateItems,WorldState} from './StateInspector';
+import {OpeningState,WorldState} from './StateInspector';
 import styles from './WorldDetailPage.module.css';
 
 type Section = '介绍'|'世界书'|'世界状态'|'开局'|'运行配置'|'会话';
@@ -102,7 +102,7 @@ function SectionContent({section,world,characterId}:{section:Section;world:World
   };
   if(section==='会话')return <SessionSection worldId={world.id}/>;
   if(section==='世界书')return <LoreList entries={data.lorebook?.entries??[]}/>;
-  if(section==='世界状态')return <WorldState scopes={data.state?.scopes??{}}/>;
+  if(section==='世界状态')return <WorldState state={data.state}/>;
   if(section==='开局')return opening?<><div onTouchStart={event=>{touch.current=event.target instanceof Element&&event.target.closest('[role=dialog]')?null:event.touches[0]?.clientX??null;}} onTouchEnd={event=>finishSwipe(event.changedTouches[0]?.clientX)} onLoadCapture={event=>{
     if(!(event.target instanceof HTMLIFrameElement))return;
     frameCleanup.current?.();const doc=event.target.contentDocument;if(!doc)return;
@@ -113,7 +113,7 @@ function SectionContent({section,world,characterId}:{section:Section;world:World
   }}>
     <div className={styles.openingToolbar}><div className={styles.openingNav}><button className={styles.actionButton} disabled={openingIndex===0} onClick={()=>setOpeningIndex(i=>i-1)} aria-label="上一个开局"><ChevronLeft size={15}/></button><span>{openingIndex+1} / {data.openings.length}</span><button className={styles.actionButton} disabled={openingIndex===data.openings.length-1} onClick={()=>setOpeningIndex(i=>i+1)} aria-label="下一个开局"><ChevronRight size={15}/></button></div><div className={styles.openingActions}><button className={styles.stateButton} onClick={()=>setStateOpen(true)}>查看初始状态</button><StartSession world={world} openingId={opening.id} characterId={characterId}/></div></div>{!characterId&&<p className={styles.startError}>此世界尚未配置可扮演角色。</p>}
     <h3>{opening.name}</h3>{opening.component?<WorldComponentView key={opening.id} world={world} entry={opening.component} title={opening.name}/>:<WorldDocumentRenderer showStyleWarning={false} title={opening.name} content={opening.content}/>}
-  </div>{stateOpen&&<Modal title="开局初始状态" size="editor" onClose={()=>setStateOpen(false)}><p className={styles.stateIntro}>“{opening.name}”开始时的消息状态，仅供查看。</p>{Object.keys(data.state?.scopes?.message??{}).length?<StateItems items={data.state?.scopes?.message??{}} overrides={opening.initial_state??{}}/>:<p>这个世界没有声明消息状态。</p>}</Modal>}</>:<p>这个世界没有开局。</p>;
+  </div>{stateOpen&&<Modal title="开局初始状态" size="editor" onClose={()=>setStateOpen(false)}><p className={styles.stateIntro}>“{opening.name}”开始时的消息状态，仅供查看。</p><OpeningState state={data.state} override={opening.initial_state}/></Modal>}</>:<p>这个世界没有开局。</p>;
   if(section==='运行配置')return <WorldConfig world={world}/>;
   return data.description?<WorldComponentView world={world} entry={data.description.component} title="世界介绍"/>:<p>这个世界还没有介绍。</p>;
 }

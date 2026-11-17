@@ -3,6 +3,7 @@ import {serveStatic} from '@hono/node-server/serve-static';
 import {normalize} from 'node:path/posix';
 import {worldAssetRoutes} from './world-assets.js';
 import type {WorldFileStore} from '../world-files/world-file-store.js';
+import {debugEnabled} from '../../common/debug.js';
 
 export interface StageConfig {origin:string|null;port:number;entryPath:'/frame.html'}
 
@@ -24,7 +25,7 @@ export function assetPath(path:string):string {
 }
 
 export function serveWebConfig(app:Hono,stage:StageConfig){
-  app.get('/api/v1/runtime/web-config',c=>{c.header('Cache-Control','no-store');return c.json({stage});});
+  app.get('/api/v1/runtime/web-config',c=>{c.header('Cache-Control','no-store');return c.json({stage,debug:debugEnabled()});});
 }
 
 /** Only isolated renderers and built assets live on this origin. No API or SPA fallback. */

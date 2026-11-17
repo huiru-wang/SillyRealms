@@ -7,5 +7,5 @@ import { handleActionSuggestions } from './action-suggestions.js';
 export function processResponse(tail:string|undefined,plan:PostprocessPlan,baseline:Record<string,Json>,modules:Record<string,any>){
  const parsed=parseExtensions(tail);if(parsed.error)throw new RuntimeError(parsed.error);
  const initial=initialExtensions(plan),state=handleStateUpdate(parsed.state_update,initial.stateUpdate,baseline,modules,new Set(plan.state_update.roots));
- return {workspace:state.workspace,extensions:{...initial,stateUpdate:state.result,actionSuggestions:handleActionSuggestions(parsed.action_suggestions,initial.actionSuggestions,state.result)}};
+ return {workspace:state.workspace,extensions:{...initial,stateUpdate:state.result,actionSuggestions:handleActionSuggestions(parsed.action_suggestions,initial.actionSuggestions)}};
 }

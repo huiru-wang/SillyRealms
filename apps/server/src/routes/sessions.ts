@@ -8,7 +8,7 @@ import { readAncestors } from '../domain/session/ancestors.js';
 import { failure } from '../common/http-response.js';
 import { decodePreset } from '../repositories/preset-repository.js';
 import { publicRunResult } from '../domain/session/run-result.js';
-import { ErrorCodes } from '../common/error-codes.js';
+import { ErrorCodes, normalizeError, stateErrorDetails } from '../common/error-codes.js';
 import { initialState, applyOpening, validateSnapshot, decodeMessageState } from '../domain/state/state.js';
 
 import { transaction } from '../domain/tags.js';
@@ -67,7 +67,11 @@ export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = (
         db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,state,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(entryId, id, null, runId, 1, 'message', 'assistant', 0, now, JSON.stringify({ message }), JSON.stringify(Object.entries(messageState).map(([key, value]) => ({ key, value }))), JSON.stringify({ origin: 'opening' }));
         return c.json({item:{id,worldId:input.worldId,presetId,apiModelConfigId:modelId,userCharacterId:input.userCharacterId,tipEntryId:entryId,title}},201);
       });
-    } catch { return c.json(failure(ErrorCodes.INVALID_SESSION),422); }
+    } catch(error) {
+      const diagnostic=stateErrorDetails(error);
+      if(diagnostic){const info=normalizeError(error,ErrorCodes.INVALID_SESSION);return c.json({success:false,...info,data:diagnostic},422);}
+      return c.json(failure(ErrorCodes.INVALID_SESSION),422);
+    }
   });
   app.patch('/:id', async c => {
     if (busy(c.req.param('id'))) return c.json(failure(ErrorCodes.SESSION_BUSY),409);

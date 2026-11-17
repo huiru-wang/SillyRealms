@@ -95,7 +95,7 @@ window.addEventListener('message',function receive(event){
             return component;
           }});
         }
-        root.render(<Boundary key={payload.main??'official'}><SDK.SRAssetProvider baseUrl={payload.assetBaseUrl??null}><AtomicContext.Provider value={{session,state}}><StoryContext.Provider value={{components,rules:payload.rules??[],state:payload.state??{},ready:()=>port.postMessage({type:'page-mounted'}),match:(text,role)=>command('message.match',{text,role})}}>{custom?<Mounted component={Component}/>:<Component/>}</StoryContext.Provider></AtomicContext.Provider></SDK.SRAssetProvider></Boundary>);
+        root.render(<Boundary key={payload.main??'official'}><SDK.SRAssetProvider baseUrl={payload.assetBaseUrl??null}><AtomicContext.Provider value={{session,state}}><StoryContext.Provider value={{debug:payload.debug===true,components,rules:payload.rules??[],state:payload.state??{},ready:()=>port.postMessage({type:'page-mounted'}),match:(text,role)=>command('message.match',{text,role})}}>{custom?<Mounted component={Component}/>:<Component/>}</StoryContext.Provider></AtomicContext.Provider></SDK.SRAssetProvider></Boundary>);
       } catch(error){port.postMessage({type:'ui-error',message:error instanceof Error?error.message:String(error)});}
     }
   };

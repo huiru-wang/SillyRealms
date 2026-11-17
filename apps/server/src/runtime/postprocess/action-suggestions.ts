@@ -1,14 +1,9 @@
 import type { ParsedBlock } from './parser.js';
-import type { ActionSuggestionsResult, StateUpdateResult } from './contracts.js';
+import type { ActionSuggestionsResult } from './contracts.js';
 
-export function handleActionSuggestions(block: ParsedBlock | undefined, initial: ActionSuggestionsResult,
-  state: StateUpdateResult): ActionSuggestionsResult {
+export function handleActionSuggestions(block: ParsedBlock | undefined, initial: ActionSuggestionsResult): ActionSuggestionsResult {
   const result = structuredClone(initial);
-  if (result.status === 'disabled') {
-    return result;
-  }
-  if (['partial', 'failed', 'cancelled', 'pending'].includes(state.status)) {
-    result.status = state.status === 'cancelled' ? 'cancelled' : 'blocked';
+  if (result.status !== 'pending') {
     return result;
   }
   if (!block || block.error || !Array.isArray(block.value) || block.value.length !== 3 ||

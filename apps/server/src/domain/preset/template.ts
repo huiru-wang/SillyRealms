@@ -1,7 +1,7 @@
 /** Named Context values available to preset templates; lookup never evaluates object paths. */
 export const systemVariableNames = [
   'user', 'persona.prompt', 'characters.prompts', 'world.lore',
-  'history.summary', 'history.messages', 'input.text', 'state.currentValues', 'state.updateRules',
+  'history.summary', 'history.messages', 'input.text', 'state.entries',
 ] as const;
 
 export type SystemVariableName = typeof systemVariableNames[number];

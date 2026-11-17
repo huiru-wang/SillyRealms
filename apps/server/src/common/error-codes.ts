@@ -1,3 +1,5 @@
+import { StateValidationError, type StateDiagnostic } from '@sillyrealms/sdk/state-validation';
+
 /** Canonical API error identifiers. Grouped by owning domain; values are stable wire codes. */
 export const ErrorCodes = {
   // Common request, pagination, and origin validation.
@@ -51,6 +53,8 @@ export const ErrorCodes = {
   STATE_SCHEMA_MISMATCH: 'STATE_SCHEMA_MISMATCH',
   WHEN_UNSUPPORTED: 'WHEN_UNSUPPORTED',
   INVALID_STATE_PATH: 'INVALID_STATE_PATH',
+  INVALID_STATE_RULE_PATH: 'INVALID_STATE_RULE_PATH',
+  STATE_RULE_MISSING: 'STATE_RULE_MISSING',
   INVALID_STATE_VALUE: 'INVALID_STATE_VALUE',
   INVALID_STATE_KEY: 'INVALID_STATE_KEY',
   STATE_NOT_FOUND: 'STATE_NOT_FOUND',
@@ -152,6 +156,8 @@ export const ErrorMessages = {
   STATE_SCHEMA_MISMATCH: '状态结构与定义不匹配',
   WHEN_UNSUPPORTED: '状态条件表达式不受支持',
   INVALID_STATE_PATH: '状态路径无效',
+  INVALID_STATE_RULE_PATH: '状态规则路径无效',
+  STATE_RULE_MISSING: '状态字段缺少更新规则',
   INVALID_STATE_VALUE: '状态值无效',
   INVALID_STATE_KEY: '状态字段名无效',
   STATE_NOT_FOUND: '状态字段不存在',
@@ -212,6 +218,9 @@ export function errorInfo(code: ErrorCode, detail?: string): PublicError {
 }
 
 export function normalizeError(error: unknown, fallback: ErrorCode = ErrorCodes.INTERNAL_ERROR): PublicError {
+  const diagnostic = stateErrorDetails(error);
+  if (diagnostic && isErrorCode(diagnostic.code))
+    return errorInfo(diagnostic.code, `${diagnostic.scope}.${diagnostic.rulePath ?? diagnostic.path}`);
   const candidate = error instanceof Error
     ? (isErrorCode((error as Error & { code?: unknown }).code)
       ? (error as Error & { code: ErrorCode }).code : error.message)
@@ -223,4 +232,17 @@ export function normalizeError(error: unknown, fallback: ErrorCode = ErrorCodes.
       return errorInfo(code, `${details.path}: ${details.reason}`);
   }
   return errorInfo(code);
+}
+
+/** Keep field diagnostics through domain, card, and preparation error wrappers. */
+export function stateErrorDetails(error: unknown): StateDiagnostic | undefined {
+  if (error instanceof StateValidationError) return error.details;
+  if (!error || typeof error !== 'object') return undefined;
+  const carrier = error as { stateDiagnostic?: StateDiagnostic; code?: unknown; details?: Record<string, unknown> };
+  if (carrier.stateDiagnostic) return carrier.stateDiagnostic;
+  const details = carrier.details;
+  if (details && isErrorCode(carrier.code) && ['global', 'session', 'message'].includes(String(details.scope)) && typeof details.statePath === 'string')
+    return { code: carrier.code as StateDiagnostic['code'], scope: details.scope as StateDiagnostic['scope'],
+      path: details.statePath, ...(typeof details.rulePath === 'string' ? { rulePath: details.rulePath } : {}) };
+  return undefined;
 }

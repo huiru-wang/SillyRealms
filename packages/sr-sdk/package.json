@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.tsx",
     "./assets": "./src/asset-url.ts",
+    "./state-validation": "./src/state-validation.ts",
     "./world-story.css": "./src/world-story.css"
   },
   "peerDependencies": {

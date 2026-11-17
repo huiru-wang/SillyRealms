@@ -1,48 +1,57 @@
-import { ErrorCodes } from '../../common/error-codes.js';
-import { initialAtomicState, validateAtomicSnapshot, validateAtomicValue, type AtomicStateDefinition } from './atomic-state.js';
+import {
+  isSafeStateKey, StateValidationError, validateStateSchema,
+  type Json, type StateScope,
+} from '@sillyrealms/sdk/state-validation';
+import { initialAtomicState, validateAtomicJson, validateAtomicSnapshot, validateAtomicValue, type AtomicStateDefinition } from './atomic-state.js';
 
-export type Json = null | boolean | number | string | Json[] | { [key:string]:Json };
-type Scope = 'global'|'session'|'message';
-type State = { schema_version:1; scopes:Partial<Record<Scope,Record<string,AtomicStateDefinition>>> };
-const unsafe = new Set(['__proto__','prototype','constructor']);
-const isObject=(value:unknown):value is Record<string,unknown>=>value!==null && typeof value==='object' && !Array.isArray(value);
+export type { Json } from '@sillyrealms/sdk/state-validation';
+const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-/** Initialize one scope from its directly declared fields. */
-export function initialState(state:unknown, scope:Scope):Record<string,Json> {
-  if(state==null)return {};
-  if(!isObject(state) || state.schema_version!==1 || !isObject(state.scopes))throw new Error(ErrorCodes.INVALID_STATE);
-  const definitions=(state as State).scopes[scope] ?? {};
-  return initialAtomicState(definitions);
+function definitionsFor(state: unknown, scope: StateScope): Record<string, AtomicStateDefinition> {
+  if (state === undefined) return {};
+  validateStateSchema(state);
+  return state.scopes[scope] ?? {};
 }
 
-/** Each opening override replaces its complete named state item, including JSON. */
-export function applyOpening(state:unknown, initial:Record<string,Json>, override:unknown):Record<string,Json> {
-  if(override==null)return initial;
-  if(!isObject(override))throw new Error('opening.initial_state: expected object');
-  const definitions=(state as State | null)?.scopes?.message ?? {};
-  const result=structuredClone(initial);
-  for(const [name,value] of Object.entries(override)) {
-    const definition=definitions[name];
-    if(!definition || !Object.hasOwn(result,name) || unsafe.has(name))throw new Error(`opening.initial_state.${name}: unknown state`);
-    validateAtomicValue(definition,value);
-    result[name]=structuredClone(value);
+/** Initialize one scope from a strict v2 definition. An omitted state defines no roots. */
+export function initialState(state: unknown, scope: StateScope): Record<string, Json> {
+  return initialAtomicState(definitionsFor(state, scope), scope);
+}
+
+/** Opening values replace complete message roots; they never merge or supply definitions. */
+export function applyOpening(state: unknown, initial: Record<string, Json>, override: unknown): Record<string, Json> {
+  const definitions = definitionsFor(state, 'message');
+  if (override === undefined) {
+    validateAtomicSnapshot(definitions, initial, 'message');
+    return initial;
   }
+  if (!isObject(override)) throw new StateValidationError('INVALID_STATE_VALUE', 'message', 'opening.initial_state');
+  const result = structuredClone(initial);
+  for (const [root, value] of Object.entries(override)) {
+    if (!isSafeStateKey(root)) throw new StateValidationError('INVALID_STATE_KEY', 'message', root);
+    if (!Object.hasOwn(definitions, root) || !Object.hasOwn(result, root)) throw new StateValidationError('STATE_NOT_FOUND', 'message', root);
+    validateAtomicValue(definitions[root]!, value, root, 'message');
+    result[root] = structuredClone(value);
+  }
+  validateAtomicSnapshot(definitions, result, 'message');
   return result;
 }
 
-export function validateSnapshot(state:unknown,scope:Scope,value:unknown):asserts value is Record<string,Json> {
-  if(state==null) { try { validateAtomicSnapshot({},value); } catch(error) { throw new Error(scope+': '+(error instanceof Error ? error.message : 'invalid state')); } return; }
-  const definitions=(state as State).scopes?.[scope] ?? {};
-  try { validateAtomicSnapshot(definitions,value); } catch(error) { throw new Error(scope+': '+(error instanceof Error ? error.message : 'invalid state')); }
+export function validateSnapshot(state: unknown, scope: StateScope, value: unknown): asserts value is Record<string, Json> {
+  validateAtomicSnapshot(definitionsFor(state, scope), value, scope);
 }
 
-export function decodeMessageState(text:string):Record<string,Json> {
-  const entries:unknown=JSON.parse(text);
-  if(!Array.isArray(entries))throw new Error('message: expected state array');
-  const result:Record<string,Json>=Object.create(null);
-  for(const entry of entries) {
-    if(!isObject(entry) || typeof entry.key!=='string' || !entry.key || unsafe.has(entry.key) || Object.hasOwn(result,entry.key) || !Object.hasOwn(entry,'value'))throw new Error('message: invalid or duplicate state entry');
-    result[entry.key]=entry.value as Json;
+export function decodeMessageState(text: string): Record<string, Json> {
+  const entries: unknown = JSON.parse(text);
+  if (!Array.isArray(entries)) throw new StateValidationError('INVALID_STATE_VALUE', 'message');
+  const result: Record<string, Json> = Object.create(null);
+  for (const entry of entries) {
+    if (!isObject(entry) || typeof entry.key !== 'string' || !Object.hasOwn(entry, 'value'))
+      throw new StateValidationError('INVALID_STATE_VALUE', 'message');
+    if (!isSafeStateKey(entry.key)) throw new StateValidationError('INVALID_STATE_KEY', 'message', entry.key);
+    if (Object.hasOwn(result, entry.key)) throw new StateValidationError('STATE_SCHEMA_MISMATCH', 'message', entry.key);
+    validateAtomicJson(entry.value, 0, 'message', entry.key);
+    result[entry.key] = entry.value;
   }
   return result;
 }

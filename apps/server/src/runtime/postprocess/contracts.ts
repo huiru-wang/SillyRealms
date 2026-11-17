@@ -1,6 +1,17 @@
+export type StateUpdateDiagnostic = {
+  index?: number;
+  path?: string;
+  scope: 'message';
+  errorCode: string;
+  statePath?: string;
+  rulePath?: string;
+};
+
 export type StateUpdateResult = {
   status: 'disabled' | 'not_required' | 'pending' | 'unchanged' | 'applied' | 'partial' | 'failed' | 'cancelled';
   errorCode?: string;
+  /** Ephemeral diagnostics: persistableExtensions deliberately retains only status. */
+  diagnostics?: StateUpdateDiagnostic[];
 };
 export type ActionSuggestionsResult = {
   status: 'disabled' | 'pending' | 'ready' | 'blocked' | 'failed' | 'cancelled';

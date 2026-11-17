@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { ErrorCodes } from '../common/error-codes.js';
+import { ErrorCodes, normalizeError, stateErrorDetails } from '../common/error-codes.js';
 import { validateSnapshot } from '../domain/state/state.js';
 import { CardError } from '../domain/world-card.js';
 import { Readable } from 'node:stream';
@@ -67,7 +67,10 @@ export function worldRoutes(
     } catch(error) {
       if(id&&!persisted)await files.remove(id).catch(()=>{});
       const path=error instanceof CardError?error.path:'$',reason=error instanceof CardError?error.reason:'World import failed';
-      return c.json(failure(ErrorCodes.INVALID_WORLD, `${path}: ${reason}`, { path, reason }),422);
+      const diagnostic=stateErrorDetails(error);
+      const code=diagnostic?normalizeError(error,ErrorCodes.INVALID_WORLD).errorCode:ErrorCodes.INVALID_WORLD;
+      return c.json(failure(code, `${path}: ${reason}`, { path, reason,
+        ...(diagnostic?{scope:diagnostic.scope,statePath:diagnostic.path,...(diagnostic.rulePath?{rulePath:diagnostic.rulePath}:{})}:{}) }),422);
     }
   });
 

@@ -1,9 +1,10 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { storedRunResult } from '../../domain/session/run-result.js';
+import { DATABASE_VERSION } from './database.js';
 
 /** Offline cleanup only. Runtime readers support the target shape without legacy fallbacks. */
 export function compactRunMetadata(db: DatabaseSync) {
-  if (Number(db.prepare('PRAGMA user_version').get()!.user_version) !== 6) throw Error('Expected schema v6');
+  if (Number(db.prepare('PRAGMA user_version').get()!.user_version) !== DATABASE_VERSION) throw Error(`Expected schema v${DATABASE_VERSION}`);
   let entries = 0, preparations = 0, bytesRemoved = 0;
   db.exec('BEGIN IMMEDIATE');
   try {

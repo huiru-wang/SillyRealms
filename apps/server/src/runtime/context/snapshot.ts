@@ -14,15 +14,15 @@ export function captureSources(store:RunStore,sessionId:string,expectedTip:strin
     if (!worldRow) throw new RuntimeError(ErrorCodes.WORLD_NOT_FOUND);
     let world: ReturnType<typeof readWorld>['data'];
     try { world = readWorld(worldRow).data; }
-    catch (error) { throw new RuntimeError(ErrorCodes.WORLD_CORRUPT, storedError(error).details); }
+    catch (error) { const failure=storedError(error); throw new RuntimeError(failure.code, failure.details); }
     const chain = store.ancestors(sessionId, expectedTip);
     const stateRow = [...chain].reverse().find(row => row.state !== null);
     let messageState: Record<string, Json>;
     try { messageState = decodeMessageState(stateRow?.state ?? '[]'); }
-    catch (error) { throw new RuntimeError(ErrorCodes.WORLD_CORRUPT, storedError(error, 'message').details); }
+    catch (error) { const failure=storedError(error,'message'); throw new RuntimeError(failure.code, failure.details); }
     const views = { global: JSON.parse(worldRow.state), session: JSON.parse(session.state), message: structuredClone(messageState) };
     try { for (const scope of ['global', 'session', 'message'] as const) validateSnapshot(world.state, scope, views[scope]); }
-    catch (error) { throw new RuntimeError(ErrorCodes.WORLD_CORRUPT, storedError(error, 'message').details); }
+    catch (error) { const failure=storedError(error,'message'); throw new RuntimeError(failure.code, failure.details); }
     const history=chain.flatMap(row=>store.narrative(row));
     const oldRow = [...chain].reverse().find(row => row.type === 'compaction');
     const oldExt = oldRow ? JSON.parse(oldRow.ext_data).summary : undefined;

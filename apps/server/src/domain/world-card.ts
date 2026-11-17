@@ -1,4 +1,5 @@
-import { ErrorCodes } from '../common/error-codes.js';
+import { ErrorCodes, isErrorCode, stateErrorDetails } from '../common/error-codes.js';
+import { validateStateSchema, type StateDiagnostic } from '@sillyrealms/sdk/state-validation';
 import { z } from 'zod';
 import { parseSRAssetUri } from '@sillyrealms/sdk/assets';
 import { applyOpening, initialState } from './state/state.js';
@@ -71,7 +72,7 @@ const schema=z.object({spec:z.literal('world_card'),spec_version:z.literal('0.1'
   lorebook:z.object({entries:z.array(lore).superRefine(unique)}).optional(),message_render:messageRender.optional(),ui:z.never().optional(),components:components.optional(),stage_component:componentId.optional(),extensions:z.custom<Record<string,unknown>>(v=>v!==null && typeof v==='object' && !Array.isArray(v),'Expected extension object').optional()
 })});
 export class CardError extends Error {
-  constructor(readonly path:string,readonly reason:string) {super(path+': '+reason);}
+  constructor(readonly path:string,readonly reason:string,readonly stateDiagnostic?:StateDiagnostic) {super(path+': '+reason);}
 }
 function location(parts:PropertyKey[]) {
   return parts.reduce<string>((path,part)=>path+(typeof part==='number'?'['+part+']':'.'+String(part)),'$');
@@ -84,6 +85,22 @@ export function parseCard(raw:unknown) {
   depth(raw,0);
   const rawState=(raw as {data?:{state?:unknown}}|null)?.data?.state;
   if(rawState!==undefined && Buffer.byteLength(JSON.stringify(rawState))>1024*1024) throw new CardError('$.data.state','Definition exceeds 1 MiB');
+  // Validate raw state before Zod can omit special record keys.
+  if(rawState!==undefined){
+    try {validateStateSchema(rawState);}
+    catch(error){
+      const diagnostic=stateErrorDetails(error);
+      let path='$.data.state';
+      if(diagnostic){
+        const root=diagnostic.path.split('.')[0]!.split('[')[0]!;
+        if(diagnostic.rulePath!==undefined)
+          path+='.scopes.'+diagnostic.scope+'.'+root+'.rules['+JSON.stringify(diagnostic.rulePath)+']';
+        else if(diagnostic.path==='schema_version'||diagnostic.path==='scopes')path+='.'+diagnostic.path;
+        else if(diagnostic.path!=='state')path+='.scopes.'+diagnostic.scope+(diagnostic.path?'.'+diagnostic.path:'');
+      }
+      throw new CardError(path,error instanceof Error?error.message:'Invalid state',diagnostic);
+    }
+  }
   // Inspect original state keys before object parsers can omit __proto__.
   function checkKeys(value:unknown,path:string):void {
     if(!value || typeof value!=='object') return;
@@ -99,7 +116,8 @@ export function parseCard(raw:unknown) {
   const parsed=schema.safeParse(raw);
   if(!parsed.success) {
     const issue=parsed.error.issues[0]!;
-    throw new CardError(location(issue.path),issue.message);
+    const diagnostic=issue.code==='custom' ? issue.params?.stateDiagnostic as StateDiagnostic|undefined : undefined;
+    throw new CardError(location(issue.path),issue.message,diagnostic);
   }
   const card=parsed.data;
   const ids=new Set(card.data.components?.map(item=>item.id));
@@ -108,13 +126,19 @@ export function parseCard(raw:unknown) {
   for(const scopeName of ['global','session','message'] as const) {
     try {initialState(card.data.state,scopeName);} catch(error) {
       const [path,reason]=splitReason(error);
-      throw new CardError(path.startsWith(scopeName+'.')?'$.data.state.scopes.'+scopeName+'.'+path.slice(scopeName.length+1):'$.data.state',reason);
+      const diagnostic=stateErrorDetails(error);
+      const sourcePath=diagnostic?'$.data.state.scopes.'+diagnostic.scope+'.'+diagnostic.path:path.startsWith(scopeName+'.')?'$.data.state.scopes.'+scopeName+'.'+path.slice(scopeName.length+1):'$.data.state';
+      throw new CardError(sourcePath,reason,diagnostic);
     }
   }
   const initial=initialState(card.data.state,'message');
   card.data.openings.forEach((v,i)=>{
     try {applyOpening(card.data.state,initial,v.initial_state);}
-    catch(error){const [path,reason]=splitReason(error); throw new CardError('$.data.openings['+i+'].'+path.replace(/^opening\./,''),reason);}
+    catch(error){
+      const [path,reason]=splitReason(error),diagnostic=stateErrorDetails(error);
+      const sourcePath='$.data.openings['+i+'].'+(diagnostic?'initial_state.'+diagnostic.path:path.replace(/^opening\./,''));
+      throw new CardError(sourcePath,reason,diagnostic);
+    }
   });
   return card;
 }
@@ -125,5 +149,8 @@ function splitReason(error:unknown):[string,string] {
 }
 export function storedError(error:unknown,path='$') {
   const [detail,reason]=splitReason(error);
-  return {code:ErrorCodes.WORLD_CORRUPT,details:{path:error instanceof CardError?error.path:detail==='$'?path:detail,reason}};
+  const diagnostic=stateErrorDetails(error);
+  return {code:diagnostic&&isErrorCode(diagnostic.code)?diagnostic.code:ErrorCodes.WORLD_CORRUPT,
+    details:{path:error instanceof CardError?error.path:diagnostic?.path??(detail==='$'?path:detail),reason,
+      ...(diagnostic?{scope:diagnostic.scope,statePath:diagnostic.path,...(diagnostic.rulePath?{rulePath:diagnostic.rulePath}:{})}:{})}};
 }

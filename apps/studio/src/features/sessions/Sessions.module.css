@@ -34,7 +34,7 @@
 .composerArea{position:absolute;z-index:2;inset:auto 0 0;min-width:0;padding:10px 24px max(20px,env(safe-area-inset-bottom));pointer-events:none}
 .composer,.expand,.stopCollapsed{border:1px solid var(--composer-glass-edge);background:var(--composer-glass-bg);box-shadow:var(--composer-glass-shadow);-webkit-backdrop-filter:blur(16px) saturate(150%);backdrop-filter:blur(16px) saturate(150%);pointer-events:auto}
 :global([data-theme="light"]) .detail{--composer-glass-bg:rgba(244,240,248,.72);--composer-glass-edge:rgba(255,255,255,.75);--composer-glass-shadow:0 10px 30px rgba(52,35,64,.14),inset 0 1px 1px rgba(255,255,255,.8)}
-.composer{width:100%;min-width:0;margin:0 auto;display:grid;grid-template-columns:44px minmax(0,1fr) 44px;align-items:end;gap:5px;padding:7px;border-radius:24px;transition:border-color var(--motion-fast),box-shadow var(--motion-fast)}
+.composer{width:100%;max-width:760px;min-width:0;margin:0 auto;display:grid;grid-template-columns:44px minmax(0,1fr) 44px;align-items:end;gap:5px;padding:7px;border-radius:24px;transition:border-color var(--motion-fast),box-shadow var(--motion-fast)}
 .composer:focus-within{border-color:var(--focus);box-shadow:var(--composer-glass-shadow),0 0 0 1px color-mix(in srgb,var(--focus) 35%,transparent)}
 .editor{min-width:0;align-self:stretch}
 .editor :global(.sr-roleplay-composer){min-width:0;width:100%}

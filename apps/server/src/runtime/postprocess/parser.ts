@@ -27,7 +27,6 @@ export function parseExtensions(tail?: string): ParsedExtensions {
     offset += id.length + 2;
     const start = offset, close = '</' + id + '>';
     let quoted = false, escaped = false, found = false;
-    const stack: string[] = [];
     for (; offset < tail.length; offset++) {
       const char = tail[offset]!;
       if (quoted) {
@@ -36,17 +35,13 @@ export function parseExtensions(tail?: string): ParsedExtensions {
         continue;
       }
       if (char === '"') { quoted = true; continue; }
-      if (char === '[' || char === '{') { stack.push(char); if(stack.length>32)return fail(); continue; }
-      if (char === ']' || char === '}') {
-        if (stack.pop() !== (char === ']' ? '[' : '{')) return fail();
-        continue;
-      }
       if (char === '<') {
-        if (!stack.length && tail.startsWith(close, offset)) { found = true; break; }
+        // JSON structure/depth belongs to this plugin; it must not invalidate its sibling.
+        if (tail.startsWith(close, offset)) { found = true; break; }
         return fail();
       }
     }
-    if (!found || quoted || stack.length) return fail();
+    if (!found || quoted) return fail();
     const error = id === 'state_update' ? ErrorCodes.STATE_UPDATE_INVALID : ErrorCodes.ACTION_SUGGESTIONS_INVALID;
     try { result[id] = { value: parseStrictJson(tail.slice(start, offset)) }; }
     catch { result[id] = { error }; }

@@ -1,4 +1,4 @@
-import { ErrorCodes } from '../../common/error-codes.js';
+import { isSafeStateKey, StateValidationError } from '@sillyrealms/sdk/state-validation';
 import { updateAtomicState, type AtomicStateDefinition } from './atomic-state.js';
 import type { Json } from './state.js';
 
@@ -6,8 +6,9 @@ import type { Json } from './state.js';
 export function applyRuntimeStateUpdate(workspace: Record<string, Json>, fields: Record<string, AtomicStateDefinition>,
   active: ReadonlySet<string>, path: string | string[], value: unknown): void {
   const parts = typeof path === 'string' ? path.split('.') : path;
-  if (!parts.length || parts.some(part => typeof part !== 'string' || !part || part.includes('.')))
-    throw new Error(ErrorCodes.INVALID_STATE_PATH);
-  if (!active.has(parts[0]!)) throw new Error(ErrorCodes.STATE_ROOT_NOT_ACTIVE);
-  updateAtomicState(workspace, fields, parts.join('.'), value);
+  if (!Array.isArray(parts) || !parts.length || parts.length > 32 || parts.some(part => typeof part !== 'string' || !isSafeStateKey(part)))
+    throw new StateValidationError('INVALID_STATE_PATH', 'message', typeof path === 'string' ? path : '');
+  const fullPath = parts.join('.');
+  if (!active.has(parts[0]!)) throw new StateValidationError('STATE_ROOT_NOT_ACTIVE', 'message', fullPath);
+  updateAtomicState(workspace, fields, fullPath, value, 'message');
 }

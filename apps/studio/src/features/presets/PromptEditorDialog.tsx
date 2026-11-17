@@ -23,8 +23,7 @@ const textVariables = [
   ['characters.prompts', '已加载角色'],
   ['world.lore', '已激活世界书'],
   ['history.summary', '已有摘要'],
-  ['state.currentValues', '可写状态当前值'],
-  ['state.updateRules', '状态更新规则'],
+  ['state.entries', '已激活状态与字段规则'],
 ] as const;
 
 export function PromptEditorDialog({title, initialValue, metadata = false, description, nodeId, onRestore, onApply, onClose}: Props) {
