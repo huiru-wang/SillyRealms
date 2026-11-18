@@ -1,21 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../database/connection.js';
-import { SessionRepository, type AppendEntryInput, type EntryMetrics, type UpdateEntryInput, type UpdateSessionInput } from './repository.js';
+import { createServices, type Services } from '../services.js';
+import { narrativePreset } from '../testing/fixtures.js';
+import { type SessionService, type AppendEntryInput, type EntryMetrics, type UpdateEntryInput, type UpdateSessionInput } from './service.js';
 
-let db: DatabaseSync, sessions: SessionRepository;
+let db: DatabaseSync, services: Services, sessions: SessionService, dataRoot: string;
 beforeEach(() => {
   db = openDatabase(':memory:');
-  db.exec(
-    "INSERT INTO api_model_configs VALUES('model','Model','provider','actual-model','credential-ref',1,1);" +
-    "INSERT INTO presets VALUES('preset','narrative','Narrative',NULL,'{}',1,1);" +
-    "INSERT INTO presets VALUES('image','image','Image',NULL,'{}',1,1);" +
-    "INSERT INTO worlds(id,spec_version,name,characters_json,openings_json,state,created_at,updated_at) " +
-    "VALUES('world','0.1','World','[]','[]','{}',1,1);",
-  );
-  sessions = new SessionRepository(db);
+  dataRoot = mkdtempSync(join(tmpdir(), 'sr-session-service-'));
+  services = createServices(db, dataRoot);
+  services.models.create({ id: 'model', name: 'Model', provider_id: 'provider', model_id: 'actual-model', credential_ref: 'credential-ref' });
+  services.presets.create({ ...narrativePreset(), id: 'preset' });
+  services.worlds.create({ id: 'world', spec_version: '0.1', name: 'World', characters_json: [], openings_json: [] });
+  sessions = services.sessions;
 });
-afterEach(() => { vi.restoreAllMocks(); db.close(); });
+afterEach(() => { vi.restoreAllMocks(); db.close(); rmSync(dataRoot, { recursive: true, force: true }); });
 
 function create(id = 'session') {
   return sessions.create({ id, world_id: 'world', preset_id: 'preset', api_model_config_id: 'model', user_character_id: 'player' });
@@ -34,7 +37,7 @@ describe('session records and references', () => {
     vi.spyOn(Date, 'now').mockReturnValue(100);
     const created = create();
     expect(created).toMatchObject({ tip_entry_id: null, state: {}, usage_json: null, created_at: 100, updated_at: 100 });
-    db.prepare('UPDATE sessions SET state=? WHERE id=?').run('{"coins":7}', created.id);
+    sessions.setState(created.id, { coins: 7 });
     vi.mocked(Date.now).mockReturnValue(200);
     expect(sessions.update(created.id, { title: 'Renamed' })).toMatchObject({
       title: 'Renamed', state: { coins: 7 }, usage_json: null, created_at: 100, updated_at: 200,
@@ -43,14 +46,14 @@ describe('session records and references', () => {
     expect(sessions.get('missing')).toBeNull();
   });
 
-  it('rejects missing world/model and non-narrative defaults atomically', () => {
+  it('rejects missing world/model/preset references atomically', () => {
     const input = { id: 'bad', world_id: 'world', preset_id: 'preset', api_model_config_id: 'model', user_character_id: 'player' };
     expect(() => sessions.create({ ...input, world_id: 'missing' })).toThrow('WORLD_NOT_FOUND');
-    expect(() => sessions.create({ ...input, api_model_config_id: 'missing' })).toThrow('MODEL_NOT_FOUND');
-    expect(() => sessions.create({ ...input, preset_id: 'image' })).toThrow();
+    expect(() => sessions.create({ ...input, api_model_config_id: 'missing' })).toThrow('MODEL_CONFIG_NOT_FOUND');
+    expect(() => sessions.create({ ...input, preset_id: 'missing' })).toThrow('PRESET_NOT_FOUND');
     expect(sessions.list()).toHaveLength(0);
     create();
-    expect(() => sessions.update('session', { title: 'must rollback', preset_id: 'image' })).toThrow();
+    expect(() => sessions.update('session', { title: 'must rollback', preset_id: 'missing' })).toThrow('PRESET_NOT_FOUND');
     expect(sessions.get('session')!.title).toBeNull();
   });
 
@@ -61,40 +64,52 @@ describe('session records and references', () => {
     expect(first.map(value => value.id)).toEqual(['c', 'b']);
     expect(sessions.list({ before: { updated_at: 100, id: 'b' } }).map(value => value.id)).toEqual(['a']);
     append('a', 'entry');
-    expect(() => db.prepare('DELETE FROM worlds WHERE id=?').run('world')).toThrow();
+    expect(() => services.worlds.delete('world')).toThrow();
     expect(sessions.delete('a')).toBe(true);
     expect(sessions.getEntry('a', 'entry')).toBeNull();
     expect(sessions.delete('a')).toBe(false);
   });
 });
 
-describe('entry trees and field ownership', () => {
-  it('keeps old branches and builds the active chain through compaction entries', () => {
+describe('linear history and field ownership', () => {
+  it('advances one linear history through message and compaction entries', () => {
     create();
-    append('session', 'root', { run_id: 'opening' });
-    append('session', 'user', { role: 'user' });
+    expect(sessions.getHistory('session')).toEqual([]);
+    append('session', 'root', { run_id: 'opening', parent_id: null });
+    append('session', 'user', { role: 'user', parent_id: 'root' });
     append('session', 'answer');
     sessions.appendEntry('session', { id: 'summary', run_id: 'compact', type: 'compaction', role: null, payload: { summary: 'Earlier history' } });
-    sessions.setTip('session', 'user');
-    const branch = append('session', 'alternate', { run_id: 'retry' });
-    expect(branch.seq).toBe(5);
-    expect(sessions.getHistory('session').map(value => value.id)).toEqual(['root', 'user', 'alternate']);
-    expect(sessions.getHistory('session', 'summary').map(value => value.id)).toEqual(['root', 'user', 'answer', 'summary']);
+    const continuation = append('session', 'continuation', { run_id: 'continue' });
+    expect(continuation).toMatchObject({ seq: 5, parent_id: 'summary' });
+    expect(sessions.get('session')!.tip_entry_id).toBe('continuation');
+    expect(sessions.getHistory('session').map(value => value.id)).toEqual(['root', 'user', 'answer', 'summary', 'continuation']);
     expect(sessions.listEntries('session', { after_seq: 2, limit: 2 }).map(value => value.id)).toEqual(['answer', 'summary']);
     expect(sessions.listRunEntries('session', 'run').map(value => value.id)).toEqual(['user', 'answer']);
   });
 
-  it('rejects cross-session parent/tip, additional roots, and corrupt cycles', () => {
+  it('rejects stale, cross-session and null parents without moving the tip or consuming a sequence', () => {
     create('one'); create('two');
     append('one', 'root-one'); append('two', 'root-two');
-    expect(() => append('one', 'cross', { parent_id: 'root-two' })).toThrow('INVALID_PARENT_CHAIN');
-    expect(() => sessions.setTip('one', 'root-two')).toThrow('INVALID_PARENT_CHAIN');
-    expect(() => append('one', 'new-root', { parent_id: null })).toThrow('INVALID_PARENT_CHAIN');
-    expect(sessions.get('one')!.tip_entry_id).toBe('root-one');
-    const child = append('one', 'child');
-    db.prepare('UPDATE entries SET parent_id=? WHERE id=?').run(child.id, 'root-one');
-    expect(() => sessions.getHistory('one')).toThrow('INVALID_PARENT_CHAIN');
-    expect(() => append('one', 'corrupt')).toThrow('INVALID_PARENT_CHAIN');
+    append('one', 'child');
+    for (const parent_id of ['root-one', 'root-two', null]) {
+      expect(() => append('one', 'invalid', { parent_id })).toThrow('TIP_CONFLICT');
+      expect(sessions.get('one')!.tip_entry_id).toBe('child');
+      expect(sessions.listEntries('one').map(entry => entry.id)).toEqual(['root-one', 'child']);
+    }
+    expect(append('one', 'next', { parent_id: 'child' }).seq).toBe(3);
+  });
+
+  it('rejects corrupt history and a persisted tip that no longer points at the last entry', () => {
+    create();
+    append('session', 'root');
+    append('session', 'child');
+    db.prepare('UPDATE entries SET parent_id=? WHERE id=?').run('child', 'root');
+    expect(() => sessions.getHistory('session')).toThrow('INVALID_PARENT_CHAIN');
+    expect(() => append('session', 'corrupt')).toThrow('INVALID_PARENT_CHAIN');
+    db.prepare('UPDATE entries SET parent_id=NULL WHERE id=?').run('root');
+    db.prepare('UPDATE sessions SET tip_entry_id=? WHERE id=?').run('root', 'session');
+    expect(() => append('session', 'rewound')).toThrow('INVALID_PARENT_CHAIN');
+    expect(sessions.listEntries('session')).toHaveLength(2);
   });
 
   it('rolls back failed entry insertion and does not consume a sequence or move the tip', () => {
@@ -129,7 +144,7 @@ describe('one canonical metrics shape', () => {
     expect(sessions.setMetrics('session', 'assistant', metrics('unknown')).metrics_json!.requests[0]!.usage).toBeNull();
     const zero = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
     expect(sessions.setMetrics('session', 'assistant', metrics('zero', zero)).metrics_json!.requests[0]!.usage).toEqual(zero);
-    db.prepare('UPDATE api_model_configs SET model_id=? WHERE id=?').run('new-model', 'model');
+    services.models.update('model', { model_id: 'new-model' });
     expect(sessions.getEntry('session', 'assistant')!.metrics_json!.requests[0]!.modelId).toBe('actual-model-snapshot');
   });
 
@@ -144,7 +159,7 @@ describe('one canonical metrics shape', () => {
     expect(sessions.getEntry('session', 'assistant')!.metrics_json!.requests[0]!.requestId).toBe('cached');
   });
 
-  it('does not duplicate requests onto user entries or another branch/entry', () => {
+  it('does not duplicate requests onto user entries or another entry', () => {
     create();
     append('session', 'root', { metrics_json: metrics('request') });
     append('session', 'user', { role: 'user' });

@@ -1,25 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase, type JsonObject, type JsonValue } from '../database/connection.js';
-import { SessionRepository } from '../sessions/repository.js';
-import { StateRepository } from './repository.js';
+import { createServices, type Services } from '../services.js';
+import type { SessionService } from '../sessions/service.js';
+import { narrativePreset } from '../testing/fixtures.js';
+import type { StateService } from './service.js';
 
-let db: DatabaseSync, sessions: SessionRepository, state: StateRepository;
+let db: DatabaseSync, services: Services, sessions: SessionService, state: StateService, dataRoot: string;
 beforeEach(() => {
   db = openDatabase(':memory:');
-  db.exec(
-    "INSERT INTO api_model_configs VALUES('model','Model','provider','model','credential-ref',1,1);" +
-    "INSERT INTO presets VALUES('preset','narrative','Narrative',NULL,'{}',1,1);" +
-    "INSERT INTO worlds(id,spec_version,name,characters_json,openings_json,state_definition_json,state,created_at,updated_at) " +
-    "VALUES('world','0.1','World','[]','[]','{\"schema_version\":2}','{\"day\":1}',1,1);",
-  );
-  sessions = new SessionRepository(db);
-  state = new StateRepository(db);
+  dataRoot = mkdtempSync(join(tmpdir(), 'sr-state-service-'));
+  services = createServices(db, dataRoot);
+  services.models.create({ id: 'model', name: 'Model', provider_id: 'provider', model_id: 'model', credential_ref: 'credential-ref' });
+  services.presets.create({ ...narrativePreset(), id: 'preset' });
+  services.worlds.create({
+    id: 'world', spec_version: '0.1', name: 'World', characters_json: [], openings_json: [],
+    state_definition_json: { schema_version: 2 }, state: { day: 1 },
+  });
+  sessions = services.sessions;
+  state = services.state;
   for (const id of ['one', 'two']) sessions.create({
     id, world_id: 'world', preset_id: 'preset', api_model_config_id: 'model', user_character_id: 'player', state: { reputation: 0 },
   });
 });
-afterEach(() => { vi.restoreAllMocks(); db.close(); });
+afterEach(() => { vi.restoreAllMocks(); db.close(); rmSync(dataRoot, { recursive: true, force: true }); });
 
 function append(id: string, parent_id?: string, sessionId = 'one') {
   return sessions.appendEntry(sessionId, {
@@ -35,24 +42,24 @@ describe('scope snapshot persistence', () => {
     expect(state.getGlobal('world')).toEqual({ day: 2 });
     expect(state.getSession('one')).toEqual({ reputation: 10 });
     expect(state.getSession('two')).toEqual({ reputation: 0 });
-    expect(JSON.parse(String(db.prepare('SELECT state_definition_json FROM worlds WHERE id=?').get('world')!.state_definition_json)))
-      .toEqual({ schema_version: 2 });
+    expect(services.worlds.get('world')!.state_definition_json).toEqual({ schema_version: 2 });
     expect(state.getGlobal('missing')).toBeNull();
     expect(() => state.setGlobal('missing', {})).toThrow('WORLD_NOT_FOUND');
     expect(() => state.setSession('missing', {})).toThrow('SESSION_NOT_FOUND');
   });
 
-  it('inherits message state through compaction and follows parent links across branches', () => {
+  it('inherits message state through compaction and the linear predecessor chain', () => {
     append('root');
     state.setMessage('one', 'root', [{ key: 'coins', value: 3 }]);
     sessions.appendEntry('one', { id: 'summary', run_id: 'compact', type: 'compaction', role: null, payload: { summary: 'Summary' } });
-    append('old-branch');
-    state.setMessage('one', 'old-branch', [{ key: 'coins', value: 99 }]);
-    sessions.setTip('one', 'summary');
-    append('new-branch');
+    append('answer');
+    expect(state.getMessage('one', 'answer')).toEqual([{ key: 'coins', value: 3 }]);
+    state.setMessage('one', 'answer', [{ key: 'coins', value: 99 }]);
+    append('continuation');
     expect(state.getMessage('one', 'summary')).toEqual([{ key: 'coins', value: 3 }]);
-    expect(state.getMessage('one', 'new-branch')).toEqual([{ key: 'coins', value: 3 }]);
-    expect(state.getMessage('one', 'old-branch')).toEqual([{ key: 'coins', value: 99 }]);
+    expect(state.getMessage('one', 'continuation')).toEqual([{ key: 'coins', value: 99 }]);
+    expect(sessions.getEntryState('one', 'continuation')).toBeNull();
+    expect(sessions.getEntryState('one', 'answer')).toEqual([{ key: 'coins', value: 99 }]);
   });
 
   it('distinguishes an empty snapshot from inherited NULL and preserves ancestor snapshots', () => {

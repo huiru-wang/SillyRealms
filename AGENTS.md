@@ -28,6 +28,17 @@
   - L2 - Structural Concern: Evaluate and improve incrementally when relevant; otherwise defer.
   - L3 - Critical Risk: Do not introduce or worsen risks affecting correctness, data consistency, or core architectural boundaries without addressing them or obtaining explicit approval.
 
+## Backend Module Boundaries
+
+- Follow the one-way call chain `route → service → repository`: no layer skipping or upward dependencies. Routes handle HTTP input/output; Services own business validation and use-case orchestration; Repositories handle persistence. Services/Repositories must not import routes or HTTP handlers, and Repositories must not import Services.
+- Each business module has exactly one public entry: its Service. Place HTTP adapters in the separate routes layer. Cross-module collaboration must use Service-to-Service calls, with explicit dependencies and no circular orchestration.
+- Repositories are private to their owning module. Routes, startup composition, and other modules must not import or expose a Repository.
+- A Repository may only implement SQL for tables or columns owned by its module. It must not depend on another module's Repository or query/update another owner's data, including reads, joins and existence checks; obtain that data through the owning Service.
+- Startup composition owns the database connection lifecycle. Services only pass the connection to their private Repository during construction; they do not retain database handles, issue SQL, open/close connections, or start transactions.
+- Do not introduce cross-module strong-consistency transactions, global rollback or transaction callbacks crossing Service boundaries. A Repository may keep a local atomic write for its own data, such as appending an entry and advancing its tip together.
+- Ordinary HTTP responses use `{ success, errorCode, errorMessage, data }`: success has null errorCode and empty errorMessage; failure has a registered error code/message and null data. SSE streams and file downloads keep their native bodies; errors before streaming starts use the ordinary failure envelope.
+- Business ownership of a behavior does not transfer table ownership. For example, state behavior coordinates World/Session Services; state-column SQL stays in the owning World/Session Repository.
+
 ## Documentation Guidelines
 
 - **Code Is the Source of Truth:** Treat code, types, tests, and directory structure as the authoritative representation of actual behavior. Documentation must never override the actual implementation.

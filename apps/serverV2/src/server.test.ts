@@ -6,7 +6,10 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createApp } from './app.js';
 import { EventHub } from './events/event-hub.js';
+import type { Services } from './services.js';
+import { narrativePreset } from './testing/fixtures.js';
 import { startServer } from './server.js';
 
 type RunningServer = Awaited<ReturnType<typeof startServer>>;
@@ -19,9 +22,19 @@ function temporaryDirectory() {
   return directory;
 }
 
-async function launch(options: Parameters<typeof startServer>[0] = {}) {
+function seedSessions(services: Services, ids: string[]) {
+  const preset = services.presets.create(narrativePreset());
+  const model = services.models.create({ name: 'Test model', provider_id: 'test', model_id: 'test-model', credential_ref: 'test-ref' });
+  const world = services.worlds.create({ name: 'Test world', spec_version: '0.1', characters_json: [], openings_json: [] });
+  for (const id of ids) services.sessions.create({
+    id, world_id: world.id, preset_id: preset.id, api_model_config_id: model.id, user_character_id: 'player',
+  });
+}
+
+async function launch(options: Parameters<typeof startServer>[0] = {}, sessionIds: string[] = []) {
   const running = await startServer({ databasePath: ':memory:', ...options, port: 0 });
   servers.push(running);
+  if (sessionIds.length) seedSessions(running.services, sessionIds);
   const address = running.server.address();
   if (!address || typeof address === 'string') throw new Error('Expected a TCP listener');
   return { ...running, url: `http://127.0.0.1:${address.port}` };
@@ -61,14 +74,22 @@ afterEach(async () => {
 });
 
 describe('Server V2 over HTTP', () => {
+  it('requires the business Services even when a custom access check permits a request', async () => {
+    const app = createApp({ events: new EventHub(), canAccessSession: () => true });
+    const response = await app.request('/api/v1/sessions/anything/events');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ success: false, errorCode: 'SERVICE_UNAVAILABLE', errorMessage: '业务服务尚未就绪', data: null });
+    app.shutdown();
+  });
+
   it('opens independent storage and rejects missing sessions instead of accepting fake sessions', async () => {
-    const { url } = await launch();
+    const { url } = await launch({ canAccessSession: () => true });
     const health = await fetch(`${url}/health`);
     expect(health.status).toBe(200);
-    expect(await health.json()).toEqual({ ok: true });
+    expect(await health.json()).toEqual({ success: true, errorCode: null, errorMessage: '', data: { ok: true } });
     const events = await fetch(`${url}/api/v1/sessions/anything/events`);
     expect(events.status).toBe(404);
-    expect(await events.json()).toEqual({ errorCode: 'SESSION_NOT_FOUND' });
+    expect(await events.json()).toEqual({ success: false, errorCode: 'SESSION_NOT_FOUND', errorMessage: '会话不存在', data: null });
     const publish = await fetch(`${url}/api/v1/sessions/anything/events`, { method: 'POST' });
     expect(publish.status).toBe(404);
     await publish.body?.cancel();
@@ -77,47 +98,33 @@ describe('Server V2 over HTTP', () => {
   it('uses persisted sessions after reopening and releases its database when HTTP closes', async () => {
     const dataRoot = temporaryDirectory(), databasePath = join(dataRoot, 'database.sqlite');
     const running = await launch({ dataRoot, databasePath });
-    const model = running.repositories.models.create({
+    const model = running.services.models.create({
       name: 'Local model', provider_id: 'provider', model_id: 'actual-model', credential_ref: 'test-ref',
     });
-    const preset = running.repositories.presets.create({
-      type: 'narrative', name: 'Story', config_json: {
-        schema_version: 1,
-        nodes: [
-          { id: 'main', name: 'Main', kind: 'system', role: 'system', enabled: true, prompt: '' },
-          { id: 'personaInfo', name: 'Persona', kind: 'system', role: 'system', enabled: true, prompt: '' },
-          { id: 'characterInfo', name: 'Characters', kind: 'system', role: 'system', enabled: true, prompt: '' },
-          { id: 'worldInfo', name: 'World', kind: 'system', role: 'system', enabled: true, prompt: '' },
-          { id: 'chatHistory', name: 'History', kind: 'system', role: 'auto', enabled: true, prompt: '{{history.messages}}' },
-          { id: 'userInput', name: 'Input', kind: 'system', role: 'user', enabled: true, prompt: '{{input.text}}' },
-        ],
-        context_strategy: { strategy: 'sliding_window', max_context_tokens: 30000, max_output_tokens: 4096, summary_prompt: 'Summarize' },
-        model_parameters: { thinking_enabled: false },
-      },
-    });
-    running.repositories.settings.update({ default_preset_id: preset.id, default_api_model_config_id: model.id });
-    const world = running.repositories.worlds.create({
+    const preset = running.services.presets.create(narrativePreset());
+    running.services.settings.update({ default_preset_id: preset.id, default_api_model_config_id: model.id });
+    const world = running.services.worlds.create({
       name: 'Persistent world', spec_version: '0.1', characters_json: [{ id: 'player', name: 'Player' }],
       openings_json: [], tags: ['test'], default_preset_id: preset.id, default_api_model_config_id: model.id,
     });
-    const session = running.repositories.sessions.create({
+    const session = running.services.sessions.create({
       world_id: world.id, preset_id: preset.id, api_model_config_id: model.id, user_character_id: 'player',
     });
-    const entry = running.repositories.sessions.appendEntry(session.id, {
+    const entry = running.services.sessions.appendEntry(session.id, {
       run_id: 'run-1', type: 'message', role: 'assistant', payload: { text: 'Saved story' }, state: [],
     });
-    running.repositories.state.setSession(session.id, { gold: 12 });
+    running.services.state.setSession(session.id, { gold: 12 });
     const stream = await connect(running.url, session.id);
     running.events.publish(session.id, { event: 'storage.ready', data: { entryId: entry.id } });
     expect(await stream.readFrame()).toContain(entry.id);
     await running.close();
-    expect(() => running.database.prepare('SELECT 1')).toThrow();
+    expect(() => running.services.sessions.get(session.id)).toThrow();
 
     const reopened = await launch({ dataRoot, databasePath });
-    expect(reopened.repositories.sessions.getHistory(session.id).map(item => item.id)).toEqual([entry.id]);
-    expect(reopened.repositories.state.getSession(session.id)).toEqual({ gold: 12 });
-    expect(reopened.repositories.worlds.get(world.id)?.tags).toEqual(['test']);
-    expect(reopened.repositories.settings.get().default_preset_id).toBe(preset.id);
+    expect(reopened.services.sessions.getHistory(session.id).map(item => item.id)).toEqual([entry.id]);
+    expect(reopened.services.state.getSession(session.id)).toEqual({ gold: 12 });
+    expect(reopened.services.worlds.get(world.id)?.tags).toEqual(['test']);
+    expect(reopened.services.settings.get().default_preset_id).toBe(preset.id);
     const restored = await connect(reopened.url, session.id);
     reopened.events.publish(session.id, { event: 'after.restart', data: {} });
     expect(await restored.readFrame()).toContain('after.restart');
@@ -138,15 +145,15 @@ describe('Server V2 over HTTP', () => {
     const { url } = await launch({ events, canAccessSession: async (id, request) => {
       if (id === 'broken') throw new Error('private storage detail');
       return id === 'allowed' && request.headers.get('x-test-access') === 'yes';
-    } });
+    } }, ['allowed', 'broken']);
     for (const id of ['missing', 'allowed']) {
       const response = await fetch(`${url}/api/v1/sessions/${id}/events`);
       expect(response.status).toBe(404);
-      expect(await response.json()).toEqual({ errorCode: 'SESSION_NOT_FOUND' });
+      expect(await response.json()).toEqual({ success: false, errorCode: 'SESSION_NOT_FOUND', errorMessage: '会话不存在', data: null });
     }
     const broken = await fetch(`${url}/api/v1/sessions/broken/events`);
     expect(broken.status).toBe(500);
-    expect(await broken.json()).toEqual({ errorCode: 'INTERNAL_ERROR' });
+    expect(await broken.json()).toEqual({ success: false, errorCode: 'INTERNAL_ERROR', errorMessage: '服务内部错误', data: null });
     expect(subscribe).not.toHaveBeenCalled();
     const allowed = await fetch(`${url}/api/v1/sessions/allowed/events`, { headers: { 'x-test-access': 'yes' } });
     expect(allowed.status).toBe(200);
@@ -156,7 +163,7 @@ describe('Server V2 over HTTP', () => {
 
   it('pushes multiple runs and late events through the same connection and isolates sessions', async () => {
     const sessions = new Set(['a', 'b']);
-    const { url, events } = await launch({ canAccessSession: id => sessions.has(id) });
+    const { url, events } = await launch({ canAccessSession: id => sessions.has(id) }, ['a', 'b']);
     const first = await connect(url, 'a');
     const sibling = await connect(url, 'a');
     const other = await connect(url, 'b');
@@ -182,7 +189,7 @@ describe('Server V2 over HTTP', () => {
       cleanups.push(cleanup);
       return cleanup;
     });
-    const { url } = await launch({ events, canAccessSession: id => id === 'a' });
+    const { url } = await launch({ events, canAccessSession: id => id === 'a' }, ['a']);
     const first = await connect(url, 'a'), sibling = await connect(url, 'a');
     first.controller.abort();
     await vi.waitFor(() => expect(cleanups[0]).toHaveBeenCalledOnce());
@@ -196,7 +203,7 @@ describe('Server V2 over HTTP', () => {
   });
 
   it('ends open SSE streams and stops listening on shutdown, including repeated close calls', async () => {
-    const running = await launch({ canAccessSession: () => true });
+    const running = await launch({ canAccessSession: () => true }, ['a', 'b']);
     const first = await connect(running.url, 'a'), second = await connect(running.url, 'b');
     const closing = running.close();
     expect(running.close()).toBe(closing);
@@ -206,18 +213,34 @@ describe('Server V2 over HTTP', () => {
     expect(running.server.listening).toBe(false);
   });
 
+  it('does not subscribe when a session is deleted during the access check', async () => {
+    let allow!: (value: boolean) => void;
+    const pendingAccess = new Promise<boolean>(resolve => { allow = resolve; });
+    const canAccessSession = vi.fn(() => pendingAccess);
+    const running = await launch({ canAccessSession }, ['a']);
+    const subscribe = vi.spyOn(running.events, 'subscribe');
+    const request = fetch(`${running.url}/api/v1/sessions/a/events`);
+    await vi.waitFor(() => expect(canAccessSession).toHaveBeenCalledOnce());
+    running.services.sessions.delete('a');
+    allow(true);
+    const response = await request;
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ success: false, errorCode: 'SESSION_NOT_FOUND', errorMessage: '会话不存在', data: null });
+    expect(subscribe).not.toHaveBeenCalled();
+  });
+
   it('does not open a new stream if shutdown happens during the access check', async () => {
     let allow!: (value: boolean) => void;
     const pendingAccess = new Promise<boolean>(resolve => { allow = resolve; });
     const canAccessSession = vi.fn(() => pendingAccess);
-    const running = await launch({ canAccessSession });
+    const running = await launch({ canAccessSession }, ['a']);
     const request = fetch(`${running.url}/api/v1/sessions/a/events`);
     await vi.waitFor(() => expect(canAccessSession).toHaveBeenCalledOnce());
     const closing = running.close();
     allow(true);
     const response = await request;
     expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ errorCode: 'SERVER_SHUTTING_DOWN' });
+    expect(await response.json()).toEqual({ success: false, errorCode: 'SERVER_SHUTTING_DOWN', errorMessage: '服务正在关闭', data: null });
     await closing;
   });
 
@@ -235,7 +258,7 @@ describe('Server V2 over HTTP', () => {
       await vi.waitFor(() => expect(output, errors).toMatch(/Server V2: http:\/\/127\.0\.0\.1:\d+/u), { timeout: 4000 });
       const url = output.match(/http:\/\/127\.0\.0\.1:\d+/u)![0];
       const health = await fetch(`${url}/health`);
-      expect(await health.json()).toEqual({ ok: true });
+      expect(await health.json()).toEqual({ success: true, errorCode: null, errorMessage: '', data: { ok: true } });
       child.kill('SIGTERM');
       expect(await exited).toEqual([0, null]);
     } finally {

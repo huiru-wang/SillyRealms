@@ -1,42 +1,15 @@
-import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { z } from 'zod';
-import { transaction } from '../database/connection.js';
-
-const valueSchema = z.object({
-  name: z.string().trim().min(1),
-  provider_id: z.string().trim().min(1),
-  model_id: z.string().trim().min(1),
-  credential_ref: z.string().trim().min(1),
-}).strict();
-const createSchema = valueSchema.extend({ id: z.string().trim().min(1).optional() }).strict();
-const patchSchema = valueSchema.partial().strict()
-  .refine(value => Object.values(value).some(item => item !== undefined), '模型配置更新不能为空');
-const listSchema = z.object({
-  limit: z.number().int().min(1).max(1000).default(100),
-  offset: z.number().int().min(0).default(0),
-}).strict();
-
-export type CreateModelInput = z.input<typeof createSchema>;
-export type UpdateModelInput = z.input<typeof patchSchema>;
-export type ModelConfig = z.infer<typeof valueSchema> & {
-  id: string;
-  created_at: number;
-  updated_at: number;
-};
+import type { ModelConfig, ModelValue } from './types.js';
 
 function decode(row: Record<string, unknown>): ModelConfig {
   return {
-    id: String(row.id),
-    ...valueSchema.parse({
-      name: row.name, provider_id: row.provider_id, model_id: row.model_id, credential_ref: row.credential_ref,
-    }),
-    created_at: Number(row.created_at),
-    updated_at: Number(row.updated_at),
+    id: String(row.id), name: String(row.name), provider_id: String(row.provider_id),
+    model_id: String(row.model_id), credential_ref: String(row.credential_ref),
+    created_at: Number(row.created_at), updated_at: Number(row.updated_at),
   };
 }
 
-/** Stores credential references only. Credential bytes belong to the credential store. */
+/** Module-private persistence for model connection references. */
 export class ModelRepository {
   constructor(private readonly db: DatabaseSync) {}
 
@@ -45,38 +18,20 @@ export class ModelRepository {
     return row ? decode(row) : null;
   }
 
-  list(options: z.input<typeof listSchema> = {}): ModelConfig[] {
-    const { limit, offset } = listSchema.parse(options);
+  list({ limit, offset }: { limit: number; offset: number }): ModelConfig[] {
     return this.db.prepare('SELECT * FROM api_model_configs ORDER BY name,id LIMIT ? OFFSET ?')
       .all(limit, offset).map(decode);
   }
 
-  create(input: CreateModelInput): ModelConfig {
-    const value = createSchema.parse(input);
-    const id = value.id ?? randomUUID();
-    return transaction(this.db, () => {
-      const now = Date.now();
-      this.db.prepare('INSERT INTO api_model_configs(id,name,provider_id,model_id,credential_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?)')
-        .run(id, value.name, value.provider_id, value.model_id, value.credential_ref, now, now);
-      return this.get(id)!;
-    });
+  create(id: string, value: ModelValue): void {
+    const now = Date.now();
+    this.db.prepare('INSERT INTO api_model_configs(id,name,provider_id,model_id,credential_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+      .run(id, value.name, value.provider_id, value.model_id, value.credential_ref, now, now);
   }
 
-  update(id: string, input: UpdateModelInput): ModelConfig | null {
-    const patch = patchSchema.parse(input);
-    return transaction(this.db, () => {
-      const current = this.get(id);
-      if (!current) return null;
-      const value = valueSchema.parse({
-        name: patch.name ?? current.name,
-        provider_id: patch.provider_id ?? current.provider_id,
-        model_id: patch.model_id ?? current.model_id,
-        credential_ref: patch.credential_ref ?? current.credential_ref,
-      });
-      this.db.prepare('UPDATE api_model_configs SET name=?,provider_id=?,model_id=?,credential_ref=?,updated_at=? WHERE id=?')
-        .run(value.name, value.provider_id, value.model_id, value.credential_ref, Date.now(), id);
-      return this.get(id)!;
-    });
+  update(id: string, value: ModelValue): void {
+    this.db.prepare('UPDATE api_model_configs SET name=?,provider_id=?,model_id=?,credential_ref=?,updated_at=? WHERE id=?')
+      .run(value.name, value.provider_id, value.model_id, value.credential_ref, Date.now(), id);
   }
 
   delete(id: string): boolean {

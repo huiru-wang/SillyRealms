@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { AppError } from '../errors.js';
 
 export const DATABASE_VERSION = 1;
 export const DATABASE_APPLICATION_ID = 0x53525632; // SRV2; distinct from the old Server database.
@@ -209,25 +210,25 @@ export function encodeJson(value: unknown, kind?: 'object' | 'array'): string {
   const snapshot = (item: unknown): JsonValue => {
     if (item === null || typeof item === 'string' || typeof item === 'boolean') return item;
     if (typeof item === 'number' && Number.isFinite(item)) return item;
-    if (typeof item !== 'object' || item === null) throw new Error('INVALID_JSON_VALUE');
-    if (ancestors.has(item)) throw new Error('CYCLIC_JSON_VALUE');
+    if (typeof item !== 'object' || item === null) throw new AppError('INVALID_JSON_VALUE');
+    if (ancestors.has(item)) throw new AppError('CYCLIC_JSON_VALUE');
     const array = Array.isArray(item), prototype = Object.getPrototypeOf(item);
     if (prototype !== null && prototype !== (array ? Array.prototype : Object.prototype))
-      throw new Error('INVALID_JSON_OBJECT');
+      throw new AppError('INVALID_JSON_OBJECT');
 
     const descriptors = Object.getOwnPropertyDescriptors(item);
-    if (Object.getOwnPropertySymbols(descriptors).length) throw new Error('INVALID_JSON_KEY');
+    if (Object.getOwnPropertySymbols(descriptors).length) throw new AppError('INVALID_JSON_KEY');
     ancestors.add(item);
     try {
       if (array) {
         const length = descriptors.length!.value as number;
-        if (Object.keys(descriptors).length !== length + 1) throw new Error('INVALID_JSON_ARRAY');
+        if (Object.keys(descriptors).length !== length + 1) throw new AppError('INVALID_JSON_ARRAY');
         const copy: JsonValue[] = [];
         Object.setPrototypeOf(copy, null);
         for (let index = 0; index < length; index++) {
           const descriptor = descriptors[String(index)];
-          if (!descriptor) throw new Error('INVALID_JSON_ARRAY');
-          if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) throw new Error('INVALID_JSON_PROPERTY');
+          if (!descriptor) throw new AppError('INVALID_JSON_ARRAY');
+          if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) throw new AppError('INVALID_JSON_PROPERTY');
           copy[index] = snapshot(descriptor.value);
         }
         return copy;
@@ -235,7 +236,7 @@ export function encodeJson(value: unknown, kind?: 'object' | 'array'): string {
 
       const copy: JsonObject = Object.create(null);
       for (const [key, descriptor] of Object.entries(descriptors)) {
-        if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) throw new Error('INVALID_JSON_PROPERTY');
+        if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) throw new AppError('INVALID_JSON_PROPERTY');
         copy[key] = snapshot(descriptor.value);
       }
       return copy;
@@ -243,9 +244,9 @@ export function encodeJson(value: unknown, kind?: 'object' | 'array'): string {
       ancestors.delete(item);
     }
   };
-  if (kind === 'array' && !Array.isArray(value)) throw new Error('JSON_ARRAY_REQUIRED');
+  if (kind === 'array' && !Array.isArray(value)) throw new AppError('JSON_ARRAY_REQUIRED');
   if (kind === 'object' && (value === null || typeof value !== 'object' || Array.isArray(value))) {
-    throw new Error('JSON_OBJECT_REQUIRED');
+    throw new AppError('JSON_OBJECT_REQUIRED');
   }
   return JSON.stringify(snapshot(value));
 }

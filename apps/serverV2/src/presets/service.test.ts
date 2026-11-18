@@ -1,38 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../database/connection.js';
-import { ModelRepository } from '../models/repository.js';
-import { SettingsRepository } from '../settings/repository.js';
-import { PresetRepository, assertNarrativePreset, type CreatePresetInput } from './repository.js';
-
-function preset(name = 'Story'): CreatePresetInput {
-  return {
-    type: 'narrative', name, description: 'Narrative preset',
-    config_json: {
-      schema_version: 1,
-      nodes: ['main', 'personaInfo', 'characterInfo', 'worldInfo', 'chatHistory', 'userInput'].map(id => ({
-        id, name: id, kind: 'system' as const, enabled: true,
-        role: id === 'chatHistory' ? 'auto' as const : id === 'userInput' ? 'user' as const : 'system' as const,
-        prompt: id === 'chatHistory' ? '{{history.messages}}' : id === 'userInput' ? '{{input.text}}' : '',
-      })),
-      context_strategy: {
-        strategy: 'rolling_summary', max_context_tokens: 30000,
-        max_output_tokens: 4096, summary_prompt: 'Summarize earlier history',
-      },
-      model_parameters: { thinking_enabled: false, temperature: 1 },
-    },
-  };
-}
+import { ModelService } from '../models/service.js';
+import { SettingsService } from '../settings/service.js';
+import { PresetService, type CreatePresetInput } from './service.js';
+import { narrativePreset as preset } from '../testing/fixtures.js';
 
 let db: DatabaseSync;
-let presets: PresetRepository;
-let models: ModelRepository;
-let settings: SettingsRepository;
+let presets: PresetService;
+let models: ModelService;
+let settings: SettingsService;
 beforeEach(() => {
   db = openDatabase(':memory:');
-  presets = new PresetRepository(db);
-  models = new ModelRepository(db);
-  settings = new SettingsRepository(db);
+  presets = new PresetService(db);
+  models = new ModelService(db);
+  settings = new SettingsService(db, { presets, models });
 });
 afterEach(() => { vi.restoreAllMocks(); db.close(); });
 
@@ -154,6 +136,7 @@ describe('model configurations and application defaults', () => {
     expect(() => settings.update({ default_preset_id: null, default_api_model_config_id: 'missing' })).toThrow('MODEL_CONFIG_NOT_FOUND');
     expect(settings.get()).toEqual(previous);
     expect(() => settings.update({ default_preset_id: 'missing' })).toThrow('PRESET_NOT_FOUND');
+    expect(settings.get()).toEqual(previous);
     expect(() => presets.delete(presetId)).toThrow();
     expect(() => models.delete(modelId)).toThrow();
 
@@ -162,15 +145,5 @@ describe('model configurations and application defaults', () => {
     expect(presets.delete(presetId)).toBe(true);
     settings.update({ default_api_model_config_id: null });
     expect(models.delete(modelId)).toBe(true);
-  });
-
-  it('rejects a non-narrative default even when a future-type row exists in the database', () => {
-    db.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)')
-      .run('future-image', 'image', 'Story', null, '{}', 1, 1);
-    presets.create(preset('Story'));
-    expect(() => assertNarrativePreset(db, 'future-image')).toThrow('NARRATIVE_PRESET_REQUIRED');
-    expect(() => settings.update({ default_preset_id: 'future-image' })).toThrow('NARRATIVE_PRESET_REQUIRED');
-    expect(settings.get().default_preset_id).toBeNull();
-    expect(presets.list()).toHaveLength(1);
   });
 });

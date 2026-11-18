@@ -6,15 +6,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createApp, type AppOptions } from './app.js';
 import { openDatabase } from './database/connection.js';
 import { EventHub } from './events/event-hub.js';
-import { ModelRepository } from './models/repository.js';
-import { PresetRepository } from './presets/repository.js';
-import { SessionRepository } from './sessions/repository.js';
-import { SettingsRepository } from './settings/repository.js';
-import { StateRepository } from './state/repository.js';
-import { WorldFileStore } from './worlds/files.js';
-import { WorldRepository } from './worlds/repository.js';
+import { createServices } from './services.js';
 
-export type ServerOptions = Partial<AppOptions> & {
+export type ServerOptions = Partial<Pick<AppOptions, 'events' | 'canAccessSession'>> & {
   port?: number;
   dataRoot?: string;
   databasePath?: string;
@@ -32,19 +26,8 @@ export async function startServer({
   const root = resolve(dataRoot);
   const database = openDatabase(databasePath ?? join(root, 'database.sqlite'));
   try {
-    const repositories = {
-      presets: new PresetRepository(database),
-      models: new ModelRepository(database),
-      settings: new SettingsRepository(database),
-      worlds: new WorldRepository(database),
-      sessions: new SessionRepository(database),
-      state: new StateRepository(database),
-    };
-    const worldFiles = new WorldFileStore(root);
-    // The default local server checks persisted sessions. A custom access adapter may also enforce authorization.
-    const access = canAccessSession ?? ((sessionId: string) =>
-      sessionId === sessionId.trim() && sessionId.length > 0 && repositories.sessions.get(sessionId) !== null);
-    const app = createApp({ events, canAccessSession: access });
+    const services = createServices(database, root);
+    const app = createApp({ events, services, canAccessSession });
     const server = createServer(getRequestListener(app.fetch, { overrideGlobalObjects: false }));
     const listening = once(server, 'listening');
     try {
@@ -71,7 +54,7 @@ export async function startServer({
       }).finally(() => database.close());
       return closing;
     };
-    return { server, events, database, repositories, worldFiles, close };
+    return { server, events, services, close };
   } catch (error) {
     database.close();
     throw error;

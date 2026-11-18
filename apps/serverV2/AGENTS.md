@@ -1,15 +1,24 @@
 # Server V2
 
-- 按模块逐步迁移；当前实现事件、最小 HTTP 启动及存储基础，不预建 engine、任务管理或应用通知。
+- 按模块逐步迁移；当前实现事件、业务 HTTP 路由及存储 Service，不预建 engine、任务管理或应用通知。
+- 业务依赖严格单向 `route → service → repository`，不得跨层或反向。HTTP 适配器统一放在根 `routes/`；Service 不导入 route/http，Repository 不导入任何 Service。Route 处理 HTTP 输入输出与传输，Service 承担业务校验、规则及编排，Repository 处理本模块持久化。
+- presets、models、settings、worlds、sessions、state 均以 `service.ts` 为对外入口；跨模块只能调用 Service，公开类型也从 Service 导出。依赖由 `services.ts` 显式装配，禁止循环编排。
+- Repository 模块内私有，只由本模块 Service 使用；Route、启动入口及其他模块禁止导入、暴露 Repository。世界文件存储同样由 WorldService 对外提供能力。
+- Repository 禁止依赖其他模块 Repository，也禁止实现其他模块属主表或列的 SQL，包括查询、JOIN、存在性检查和更新。表归属：presets → presets；models → api_model_configs；settings → app_settings；worlds → worlds/world_tags；sessions → sessions/entries。
+- State 无独立持久化表，不设 Repository；StateService 编排 WorldService、SessionService 完成 scope 快照与消息状态继承。状态列的 SQL 归表所属模块，普通内容更新不能覆盖运行 state。
+- 连接由启动装配方创建和关闭，Repository 只借用连接；Service 构造时仅把连接传给私有 Repository，不保留连接、不写 SQL、不打开/关闭连接、不执行事务。
+- 不做跨模块强一致性事务、全局回滚或跨 Service 事务回调。单模块必要的多条 SQL 原子写入留在 Repository，例如世界内容和标签、entry 追加与 tip 推进；显式维护 updated_at，不新增触发器。数据库版本和 DDL 属于 database 基础设施。
+- 本期只支持线性叙事：appendEntry 只能接在当前 tip 后，显式 parent 不匹配时失败；追加、seq 分配与 tip 推进原子完成。不提供 setTip；getHistory 只读取当前线性历史。
+- 消息正文、历史关系、state、metrics 各自使用明确字段写入，禁止整行覆盖。状态 set 保存完整 scope 快照；NULL 继承前驱，显式空数组终止继承。
+- 仅开放已实现校验的预设类型；类型与配置统一在 PresetService 校验，引用存在性通过 Service 校验及数据库外键保证，不恢复 assertNarrativePreset。凭据字节不进入模型配置表。
 - 事件连接独立于业务执行。业务发布完整事件；连接层不得查询 Runtime、数据库或决定业务终态。
 - 会话运行完成、失败、停止均不关闭 SSE；断开连接只取消订阅，不取消业务。
-- 事件不持久化或回放。接入路由时由调用方负责会话存在性、访问校验及业务结果查询。
-- 事件仅包含 `event` 和 `data`；不生成事件 id，不输出 SSE `id:` 字段。
-- 路由通过 `canAccessSession` 检查会话；启动装配默认接入真实 SessionRepository，裸应用未接入时返回 503。测试夹具不得成为启动入口的默认会话存储。
+- 事件不持久化或回放；仅包含 `event` 和 `data`，不生成事件 id，不输出 SSE `id:` 字段。
+- 会话范围路由通过 SessionService 检查真实会话，再执行可选 canAccessSession；等待后先检查关闭信号，再确认会话仍存在。未装配 Service 时返回 503。访问适配器不能代替会话存在性检查。
+- 普通 HTTP 响应统一 `{ success, errorCode, errorMessage, data }`：成功 errorCode=null、errorMessage=""，业务结果放 data；失败使用 errors.ts 注册的 code/message、data=null。status 保留正确的 2xx/4xx/5xx；未知异常不泄漏 SQL、路径或堆栈。
+- routes 使用 http/response.ts 的统一 success/errorHandler；JSON 正文和 query 的传输校验在 route/helper，业务校验在 Service。SSE 和文件下载成功响应不包络，开始传输前的错误走统一 JSON 失败响应。
+- 当前状态 HTTP 为完整 scope 快照 GET/PUT；不把 PUT 冒充按路径 PATCH。消息计量仅由进程内 Service 写入；SSE 无公开发布接口。接口契约见 `../../docs/runtime/server-v2-http.md`。
 - V2 使用独立数据根目录和数据库，`user_version=1`；不导入旧 Server 的建表、恢复或计量结算逻辑，不自动改造或清空旧库。
-- Repository 随业务归属放置，共享启动装配方持有的连接；跨表写入用同步事务，显式维护 updated_at，不新增触发器。
-- 世界内容更新不覆盖运行 state；State 仅写运行状态；消息正文、历史关系、metrics 各自使用明确字段写入，禁止整行覆盖。
-- 仅开放已实现校验的预设类型；世界、会话和设置的预设引用目前必须为 narrative。凭据字节不进入模型配置表。
 - 世界文件本期提供固定路径和原件保存基础规则；ZIP 导入导出及 DB/文件协作随用例迁移。目标契约见 `../../plan/sr-server-v2-storage-v1.md`。
 - HTTP 集成测试使用真实回环端口、临时或内存数据库和业务侧 publish，不增加公开事件发布接口。关闭服务须结束 SSE/HTTP 后关闭自有数据库。
-- 运行本包测试、类型检查和 lint；事件生命周期见 `../../docs/runtime/server-v2-events.md`。
+- 运行本包测试、类型检查和 lint；lint 检查模块唯一出口、单向层级、连接生命周期、事务位置及 SQL 表归属。事件生命周期见 `../../docs/runtime/server-v2-events.md`。

@@ -1,18 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { constants, type Stats } from 'node:fs';
-import { lstat, mkdir, open, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
-import { join, resolve, sep } from 'node:path';
+import { lstat, mkdir, open, readdir, realpath, rename, rm, writeFile, type FileHandle } from 'node:fs/promises';
+import { basename, join, resolve, sep } from 'node:path';
+import { Readable } from 'node:stream';
+import { AppError } from '../errors.js';
 
 export type WorldPaths = { root: string; source: string; package: string };
 export type OriginalFormat = 'json' | 'zip';
 export type WorldOriginal = { format: OriginalFormat; bytes: Uint8Array };
 export type PackageFile = { path: string; stat: Stats };
+export type WorldDownload = { body: ReadableStream<Uint8Array>; filename: string; size: number };
 const sourceLimits: Record<OriginalFormat, number> = { json: 10 * 1024 * 1024, zip: 256 * 1024 * 1024 };
 const sourceWrites = new Map<string, Promise<void>>();
 
 /** Generated IDs are UUIDs; explicit IDs must be safe on case-insensitive filesystems too. */
 export function assertWorldId(id: string): void {
-  if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,127}$/.test(id)) throw new Error('INVALID_WORLD_ID');
+  if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,127}$/.test(id)) throw new AppError('INVALID_WORLD_ID');
 }
 
 export function getWorldPaths(dataRoot: string, worldId: string): WorldPaths {
@@ -23,7 +26,7 @@ export function getWorldPaths(dataRoot: string, worldId: string): WorldPaths {
 
 /** The export name comes from the current world name, never an original upload filename. */
 export function exportFilename(worldName: string): string {
-  if (typeof worldName !== 'string') throw new Error('INVALID_WORLD_NAME');
+  if (typeof worldName !== 'string') throw new AppError('INVALID_WORLD_NAME');
   let stem = worldName.trim().replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '_').replace(/[. ]+$/g, '');
   if (!stem || stem === '.' || stem === '..') stem = 'world';
   if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(stem)) stem = '_' + stem;
@@ -36,11 +39,38 @@ function missing(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
+type InvalidFileCode = 'INVALID_WORLD_ORIGINAL' | 'INVALID_WORLD_PACKAGE_FILE';
+type MissingFileCode = 'WORLD_ORIGINAL_NOT_FOUND' | 'WORLD_PACKAGE_FILE_NOT_FOUND';
+
+async function openVerified(path: string, expected: Stats, invalidCode: InvalidFileCode, missingCode: MissingFileCode) {
+  let file: FileHandle | undefined;
+  try {
+    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = await file.stat();
+    if (!stat.isFile() || stat.dev !== expected.dev || stat.ino !== expected.ino) throw new AppError(invalidCode);
+    return { file, stat };
+  } catch (error) {
+    await file?.close();
+    if (missing(error)) throw new AppError(missingCode);
+    if (error instanceof Error && 'code' in error && error.code === 'ELOOP') throw new AppError(invalidCode);
+    throw error;
+  }
+}
+
+function download(file: FileHandle, stat: Stats, filename: string, signal?: AbortSignal): WorldDownload {
+  const stream = file.createReadStream({ autoClose: true, signal, highWaterMark: 64 * 1024 });
+  // Bound buffering in bytes; cancellation, errors and EOF close the file handle.
+  const body = Readable.toWeb(stream, {
+    strategy: { highWaterMark: 64 * 1024, size: (chunk: Uint8Array) => chunk.byteLength },
+  }) as ReadableStream<Uint8Array>;
+  return { body, filename, size: stat.size };
+}
+
 function packageSegments(path: string): string[] {
-  if (typeof path !== 'string' || !path || /[\\:\u0000-\u001f\u007f]/.test(path)) throw new Error('INVALID_WORLD_PACKAGE_PATH');
+  if (typeof path !== 'string' || !path || /[\\:\u0000-\u001f\u007f]/.test(path)) throw new AppError('INVALID_WORLD_PACKAGE_PATH');
   const parts = path.split('/');
   if (parts.some(part => !part || part === '.' || part === '..' || Buffer.byteLength(part, 'utf8') > 255)) {
-    throw new Error('INVALID_WORLD_PACKAGE_PATH');
+    throw new AppError('INVALID_WORLD_PACKAGE_PATH');
   }
   return parts;
 }
@@ -80,7 +110,7 @@ export class WorldFileStore {
         });
       }
       const stat = await lstat(directory);
-      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('INVALID_WORLD_DIRECTORY');
+      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new AppError('INVALID_WORLD_DIRECTORY');
     }
     return directory;
   }
@@ -91,23 +121,23 @@ export class WorldFileStore {
       const path = join(source, 'original.' + format);
       const stat = await lstat(path).catch(error => { if (missing(error)) return null; throw error; });
       if (!stat) continue;
-      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('INVALID_WORLD_ORIGINAL');
-      if (found) throw new Error('AMBIGUOUS_WORLD_ORIGINAL');
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new AppError('INVALID_WORLD_ORIGINAL');
+      if (found) throw new AppError('AMBIGUOUS_WORLD_ORIGINAL');
       found = { format, path, stat };
     }
     return found;
   }
 
   async saveOriginal(worldId: string, format: OriginalFormat, bytes: Uint8Array): Promise<void> {
-    if (format !== 'json' && format !== 'zip') throw new Error('INVALID_WORLD_ORIGINAL_FORMAT');
+    if (format !== 'json' && format !== 'zip') throw new AppError('INVALID_WORLD_ORIGINAL_FORMAT');
     if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0 || bytes.byteLength > sourceLimits[format]) {
-      throw new Error('INVALID_WORLD_ORIGINAL_SIZE');
+      throw new AppError('INVALID_WORLD_ORIGINAL_SIZE');
     }
     const source = await this.directory(worldId, 'source', true);
     await withSourceWrite(source, async () => {
       const current = await this.originalAt(source);
       // Switching formats is a future import policy, not a partially atomic two-file replacement.
-      if (current && current.format !== format) throw new Error('WORLD_SOURCE_FORMAT_CONFLICT');
+      if (current && current.format !== format) throw new AppError('WORLD_SOURCE_FORMAT_CONFLICT');
       const temporary = join(source, '.original-' + randomUUID());
       try {
         await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 });
@@ -118,39 +148,74 @@ export class WorldFileStore {
     });
   }
 
-  async readOriginal(worldId: string): Promise<WorldOriginal | null> {
+  private async openOriginalFile(worldId: string): Promise<{ file: FileHandle; stat: Stats; format: OriginalFormat } | null> {
     const source = await this.directory(worldId, 'source').catch(error => { if (missing(error)) return null; throw error; });
     if (source === null) return null;
     const original = await this.originalAt(source);
     if (!original) return null;
-    const file = await open(original.path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    try {
-      const stat = await file.stat();
-      if (!stat.isFile() || stat.size === 0 || stat.size > sourceLimits[original.format]) throw new Error('INVALID_WORLD_ORIGINAL_SIZE');
-      return { format: original.format, bytes: await file.readFile() };
-    } finally {
+    const { file, stat } = await openVerified(original.path, original.stat, 'INVALID_WORLD_ORIGINAL', 'WORLD_ORIGINAL_NOT_FOUND');
+    if (stat.size === 0 || stat.size > sourceLimits[original.format]) {
       await file.close();
+      throw new AppError('INVALID_WORLD_ORIGINAL_SIZE');
+    }
+    return { file, stat, format: original.format };
+  }
+
+  async readOriginal(worldId: string): Promise<WorldOriginal | null> {
+    const original = await this.openOriginalFile(worldId);
+    if (!original) return null;
+    try {
+      return { format: original.format, bytes: await original.file.readFile() };
+    } finally {
+      await original.file.close();
+    }
+  }
+
+  async openOriginal(worldId: string, signal?: AbortSignal): Promise<WorldDownload | null> {
+    const original = await this.openOriginalFile(worldId);
+    if (!original) return null;
+    try {
+      return download(original.file, original.stat, 'original.' + original.format, signal);
+    } catch (error) {
+      await original.file.close();
+      throw error;
     }
   }
 
   async resolvePackageFile(worldId: string, relativePath: string): Promise<PackageFile> {
     const parts = packageSegments(relativePath);
-    const root = await this.directory(worldId, 'package');
-    let current = root;
-    let stat: Stats | undefined;
-    for (let index = 0; index < parts.length; index++) {
-      const normalized = parts[index]!.normalize('NFC');
-      const matches = (await readdir(current)).filter(name => name.normalize('NFC') === normalized);
-      if (!matches.length) throw Object.assign(new Error('WORLD_PACKAGE_FILE_NOT_FOUND'), { code: 'ENOENT' });
-      if (matches.length !== 1) throw new Error('AMBIGUOUS_WORLD_PACKAGE_PATH');
-      current = join(current, matches[0]!);
-      stat = await lstat(current);
-      if (stat.isSymbolicLink() || (index < parts.length - 1 ? !stat.isDirectory() : !stat.isFile())) {
-        throw new Error('INVALID_WORLD_PACKAGE_FILE');
+    try {
+      const root = await this.directory(worldId, 'package');
+      let current = root;
+      let stat: Stats | undefined;
+      for (let index = 0; index < parts.length; index++) {
+        const normalized = parts[index]!.normalize('NFC');
+        const matches = (await readdir(current)).filter(name => name.normalize('NFC') === normalized);
+        if (!matches.length) throw new AppError('WORLD_PACKAGE_FILE_NOT_FOUND');
+        if (matches.length !== 1) throw new AppError('AMBIGUOUS_WORLD_PACKAGE_PATH');
+        current = join(current, matches[0]!);
+        stat = await lstat(current);
+        if (stat.isSymbolicLink() || (index < parts.length - 1 ? !stat.isDirectory() : !stat.isFile())) {
+          throw new AppError('INVALID_WORLD_PACKAGE_FILE');
+        }
       }
+      const actual = await realpath(current);
+      if (!actual.startsWith(root + sep)) throw new AppError('INVALID_WORLD_PACKAGE_PATH');
+      return { path: actual, stat: stat! };
+    } catch (error) {
+      if (missing(error)) throw new AppError('WORLD_PACKAGE_FILE_NOT_FOUND');
+      throw error;
     }
-    const actual = await realpath(current);
-    if (!actual.startsWith(root + sep)) throw new Error('INVALID_WORLD_PACKAGE_PATH');
-    return { path: actual, stat: stat! };
+  }
+
+  async openPackageFile(worldId: string, relativePath: string, signal?: AbortSignal): Promise<WorldDownload> {
+    const resolved = await this.resolvePackageFile(worldId, relativePath);
+    const { file, stat } = await openVerified(resolved.path, resolved.stat, 'INVALID_WORLD_PACKAGE_FILE', 'WORLD_PACKAGE_FILE_NOT_FOUND');
+    try {
+      return download(file, stat, basename(resolved.path), signal);
+    } catch (error) {
+      await file.close();
+      throw error;
+    }
   }
 }

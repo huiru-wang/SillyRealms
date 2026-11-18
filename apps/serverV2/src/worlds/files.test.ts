@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exportFilename, getWorldPaths, WorldFileStore } from './files.js';
 
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, rename: vi.fn(actual.rename) };
+  return { ...actual, open: vi.fn(actual.open), rename: vi.fn(actual.rename) };
 });
 
 let root: string;
@@ -90,6 +90,24 @@ describe('fixed world file layout', () => {
     await expect(files.resolvePackageFile('world-one', 'assets/link.txt')).rejects.toThrow('INVALID_WORLD_PACKAGE_FILE');
     await symlink(root, join(packageRoot, 'linked'));
     await expect(files.resolvePackageFile('world-one', 'linked/outside.txt')).rejects.toThrow('INVALID_WORLD_PACKAGE_FILE');
+  });
+
+  it('closes streaming handles after completion and cancellation', async () => {
+    await files.saveOriginal('world-one', 'json', bytes('{"original":true}'));
+    const original = await files.openOriginal('world-one');
+    const originalHandle = await vi.mocked(open).mock.results.at(-1)!.value;
+    expect(original?.filename).toBe('original.json');
+    expect(await new Response(original!.body).text()).toBe('{"original":true}');
+    await vi.waitFor(() => expect(originalHandle.fd).toBe(-1));
+
+    const packageRoot = files.paths('world-one').package;
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(join(packageRoot, 'large.mp4'), Buffer.alloc(1024 * 1024));
+    const media = await files.openPackageFile('world-one', 'large.mp4');
+    const mediaHandle = await vi.mocked(open).mock.results.at(-1)!.value;
+    expect(media.size).toBe(1024 * 1024);
+    await media.body.cancel();
+    await vi.waitFor(() => expect(mediaHandle.fd).toBe(-1));
   });
 
   it('rejects symlinked world-owned directories and source files', async () => {

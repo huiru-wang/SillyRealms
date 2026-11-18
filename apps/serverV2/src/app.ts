@@ -1,34 +1,46 @@
 import { Hono } from 'hono';
 import type { EventHub } from './events/event-hub.js';
-import { createSessionEventsResponse } from './events/session-events.js';
+import type { SessionAccessCheck } from './http/session-access.js';
+import { errorHandler, failure, success } from './http/response.js';
+import { createModelRoutes } from './routes/models.js';
+import { createPresetRoutes } from './routes/presets.js';
+import { createSessionRoutes } from './routes/sessions.js';
+import { createSettingsRoutes } from './routes/settings.js';
+import { createStateRoutes } from './routes/state.js';
+import { createWorldRoutes } from './routes/worlds.js';
+import type { Services } from './services.js';
 
 export type AppOptions = {
   events: EventHub;
-  // True means the session exists and this request may access it.
-  canAccessSession?: (sessionId: string, request: Request) => boolean | Promise<boolean>;
+  services?: Services;
+  canAccessSession?: SessionAccessCheck;
 };
 
-export function createApp({ events, canAccessSession }: AppOptions) {
+export function createApp({ events, services, canAccessSession }: AppOptions) {
   const app = new Hono();
   const shutdown = new AbortController();
   app.use('*', async (c, next) => {
-    if (shutdown.signal.aborted) return c.json({ errorCode: 'SERVER_SHUTTING_DOWN' }, 503);
+    if (shutdown.signal.aborted) return failure(c, 'SERVER_SHUTTING_DOWN');
     await next();
   });
-  app.onError(() => new Response(JSON.stringify({ errorCode: 'INTERNAL_ERROR' }), {
-    status: 500, headers: { 'content-type': 'application/json' },
-  }));
-  app.notFound(c => c.json({ errorCode: 'NOT_FOUND' }, 404));
-  // Liveness only; the startup composition opens storage before accepting HTTP requests.
-  app.get('/health', c => c.json({ ok: true }));
-  app.get('/api/v1/sessions/:id/events', async c => {
-    if (!canAccessSession) return c.json({ errorCode: 'SESSION_ACCESS_UNAVAILABLE' }, 503);
-    const sessionId = c.req.param('id');
-    const allowed = await canAccessSession(sessionId, c.req.raw);
-    if (shutdown.signal.aborted) return c.json({ errorCode: 'SERVER_SHUTTING_DOWN' }, 503);
-    // Do not reveal whether an inaccessible session exists.
-    if (!allowed) return c.json({ errorCode: 'SESSION_NOT_FOUND' }, 404);
-    return createSessionEventsResponse(events, sessionId, c.req.raw.signal, shutdown.signal);
+  app.use('/api/*', async (c, next) => {
+    if (!services) return failure(c, 'SERVICE_UNAVAILABLE');
+    await next();
   });
+  app.onError(errorHandler);
+  app.notFound(c => failure(c, 'NOT_FOUND'));
+  app.get('/health', c => success(c, { ok: true }));
+  if (services) {
+    app.route('/api/v1/presets', createPresetRoutes(services.presets));
+    app.route('/api/v1/api-model-configs', createModelRoutes(services.models));
+    app.route('/api/v1/app-settings', createSettingsRoutes(services.settings));
+    app.route('/api/v1/worlds', createWorldRoutes(services.worlds));
+    app.route('/api/v1/sessions', createSessionRoutes({
+      sessions: services.sessions, events, canAccessSession, shutdownSignal: shutdown.signal,
+    }));
+    app.route('/api/v1', createStateRoutes({
+      state: services.state, sessions: services.sessions, canAccessSession, shutdownSignal: shutdown.signal,
+    }));
+  }
   return Object.assign(app, { shutdown: () => shutdown.abort() });
 }

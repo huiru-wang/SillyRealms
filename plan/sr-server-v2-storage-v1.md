@@ -1,11 +1,11 @@
 # Server V2 存储方案 v1
 
 - 日期：2026-11-18（Asia/Shanghai）。
-- 状态：存储基础已实施；目标 DDL 用于 V2 独立新库，不是旧 Server 的升级脚本。
+- 状态：存储 Service 与业务 HTTP 路由已实施；目标 DDL 用于 V2 独立新库，不是旧 Server 的升级脚本。
 - 实施位置：`apps/serverV2`，按业务模块逐步迁移，不预建 engine 或通用任务体系。
 - 本版已确认目标 DDL、精简 metrics 结构、世界文件推导及导入导出语义；世界 ZIP 业务流程和叙事执行不在本期存储范围。
 - 与旧文档的关系：`sr-server-architecture.md`、`sr-narrative-state-migration-v1.md` 中有关旧 v7 原样保留、engine/tasks 和事件目录的安排，不作为 V2 本次存储实施要求。当前事件模块位于 `apps/serverV2/src/events/`，不生成事件 ID。
-- 本期已建立数据库连接、各业务 Repository 和启动装配；验证使用内存或临时库，不改造旧用户数据库。
+- 本期已建立数据库连接、各业务 Service、模块私有 Repository 和启动装配；验证使用内存或临时库，不改造旧用户数据库。
 
 ## 1. 已确认决策
 
@@ -20,6 +20,8 @@
 | 标签 | 只有世界支持标签，采用一张 `world_tags` 表；取消预设标签及原通用标签关联表 |
 | 预设 | 增加 `type`；`context_strategy`、`model_parameters` 纳入各类型的 `config_json` |
 | 更新时间 | 不使用触发器，由所属 Repository 显式更新 |
+| 模块边界 | route → service → repository；跨模块仅通过 Service，Repository 仅操作本模块表 |
+| 叙事范围 | 本期线性追加，不开放分支或独立切换 tip |
 
 以下取舍已随本次目标 DDL 一并确认：
 
@@ -30,42 +32,73 @@
 
 ## 2. 模块及数据所有权
 
-Repository 放在所属业务模块内，提供具体的数据访问函数；不按表集中建立万能 Repository，也不先拆接口与多种实现。
+业务调用链固定为 `route → service → repository`。每个业务模块以 `service.ts` 对外提供能力；跨模块通过 Service 编排，Repository 是模块内部实现。Route 处理 HTTP 输入输出，Service 承担业务校验与规则，Repository 负责所属表的 SQL 和编码。
 
 ```text
 apps/serverV2/src/
-  app.ts                    # HTTP 入口与访问检查
-  server.ts                 # 连接、Repository 与 EventHub 的启动装配
-  events/                   # 已实现；不依赖数据库
+  app.ts                    # HTTP 装配
+  server.ts                 # 数据库、Service 与 EventHub 生命周期
+  services.ts               # 显式装配业务 Service 依赖
+  routes/                   # 六个业务 HTTP 适配器，只调用 Service
+  http/                     # 统一响应与会话访问检查
+  errors.ts                 # 错误码、中文信息及 HTTP 状态
+  events/                   # 事件传输基础设施，不依赖数据库
   database/
     connection.ts           # V2 连接、结构版本、DDL 与事务
   presets/
-    repository.ts           # 类型化预设
-    schema.ts               # 已开放类型的配置和模板校验
+    service.ts              # 预设公开能力与配置校验
+    repository.ts           # 内部预设存储
+    schema.ts               # 已开放类型的配置和模板规则
+    types.ts
   models/
-    repository.ts           # 模型连接配置、凭据引用
+    service.ts              # 模型配置公开能力
+    repository.ts
+    types.ts
   settings/
-    repository.ts           # 应用默认选择
+    service.ts              # 默认选择及预设/模型引用编排
+    repository.ts
+    types.ts
   worlds/
-    repository.ts           # 世界定义、配置引用、world_tags
-    files.ts                # 固定路径、原件字节保存与资源路径检查
+    service.ts              # 世界、标签、世界状态存取及文件基础能力
+    repository.ts
+    files.ts                # 内部文件存储与路径规则
+    types.ts
   sessions/
-    repository.ts           # 会话、消息、摘要、历史关系和 entry 计量
+    service.ts              # 会话、线性历史、消息、计量与状态存取
+    repository.ts
+    schema.ts
+    types.ts
   state/
-    repository.ts           # 三种 scope 的状态快照读写
+    service.ts              # scope 快照及继承，通过 World/Session Service 存取
 ```
 
-以上模块已建立，测试与实现放在对应模块内。当前开放能力以代码为准；Repository 的存在不表示对应 HTTP 用例或模型执行已经迁入。
+SQL 表归属固定如下：
 
-- 一个业务 Repository 可以跨表；同一表的不同字段可以归不同业务能力，但不得整行覆盖其他能力的数据。
-- World 管理状态定义；State 管理解释规则和运行状态。世界/会话首次创建时，可以将状态模块算好的初值一起 INSERT。
-- 会话拥有 entries 的内容和历史关系；计量使用独立 `setMetrics` 写入，按本版精简结构校验，不复制旧 UsageStore。
-- 模块通过公开能力协作。世界页面的会话列表、预设详情、模型详情由接口用例组合，不放入 WorldRepository。
-- 数据库连接由启动装配方创建和关闭，Repository 不自行持有另一份连接生命周期。
+| 模块 | Repository 可操作的表 |
+|---|---|
+| presets | presets |
+| models | api_model_configs |
+| settings | app_settings |
+| worlds | worlds、world_tags |
+| sessions | sessions、entries |
+| state | 无独立表，不建立 Repository |
+
+- Repository 禁止依赖其他模块 Repository，也禁止直接实现其他模块属主表或列的 SQL，包括查询、JOIN、存在性检查和写入。Route 和启动入口同样不能导入 Repository。
+- Service 之间按显式依赖编排：Settings/World 调用 Preset/Model；Session 调用 World/Preset/Model；State 调用 World/Session。禁止循环编排；公开类型从所属 Service 导出。
+- 层级严格单向；Repository 不依赖 Service，Service 不依赖 route/http。Service 不保留连接或执行事务，构造时只把启动装配传入的连接交给私有 Repository。SQL 与 JSON 存储编码留在所属 Repository。
+- 跨模块不做强一致性事务、全局回滚或事务回调。单模块多条 SQL 的必要原子操作留在所属 Repository；数据库初始化与 DDL 属于 database 基础设施。
+- World 管理状态定义；State 管理 scope 与继承语义。worlds.state 由 WorldRepository 存取，sessions.state 和 entries.state 由 SessionRepository 存取；StateService 通过对应 Service 调用，不能绕过模块边界。
+- 世界/会话首次创建可以同时保存状态初值。普通内容更新不覆盖运行 state；状态、正文和计量分别写入各自字段。
+- 本期只做线性叙事。appendEntry 只接当前 tip，显式 parent 不匹配时报 TIP_CONFLICT；追加、seq 分配与 tip 推进原子完成。删除 setTip，getHistory 只读取当前线性历史。保留 parent_id、tip_entry_id 和 seq，不改 DDL。
+- 会话拥有 entries 的内容、历史关系及计量；setMetrics 使用精简结构校验，不复制旧 UsageStore。
+- 数据库由启动装配方创建和关闭，各模块共享同一连接；startServer 仅公开 services、events、server、close，不暴露数据库或 Repository。
+- 模块内部测试可验证存储细节，业务功能测试经 Service 调用；lint 检查导入边界、SQL 分层和表归属。
+
+当前 HTTP 已覆盖预设/模型/默认设置/世界/会话 CRUD、标签、消息历史、scope 快照、SSE 与原件/包资源下载。普通 JSON 统一响应包络，SSE 和下载保留原始格式；契约见 `../docs/runtime/server-v2-http.md`。模型执行、完整世界 ZIP 业务及按路径状态更新仍按后续用例迁移。
 
 ## 3. 世界文件：固定路径，不保存 source_file_path
 
-世界文件完整导入导出业务不在本期范围。本期 `worlds/files.ts` 只落实目录推导、原件字节保存和资源路径检查，供后续用例调用。
+世界文件完整导入导出业务不在本期范围。本期 `worlds/files.ts` 只落实目录推导、原件字节保存和资源路径检查，通过 WorldService 对外提供。
 
 ### 3.1 固定布局
 
@@ -88,7 +121,7 @@ apps/serverV2/src/
 - **导入**：保留原始文件字节；当前业务尚无消费原件的流程，也不依赖原始上传文件名。
 - **导出**：从 DB 读取当前世界卡和当前标签，结合 `package/` 中当前资源构建 ZIP。导出反映世界现在的内容，原件不作为导出数据源。
 - **导出文件名**：`world_name.zip`，其中 world_name 为当前世界名称；仅处理路径分隔符、控制字符等不适合作为文件名的字符，不按原始文件名命名。
-- 原件下载、ZIP 校验/编解码、DB 与文件更新的一致性及对应 HTTP 用例后续实施；本期不将文件辅助能力宣称为完整导入导出。
+- 原件下载与包资源读取已通过 HTTP 提供原始文件流，原件固定名为 original.json/original.zip。ZIP 校验/编解码和 DB/文件导入导出用例后续实施，当前原件下载不等于按当前世界重建 ZIP。
 - 删除 source_sha256 后不恢复旧持久化哈希比对；后续导入仍须做包结构、路径和内容校验，告警仅作为当次操作结果。
 
 ## 4. 状态字段的含义
@@ -102,7 +135,7 @@ apps/serverV2/src/
 
 本版不删除 global scope，也不将运行中的当前值反写为世界卡初值。用户询问 state 的用途，不等于确认取消该能力。
 
-本版固定保留 worlds/sessions 的 JSON object 和 entries 的 JSON array。StateRepository 负责专属字段写入和消息祖先继承；显式空数组表示已记录的空快照，不继续继承。状态定义解释、规则计算和模型状态更新留给后续服务层。
+本版固定保留 worlds/sessions 的 JSON object 和 entries 的 JSON array。StateService 负责 scope 快照与消息前驱继承，通过 WorldService/SessionService 存取；SQL 位于相应模块的 Repository。显式空数组表示已记录的空快照，不继续继承。set 保存完整 scope 快照；状态定义解释、按路径更新、规则计算及模型状态更新随业务后续迁入。
 
 本版删除固定类型标识 `spec`，保留世界卡格式版本 `spec_version`。数据库结构版本与世界卡格式版本分别管理；后续导入导出由世界模块按此契约解析。
 
@@ -165,7 +198,7 @@ apps/serverV2/src/
 
 本期存储契约：
 
-- requestId 区分真实模型调用，不是 SSE 事件 ID；同一 entry 内及同一会话所有分支/entry 之间不得重复归属。
+- requestId 区分真实模型调用，不是 SSE 事件 ID；同一 entry 内及同一会话所有 entry 之间不得重复归属。
 - 整列 NULL 表示没有计量记录；requests 内 usage 为 null 表示调用存在但未取得提供方计量。缺失数据不补零。
 - status 为 completed、failed、cancelled；durationMs、firstTextMs 按实际可用性记录，并校验非负有限数值及先后关系。
 - inputTokens 延续旧归一口径，已包含 cacheReadTokens/cacheWriteTokens；缓存字段是其细分，不额外加总。totalTokens 保留提供方值，不由存储层重新推导。
@@ -195,7 +228,7 @@ apps/serverV2/src/
 - 具体配置由 type 选择校验规则，不能把所有类型的字段堆进一份可选字段集合。
 - 仅开放已实现校验和执行能力的类型；增加 type 列不代表本期实现了生图。
 - 本版叙事 config_json 使用 `schema_version: 1`，包含 nodes、context_strategy、model_parameters；配置和模板规则在 presets/schema.ts 按类型校验。
-- 世界、会话、应用中的 preset 引用表示叙事默认选择，写入时检查 type=narrative；本版保持当前字段名。
+- 世界、会话、应用中的 preset 引用通过 PresetService 检查记录存在，并保留数据库外键约束；类型与配置统一在 PresetService 校验，引用写入不增加 narrative 类型断言；本版保持当前字段名。
 - model_parameters 表示该预设的生成参数；模型连接、提供方及凭据引用仍归模型配置模块。
 
 ## 8. 目标 DDL（已实施）
@@ -324,8 +357,8 @@ parent_id、tip_entry_id 的同会话、祖先链与无环约束由历史操作�
 - 默认数据根目录为仓库下 `runtime/server-v2/`，CLI 可通过 `SERVER_V2_DATA_ROOT` 指定；库文件为 `<dataRoot>/database.sqlite`。
 - V2 使用 `user_version=1` 和独立 `application_id=0x53525632`，打开既有库时检查标识、版本与目标结构。
 - 只有全空且未设版本/标识的数据库可以初始化。旧库、其他应用库或缺损 V2 结构明确报错，不自动重置、修复或迁移。
-- 连接启用外键、WAL 和 busy_timeout；所有 Repository 共用启动装配方持有的连接，跨表写入使用可嵌套的同步事务。
-- `server.ts` 默认用真实 SessionRepository 检查 SSE 会话存在性；事件传输层仍不查询数据库。自定义访问适配器可接入额外权限规则。
+- 连接启用外键、WAL 和 busy_timeout；所有 Repository 借用启动装配方持有的连接。仅在所属 Repository 内对本模块数据做必要原子写入，不建立跨模块强一致性事务。
+- 会话 Route 经 SessionService 检查 SSE 会话存在性；事件传输层仍不查询数据库。自定义访问适配器可接入额外权限规则，但不能代替真实会话检查。
 - 监听启动失败会关库；服务关闭时先结束 SSE 和 HTTP，再关闭数据库，close 可重复调用。
 - 新库仅初始化空默认选择的 app_settings 单例，不复制旧预设、用户配置、UsageStore 或 recoverInterrupted。
 - 内容变更显式更新 updated_at；状态写入只更新目标 scope 所在行，计量写入不改显示 timestamp 或会话列表时间。
@@ -336,15 +369,16 @@ parent_id、tip_entry_id 的同会话、祖先链与无环约束由历史操作�
 已完成：
 
 1. **数据库基础**：独立 V2 版本、目标 7 表、默认设置单例、外键/JSON 约束、事务及无损 JSON 编码。
-2. **预设、模型、设置**：类型化叙事配置、模型凭据引用、默认选择；叙事引用与删除限制。
+2. **预设、模型、设置**：各模块 Service、类型化叙事配置、模型凭据引用、默认选择与引用编排；Repository 模块内私有。
 3. **世界**：世界内容、配置引用、world_tags、目录推导和原件字节基础操作；内容更新不覆盖运行状态。
-4. **会话与消息**：会话读写、消息/摘要、父子历史和分支 tip；追加 entry、seq 分配与 tip 更新原子完成。
-5. **状态与计量**：三种 scope 快照、NULL 沿祖先继承、独立计量写入及同会话 requestId 唯一归属。
-6. **启动装配**：真实存储会话检查、共享连接生命周期、重启读取和 HTTP/SSE 集成。
+4. **会话与消息**：会话 Service、消息/摘要和线性历史；仅当前 tip 可追加，entry、seq 分配与 tip 推进原子完成。
+5. **状态与计量**：StateService 编排三种 scope 快照及 NULL 沿前驱继承，状态 SQL 归所属 World/Session Repository；独立计量写入及同会话 requestId 唯一归属。
+6. **启动装配与边界**：显式 Service 依赖图、严格三层单向调用、启动连接生命周期、重启读取和 HTTP/SSE 集成；lint 检查唯一模块出口、反向依赖、事务位置和 SQL 归属。
+7. **HTTP**：六个业务适配器及统一 success/errorCode/errorMessage/data 响应；错误码与中文信息绑定，SSE/文件成功响应保留原始流。
 
 验证命令：`pnpm --filter @sillyrealms/server-v2 test`、`typecheck`、`lint`。测试只使用内存或临时 SQLite、临时文件目录与回环 HTTP，不访问真实模型或旧用户数据库。
 
-后续仍需独立实施：世界 ZIP 导入导出和 CRUD HTTP 用例、世界卡领域解析、状态规则解释与更新服务、叙事/模型调用迁移、无 entry 请求的计量落点与查询、累计计量及上下文估算读取位置、旧数据导入和 Studio 切换。这里没有通过建表承诺这些能力已完成。
+后续仍需独立实施：世界 ZIP 导入导出业务、世界卡领域解析、状态规则解释及按路径更新、叙事/模型调用迁移、无 entry 请求的计量落点与查询、累计计量及上下文估算读取位置、旧数据导入和 Studio 切换。这里没有通过建表承诺这些能力已完成。
 
 ## 11. 旧实现核对依据
 
