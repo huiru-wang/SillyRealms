@@ -1,5 +1,9 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventHub } from './events/event-hub.js';
@@ -8,9 +12,15 @@ import { startServer } from './server.js';
 type RunningServer = Awaited<ReturnType<typeof startServer>>;
 const servers: RunningServer[] = [];
 const clients: AbortController[] = [];
+const directories: string[] = [];
+function temporaryDirectory() {
+  const directory = mkdtempSync(join(tmpdir(), 'sr-v2-server-'));
+  directories.push(directory);
+  return directory;
+}
 
 async function launch(options: Parameters<typeof startServer>[0] = {}) {
-  const running = await startServer({ ...options, port: 0 });
+  const running = await startServer({ databasePath: ':memory:', ...options, port: 0 });
   servers.push(running);
   const address = running.server.address();
   if (!address || typeof address === 'string') throw new Error('Expected a TCP listener');
@@ -47,20 +57,79 @@ afterEach(async () => {
   for (const controller of clients.splice(0)) controller.abort();
   await Promise.all(servers.splice(0).map(server => server.close()));
   vi.restoreAllMocks();
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
 describe('Server V2 over HTTP', () => {
-  it('starts without storage and reports unavailable access checks instead of accepting fake sessions', async () => {
+  it('opens independent storage and rejects missing sessions instead of accepting fake sessions', async () => {
     const { url } = await launch();
     const health = await fetch(`${url}/health`);
     expect(health.status).toBe(200);
     expect(await health.json()).toEqual({ ok: true });
     const events = await fetch(`${url}/api/v1/sessions/anything/events`);
-    expect(events.status).toBe(503);
-    expect(await events.json()).toEqual({ errorCode: 'SESSION_ACCESS_UNAVAILABLE' });
+    expect(events.status).toBe(404);
+    expect(await events.json()).toEqual({ errorCode: 'SESSION_NOT_FOUND' });
     const publish = await fetch(`${url}/api/v1/sessions/anything/events`, { method: 'POST' });
     expect(publish.status).toBe(404);
     await publish.body?.cancel();
+  });
+
+  it('uses persisted sessions after reopening and releases its database when HTTP closes', async () => {
+    const dataRoot = temporaryDirectory(), databasePath = join(dataRoot, 'database.sqlite');
+    const running = await launch({ dataRoot, databasePath });
+    const model = running.repositories.models.create({
+      name: 'Local model', provider_id: 'provider', model_id: 'actual-model', credential_ref: 'test-ref',
+    });
+    const preset = running.repositories.presets.create({
+      type: 'narrative', name: 'Story', config_json: {
+        schema_version: 1,
+        nodes: [
+          { id: 'main', name: 'Main', kind: 'system', role: 'system', enabled: true, prompt: '' },
+          { id: 'personaInfo', name: 'Persona', kind: 'system', role: 'system', enabled: true, prompt: '' },
+          { id: 'characterInfo', name: 'Characters', kind: 'system', role: 'system', enabled: true, prompt: '' },
+          { id: 'worldInfo', name: 'World', kind: 'system', role: 'system', enabled: true, prompt: '' },
+          { id: 'chatHistory', name: 'History', kind: 'system', role: 'auto', enabled: true, prompt: '{{history.messages}}' },
+          { id: 'userInput', name: 'Input', kind: 'system', role: 'user', enabled: true, prompt: '{{input.text}}' },
+        ],
+        context_strategy: { strategy: 'sliding_window', max_context_tokens: 30000, max_output_tokens: 4096, summary_prompt: 'Summarize' },
+        model_parameters: { thinking_enabled: false },
+      },
+    });
+    running.repositories.settings.update({ default_preset_id: preset.id, default_api_model_config_id: model.id });
+    const world = running.repositories.worlds.create({
+      name: 'Persistent world', spec_version: '0.1', characters_json: [{ id: 'player', name: 'Player' }],
+      openings_json: [], tags: ['test'], default_preset_id: preset.id, default_api_model_config_id: model.id,
+    });
+    const session = running.repositories.sessions.create({
+      world_id: world.id, preset_id: preset.id, api_model_config_id: model.id, user_character_id: 'player',
+    });
+    const entry = running.repositories.sessions.appendEntry(session.id, {
+      run_id: 'run-1', type: 'message', role: 'assistant', payload: { text: 'Saved story' }, state: [],
+    });
+    running.repositories.state.setSession(session.id, { gold: 12 });
+    const stream = await connect(running.url, session.id);
+    running.events.publish(session.id, { event: 'storage.ready', data: { entryId: entry.id } });
+    expect(await stream.readFrame()).toContain(entry.id);
+    await running.close();
+    expect(() => running.database.prepare('SELECT 1')).toThrow();
+
+    const reopened = await launch({ dataRoot, databasePath });
+    expect(reopened.repositories.sessions.getHistory(session.id).map(item => item.id)).toEqual([entry.id]);
+    expect(reopened.repositories.state.getSession(session.id)).toEqual({ gold: 12 });
+    expect(reopened.repositories.worlds.get(world.id)?.tags).toEqual(['test']);
+    expect(reopened.repositories.settings.get().default_preset_id).toBe(preset.id);
+    const restored = await connect(reopened.url, session.id);
+    reopened.events.publish(session.id, { event: 'after.restart', data: {} });
+    expect(await restored.readFrame()).toContain('after.restart');
+  });
+
+  it('releases storage if the HTTP listener cannot start', async () => {
+    const running = await launch();
+    const address = running.server.address();
+    if (!address || typeof address === 'string') throw new Error('Expected TCP address');
+    const close = vi.spyOn(DatabaseSync.prototype, 'close');
+    await expect(startServer({ port: address.port, databasePath: ':memory:' })).rejects.toMatchObject({ code: 'EADDRINUSE' });
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it('checks existence and access before subscribing, without exposing internal errors', async () => {
@@ -155,7 +224,7 @@ describe('Server V2 over HTTP', () => {
   it('runs the CLI entry and exits cleanly on SIGTERM', async () => {
     const child = spawn(process.execPath, ['--import', 'tsx', fileURLToPath(new URL('./server.ts', import.meta.url))], {
       cwd: fileURLToPath(new URL('..', import.meta.url)),
-      env: { ...process.env, SERVER_V2_PORT: '0' },
+      env: { ...process.env, SERVER_V2_PORT: '0', SERVER_V2_DATA_ROOT: temporaryDirectory() },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const exited = once(child, 'exit');
@@ -163,7 +232,7 @@ describe('Server V2 over HTTP', () => {
     child.stdout.on('data', chunk => { output += String(chunk); });
     child.stderr.on('data', chunk => { errors += String(chunk); });
     try {
-      await vi.waitFor(() => expect(output, errors).toMatch(/Server V2: http:\/\/127\.0\.0\.1:\d+/u), { timeout: 2500 });
+      await vi.waitFor(() => expect(output, errors).toMatch(/Server V2: http:\/\/127\.0\.0\.1:\d+/u), { timeout: 4000 });
       const url = output.match(/http:\/\/127\.0\.0\.1:\d+/u)![0];
       const health = await fetch(`${url}/health`);
       expect(await health.json()).toEqual({ ok: true });

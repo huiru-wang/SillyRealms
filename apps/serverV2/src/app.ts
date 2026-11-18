@@ -19,7 +19,7 @@ export function createApp({ events, canAccessSession }: AppOptions) {
     status: 500, headers: { 'content-type': 'application/json' },
   }));
   app.notFound(c => c.json({ errorCode: 'NOT_FOUND' }, 404));
-  // Liveness only: V2 does not connect to business storage yet.
+  // Liveness only; the startup composition opens storage before accepting HTTP requests.
   app.get('/health', c => c.json({ ok: true }));
   app.get('/api/v1/sessions/:id/events', async c => {
     if (!canAccessSession) return c.json({ errorCode: 'SESSION_ACCESS_UNAVAILABLE' }, 503);

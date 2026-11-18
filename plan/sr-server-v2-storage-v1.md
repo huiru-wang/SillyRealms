@@ -1,11 +1,11 @@
 # Server V2 存储方案 v1
 
 - 日期：2026-11-18（Asia/Shanghai）。
-- 状态：设计快照，未实施；DDL 是目标草案，不是当前数据库结构，也不是升级脚本。
+- 状态：存储基础已实施；目标 DDL 用于 V2 独立新库，不是旧 Server 的升级脚本。
 - 实施位置：`apps/serverV2`，按业务模块逐步迁移，不预建 engine 或通用任务体系。
-- 本版记录已确认的取舍，并明确仍需在对应模块实施前决定的细节。
+- 本版已确认目标 DDL、精简 metrics 结构、世界文件推导及导入导出语义；世界 ZIP 业务流程和叙事执行不在本期存储范围。
 - 与旧文档的关系：`sr-server-architecture.md`、`sr-narrative-state-migration-v1.md` 中有关旧 v7 原样保留、engine/tasks 和事件目录的安排，不作为 V2 本次存储实施要求。当前事件模块位于 `apps/serverV2/src/events/`，不生成事件 ID。
-- 本次仅新增本方案文件；未修改业务代码、用户配置或数据库。
+- 本期已建立数据库连接、各业务 Repository 和启动装配；验证使用内存或临时库，不改造旧用户数据库。
 
 ## 1. 已确认决策
 
@@ -21,10 +21,10 @@
 | 预设 | 增加 `type`；`context_strategy`、`model_parameters` 纳入各类型的 `config_json` |
 | 更新时间 | 不使用触发器，由所属 Repository 显式更新 |
 
-以下属于本版建议，不能误称为用户已单独确认的决定：
+以下取舍已随本次目标 DDL 一并确认：
 
 - 删除 `entries.branch_count`：当前实现只将前一个可见条目标记为 1，并非真实分支计数；保留父子历史关系。
-- 保留三种状态 scope 与格式版本信息；命名在本版暂沿用 `state`、`spec_version`，不自行扩大重命名范围。
+- 保留三种状态 scope 与格式版本信息；本版沿用 `state`、`spec_version`。
 - V2 使用独立数据库文件和独立结构版本，不让旧 Server 与 V2 对不同结构共用写入同一文件；旧数据导入单独安排。
 - 同类型预设名称唯一，采用 `UNIQUE(type, name)`。
 
@@ -34,64 +34,62 @@ Repository 放在所属业务模块内，提供具体的数据访问函数；不
 
 ```text
 apps/serverV2/src/
+  app.ts                    # HTTP 入口与访问检查
+  server.ts                 # 连接、Repository 与 EventHub 的启动装配
+  events/                   # 已实现；不依赖数据库
   database/
-    connection.ts           # 连接、结构版本与初始化入口
-  worlds/
-    repository.ts           # 世界定义、配置引用、world_tags
-    files.ts                # 世界文件固定路径与读写规则，迁移时再建立
-  sessions/
-    repository.ts           # 会话、消息、摘要、历史关系
+    connection.ts           # V2 连接、结构版本、DDL 与事务
   presets/
     repository.ts           # 类型化预设
+    schema.ts               # 已开放类型的配置和模板校验
   models/
-    repository.ts           # 模型连接配置
+    repository.ts           # 模型连接配置、凭据引用
   settings/
     repository.ts           # 应用默认选择
+  worlds/
+    repository.ts           # 世界定义、配置引用、world_tags
+    files.ts                # 固定路径、原件字节保存与资源路径检查
+  sessions/
+    repository.ts           # 会话、消息、摘要、历史关系和 entry 计量
   state/
-    repository.ts           # 状态读写，迁移状态模块时再建立
-  events/                   # 已实现；不依赖数据库
+    repository.ts           # 三种 scope 的状态快照读写
 ```
 
-以上为模块归属，不要求下一批一次创建全部目录。当前实际运行情况以代码为准。
+以上模块已建立，测试与实现放在对应模块内。当前开放能力以代码为准；Repository 的存在不表示对应 HTTP 用例或模型执行已经迁入。
 
 - 一个业务 Repository 可以跨表；同一表的不同字段可以归不同业务能力，但不得整行覆盖其他能力的数据。
 - World 管理状态定义；State 管理解释规则和运行状态。世界/会话首次创建时，可以将状态模块算好的初值一起 INSERT。
-- 会话拥有 entries 的内容和历史关系；计量字段的写入规则在计量能力迁移时确定，不因保留列就复制旧 UsageStore。
+- 会话拥有 entries 的内容和历史关系；计量使用独立 `setMetrics` 写入，按本版精简结构校验，不复制旧 UsageStore。
 - 模块通过公开能力协作。世界页面的会话列表、预设详情、模型详情由接口用例组合，不放入 WorldRepository。
 - 数据库连接由启动装配方创建和关闭，Repository 不自行持有另一份连接生命周期。
 
 ## 3. 世界文件：固定路径，不保存 source_file_path
 
-### 3.1 可直接确定的部分
+世界文件完整导入导出业务不在本期范围。本期 `worlds/files.ts` 只落实目录推导、原件字节保存和资源路径检查，供后续用例调用。
 
-世界目录由服务端数据根目录和世界 ID 确定，例如：
+### 3.1 固定布局
 
 ```text
 <dataRoot>/worlds/<worldId>/
-  source/                   # 可选的原始导入文件
-  package/                  # 提取或整理后的资源
+  source/
+    original.json           # JSON 原件；与 original.zip 最多存在一种
+    original.zip            # ZIP 原件
+  package/                  # 当前可用的组件和素材资源
 ```
 
-- 目录规则统一收口在世界文件模块，不由路由、Repository 各自拼接。
-- 使用服务端生成并校验的世界 ID；资源路径仍需限制在所属世界目录内。
-- 世界名称、上传文件名不参与世界根目录定位。
-- 导出包由当前世界内容和资源构建，不依赖原始文件名。
-- 不增加一个 JSON 元数据文件来变相保存已经决定删除的 path/kind/hash/warnings。
+- 世界目录由配置的数据根目录和服务端生成、校验后的世界 ID 推导；名称与上传文件名不参与定位。
+- 世界文件模块统一校验资源相对路径及符号链接，路径必须留在所属世界目录。
+- 不新增元数据文件来变相保存已删除的 path/kind/hash/warnings。
+- 原件读取仅检查两个固定候选名；两者同时存在视为存储异常。没有原件仍可构成有效世界。
+- 同格式原件通过临时文件和 rename 原子替换；失败保留旧原件。已有另一种格式时拒绝覆盖，跨格式替换不属于本期能力。
 
-### 3.2 源文件表示建议，待文件模块实施时定稿
+### 3.2 已确认的导入导出契约
 
-如果继续保留“下载原始文件”能力，可采用固定文件名：
-
-```text
-source/original.json        # JSON 原文件
-source/original.zip         # ZIP 原文件
-```
-
-同一世界最多保留其中一种；没有源文件也可以是有效世界。读取通过固定候选名确定格式，不能任意扫描后取第一个文件。两种文件同时存在应视为存储异常。原始上传文件名不再承诺保留。
-
-删除数据库路径字段只要求固定定位，不自动意味着取消原始字节保存；是否继续提供原文件下载，在迁移世界文件模块时明确。不得把重新导出的包称为原始文件。
-
-删除 source_sha256 后，不再执行旧的持久化哈希比对；导入时的包结构、路径和内容校验仍按实际需要保留。导入告警只作为当次操作结果，不长期挂在 worlds 上。
+- **导入**：保留原始文件字节；当前业务尚无消费原件的流程，也不依赖原始上传文件名。
+- **导出**：从 DB 读取当前世界卡和当前标签，结合 `package/` 中当前资源构建 ZIP。导出反映世界现在的内容，原件不作为导出数据源。
+- **导出文件名**：`world_name.zip`，其中 world_name 为当前世界名称；仅处理路径分隔符、控制字符等不适合作为文件名的字符，不按原始文件名命名。
+- 原件下载、ZIP 校验/编解码、DB 与文件更新的一致性及对应 HTTP 用例后续实施；本期不将文件辅助能力宣称为完整导入导出。
+- 删除 source_sha256 后不恢复旧持久化哈希比对；后续导入仍须做包结构、路径和内容校验，告警仅作为当次操作结果。
 
 ## 4. 状态字段的含义
 
@@ -104,9 +102,9 @@ source/original.zip         # ZIP 原文件
 
 本版不删除 global scope，也不将运行中的当前值反写为世界卡初值。用户询问 state 的用途，不等于确认取消该能力。
 
-为了不顺带变更消息状态编码，DDL 草案暂保留 worlds/sessions 的 JSON object 和 entries 的 JSON array。未来是否统一编码、是否改名 `global_state_json`，在 State 模块迁移时决定。
+本版固定保留 worlds/sessions 的 JSON object 和 entries 的 JSON array。StateRepository 负责专属字段写入和消息祖先继承；显式空数组表示已记录的空快照，不继续继承。状态定义解释、规则计算和模型状态更新留给后续服务层。
 
-`spec` 固定类型标识可以删除；格式版本仍有识别导入格式的用途。本版暂保留 `spec_version`，是否改名 `format_version` 未定稿。数据库结构版本与世界卡格式版本分别管理。
+本版删除固定类型标识 `spec`，保留世界卡格式版本 `spec_version`。数据库结构版本与世界卡格式版本分别管理；后续导入导出由世界模块按此契约解析。
 
 ## 5. metrics_json 为什么字段多，V2 怎么收敛
 
@@ -140,9 +138,9 @@ source/original.zip         # ZIP 原文件
 - 当前模型配置可以被修改，因此实际调用的 modelId 不应简单依赖后来查询配置行得到。
 - 提供方未报告 usage 时保持未知，不能填成 0；缓存 token 与输入 token 的口径必须延续明确规则，不能重复计数。
 
-### 5.3 精简结构候选，尚未冻结
+### 5.3 已确认并实施的精简结构
 
-优先采用一种形状表示附属于该 entry 的调用，而不是按 user/assistant/compaction 使用不同外壳：
+使用同一种形状记录附属于 assistant 或 compaction entry 的模型调用：
 
 ```json
 {
@@ -165,13 +163,15 @@ source/original.zip         # ZIP 原文件
 }
 ```
 
-这是讨论用的精简候选，不是已批准的最终 JSON Schema：
+本期存储契约：
 
-- requestId 用于区分真实模型调用；它不是 SSE 事件 ID。
-- usage 可为 null，表示未取得提供方计量；耗时字段按实际可用性记录。
-- 不在 user entry 再保存一份相同请求的整轮汇总，避免多个副本重复计费。
-- phase、模型配置引用、时间戳、上下文预算等字段是否保留，需要由具体展示、查询和算法消费者证明用途。
-- 总量可以由关联记录求和；如确有累计缓存需求，再明确失效和重算规则。本版不复制旧 pendingRun/accounted 机制。
+- requestId 区分真实模型调用，不是 SSE 事件 ID；同一 entry 内及同一会话所有分支/entry 之间不得重复归属。
+- 整列 NULL 表示没有计量记录；requests 内 usage 为 null 表示调用存在但未取得提供方计量。缺失数据不补零。
+- status 为 completed、failed、cancelled；durationMs、firstTextMs 按实际可用性记录，并校验非负有限数值及先后关系。
+- inputTokens 延续旧归一口径，已包含 cacheReadTokens/cacheWriteTokens；缓存字段是其细分，不额外加总。totalTokens 保留提供方值，不由存储层重新推导。
+- user entry 不保存同一请求的整轮副本。计量更新只写 metrics_json 和该 entry 的 updated_at，不修改消息 timestamp、正文、状态或会话排序时间。
+- 本版不保留 phase、模型配置引用、时间戳、上下文预算和旧 accounted/pendingRun 等控制字段；实际 modelId 随请求保存。
+- sessions.usage_json 保留可空列，目前默认 NULL，不填充旧汇总结构，也不建立累计缓存/恢复机制。
 
 ### 5.4 尚未解决，不能宣称已经保留的能力
 
@@ -194,15 +194,15 @@ source/original.zip         # ZIP 原文件
 - 叙事配置可以包含 nodes、context_strategy、model_parameters；生图配置无需声明 context_strategy。
 - 具体配置由 type 选择校验规则，不能把所有类型的字段堆进一份可选字段集合。
 - 仅开放已实现校验和执行能力的类型；增加 type 列不代表本期实现了生图。
-- 本版建议配置内部保留 schema_version，以独立演进不同类型的配置。
-- 世界、会话、应用中现有 preset 引用暂仍表示叙事默认选择，写入时检查 type=narrative。具体字段是否重命名，迁移该模块时处理。
+- 本版叙事 config_json 使用 `schema_version: 1`，包含 nodes、context_strategy、model_parameters；配置和模板规则在 presets/schema.ts 按类型校验。
+- 世界、会话、应用中的 preset 引用表示叙事默认选择，写入时检查 type=narrative；本版保持当前字段名。
 - model_parameters 表示该预设的生成参数；模型连接、提供方及凭据引用仍归模型配置模块。
 
-## 8. 目标 DDL 草案
+## 8. 目标 DDL（已实施）
 
 共 7 张业务表：worlds、world_tags、sessions、entries、presets、api_model_configs、app_settings。没有 run_preparations、runs、tags、tag_assignments，也没有触发器。
 
-DDL 只用于审阅。除上述明确变更外，未评估字段暂保留；保留列不代表照搬旧逻辑。特别是 sessions.usage_json 的内容及 entries.ext_data 中原执行元数据尚未定稿，不能直接套用旧 JSON 默认值。
+以下 DDL 用于 V2 新库初始化。sessions.usage_json 当前允许 NULL，entries.ext_data 默认空对象；不套用旧执行元数据、准备记录或计量结算逻辑。
 
 ```sql
 CREATE TABLE api_model_configs (
@@ -315,30 +315,38 @@ CREATE INDEX idx_entries_run ON entries(session_id, run_id, seq);
 CREATE INDEX idx_entries_role ON entries(session_id, role, seq);
 ```
 
-DDL 中额外建议的结构收敛：文本主键明确 NOT NULL；entries 增加所属 session 外键；world_tags 删除世界时级联清理；时间值由 Repository 在实际写操作中提供。上述建议仍需随模块验收，不作为修改旧库的授权。
+已落实文本主键 NOT NULL、entries 所属 session 外键、world_tags 随世界级联删除、Repository 显式时间写入。上述结构只在 V2 独立库生效。
 
 parent_id、tip_entry_id 的同会话、祖先链与无环约束由历史操作校验，单个外键不能替代这些规则。run_id 暂作为条目分组标识，没有隐含 runs 表；其最终生命周期在叙事模块迁移时定义。
 
 ## 9. 数据库生命周期与兼容边界
 
-- 建议 V2 独立目录、独立数据库文件及自己的 user_version。初始版本号在真正落地时确定，不冒充旧 v7。
-- 旧库只读查询可用于核对或后续导入，但不再将“所有模块原样兼容旧 v7”作为本次目标。
-- 连接初始化启用外键，版本不兼容时明确报错；不自动重置、清空或改造旧用户数据库。
-- 不通过导入旧 Server 的 createSchema/recoverInterrupted 获取新库能力，它们包含已被本版否决或暂缓的逻辑。
-- 数据库与世界文件的导入、更新、删除一致性，在对应模块实现时设计，不借本次计划引入通用事务协调体系。
-- 普通业务内容变更显式更新 updated_at；计量更新是否影响消息内容的显示时间，应由对应查询语义决定。
+- 默认数据根目录为仓库下 `runtime/server-v2/`，CLI 可通过 `SERVER_V2_DATA_ROOT` 指定；库文件为 `<dataRoot>/database.sqlite`。
+- V2 使用 `user_version=1` 和独立 `application_id=0x53525632`，打开既有库时检查标识、版本与目标结构。
+- 只有全空且未设版本/标识的数据库可以初始化。旧库、其他应用库或缺损 V2 结构明确报错，不自动重置、修复或迁移。
+- 连接启用外键、WAL 和 busy_timeout；所有 Repository 共用启动装配方持有的连接，跨表写入使用可嵌套的同步事务。
+- `server.ts` 默认用真实 SessionRepository 检查 SSE 会话存在性；事件传输层仍不查询数据库。自定义访问适配器可接入额外权限规则。
+- 监听启动失败会关库；服务关闭时先结束 SSE 和 HTTP，再关闭数据库，close 可重复调用。
+- 新库仅初始化空默认选择的 app_settings 单例，不复制旧预设、用户配置、UsageStore 或 recoverInterrupted。
+- 内容变更显式更新 updated_at；状态写入只更新目标 scope 所在行，计量写入不改显示 timestamp 或会话列表时间。
+- 数据库与世界文件的导入、更新、删除一致性随后续世界业务实施，不引入通用事务协调体系。
 
-## 10. 后续任务与验收（按批推进）
+## 10. 本期实施结果与后续边界
 
-1. **数据库基础**：按已定稿部分建立 V2 连接与结构版本机制；临时数据库验证 DDL、外键与约束。不得对旧库直接执行本文件。
-2. **预设模块**：落实 type 与分型 config 校验；迁入 context_strategy/model_parameters，移除预设标签；验证叙事默认引用不能指向其他类型。
-3. **世界模块**：落实已确认字段删除、world_tags 和固定文件布局；同步世界卡导入导出契约，验证无数据库路径仍能正确定位资源。
-4. **会话与消息模块**：迁移会话读取及历史关系，再接实际 SSE 会话检查；实现前确定 branch_count 删除、状态编码和 metrics_json 的相关待决项，不加入准备任务表。
-5. **计量与配置收口**：按实际消费者冻结 metrics JSON、决定无 entry 调用的处理方式；模型配置与设置随各自使用场景迁移。验证未知用量、关联归属和累计口径，不能把暂未支持的恢复能力标为已完成。
+已完成：
 
-每批只推进当批模块，遇到实际边界问题再决策；不以本版 DDL 一次建全表或搬完整 Server 作为完成标准。
+1. **数据库基础**：独立 V2 版本、目标 7 表、默认设置单例、外键/JSON 约束、事务及无损 JSON 编码。
+2. **预设、模型、设置**：类型化叙事配置、模型凭据引用、默认选择；叙事引用与删除限制。
+3. **世界**：世界内容、配置引用、world_tags、目录推导和原件字节基础操作；内容更新不覆盖运行状态。
+4. **会话与消息**：会话读写、消息/摘要、父子历史和分支 tip；追加 entry、seq 分配与 tip 更新原子完成。
+5. **状态与计量**：三种 scope 快照、NULL 沿祖先继承、独立计量写入及同会话 requestId 唯一归属。
+6. **启动装配**：真实存储会话检查、共享连接生命周期、重启读取和 HTTP/SSE 集成。
 
-## 11. 当前实现依据
+验证命令：`pnpm --filter @sillyrealms/server-v2 test`、`typecheck`、`lint`。测试只使用内存或临时 SQLite、临时文件目录与回环 HTTP，不访问真实模型或旧用户数据库。
+
+后续仍需独立实施：世界 ZIP 导入导出和 CRUD HTTP 用例、世界卡领域解析、状态规则解释与更新服务、叙事/模型调用迁移、无 entry 请求的计量落点与查询、累计计量及上下文估算读取位置、旧数据导入和 Studio 切换。这里没有通过建表承诺这些能力已完成。
+
+## 11. 旧实现核对依据
 
 - `apps/server/src/infrastructure/database/database.ts`：旧 v7 表、约束和更新时间触发器。
 - `apps/server/src/runtime/persistence/usage-store.ts`：RequestMetrics、entry 计量三种形状、pendingRun 与结算副作用。
@@ -348,4 +356,4 @@ parent_id、tip_entry_id 的同会话、祖先链与无环约束由历史操作�
 - `apps/server/src/routes/worlds.ts`：原始文件下载、校验及导出命名。
 - `apps/server/src/domain/preset/schema.ts`：旧叙事预设专属结构。
 
-本版不声称这些旧实现已经修改；后续以 V2 实际代码、类型与测试为实现事实。
+旧实现保持原状；本期实现事实以 `apps/serverV2/src/` 的代码、类型与测试为准。
