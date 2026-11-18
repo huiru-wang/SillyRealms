@@ -62,8 +62,6 @@ export class ModelClient {
       { strategy: options.prepared.strategy ?? 'rolling_summary', reasoning: options.reasoning, toolChoice: options.toolChoice });
     if (meta) this.usage?.beginRequest(meta, model.id, model.contextWindow);
     debugLog('MODEL BEGIN', { provider: model.provider, model: model.id }, logOptions);
-    debugLog('MODEL INPUT', { source: 'pi-context', systemPrompt: context.systemPrompt, messages: context.messages,
-      tools: context.tools, maxOutputTokens: options.maxTokens, temperature: options.temperature, reasoning: options.reasoning, toolChoice: options.toolChoice }, logOptions);
     const finish = (status: RequestMetrics['status'], usage?: import('@earendil-works/pi-ai').Usage) => {
       if (settled) return;
       settled = true;
