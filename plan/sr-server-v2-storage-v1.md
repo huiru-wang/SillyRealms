@@ -32,7 +32,7 @@
 
 ## 2. 模块及数据所有权
 
-业务调用链固定为 `route → service → repository`。每个业务模块以 `service.ts` 对外提供能力；跨模块通过 Service 编排，Repository 是模块内部实现。Route 处理 HTTP 输入输出，Service 承担业务校验与规则，Repository 负责所属表的 SQL 和编码。
+业务调用链固定为 `route → service → repository`。每个业务模块以 `service.ts` 对外提供能力；跨模块通过 Service 编排，Repository 是模块内部实现。Route 处理 HTTP 输入输出，Service 承担业务校验与规则，Repository 负责所属表的 SQL 和编码。Service 输入输出为显式驼峰领域对象，不直接公开存储行；按 Studio 契约需要的跨模块投影（世界 sessionCount、会话 cover/worldName）由 route 调各模块 Service 组合。
 
 ```text
 apps/serverV2/src/
@@ -98,7 +98,7 @@ SQL 表归属固定如下：
 
 ## 3. 世界文件：固定路径，不保存 source_file_path
 
-世界文件完整导入导出业务不在本期范围。本期 `worlds/files.ts` 只落实目录推导、原件字节保存和资源路径检查，通过 WorldService 对外提供。
+世界文件完整导入导出业务不在本期范围。本期 `worlds/files.ts` 落实目录推导、原件字节保存、资源路径检查和世界目录清理，通过 WorldService 对外提供。
 
 ### 3.1 固定布局
 
@@ -113,6 +113,8 @@ SQL 表归属固定如下：
 - 世界目录由配置的数据根目录和服务端生成、校验后的世界 ID 推导；名称与上传文件名不参与定位。
 - 世界文件模块统一校验资源相对路径及符号链接，路径必须留在所属世界目录。
 - 不新增元数据文件来变相保存已删除的 path/kind/hash/warnings。
+- 世界删除先删 DB，外键失败不动文件；成功后清理该世界 source/package 整个根目录。文件失败报 WORLD_FILES_DELETE_FAILED，重试可清理 DB 已不存在的残留目录；目录缺失视为已清理，不引入 DB/文件强事务。保存原件与删除按世界串行。
+- Service 的 description 为已解码的描述值，支持 Studio 的组件对象；存储层显式 JSON 编解码，已有文本描述保持文本语义。
 - 原件读取仅检查两个固定候选名；两者同时存在视为存储异常。没有原件仍可构成有效世界。
 - 同格式原件通过临时文件和 rename 原子替换；失败保留旧原件。已有另一种格式时拒绝覆盖，跨格式替换不属于本期能力。
 
@@ -362,7 +364,7 @@ parent_id、tip_entry_id 的同会话、祖先链与无环约束由历史操作�
 - 监听启动失败会关库；服务关闭时先结束 SSE 和 HTTP，再关闭数据库，close 可重复调用。
 - 新库仅初始化空默认选择的 app_settings 单例，不复制旧预设、用户配置、UsageStore 或 recoverInterrupted。
 - 内容变更显式更新 updated_at；状态写入只更新目标 scope 所在行，计量写入不改显示 timestamp 或会话列表时间。
-- 数据库与世界文件的导入、更新、删除一致性随后续世界业务实施，不引入通用事务协调体系。
+- 世界删除已实现 DB 先删及文件清理重试；导入、更新与文件协作随后续世界业务实施，不引入通用事务协调体系。
 
 ## 10. 本期实施结果与后续边界
 
@@ -370,11 +372,11 @@ parent_id、tip_entry_id 的同会话、祖先链与无环约束由历史操作�
 
 1. **数据库基础**：独立 V2 版本、目标 7 表、默认设置单例、外键/JSON 约束、事务及无损 JSON 编码。
 2. **预设、模型、设置**：各模块 Service、类型化叙事配置、模型凭据引用、默认选择与引用编排；Repository 模块内私有。
-3. **世界**：世界内容、配置引用、world_tags、目录推导和原件字节基础操作；内容更新不覆盖运行状态。
+3. **世界**：世界内容、配置引用、world_tags、目录推导、原件字节基础操作及安全删除清理；内容更新不覆盖运行状态。
 4. **会话与消息**：会话 Service、消息/摘要和线性历史；仅当前 tip 可追加，entry、seq 分配与 tip 推进原子完成。
 5. **状态与计量**：StateService 编排三种 scope 快照及 NULL 沿前驱继承，状态 SQL 归所属 World/Session Repository；独立计量写入及同会话 requestId 唯一归属。
 6. **启动装配与边界**：显式 Service 依赖图、严格三层单向调用、启动连接生命周期、重启读取和 HTTP/SSE 集成；lint 检查唯一模块出口、反向依赖、事务位置和 SQL 归属。
-7. **HTTP**：六个业务适配器及统一 success/errorCode/errorMessage/data 响应；错误码与中文信息绑定，SSE/文件成功响应保留原始流。
+7. **HTTP**：六个业务适配器及统一 success/errorCode/errorMessage/data 响应；Service 返回驼峰领域对象，route 按 Studio 消费契约构建列表/详情及跨模块投影，HTTP 游标与领域分页分离；错误码与中文信息绑定，SSE/文件成功响应保留原始流。
 
 验证命令：`pnpm --filter @sillyrealms/server-v2 test`、`typecheck`、`lint`。测试只使用内存或临时 SQLite、临时文件目录与回环 HTTP，不访问真实模型或旧用户数据库。
 

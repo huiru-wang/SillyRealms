@@ -38,36 +38,36 @@ export const metricsSchema = z.object({
 });
 
 export const createSessionSchema = z.object({
-  id: identifier.optional(), world_id: identifier, preset_id: identifier,
-  api_model_config_id: identifier, user_character_id: identifier,
+  id: identifier.optional(), worldId: identifier, presetId: identifier,
+  apiModelConfigId: identifier, userCharacterId: identifier,
   title: z.string().nullable().optional(), state: jsonObject.optional(),
 }).strict();
 export const updateSessionSchema = z.object({
-  preset_id: identifier.optional(), api_model_config_id: identifier.optional(),
-  user_character_id: identifier.optional(), title: z.string().nullable().optional(),
+  presetId: identifier.optional(), apiModelConfigId: identifier.optional(),
+  userCharacterId: identifier.optional(), title: z.string().nullable().optional(),
 }).strict();
 const appendFields = {
-  id: identifier.optional(), parent_id: identifier.nullable().optional(), run_id: identifier,
+  id: identifier.optional(), parentId: identifier.nullable().optional(), runId: identifier,
   timestamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   payload: jsonObject, state: jsonArray.nullable().optional(),
-  ext_data: jsonObject.optional(), metrics_json: metricsSchema.nullable().optional(),
+  extData: jsonObject.optional(), metrics: metricsSchema.nullable().optional(),
 };
 export const appendEntrySchema = z.discriminatedUnion('type', [
   z.object({ ...appendFields, type: z.literal('message'), role: z.enum(['user', 'assistant']) }).strict(),
   z.object({ ...appendFields, type: z.literal('compaction'), role: z.null() }).strict(),
 ]);
 export const updateEntrySchema = z.object({
-  payload: jsonObject.optional(), ext_data: jsonObject.optional(),
+  payload: jsonObject.optional(), extData: jsonObject.optional(),
 }).strict();
 export const sessionListSchema = z.object({
-  world_id: identifier.optional(),
+  worldId: identifier.optional(),
   limit: z.number().int().min(1).max(1000).default(100),
   before: z.object({
-    updated_at: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    updatedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     id: identifier,
   }).strict().optional(),
 }).strict();
 export const entryListSchema = z.object({
-  after_seq: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
+  afterSeq: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
   limit: z.number().int().min(1).max(1000).default(100),
 }).strict();

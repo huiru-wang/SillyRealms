@@ -24,10 +24,10 @@ function temporaryDirectory() {
 
 function seedSessions(services: Services, ids: string[]) {
   const preset = services.presets.create(narrativePreset());
-  const model = services.models.create({ name: 'Test model', provider_id: 'test', model_id: 'test-model', credential_ref: 'test-ref' });
-  const world = services.worlds.create({ name: 'Test world', spec_version: '0.1', characters_json: [], openings_json: [] });
+  const model = services.models.create({ name: 'Test model', providerId: 'test', modelId: 'test-model', credentialRef: 'test-ref' });
+  const world = services.worlds.create({ name: 'Test world', specVersion: '0.1', characters: [], openings: [] });
   for (const id of ids) services.sessions.create({
-    id, world_id: world.id, preset_id: preset.id, api_model_config_id: model.id, user_character_id: 'player',
+    id, worldId: world.id, presetId: preset.id, apiModelConfigId: model.id, userCharacterId: 'player',
   });
 }
 
@@ -99,19 +99,19 @@ describe('Server V2 over HTTP', () => {
     const dataRoot = temporaryDirectory(), databasePath = join(dataRoot, 'database.sqlite');
     const running = await launch({ dataRoot, databasePath });
     const model = running.services.models.create({
-      name: 'Local model', provider_id: 'provider', model_id: 'actual-model', credential_ref: 'test-ref',
+      name: 'Local model', providerId: 'provider', modelId: 'actual-model', credentialRef: 'test-ref',
     });
     const preset = running.services.presets.create(narrativePreset());
-    running.services.settings.update({ default_preset_id: preset.id, default_api_model_config_id: model.id });
+    running.services.settings.update({ defaultPresetId: preset.id, defaultApiModelConfigId: model.id });
     const world = running.services.worlds.create({
-      name: 'Persistent world', spec_version: '0.1', characters_json: [{ id: 'player', name: 'Player' }],
-      openings_json: [], tags: ['test'], default_preset_id: preset.id, default_api_model_config_id: model.id,
+      name: 'Persistent world', specVersion: '0.1', characters: [{ id: 'player', name: 'Player' }],
+      openings: [], tags: ['test'], defaultPresetId: preset.id, defaultApiModelConfigId: model.id,
     });
     const session = running.services.sessions.create({
-      world_id: world.id, preset_id: preset.id, api_model_config_id: model.id, user_character_id: 'player',
+      worldId: world.id, presetId: preset.id, apiModelConfigId: model.id, userCharacterId: 'player',
     });
     const entry = running.services.sessions.appendEntry(session.id, {
-      run_id: 'run-1', type: 'message', role: 'assistant', payload: { text: 'Saved story' }, state: [],
+      runId: 'run-1', type: 'message', role: 'assistant', payload: { text: 'Saved story' }, state: [],
     });
     running.services.state.setSession(session.id, { gold: 12 });
     const stream = await connect(running.url, session.id);
@@ -124,7 +124,7 @@ describe('Server V2 over HTTP', () => {
     expect(reopened.services.sessions.getHistory(session.id).map(item => item.id)).toEqual([entry.id]);
     expect(reopened.services.state.getSession(session.id)).toEqual({ gold: 12 });
     expect(reopened.services.worlds.get(world.id)?.tags).toEqual(['test']);
-    expect(reopened.services.settings.get().default_preset_id).toBe(preset.id);
+    expect(reopened.services.settings.get().defaultPresetId).toBe(preset.id);
     const restored = await connect(reopened.url, session.id);
     reopened.events.publish(session.id, { event: 'after.restart', data: {} });
     expect(await restored.readFrame()).toContain('after.restart');

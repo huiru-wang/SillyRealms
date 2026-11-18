@@ -4,9 +4,9 @@ import { z } from 'zod';
 import { AppError } from '../errors.js';
 import { PresetRepository, type StoredPreset } from './repository.js';
 import { presetValueSchema } from './schema.js';
-import type { CreatePresetInput, Preset, PresetListOptions, UpdatePresetInput } from './types.js';
+import type { CreatePresetInput, Preset, PresetListOptions, PresetPage, UpdatePresetInput } from './types.js';
 
-export type { CreatePresetInput, Preset, PresetListOptions, UpdatePresetInput } from './types.js';
+export type { CreatePresetInput, Preset, PresetListOptions, PresetPage, UpdatePresetInput } from './types.js';
 export type { NarrativePresetConfig, PresetNode } from './schema.js';
 
 const createSchema = presetValueSchema.extend({ id: z.string().trim().min(1).optional() }).strict();
@@ -18,13 +18,31 @@ const listSchema = z.object({
   offset: z.number().int().min(0).default(0),
 }).strict();
 
-function preset(row: StoredPreset): Preset {
+function toPreset(record: StoredPreset): Preset {
+  const config = record.config_json;
   return {
-    id: row.id,
+    id: record.id,
     ...presetValueSchema.parse({
-      type: row.type, name: row.name, description: row.description, config_json: row.config_json,
+      type: record.type,
+      name: record.name,
+      description: record.description,
+      config: {
+        schemaVersion: config.schema_version,
+        nodes: config.nodes,
+        contextStrategy: {
+          strategy: config.context_strategy.strategy,
+          maxContextTokens: config.context_strategy.max_context_tokens,
+          maxOutputTokens: config.context_strategy.max_output_tokens,
+          summaryPrompt: config.context_strategy.summary_prompt,
+        },
+        modelParameters: {
+          ...(config.model_parameters.temperature === undefined ? {} : { temperature: config.model_parameters.temperature }),
+          thinkingEnabled: config.model_parameters.thinking_enabled,
+        },
+      },
     }),
-    created_at: row.created_at, updated_at: row.updated_at,
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
   };
 }
 
@@ -36,8 +54,8 @@ export class PresetService {
   }
 
   get(id: string): Preset | null {
-    const row = this.#repository.get(id);
-    return row ? preset(row) : null;
+    const value = this.#repository.get(id);
+    return value ? toPreset(value) : null;
   }
 
   require(id: string): Preset {
@@ -47,7 +65,13 @@ export class PresetService {
   }
 
   list(options: PresetListOptions = {}): Preset[] {
-    return this.#repository.list(listSchema.parse(options)).map(preset);
+    return this.#repository.list(listSchema.parse(options)).map(toPreset);
+  }
+
+  listPage(options: PresetListOptions = {}): PresetPage {
+    const page = listSchema.parse(options);
+    const items = this.#repository.list({ ...page, limit: page.limit + 1 });
+    return { items: items.slice(0, page.limit).map(toPreset), hasMore: items.length > page.limit };
   }
 
   create(input: CreatePresetInput): Preset {
@@ -64,7 +88,7 @@ export class PresetService {
       type: patch.type ?? current.type,
       name: patch.name ?? current.name,
       description: patch.description === undefined ? current.description : patch.description,
-      config_json: patch.config_json ?? current.config_json,
+      config: patch.config ?? current.config,
     });
     this.#repository.update(id, value);
     return this.require(id);

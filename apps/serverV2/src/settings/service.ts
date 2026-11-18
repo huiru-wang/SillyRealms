@@ -2,15 +2,25 @@ import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import type { ModelService } from '../models/service.js';
 import type { PresetService } from '../presets/service.js';
-import { SettingsRepository } from './repository.js';
+import { SettingsRepository, type StoredAppSettings } from './repository.js';
 import type { AppSettings, SettingsPatch } from './types.js';
 
 export type { AppSettings, SettingsPatch } from './types.js';
 
 const patchSchema = z.object({
-  default_preset_id: z.string().trim().min(1).nullable().optional(),
-  default_api_model_config_id: z.string().trim().min(1).nullable().optional(),
+  defaultPresetId: z.string().trim().min(1).nullable().optional(),
+  defaultApiModelConfigId: z.string().trim().min(1).nullable().optional(),
 }).strict().refine(value => Object.values(value).some(item => item !== undefined), '应用默认设置更新不能为空');
+
+function toAppSettings(record: StoredAppSettings): AppSettings {
+  return {
+    id: record.id,
+    defaultPresetId: record.default_preset_id,
+    defaultApiModelConfigId: record.default_api_model_config_id,
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
+  };
+}
 
 export class SettingsService {
   readonly #repository: SettingsRepository;
@@ -22,16 +32,16 @@ export class SettingsService {
   }
 
   get(): AppSettings {
-    return this.#repository.get();
+    return toAppSettings(this.#repository.get());
   }
 
   update(input: SettingsPatch): AppSettings {
     const patch = patchSchema.parse(input);
-    const current = this.#repository.get();
-    const presetId = patch.default_preset_id === undefined ? current.default_preset_id : patch.default_preset_id;
-    const modelId = patch.default_api_model_config_id === undefined ? current.default_api_model_config_id : patch.default_api_model_config_id;
+    const current = this.get();
+    const presetId = patch.defaultPresetId === undefined ? current.defaultPresetId : patch.defaultPresetId;
+    const modelId = patch.defaultApiModelConfigId === undefined ? current.defaultApiModelConfigId : patch.defaultApiModelConfigId;
     if (presetId !== null) this.#services.presets.require(presetId);
     if (modelId !== null) this.#services.models.require(modelId);
-    return this.#repository.update({ default_preset_id: presetId, default_api_model_config_id: modelId });
+    return toAppSettings(this.#repository.update({ defaultPresetId: presetId, defaultApiModelConfigId: modelId }));
   }
 }

@@ -13,19 +13,19 @@ beforeEach(() => {
   db = openDatabase(':memory:');
   dataRoot = mkdtempSync(join(tmpdir(), 'sr-session-service-'));
   services = createServices(db, dataRoot);
-  services.models.create({ id: 'model', name: 'Model', provider_id: 'provider', model_id: 'actual-model', credential_ref: 'credential-ref' });
+  services.models.create({ id: 'model', name: 'Model', providerId: 'provider', modelId: 'actual-model', credentialRef: 'credential-ref' });
   services.presets.create({ ...narrativePreset(), id: 'preset' });
-  services.worlds.create({ id: 'world', spec_version: '0.1', name: 'World', characters_json: [], openings_json: [] });
+  services.worlds.create({ id: 'world', specVersion: '0.1', name: 'World', characters: [], openings: [] });
   sessions = services.sessions;
 });
 afterEach(() => { vi.restoreAllMocks(); db.close(); rmSync(dataRoot, { recursive: true, force: true }); });
 
 function create(id = 'session') {
-  return sessions.create({ id, world_id: 'world', preset_id: 'preset', api_model_config_id: 'model', user_character_id: 'player' });
+  return sessions.create({ id, worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' });
 }
 function append(sessionId: string, id: string, patch: Partial<AppendEntryInput> = {}) {
   return sessions.appendEntry(sessionId, {
-    id, run_id: 'run', type: 'message', role: 'assistant', payload: { text: id }, ...patch,
+    id, runId: 'run', type: 'message', role: 'assistant', payload: { text: id }, ...patch,
   } as AppendEntryInput);
 }
 function metrics(id: string, usage: EntryMetrics['requests'][number]['usage'] = null): EntryMetrics {
@@ -36,35 +36,52 @@ describe('session records and references', () => {
   it('starts with no tip/usage and changes only the session-owned fields', () => {
     vi.spyOn(Date, 'now').mockReturnValue(100);
     const created = create();
-    expect(created).toMatchObject({ tip_entry_id: null, state: {}, usage_json: null, created_at: 100, updated_at: 100 });
+    expect(created).toMatchObject({ tipEntryId: null, state: {}, usage: null, createdAt: 100, updatedAt: 100 });
+    expect(Object.keys(created).sort()).toEqual([
+      'apiModelConfigId', 'createdAt', 'id', 'presetId', 'state', 'tipEntryId', 'title', 'updatedAt', 'usage', 'userCharacterId', 'worldId',
+    ]);
     sessions.setState(created.id, { coins: 7 });
     vi.mocked(Date.now).mockReturnValue(200);
     expect(sessions.update(created.id, { title: 'Renamed' })).toMatchObject({
-      title: 'Renamed', state: { coins: 7 }, usage_json: null, created_at: 100, updated_at: 200,
+      title: 'Renamed', state: { coins: 7 }, usage: null, createdAt: 100, updatedAt: 200,
     });
     expect(() => sessions.update(created.id, { state: {} } as unknown as UpdateSessionInput)).toThrow();
     expect(sessions.get('missing')).toBeNull();
   });
 
   it('rejects missing world/model/preset references atomically', () => {
-    const input = { id: 'bad', world_id: 'world', preset_id: 'preset', api_model_config_id: 'model', user_character_id: 'player' };
-    expect(() => sessions.create({ ...input, world_id: 'missing' })).toThrow('WORLD_NOT_FOUND');
-    expect(() => sessions.create({ ...input, api_model_config_id: 'missing' })).toThrow('MODEL_CONFIG_NOT_FOUND');
-    expect(() => sessions.create({ ...input, preset_id: 'missing' })).toThrow('PRESET_NOT_FOUND');
+    const input = { id: 'bad', worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' };
+    expect(() => sessions.create({ ...input, worldId: 'missing' })).toThrow('WORLD_NOT_FOUND');
+    expect(() => sessions.create({ ...input, apiModelConfigId: 'missing' })).toThrow('MODEL_CONFIG_NOT_FOUND');
+    expect(() => sessions.create({ ...input, presetId: 'missing' })).toThrow('PRESET_NOT_FOUND');
     expect(sessions.list()).toHaveLength(0);
     create();
-    expect(() => sessions.update('session', { title: 'must rollback', preset_id: 'missing' })).toThrow('PRESET_NOT_FOUND');
+    expect(() => sessions.update('session', { title: 'must rollback', presetId: 'missing' })).toThrow('PRESET_NOT_FOUND');
     expect(sessions.get('session')!.title).toBeNull();
   });
 
-  it('lists by a stable updated-at/id cursor and cascades entries on deletion', () => {
+  it('counts requested worlds in one service operation, including zero counts', () => {
+    services.worlds.create({ id: 'other', specVersion: '0.1', name: 'Other', characters: [], openings: [] });
+    create('one'); create('two');
+    sessions.create({ id: 'three', worldId: 'other', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' });
+    expect(sessions.countByWorldIds(['world', 'other', 'missing', 'world'])).toEqual({ world: 2, other: 1, missing: 0 });
+    expect(sessions.countByWorldIds(['other'])).toEqual({ other: 1 });
+    expect(sessions.countByWorldIds([])).toEqual({});
+    sessions.delete('one');
+    expect(sessions.countByWorldIds(['world'])).toEqual({ world: 1 });
+    expect(() => sessions.countByWorldIds([' world'])).toThrow();
+  });
+
+  it('lists by a stable updated-at/id cursor and cascades entries on deletion', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(100);
     create('a'); create('b'); create('c');
-    const first = sessions.list({ world_id: 'world', limit: 2 });
+    const first = sessions.list({ worldId: 'world', limit: 2 });
     expect(first.map(value => value.id)).toEqual(['c', 'b']);
-    expect(sessions.list({ before: { updated_at: 100, id: 'b' } }).map(value => value.id)).toEqual(['a']);
+    expect(sessions.listPage({ worldId: 'world', limit: 2 })).toEqual({ items: first, hasMore: true });
+    expect(sessions.listPage({ before: { updatedAt: 100, id: 'b' }, limit: 2 }).hasMore).toBe(false);
+    expect(sessions.list({ before: { updatedAt: 100, id: 'b' } }).map(value => value.id)).toEqual(['a']);
     append('a', 'entry');
-    expect(() => services.worlds.delete('world')).toThrow();
+    await expect(services.worlds.delete('world')).rejects.toThrow();
     expect(sessions.delete('a')).toBe(true);
     expect(sessions.getEntry('a', 'entry')).toBeNull();
     expect(sessions.delete('a')).toBe(false);
@@ -75,15 +92,15 @@ describe('linear history and field ownership', () => {
   it('advances one linear history through message and compaction entries', () => {
     create();
     expect(sessions.getHistory('session')).toEqual([]);
-    append('session', 'root', { run_id: 'opening', parent_id: null });
-    append('session', 'user', { role: 'user', parent_id: 'root' });
+    append('session', 'root', { runId: 'opening', parentId: null });
+    append('session', 'user', { role: 'user', parentId: 'root' });
     append('session', 'answer');
-    sessions.appendEntry('session', { id: 'summary', run_id: 'compact', type: 'compaction', role: null, payload: { summary: 'Earlier history' } });
-    const continuation = append('session', 'continuation', { run_id: 'continue' });
-    expect(continuation).toMatchObject({ seq: 5, parent_id: 'summary' });
-    expect(sessions.get('session')!.tip_entry_id).toBe('continuation');
+    sessions.appendEntry('session', { id: 'summary', runId: 'compact', type: 'compaction', role: null, payload: { summary: 'Earlier history' } });
+    const continuation = append('session', 'continuation', { runId: 'continue' });
+    expect(continuation).toMatchObject({ seq: 5, parentId: 'summary' });
+    expect(sessions.get('session')!.tipEntryId).toBe('continuation');
     expect(sessions.getHistory('session').map(value => value.id)).toEqual(['root', 'user', 'answer', 'summary', 'continuation']);
-    expect(sessions.listEntries('session', { after_seq: 2, limit: 2 }).map(value => value.id)).toEqual(['answer', 'summary']);
+    expect(sessions.listEntries('session', { afterSeq: 2, limit: 2 }).map(value => value.id)).toEqual(['answer', 'summary']);
     expect(sessions.listRunEntries('session', 'run').map(value => value.id)).toEqual(['user', 'answer']);
   });
 
@@ -91,12 +108,12 @@ describe('linear history and field ownership', () => {
     create('one'); create('two');
     append('one', 'root-one'); append('two', 'root-two');
     append('one', 'child');
-    for (const parent_id of ['root-one', 'root-two', null]) {
-      expect(() => append('one', 'invalid', { parent_id })).toThrow('TIP_CONFLICT');
-      expect(sessions.get('one')!.tip_entry_id).toBe('child');
+    for (const parentId of ['root-one', 'root-two', null]) {
+      expect(() => append('one', 'invalid', { parentId })).toThrow('TIP_CONFLICT');
+      expect(sessions.get('one')!.tipEntryId).toBe('child');
       expect(sessions.listEntries('one').map(entry => entry.id)).toEqual(['root-one', 'child']);
     }
-    expect(append('one', 'next', { parent_id: 'child' }).seq).toBe(3);
+    expect(append('one', 'next', { parentId: 'child' }).seq).toBe(3);
   });
 
   it('rejects corrupt history and a persisted tip that no longer points at the last entry', () => {
@@ -116,71 +133,71 @@ describe('linear history and field ownership', () => {
     create();
     append('session', 'root');
     expect(() => append('session', 'root')).toThrow();
-    expect(sessions.get('session')!.tip_entry_id).toBe('root');
+    expect(sessions.get('session')!.tipEntryId).toBe('root');
     expect(sessions.listEntries('session')).toHaveLength(1);
     expect(append('session', 'next').seq).toBe(2);
   });
 
-  it('changes payload/ext_data without overwriting snapshots, metrics, ancestry or display time', () => {
+  it('changes payload/extData without overwriting snapshots, metrics, ancestry or display time', () => {
     create();
     const original = append('session', 'root', {
       timestamp: 42, state: [{ key: 'coins', value: 7 }],
-      metrics_json: metrics('request'), ext_data: { actions: ['Wait'] },
+      metrics: metrics('request'), extData: { actions: ['Wait'] },
     });
     const edited = sessions.updateEntry('session', 'root', { payload: { text: 'Edited' } });
     expect(edited).toMatchObject({
-      parent_id: original.parent_id, timestamp: 42, state: original.state,
-      metrics_json: original.metrics_json, ext_data: original.ext_data, payload: { text: 'Edited' },
+      parentId: original.parentId, timestamp: 42, state: original.state,
+      metrics: original.metrics, extData: original.extData, payload: { text: 'Edited' },
     });
     expect(() => sessions.updateEntry('session', 'root', { state: [] } as unknown as UpdateEntryInput)).toThrow();
-    expect(() => sessions.updateEntry('session', 'root', { parent_id: 'root' } as unknown as UpdateEntryInput)).toThrow();
+    expect(() => sessions.updateEntry('session', 'root', { parentId: 'root' } as unknown as UpdateEntryInput)).toThrow();
   });
 });
 
 describe('one canonical metrics shape', () => {
   it('distinguishes absent metrics, unknown usage, and real zero consumption', () => {
     create(); append('session', 'assistant');
-    expect(sessions.getEntry('session', 'assistant')!.metrics_json).toBeNull();
-    expect(sessions.setMetrics('session', 'assistant', metrics('unknown')).metrics_json!.requests[0]!.usage).toBeNull();
+    expect(sessions.getEntry('session', 'assistant')!.metrics).toBeNull();
+    expect(sessions.setMetrics('session', 'assistant', metrics('unknown')).metrics!.requests[0]!.usage).toBeNull();
     const zero = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
-    expect(sessions.setMetrics('session', 'assistant', metrics('zero', zero)).metrics_json!.requests[0]!.usage).toEqual(zero);
-    services.models.update('model', { model_id: 'new-model' });
-    expect(sessions.getEntry('session', 'assistant')!.metrics_json!.requests[0]!.modelId).toBe('actual-model-snapshot');
+    expect(sessions.setMetrics('session', 'assistant', metrics('zero', zero)).metrics!.requests[0]!.usage).toEqual(zero);
+    services.models.update('model', { modelId: 'new-model' });
+    expect(sessions.getEntry('session', 'assistant')!.metrics!.requests[0]!.modelId).toBe('actual-model-snapshot');
   });
 
   it('preserves normalized inclusive input and provider total without adding cache tokens again', () => {
     create(); append('session', 'assistant');
     const usage = { inputTokens: 1200, outputTokens: 300, totalTokens: 1500, cacheReadTokens: 600, cacheWriteTokens: 100 };
-    expect(sessions.setMetrics('session', 'assistant', metrics('cached', usage)).metrics_json!.requests[0]!.usage).toEqual(usage);
+    expect(sessions.setMetrics('session', 'assistant', metrics('cached', usage)).metrics!.requests[0]!.usage).toEqual(usage);
     expect(() => sessions.setMetrics('session', 'assistant', metrics('invalid', { ...usage, inputTokens: 20 }))).toThrow();
     const missing = metrics('missing', usage);
     delete (missing.requests[0]!.usage as unknown as Record<string, unknown>).outputTokens;
     expect(() => sessions.setMetrics('session', 'assistant', missing)).toThrow();
-    expect(sessions.getEntry('session', 'assistant')!.metrics_json!.requests[0]!.requestId).toBe('cached');
+    expect(sessions.getEntry('session', 'assistant')!.metrics!.requests[0]!.requestId).toBe('cached');
   });
 
   it('does not duplicate requests onto user entries or another entry', () => {
     create();
-    append('session', 'root', { metrics_json: metrics('request') });
+    append('session', 'root', { metrics: metrics('request') });
     append('session', 'user', { role: 'user' });
     expect(() => sessions.setMetrics('session', 'user', metrics('request'))).toThrow('USER_ENTRY_METRICS_NOT_ALLOWED');
-    expect(() => append('session', 'copy', { metrics_json: metrics('request') })).toThrow('DUPLICATE_REQUEST_METRICS');
-    expect(sessions.get('session')!.tip_entry_id).toBe('user');
+    expect(() => append('session', 'copy', { metrics: metrics('request') })).toThrow('DUPLICATE_REQUEST_METRICS');
+    expect(sessions.get('session')!.tipEntryId).toBe('user');
     append('session', 'answer');
     sessions.setMetrics('session', 'answer', metrics('other'));
     expect(() => sessions.setMetrics('session', 'answer', { requests: [...metrics('duplicate').requests, ...metrics('duplicate').requests] })).toThrow();
-    expect(sessions.getEntry('session', 'answer')!.metrics_json!.requests[0]!.requestId).toBe('other');
+    expect(sessions.getEntry('session', 'answer')!.metrics!.requests[0]!.requestId).toBe('other');
   });
 
   it('stores compaction metrics and updates only metadata time, with strict terminal/numeric fields', () => {
     vi.spyOn(Date, 'now').mockReturnValue(100);
     create();
-    const entry = sessions.appendEntry('session', { id: 'summary', run_id: 'compact', type: 'compaction', role: null, payload: { summary: 'Summary' } });
+    const entry = sessions.appendEntry('session', { id: 'summary', runId: 'compact', type: 'compaction', role: null, payload: { summary: 'Summary' } });
     vi.mocked(Date.now).mockReturnValue(200);
     const saved = sessions.setMetrics('session', 'summary', metrics('summary-request'));
     expect(saved.timestamp).toBe(entry.timestamp);
-    expect(saved.updated_at).toBe(200);
-    expect(sessions.get('session')!.updated_at).toBe(100);
+    expect(saved.updatedAt).toBe(200);
+    expect(sessions.get('session')!.updatedAt).toBe(100);
     for (const patch of [{ durationMs: -1 }, { durationMs: Infinity }, { status: 'started' }, { phase: 'summary' }]) {
       const invalid = { requests: [{ ...metrics('invalid').requests[0], ...patch }] } as unknown as EntryMetrics;
       expect(() => sessions.setMetrics('session', 'summary', invalid)).toThrow();

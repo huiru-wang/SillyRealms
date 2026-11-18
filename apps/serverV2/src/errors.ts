@@ -7,6 +7,7 @@ export const ERRORS = {
   METHOD_NOT_ALLOWED: { message: '请求方法不支持', status: 405 },
   SERVICE_UNAVAILABLE: { message: '业务服务尚未就绪', status: 503 },
   SERVER_SHUTTING_DOWN: { message: '服务正在关闭', status: 503 },
+  WORLD_FILES_DELETE_FAILED: { status: 500, message: '世界文件清理失败，请重试删除' },
   INTERNAL_ERROR: { message: '服务内部错误', status: 500 },
   STORAGE_BUSY: { message: '存储暂时繁忙，请稍后重试', status: 503 },
   RESOURCE_CONFLICT: { message: '资源已存在或名称重复', status: 409 },

@@ -1,8 +1,10 @@
 import { Hono } from 'hono';
 import { getMimeType } from 'hono/utils/mime';
 import { AppError } from '../errors.js';
-import { numberQuery, readJson, success } from '../http/response.js';
-import type { CreateWorld, WorldDownload, WorldPatch, WorldService } from '../worlds/service.js';
+import { offsetPage, readOffsetPagination } from '../http/pagination.js';
+import { readJson, success } from '../http/response.js';
+import type { SessionService } from '../sessions/service.js';
+import type { CreateWorld, World, WorldDownload, WorldPatch, WorldService } from '../worlds/service.js';
 
 const mediaTypes: Record<string, string> = {
   ts: 'text/plain', tsx: 'text/plain', jsx: 'text/plain',
@@ -30,26 +32,72 @@ async function fileResponse(file: WorldDownload, head: boolean, attachment = fal
   return new Response(file.body, { headers });
 }
 
-export function createWorldRoutes(worlds: WorldService): Hono {
+function worldDetail(world: World) {
+  return {
+    id: world.id,
+    specVersion: world.specVersion,
+    createdAt: world.createdAt,
+    updatedAt: world.updatedAt,
+    defaultPresetId: world.defaultPresetId,
+    defaultApiModelConfigId: world.defaultApiModelConfigId,
+    data: {
+      name: world.name,
+      ...(world.description && typeof world.description === 'object' ? { description: world.description } : {}),
+      ...(world.cover !== null ? { cover: world.cover } : {}),
+      tags: world.tags,
+      characters: world.characters,
+      openings: world.openings,
+      ...(world.lorebook !== null ? { lorebook: world.lorebook } : {}),
+      ...(world.stateDefinition !== null ? { state: world.stateDefinition } : {}),
+      ...(world.messageRender !== null ? { message_render: world.messageRender } : {}),
+      ...(world.components !== null ? { components: world.components } : {}),
+      ...(world.stageComponent !== null ? { stage_component: world.stageComponent } : {}),
+      ...(world.extensions !== null ? { extensions: world.extensions } : {}),
+    },
+  };
+}
+
+function tagItems(worlds: WorldService) {
+  return worlds.listTags().map(tag => ({ id: tag.name, name: tag.name }));
+}
+
+export function createTagRoutes(worlds: WorldService): Hono {
+  return new Hono().get('/', c => {
+    if (c.req.query('type') !== 'world') throw new AppError('INVALID_REQUEST', '仅支持 type=world 的标签查询');
+    return success(c, { items: tagItems(worlds) });
+  });
+}
+
+export function createWorldRoutes({ worlds, sessions }: { worlds: WorldService; sessions: SessionService }): Hono {
   const routes = new Hono();
-  routes.get('/', c => success(c, { items: worlds.list({
-    tag: c.req.query('tag'), limit: numberQuery(c, 'limit'), offset: numberQuery(c, 'offset'),
-  }) }));
-  routes.get('/tags', c => success(c, { items: worlds.listTags() }));
-  routes.post('/', async c => success(c, { item: worlds.create(await readJson<CreateWorld>(c)) }, 201));
+  routes.get('/', c => {
+    const tagId = c.req.query('tagId') ?? '';
+    const scope = 'worlds:' + tagId;
+    const pagination = readOffsetPagination(c, scope);
+    const page = worlds.listPage({ tag: tagId || undefined, ...pagination });
+    const counts = sessions.countByWorldIds(page.items.map(world => world.id));
+    const items = page.items.map(world => ({
+      id: world.id, name: world.name, cover: world.cover,
+      tags: world.tags.map(name => ({ id: name, name })),
+      sessionCount: counts[world.id] ?? 0,
+    }));
+    return success(c, offsetPage(items, page.hasMore, pagination, scope));
+  });
+  routes.get('/tags', c => success(c, { items: tagItems(worlds) }));
+  routes.post('/', async c => success(c, { item: worldDetail(worlds.create(await readJson<CreateWorld>(c))) }, 201));
   routes.get('/:id/original', async c =>
     fileResponse(await worlds.openOriginal(c.req.param('id'), c.req.raw.signal), c.req.method === 'HEAD', true));
   routes.get('/:id/package/:path{.+}', async c =>
     fileResponse(await worlds.openPackageFile(c.req.param('id'), c.req.param('path'), c.req.raw.signal), c.req.method === 'HEAD'));
-  routes.get('/:id', c => success(c, { item: worlds.require(c.req.param('id')) }));
+  routes.get('/:id', c => success(c, { item: worldDetail(worlds.require(c.req.param('id'))), warnings: [] }));
   routes.patch('/:id', async c => {
     const item = worlds.update(c.req.param('id'), await readJson<WorldPatch>(c));
     if (!item) throw new AppError('WORLD_NOT_FOUND');
-    return success(c, { item });
+    return success(c, { item: worldDetail(item) });
   });
-  routes.delete('/:id', c => {
+  routes.delete('/:id', async c => {
     const id = c.req.param('id');
-    if (!worlds.delete(id)) throw new AppError('WORLD_NOT_FOUND');
+    if (!await worlds.delete(id)) throw new AppError('WORLD_NOT_FOUND');
     return success(c, { id });
   });
   routes.put('/:id/tags', async c => {
@@ -59,7 +107,7 @@ export function createWorldRoutes(worlds: WorldService): Hono {
     }
     const item = worlds.setTags(c.req.param('id'), body.tags);
     if (!item) throw new AppError('WORLD_NOT_FOUND');
-    return success(c, { item });
+    return success(c, { item: worldDetail(item) });
   });
   return routes;
 }

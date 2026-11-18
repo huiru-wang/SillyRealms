@@ -7,7 +7,7 @@ import { createPresetRoutes } from './routes/presets.js';
 import { createSessionRoutes } from './routes/sessions.js';
 import { createSettingsRoutes } from './routes/settings.js';
 import { createStateRoutes } from './routes/state.js';
-import { createWorldRoutes } from './routes/worlds.js';
+import { createTagRoutes, createWorldRoutes } from './routes/worlds.js';
 import type { Services } from './services.js';
 
 export type AppOptions = {
@@ -34,9 +34,10 @@ export function createApp({ events, services, canAccessSession }: AppOptions) {
     app.route('/api/v1/presets', createPresetRoutes(services.presets));
     app.route('/api/v1/api-model-configs', createModelRoutes(services.models));
     app.route('/api/v1/app-settings', createSettingsRoutes(services.settings));
-    app.route('/api/v1/worlds', createWorldRoutes(services.worlds));
+    app.route('/api/v1/worlds', createWorldRoutes({ worlds: services.worlds, sessions: services.sessions }));
+    app.route('/api/v1/tags', createTagRoutes(services.worlds));
     app.route('/api/v1/sessions', createSessionRoutes({
-      sessions: services.sessions, events, canAccessSession, shutdownSignal: shutdown.signal,
+      sessions: services.sessions, worlds: services.worlds, events, canAccessSession, shutdownSignal: shutdown.signal,
     }));
     app.route('/api/v1', createStateRoutes({
       state: services.state, sessions: services.sessions, canAccessSession, shutdownSignal: shutdown.signal,

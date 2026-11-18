@@ -67,6 +67,46 @@ describe('fixed world file layout', () => {
     expect((await readdir(files.paths('world-one').source)).length).toBe(1);
   });
 
+  it('serializes accepted saves and removal across store instances without recreating directories', async () => {
+    const other = new WorldFileStore(root);
+    const first = files.saveOriginal('world-one', 'json', bytes('first'));
+    const second = other.saveOriginal('world-one', 'json', bytes('second'));
+    const deletion = other.remove('world-one');
+    await Promise.all([first, second]);
+    expect(await deletion).toBe(true);
+    expect(await files.readOriginal('world-one')).toBeNull();
+    await expect(readdir(files.paths('world-one').root)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await files.remove('world-one')).toBe(false);
+    expect(await files.remove('missing')).toBe(false);
+  });
+
+  it('removes source, package and inner symlinks without following their targets', async () => {
+    await files.saveOriginal('world-one', 'json', bytes('remove me'));
+    await files.saveOriginal('world-two', 'json', bytes('keep me'));
+    const packageRoot = files.paths('world-one').package;
+    await mkdir(packageRoot);
+    await mkdir(join(root, 'outside'));
+    await writeFile(join(root, 'outside', 'sentinel'), 'outside');
+    await symlink(join(root, 'outside'), join(packageRoot, 'external'));
+    await symlink(files.paths('world-two').root, join(packageRoot, 'other-world'));
+    await writeFile(join(packageRoot, 'resource.txt'), 'resource');
+    expect(await files.remove('world-one')).toBe(true);
+    expect(await readFile(join(root, 'outside', 'sentinel'), 'utf8')).toBe('outside');
+    expect(await files.readOriginal('world-two')).toEqual({ format: 'json', bytes: bytes('keep me') });
+  });
+
+  it('rejects traversal and symlinked deletion roots while preserving the target directories', async () => {
+    await files.saveOriginal('world-two', 'json', bytes('keep me'));
+    await symlink(files.paths('world-two').root, files.paths('linked-world').root);
+    await expect(files.remove('../outside')).rejects.toThrow('INVALID_WORLD_ID');
+    await expect(files.remove('linked-world')).rejects.toThrow('INVALID_WORLD_DIRECTORY');
+    expect(await files.readOriginal('world-two')).toEqual({ format: 'json', bytes: bytes('keep me') });
+    await rename(join(root, 'worlds'), join(root, 'outside'));
+    await symlink(join(root, 'outside'), join(root, 'worlds'));
+    await expect(files.remove('world-two')).rejects.toThrow('INVALID_WORLD_DIRECTORY');
+    expect(await readFile(join(root, 'outside', 'world-two', 'source', 'original.json'), 'utf8')).toBe('keep me');
+  });
+
   it('reports two originals as corruption instead of picking a file', async () => {
     await files.saveOriginal('world-one', 'json', bytes('{}'));
     await writeFile(join(files.paths('world-one').source, 'original.zip'), 'zip');

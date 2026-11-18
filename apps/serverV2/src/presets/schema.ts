@@ -37,17 +37,17 @@ export const presetNodeSchema = z.object({
 }).strict();
 
 export const narrativeConfigSchema = z.object({
-  schema_version: z.literal(1),
+  schemaVersion: z.literal(1),
   nodes: z.array(presetNodeSchema),
-  context_strategy: z.object({
+  contextStrategy: z.object({
     strategy: z.enum(['rolling_summary', 'sliding_window']),
-    max_context_tokens: z.number().int().min(2).max(Number.MAX_SAFE_INTEGER),
-    max_output_tokens: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-    summary_prompt: z.string().trim().min(1),
+    maxContextTokens: z.number().int().min(2).max(Number.MAX_SAFE_INTEGER),
+    maxOutputTokens: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    summaryPrompt: z.string().trim().min(1),
   }).strict(),
-  model_parameters: z.object({
+  modelParameters: z.object({
     temperature: z.number().min(0).max(2).optional(),
-    thinking_enabled: z.boolean().default(false),
+    thinkingEnabled: z.boolean().default(false),
   }).strict(),
 }).strict().superRefine(({ nodes }, context) => {
   const ids = nodes.map(node => node.id);
@@ -91,7 +91,7 @@ export const presetValueSchema = z.object({
   type: z.literal('narrative'),
   name: z.string().trim().min(1),
   description: z.string().nullable().default(null),
-  config_json: narrativeConfigSchema,
+  config: narrativeConfigSchema,
 }).strict();
 
 export type NarrativePresetConfig = z.infer<typeof narrativeConfigSchema>;

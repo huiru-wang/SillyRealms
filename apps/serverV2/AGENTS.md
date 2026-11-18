@@ -3,6 +3,8 @@
 - 按模块逐步迁移；当前实现事件、业务 HTTP 路由及存储 Service，不预建 engine、任务管理或应用通知。
 - 业务依赖严格单向 `route → service → repository`，不得跨层或反向。HTTP 适配器统一放在根 `routes/`；Service 不导入 route/http，Repository 不导入任何 Service。Route 处理 HTTP 输入输出与传输，Service 承担业务校验、规则及编排，Repository 处理本模块持久化。
 - presets、models、settings、worlds、sessions、state 均以 `service.ts` 为对外入口；跨模块只能调用 Service，公开类型也从 Service 导出。依赖由 `services.ts` 显式装配，禁止循环编排。
+- Service 公共输入输出使用显式驼峰领域类型，存储行到领域对象的映射放在 Service 层，不直接返回存储行，不公开 Row 类型或 `*_json` 等列名。Repository 负责存储 JSON 编解码并返回模块私有记录。仅映射已知结构字段；作者 JSON、状态键、世界卡/预设文档协议中的键保持原样，不做通用递归改名。
+- 按 Studio 消费契约需要的跨模块展示投影由 route 调公开 Service 组合，例如世界的 sessionCount 和会话的 cover/worldName；业务校验和用例编排仍归 Service。HTTP 分页游标只在 route/http 编解码，Service 接收类型化分页位置。
 - Repository 模块内私有，只由本模块 Service 使用；Route、启动入口及其他模块禁止导入、暴露 Repository。世界文件存储同样由 WorldService 对外提供能力。
 - Repository 禁止依赖其他模块 Repository，也禁止实现其他模块属主表或列的 SQL，包括查询、JOIN、存在性检查和更新。表归属：presets → presets；models → api_model_configs；settings → app_settings；worlds → worlds/world_tags；sessions → sessions/entries。
 - State 无独立持久化表，不设 Repository；StateService 编排 WorldService、SessionService 完成 scope 快照与消息状态继承。状态列的 SQL 归表所属模块，普通内容更新不能覆盖运行 state。
@@ -19,6 +21,7 @@
 - routes 使用 http/response.ts 的统一 success/errorHandler；JSON 正文和 query 的传输校验在 route/helper，业务校验在 Service。SSE 和文件下载成功响应不包络，开始传输前的错误走统一 JSON 失败响应。
 - 当前状态 HTTP 为完整 scope 快照 GET/PUT；不把 PUT 冒充按路径 PATCH。消息计量仅由进程内 Service 写入；SSE 无公开发布接口。接口契约见 `../../docs/runtime/server-v2-http.md`。
 - V2 使用独立数据根目录和数据库，`user_version=1`；不导入旧 Server 的建表、恢复或计量结算逻辑，不自动改造或清空旧库。
-- 世界文件本期提供固定路径和原件保存基础规则；ZIP 导入导出及 DB/文件协作随用例迁移。目标契约见 `../../plan/sr-server-v2-storage-v1.md`。
+- 世界删除先执行本模块 DB 删除，外键拒绝时不碰文件；随后清理该世界根目录（source/package）。清理失败报告 WORLD_FILES_DELETE_FAILED，重试允许清理 DB 已不存在的残留目录；不做 DB/文件强事务。文件写入与删除按世界串行，路径校验不得跟随根目录符号链接影响其他世界。
+- 世界文件本期提供固定路径、原件保存和世界删除清理；ZIP 导入导出随用例迁移。目标契约见 `../../plan/sr-server-v2-storage-v1.md`。
 - HTTP 集成测试使用真实回环端口、临时或内存数据库和业务侧 publish，不增加公开事件发布接口。关闭服务须结束 SSE/HTTP 后关闭自有数据库。
 - 运行本包测试、类型检查和 lint；lint 检查模块唯一出口、单向层级、连接生命周期、事务位置及 SQL 表归属。事件生命周期见 `../../docs/runtime/server-v2-events.md`。

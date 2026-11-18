@@ -5,16 +5,16 @@ import { AppError } from '../errors.js';
 import type { ModelService } from '../models/service.js';
 import type { PresetService } from '../presets/service.js';
 import { assertWorldId, exportFilename, WorldFileStore, type OriginalFormat, type PackageFile, type WorldDownload, type WorldOriginal, type WorldPaths } from './files.js';
-import { WorldRepository } from './repository.js';
+import { WorldRepository, type WorldContentRow, type WorldRow } from './repository.js';
 import {
-  worldContentFields, type CreateWorld, type WorldContent, type WorldListOptions, type WorldPatch, type WorldRecord, type WorldTag,
+  worldContentFields, type CreateWorld, type WorldContent, type WorldListOptions, type WorldPatch, type World, type WorldPage, type WorldTag,
 } from './types.js';
 
-export type { CreateWorld, WorldContent, WorldListOptions, WorldPatch, WorldRecord, WorldTag } from './types.js';
+export type { CreateWorld, WorldContent, WorldDescription, WorldListOptions, WorldPage, WorldPatch, World, WorldTag } from './types.js';
 export type { OriginalFormat, PackageFile, WorldDownload, WorldOriginal, WorldPaths } from './files.js';
 
 type WorldDependencies = { presets: PresetService; models: ModelService };
-const nullableTextFields = ['description', 'cover', 'stage_component', 'default_preset_id', 'default_api_model_config_id'] as const;
+const nullableTextFields = ['cover', 'stageComponent', 'defaultPresetId', 'defaultApiModelConfigId'] as const;
 
 function nonblank(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new AppError('INVALID_WORLD_FIELD', field);
@@ -22,6 +22,7 @@ function nonblank(value: unknown, field: string): string {
 }
 
 function inputKeys(input: object, allowed: readonly string[]): void {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new AppError('INVALID_WORLD_FIELD');
   for (const key of Object.keys(input)) {
     if (!allowed.includes(key)) throw new AppError('INVALID_WORLD_FIELD', key);
   }
@@ -33,32 +34,61 @@ function tagsFrom(input: readonly string[]): string[] {
 }
 
 function normalizeContent(input: WorldContent): WorldContent {
-  const content = { ...input, name: nonblank(input.name, 'name'), spec_version: nonblank(input.spec_version, 'spec_version') };
+  const content = { ...input, name: nonblank(input.name, 'name'), specVersion: nonblank(input.specVersion, 'specVersion') };
   for (const field of nullableTextFields) {
     const value = input[field];
     if (value === null) continue;
     if (typeof value !== 'string') throw new AppError('INVALID_WORLD_FIELD', field);
-    content[field] = field === 'default_preset_id' || field === 'default_api_model_config_id' ? nonblank(value, field) : value;
+    content[field] = field === 'defaultPresetId' || field === 'defaultApiModelConfigId' ? nonblank(value, field) : value;
+  }
+  const description = input.description;
+  if (description !== null && typeof description !== 'string') {
+    if (typeof description !== 'object' || Array.isArray(description) ||
+      Object.keys(description).some(key => key !== 'type' && key !== 'component') || description.type !== 'component') {
+      throw new AppError('INVALID_WORLD_FIELD', 'description');
+    }
+    content.description = { type: 'component', component: nonblank(description.component, 'description.component') };
   }
   return content;
 }
 
 function initialContent(input: CreateWorld): WorldContent {
   return {
-    spec_version: input.spec_version,
+    specVersion: input.specVersion,
     name: input.name,
     description: input.description ?? null,
     cover: input.cover ?? null,
-    characters_json: input.characters_json,
-    openings_json: input.openings_json,
-    lorebook_json: input.lorebook_json ?? null,
-    state_definition_json: input.state_definition_json ?? null,
-    message_render_json: input.message_render_json ?? null,
+    characters: input.characters,
+    openings: input.openings,
+    lorebook: input.lorebook ?? null,
+    stateDefinition: input.stateDefinition ?? null,
+    messageRender: input.messageRender ?? null,
     components: input.components ?? null,
-    stage_component: input.stage_component ?? null,
-    extensions_json: input.extensions_json ?? null,
-    default_preset_id: input.default_preset_id ?? null,
-    default_api_model_config_id: input.default_api_model_config_id ?? null,
+    stageComponent: input.stageComponent ?? null,
+    extensions: input.extensions ?? null,
+    defaultPresetId: input.defaultPresetId ?? null,
+    defaultApiModelConfigId: input.defaultApiModelConfigId ?? null,
+  };
+}
+
+function toWorld(row: WorldRow): World {
+  return {
+    id: row.id, specVersion: row.spec_version, name: row.name, description: row.description, cover: row.cover,
+    characters: row.characters_json, openings: row.openings_json, lorebook: row.lorebook_json,
+    stateDefinition: row.state_definition_json, messageRender: row.message_render_json,
+    components: row.components, stageComponent: row.stage_component, extensions: row.extensions_json,
+    defaultPresetId: row.default_preset_id, defaultApiModelConfigId: row.default_api_model_config_id,
+    state: row.state, tags: row.tags, createdAt: row.created_at, updatedAt: row.updated_at,
+  };
+}
+
+function toContentRow(content: WorldContent): WorldContentRow {
+  return {
+    spec_version: content.specVersion, name: content.name, description: content.description, cover: content.cover,
+    characters_json: content.characters, openings_json: content.openings, lorebook_json: content.lorebook,
+    state_definition_json: content.stateDefinition, message_render_json: content.messageRender,
+    components: content.components, stage_component: content.stageComponent, extensions_json: content.extensions,
+    default_preset_id: content.defaultPresetId, default_api_model_config_id: content.defaultApiModelConfigId,
   };
 }
 
@@ -74,34 +104,46 @@ export class WorldService {
     this.#dependencies = dependencies;
   }
 
-  get(id: string): WorldRecord | null {
-    return this.#repository.get(id);
+  get(id: string): World | null {
+    const row = this.#repository.get(id);
+    return row ? toWorld(row) : null;
   }
 
-  require(id: string): WorldRecord {
+  require(id: string): World {
     const world = this.get(id);
     if (!world) throw new AppError('WORLD_NOT_FOUND');
     return world;
   }
 
-  list({ tag, limit = 50, offset = 0 }: WorldListOptions = {}): WorldRecord[] {
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200 || !Number.isSafeInteger(offset) || offset < 0) {
-      throw new AppError('INVALID_WORLD_PAGINATION');
-    }
-    return this.#repository.list({ tag: tag === undefined ? undefined : nonblank(tag, 'tag'), limit, offset });
+  list(options: WorldListOptions = {}): World[] {
+    return this.#repository.list(this.listOptions(options)).map(toWorld);
   }
 
-  create(input: CreateWorld): WorldRecord {
+  listPage(options: WorldListOptions = {}): WorldPage {
+    const pagination = this.listOptions(options);
+    const items = this.#repository.list({ ...pagination, limit: pagination.limit + 1 });
+    return { items: items.slice(0, pagination.limit).map(toWorld), hasMore: items.length > pagination.limit };
+  }
+
+  private listOptions({ tag, limit = 50, offset = 0 }: WorldListOptions) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200 || !Number.isSafeInteger(offset) ||
+      offset < 0 || !Number.isSafeInteger(offset + limit)) {
+      throw new AppError('INVALID_WORLD_PAGINATION');
+    }
+    return { tag: tag === undefined ? undefined : nonblank(tag, 'tag'), limit, offset };
+  }
+
+  create(input: CreateWorld): World {
     inputKeys(input, [...worldContentFields, 'id', 'state', 'tags']);
     const id = input.id ?? randomUUID();
     assertWorldId(id);
     const content = normalizeContent(initialContent(input));
     const tags = tagsFrom(input.tags === undefined ? [] : input.tags);
     this.checkReferences(content);
-    return this.#repository.create(id, content, tags, input.state === undefined ? {} : input.state);
+    return toWorld(this.#repository.create(id, toContentRow(content), tags, input.state === undefined ? {} : input.state));
   }
 
-  update(id: string, patch: WorldPatch): WorldRecord | null {
+  update(id: string, patch: WorldPatch): World | null {
     // World definition edits cannot overwrite a runtime snapshot.
     inputKeys(patch, [...worldContentFields, 'tags']);
     const current = this.get(id);
@@ -111,20 +153,29 @@ export class WorldService {
     const next = normalizeContent({ ...current, ...Object.fromEntries(changes) });
     const tags = patch.tags === undefined ? undefined : tagsFrom(patch.tags);
     this.checkReferences(next);
-    return this.#repository.update(id, next, tags);
+    return toWorld(this.#repository.update(id, toContentRow(next), tags));
   }
 
-  setTags(id: string, tags: readonly string[]): WorldRecord | null {
+  setTags(id: string, tags: readonly string[]): World | null {
     if (!Array.isArray(tags)) throw new AppError('INVALID_WORLD_TAGS');
     return this.update(id, { tags });
   }
 
   listTags(): WorldTag[] {
-    return this.#repository.listTags();
+    return this.#repository.listTags().map(row => ({ name: row.name, worldCount: row.world_count }));
   }
 
-  delete(id: string): boolean {
-    return this.#repository.delete(id);
+  async delete(id: string): Promise<boolean> {
+    assertWorldId(id);
+    // A rejected DB deletion must never remove the still-referenced world's files.
+    const dbDeleted = this.#repository.delete(id);
+    try {
+      const filesRemoved = await this.#files.remove(id);
+      return dbDeleted || filesRemoved;
+    } catch {
+      // Retrying also cleans up a directory whose DB row was already deleted.
+      throw new AppError('WORLD_FILES_DELETE_FAILED');
+    }
   }
 
   getState(worldId: string): JsonObject | null {
@@ -144,8 +195,9 @@ export class WorldService {
     return this.#files.paths(worldId);
   }
 
-  saveOriginal(worldId: string, format: OriginalFormat, bytes: Uint8Array): Promise<void> {
-    return this.#files.saveOriginal(worldId, format, bytes);
+  async saveOriginal(worldId: string, format: OriginalFormat, bytes: Uint8Array): Promise<void> {
+    this.require(worldId);
+    await this.#files.saveOriginal(worldId, format, bytes);
   }
 
   readOriginal(worldId: string): Promise<WorldOriginal | null> {
@@ -173,7 +225,7 @@ export class WorldService {
   }
 
   private checkReferences(content: WorldContent): void {
-    if (content.default_preset_id !== null) this.#dependencies.presets.require(content.default_preset_id);
-    if (content.default_api_model_config_id !== null) this.#dependencies.models.require(content.default_api_model_config_id);
+    if (content.defaultPresetId !== null) this.#dependencies.presets.require(content.defaultPresetId);
+    if (content.defaultApiModelConfigId !== null) this.#dependencies.models.require(content.defaultApiModelConfigId);
   }
 }

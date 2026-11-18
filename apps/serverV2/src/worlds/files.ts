@@ -11,7 +11,7 @@ export type WorldOriginal = { format: OriginalFormat; bytes: Uint8Array };
 export type PackageFile = { path: string; stat: Stats };
 export type WorldDownload = { body: ReadableStream<Uint8Array>; filename: string; size: number };
 const sourceLimits: Record<OriginalFormat, number> = { json: 10 * 1024 * 1024, zip: 256 * 1024 * 1024 };
-const sourceWrites = new Map<string, Promise<void>>();
+const worldWrites = new Map<string, Promise<void>>();
 
 /** Generated IDs are UUIDs; explicit IDs must be safe on case-insensitive filesystems too. */
 export function assertWorldId(id: string): void {
@@ -75,17 +75,17 @@ function packageSegments(path: string): string[] {
   return parts;
 }
 
-async function withSourceWrite<T>(key: string, write: () => Promise<T>): Promise<T> {
-  const previous = sourceWrites.get(key) ?? Promise.resolve();
+async function withWorldWrite<T>(key: string, write: () => Promise<T>): Promise<T> {
+  const previous = worldWrites.get(key) ?? Promise.resolve();
   let release!: () => void;
   const waiting = new Promise<void>(resolve => { release = resolve; });
-  sourceWrites.set(key, waiting);
+  worldWrites.set(key, waiting);
   await previous;
   try {
     return await write();
   } finally {
     release();
-    if (sourceWrites.get(key) === waiting) sourceWrites.delete(key);
+    if (worldWrites.get(key) === waiting) worldWrites.delete(key);
   }
 }
 
@@ -97,12 +97,12 @@ export class WorldFileStore {
     return getWorldPaths(this.dataRoot, worldId);
   }
 
-  private async directory(worldId: string, leaf: 'source' | 'package', create = false): Promise<string> {
+  private async directory(worldId: string, leaf?: 'source' | 'package', create = false): Promise<string> {
     assertWorldId(worldId);
     if (create) await mkdir(this.dataRoot, { recursive: true, mode: 0o700 });
     // The configured data root may itself be a system alias (for example /tmp on macOS).
     let directory = await realpath(this.dataRoot);
-    for (const segment of ['worlds', worldId, leaf]) {
+    for (const segment of ['worlds', worldId, ...(leaf ? [leaf] : [])]) {
       directory = join(directory, segment);
       if (create) {
         await mkdir(directory, { mode: 0o700 }).catch(error => {
@@ -133,8 +133,9 @@ export class WorldFileStore {
     if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0 || bytes.byteLength > sourceLimits[format]) {
       throw new AppError('INVALID_WORLD_ORIGINAL_SIZE');
     }
-    const source = await this.directory(worldId, 'source', true);
-    await withSourceWrite(source, async () => {
+    // Enqueue before mkdir so deletion cannot finish ahead of an already-accepted write.
+    await withWorldWrite(this.paths(worldId).root, async () => {
+      const source = await this.directory(worldId, 'source', true);
       const current = await this.originalAt(source);
       // Switching formats is a future import policy, not a partially atomic two-file replacement.
       if (current && current.format !== format) throw new AppError('WORLD_SOURCE_FORMAT_CONFLICT');
@@ -145,6 +146,16 @@ export class WorldFileStore {
       } finally {
         await rm(temporary, { force: true });
       }
+    });
+  }
+
+  async remove(worldId: string): Promise<boolean> {
+    return withWorldWrite(this.paths(worldId).root, async () => {
+      const root = await this.directory(worldId).catch(error => { if (missing(error)) return null; throw error; });
+      if (root === null) return false;
+      // Checked parents and root must be real directories. rm unlinks inner symlinks without following them.
+      await rm(root, { recursive: true, force: true });
+      return true;
     });
   }
 

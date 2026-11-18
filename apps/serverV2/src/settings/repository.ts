@@ -1,12 +1,20 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { AppError } from '../errors.js';
-import type { AppSettings, SettingsValues } from './types.js';
+import type { SettingsValues } from './types.js';
+
+export type StoredAppSettings = {
+  id: 1;
+  default_preset_id: string | null;
+  default_api_model_config_id: string | null;
+  created_at: number;
+  updated_at: number;
+};
 
 /** Module-private persistence for the application settings singleton. */
 export class SettingsRepository {
   constructor(private readonly db: DatabaseSync) {}
 
-  get(): AppSettings {
+  get(): StoredAppSettings {
     const row = this.db.prepare('SELECT * FROM app_settings WHERE id=1').get();
     if (!row) throw new AppError('APP_SETTINGS_MISSING');
     return {
@@ -18,9 +26,9 @@ export class SettingsRepository {
     };
   }
 
-  update(value: SettingsValues): AppSettings {
+  update(value: SettingsValues): StoredAppSettings {
     this.db.prepare('UPDATE app_settings SET default_preset_id=?,default_api_model_config_id=?,updated_at=? WHERE id=1')
-      .run(value.default_preset_id, value.default_api_model_config_id, Date.now());
+      .run(value.defaultPresetId, value.defaultApiModelConfigId, Date.now());
     return this.get();
   }
 }

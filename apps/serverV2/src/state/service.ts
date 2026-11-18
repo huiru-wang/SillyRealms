@@ -65,7 +65,7 @@ export class StateService {
       }
       if (result === null && entry.state !== null) result = entry.state;
       nextSequence = entry.seq;
-      current = entry.parent_id;
+      current = entry.parentId;
     }
     return result;
   }

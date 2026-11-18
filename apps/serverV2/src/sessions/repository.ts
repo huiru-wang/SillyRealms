@@ -2,11 +2,22 @@ import type { DatabaseSync } from 'node:sqlite';
 import { AppError } from '../errors.js';
 import { encodeJson, transaction, type JsonObject, type JsonValue } from '../database/connection.js';
 import type {
-  AppendEntryInput, CreateSessionInput, EntryListOptions, EntryMetrics, EntryRecord,
-  SessionListOptions, SessionRecord, UpdateEntryInput, UpdateSessionInput,
+  AppendEntryInput, CreateSessionInput, EntryListOptions, EntryMetrics,
+  SessionListOptions, UpdateEntryInput, UpdateSessionInput,
 } from './types.js';
 
-function decodeSession(row: Record<string, unknown>): SessionRecord {
+export type SessionRow = {
+  id: string; world_id: string; preset_id: string; api_model_config_id: string;
+  user_character_id: string; tip_entry_id: string | null; title: string | null;
+  state: JsonObject; usage_json: JsonObject | null; created_at: number; updated_at: number;
+};
+export type EntryRow = {
+  id: string; session_id: string; parent_id: string | null; run_id: string; seq: number;
+  timestamp: number; payload: JsonObject; state: JsonValue[] | null; ext_data: JsonObject;
+  metrics_json: EntryMetrics | null; created_at: number; updated_at: number;
+} & ({ type: 'message'; role: 'user' | 'assistant' } | { type: 'compaction'; role: null });
+
+function decodeSession(row: Record<string, unknown>): SessionRow {
   return {
     id: String(row.id), world_id: String(row.world_id), preset_id: String(row.preset_id),
     api_model_config_id: String(row.api_model_config_id), user_character_id: String(row.user_character_id),
@@ -18,7 +29,7 @@ function decodeSession(row: Record<string, unknown>): SessionRecord {
   };
 }
 
-function decodeEntry(row: Record<string, unknown>): EntryRecord {
+function decodeEntry(row: Record<string, unknown>): EntryRow {
   const kind: { type: 'message'; role: 'user' | 'assistant' } | { type: 'compaction'; role: null } | null =
     row.type === 'message' && (row.role === 'user' || row.role === 'assistant')
     ? { type: 'message' as const, role: row.role }
@@ -45,42 +56,60 @@ export class SessionRepository {
 
   constructor(db: DatabaseSync) { this.#db = db; }
 
-  get(id: string): SessionRecord | null {
+  get(id: string): SessionRow | null {
     const row = this.#db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
     return row ? decodeSession(row) : null;
   }
 
-  create(value: CreateSessionInput & { id: string }): SessionRecord {
+  create(value: CreateSessionInput & { id: string }): SessionRow {
     const state = encodeJson(value.state ?? {}, 'object');
     const now = Date.now();
     this.#db.prepare(
       'INSERT INTO sessions(id,world_id,preset_id,api_model_config_id,user_character_id,tip_entry_id,title,state,usage_json,created_at,updated_at) ' +
       'VALUES(?,?,?,?,?,NULL,?,?,NULL,?,?)',
-    ).run(value.id, value.world_id, value.preset_id, value.api_model_config_id, value.user_character_id, value.title ?? null, state, now, now);
+    ).run(value.id, value.worldId, value.presetId, value.apiModelConfigId, value.userCharacterId, value.title ?? null, state, now, now);
     return this.#requireSession(value.id);
   }
 
-  list(options: SessionListOptions & { limit: number }): SessionRecord[] {
+  list(options: SessionListOptions & { limit: number }): SessionRow[] {
     const clauses: string[] = [], values: (string | number)[] = [];
-    if (options.world_id !== undefined) {
-      clauses.push('world_id=?'); values.push(options.world_id);
+    if (options.worldId !== undefined) {
+      clauses.push('world_id=?'); values.push(options.worldId);
     }
     if (options.before !== undefined) {
       clauses.push('(updated_at<? OR (updated_at=? AND id<?))');
-      values.push(options.before.updated_at, options.before.updated_at, options.before.id);
+      values.push(options.before.updatedAt, options.before.updatedAt, options.before.id);
     }
     const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : '';
     return this.#db.prepare('SELECT * FROM sessions' + where + ' ORDER BY updated_at DESC,id DESC LIMIT ?')
       .all(...values, options.limit).map(decodeSession);
   }
 
-  update(id: string, patch: UpdateSessionInput): SessionRecord {
+  listPage(options: SessionListOptions & { limit: number }): { items: SessionRow[]; hasMore: boolean } {
+    const rows = this.list({ ...options, limit: options.limit + 1 });
+    return { items: rows.slice(0, options.limit), hasMore: rows.length > options.limit };
+  }
+
+  countByWorldIds(worldIds: readonly string[]): Record<string, number> {
+    const result = Object.fromEntries(worldIds.map(id => [id, 0]));
+    for (let offset = 0; offset < worldIds.length; offset += 500) {
+      const batch = worldIds.slice(offset, offset + 500);
+      const placeholders = batch.map(() => '?').join(',');
+      const rows = this.#db.prepare(
+        'SELECT world_id,count(*) AS count FROM sessions WHERE world_id IN (' + placeholders + ') GROUP BY world_id',
+      ).all(...batch);
+      for (const row of rows) result[String(row.world_id)] = Number(row.count);
+    }
+    return result;
+  }
+
+  update(id: string, patch: UpdateSessionInput): SessionRow {
     return transaction(this.#db, () => {
       const current = this.#requireSession(id);
       if (!Object.values(patch).some(value => value !== undefined)) return current;
       this.#db.prepare('UPDATE sessions SET preset_id=?,api_model_config_id=?,user_character_id=?,title=?,updated_at=? WHERE id=?')
-        .run(patch.preset_id ?? current.preset_id, patch.api_model_config_id ?? current.api_model_config_id,
-          patch.user_character_id ?? current.user_character_id,
+        .run(patch.presetId ?? current.preset_id, patch.apiModelConfigId ?? current.api_model_config_id,
+          patch.userCharacterId ?? current.user_character_id,
           patch.title !== undefined ? patch.title : current.title, Date.now(), id);
       return this.#requireSession(id);
     });
@@ -90,19 +119,19 @@ export class SessionRepository {
     return this.#db.prepare('DELETE FROM sessions WHERE id=?').run(id).changes > 0;
   }
 
-  getEntry(sessionId: string, entryId: string): EntryRecord | null {
+  getEntry(sessionId: string, entryId: string): EntryRow | null {
     const row = this.#db.prepare('SELECT * FROM entries WHERE session_id=? AND id=?').get(sessionId, entryId);
     return row ? decodeEntry(row) : null;
   }
 
   /** Check the expected predecessor and advance the tip with the insertion in one transaction. */
-  appendEntry(sessionId: string, value: AppendEntryInput & { id: string }): EntryRecord {
-    const payload = encodeJson(value.payload, 'object'), ext = encodeJson(value.ext_data ?? {}, 'object');
+  appendEntry(sessionId: string, value: AppendEntryInput & { id: string }): EntryRow {
+    const payload = encodeJson(value.payload, 'object'), ext = encodeJson(value.extData ?? {}, 'object');
     const state = value.state == null ? null : encodeJson(value.state, 'array');
-    const metrics = value.metrics_json ?? null;
+    const metrics = value.metrics ?? null;
     return transaction(this.#db, () => {
       const session = this.#requireSession(sessionId);
-      const parent = value.parent_id === undefined ? session.tip_entry_id : value.parent_id;
+      const parent = value.parentId === undefined ? session.tip_entry_id : value.parentId;
       if (parent !== session.tip_entry_id) throw new AppError('TIP_CONFLICT');
       const maximum = Number(this.#db.prepare('SELECT coalesce(max(seq),0) AS seq FROM entries WHERE session_id=?').get(sessionId)!.seq);
       if (parent === null ? maximum !== 0 : this.getEntry(sessionId, parent)?.seq !== maximum) {
@@ -113,29 +142,29 @@ export class SessionRepository {
       this.#db.prepare(
         'INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,timestamp,payload,state,ext_data,metrics_json,created_at,updated_at) ' +
         'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-      ).run(value.id, sessionId, parent, value.run_id, maximum + 1, value.type, value.role, value.timestamp ?? now,
+      ).run(value.id, sessionId, parent, value.runId, maximum + 1, value.type, value.role, value.timestamp ?? now,
         payload, state, ext, metrics === null ? null : encodeJson(metrics, 'object'), now, now);
       this.#db.prepare('UPDATE sessions SET tip_entry_id=?,updated_at=? WHERE id=?').run(value.id, now, sessionId);
       return this.#requireEntry(sessionId, value.id);
     });
   }
 
-  listEntries(sessionId: string, options: Required<EntryListOptions>): EntryRecord[] {
+  listEntries(sessionId: string, options: Required<EntryListOptions>): EntryRow[] {
     return this.#db.prepare('SELECT * FROM entries WHERE session_id=? AND seq>? ORDER BY seq LIMIT ?')
-      .all(sessionId, options.after_seq, options.limit).map(decodeEntry);
+      .all(sessionId, options.afterSeq, options.limit).map(decodeEntry);
   }
 
-  listRunEntries(sessionId: string, runId: string): EntryRecord[] {
+  listRunEntries(sessionId: string, runId: string): EntryRow[] {
     return this.#db.prepare('SELECT * FROM entries WHERE session_id=? AND run_id=? ORDER BY seq')
       .all(sessionId, runId).map(decodeEntry);
   }
 
-  updateEntry(sessionId: string, entryId: string, patch: UpdateEntryInput): EntryRecord {
+  updateEntry(sessionId: string, entryId: string, patch: UpdateEntryInput): EntryRow {
     return transaction(this.#db, () => {
       const current = this.#requireEntry(sessionId, entryId);
-      if (patch.payload === undefined && patch.ext_data === undefined) return current;
+      if (patch.payload === undefined && patch.extData === undefined) return current;
       const payload = encodeJson(patch.payload ?? current.payload, 'object');
-      const ext = encodeJson(patch.ext_data ?? current.ext_data, 'object');
+      const ext = encodeJson(patch.extData ?? current.ext_data, 'object');
       const now = Date.now();
       this.#db.prepare('UPDATE entries SET payload=?,ext_data=?,updated_at=? WHERE session_id=? AND id=?')
         .run(payload, ext, now, sessionId, entryId);
@@ -144,7 +173,7 @@ export class SessionRepository {
     });
   }
 
-  setMetrics(sessionId: string, entryId: string, value: EntryMetrics | null): EntryRecord {
+  setMetrics(sessionId: string, entryId: string, value: EntryMetrics | null): EntryRow {
     return transaction(this.#db, () => {
       this.#requireEntry(sessionId, entryId);
       this.#assertMetricsUnique(sessionId, entryId, value);
@@ -191,13 +220,13 @@ export class SessionRepository {
     return state === null ? null : JSON.parse(state) as JsonValue[];
   }
 
-  #requireSession(id: string): SessionRecord {
+  #requireSession(id: string): SessionRow {
     const row = this.get(id);
     if (!row) throw new AppError('SESSION_NOT_FOUND');
     return row;
   }
 
-  #requireEntry(sessionId: string, entryId: string): EntryRecord {
+  #requireEntry(sessionId: string, entryId: string): EntryRow {
     const row = this.getEntry(sessionId, entryId);
     if (!row) throw new AppError('ENTRY_NOT_FOUND');
     return row;

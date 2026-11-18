@@ -14,24 +14,24 @@ beforeEach(() => {
   db = openDatabase(':memory:');
   dataRoot = mkdtempSync(join(tmpdir(), 'sr-state-service-'));
   services = createServices(db, dataRoot);
-  services.models.create({ id: 'model', name: 'Model', provider_id: 'provider', model_id: 'model', credential_ref: 'credential-ref' });
+  services.models.create({ id: 'model', name: 'Model', providerId: 'provider', modelId: 'model', credentialRef: 'credential-ref' });
   services.presets.create({ ...narrativePreset(), id: 'preset' });
   services.worlds.create({
-    id: 'world', spec_version: '0.1', name: 'World', characters_json: [], openings_json: [],
-    state_definition_json: { schema_version: 2 }, state: { day: 1 },
+    id: 'world', specVersion: '0.1', name: 'World', characters: [], openings: [],
+    stateDefinition: { schema_version: 2 }, state: { day: 1 },
   });
   sessions = services.sessions;
   state = services.state;
   for (const id of ['one', 'two']) sessions.create({
-    id, world_id: 'world', preset_id: 'preset', api_model_config_id: 'model', user_character_id: 'player', state: { reputation: 0 },
+    id, worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player', state: { reputation: 0 },
   });
 });
 afterEach(() => { vi.restoreAllMocks(); db.close(); rmSync(dataRoot, { recursive: true, force: true }); });
 
-function append(id: string, parent_id?: string, sessionId = 'one') {
+function append(id: string, parentId?: string, sessionId = 'one') {
   return sessions.appendEntry(sessionId, {
-    id, parent_id, run_id: 'run', type: 'message', role: 'assistant',
-    payload: { text: id }, ext_data: { custom: true },
+    id, parentId, runId: 'run', type: 'message', role: 'assistant',
+    payload: { text: id }, extData: { custom: true },
   });
 }
 
@@ -42,7 +42,7 @@ describe('scope snapshot persistence', () => {
     expect(state.getGlobal('world')).toEqual({ day: 2 });
     expect(state.getSession('one')).toEqual({ reputation: 10 });
     expect(state.getSession('two')).toEqual({ reputation: 0 });
-    expect(services.worlds.get('world')!.state_definition_json).toEqual({ schema_version: 2 });
+    expect(services.worlds.get('world')!.stateDefinition).toEqual({ schema_version: 2 });
     expect(state.getGlobal('missing')).toBeNull();
     expect(() => state.setGlobal('missing', {})).toThrow('WORLD_NOT_FOUND');
     expect(() => state.setSession('missing', {})).toThrow('SESSION_NOT_FOUND');
@@ -51,7 +51,7 @@ describe('scope snapshot persistence', () => {
   it('inherits message state through compaction and the linear predecessor chain', () => {
     append('root');
     state.setMessage('one', 'root', [{ key: 'coins', value: 3 }]);
-    sessions.appendEntry('one', { id: 'summary', run_id: 'compact', type: 'compaction', role: null, payload: { summary: 'Summary' } });
+    sessions.appendEntry('one', { id: 'summary', runId: 'compact', type: 'compaction', role: null, payload: { summary: 'Summary' } });
     append('answer');
     expect(state.getMessage('one', 'answer')).toEqual([{ key: 'coins', value: 3 }]);
     state.setMessage('one', 'answer', [{ key: 'coins', value: 99 }]);
@@ -75,7 +75,7 @@ describe('scope snapshot persistence', () => {
     expect(sessions.getEntry('one', 'root')!.state).toEqual([{ key: 'coins', value: 3 }]);
   });
 
-  it('updates only the selected state field and updated_at', () => {
+  it('updates only the selected state field and updatedAt', () => {
     vi.spyOn(Date, 'now').mockReturnValue(100);
     const entry = append('root');
     sessions.setMetrics('one', entry.id, { requests: [{ requestId: 'request', modelId: 'actual', status: 'completed', usage: null }] });
@@ -83,9 +83,9 @@ describe('scope snapshot persistence', () => {
     vi.mocked(Date.now).mockReturnValue(200);
     state.setMessage('one', entry.id, [{ key: 'inventory', value: { coins: 7 } }]);
     expect(sessions.getEntry('one', entry.id)).toEqual({
-      ...before, state: [{ key: 'inventory', value: { coins: 7 } }], updated_at: 200,
+      ...before, state: [{ key: 'inventory', value: { coins: 7 } }], updatedAt: 200,
     });
-    expect(sessions.get('one')!.updated_at).toBe(100);
+    expect(sessions.get('one')!.updatedAt).toBe(100);
     expect(() => state.setMessage('two', entry.id, [])).toThrow('ENTRY_NOT_FOUND');
     expect(state.getMessage('two', entry.id)).toBeNull();
   });

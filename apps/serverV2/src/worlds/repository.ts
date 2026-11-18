@@ -1,13 +1,36 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { encodeJson, transaction, type JsonObject, type JsonValue } from '../database/connection.js';
-import {
-  worldContentFields, type WorldContent, type WorldListOptions, type WorldRecord, type WorldTag,
-} from './types.js';
+import type { WorldDescription, WorldListOptions } from './types.js';
 
-const nullableJsonFields = new Set(['lorebook_json', 'state_definition_json', 'message_render_json', 'extensions_json']);
+/** Decoded storage rows stay inside this module; only the Service exposes domain objects. */
+export type WorldContentRow = {
+  spec_version: string;
+  name: string;
+  description: WorldDescription;
+  cover: string | null;
+  characters_json: JsonValue[];
+  openings_json: JsonValue[];
+  lorebook_json: JsonValue | null;
+  state_definition_json: JsonValue | null;
+  message_render_json: JsonValue | null;
+  components: JsonValue[] | null;
+  stage_component: string | null;
+  extensions_json: JsonValue | null;
+  default_preset_id: string | null;
+  default_api_model_config_id: string | null;
+};
+export type WorldRow = WorldContentRow & {
+  id: string; state: JsonObject; tags: string[]; created_at: number; updated_at: number;
+};
+const contentColumns = [
+  'spec_version', 'name', 'description', 'cover', 'characters_json', 'openings_json',
+  'lorebook_json', 'state_definition_json', 'message_render_json', 'components',
+  'stage_component', 'extensions_json', 'default_preset_id', 'default_api_model_config_id',
+] as const;
+const nullableJsonFields = new Set(['description', 'lorebook_json', 'state_definition_json', 'message_render_json', 'extensions_json']);
 
-function contentValues(input: WorldContent): SQLInputValue[] {
-  return worldContentFields.map(field => {
+function contentValues(input: WorldContentRow): SQLInputValue[] {
+  return contentColumns.map(field => {
     const value = input[field];
     if (field === 'characters_json' || field === 'openings_json') return encodeJson(value, 'array');
     if (field === 'components') return value === null ? null : encodeJson(value, 'array');
@@ -16,11 +39,25 @@ function contentValues(input: WorldContent): SQLInputValue[] {
   });
 }
 
+function readDescription(value: unknown): WorldDescription {
+  if (value === null) return null;
+  const text = String(value);
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed === 'string') return parsed;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
+      'type' in parsed && parsed.type === 'component' && 'component' in parsed && typeof parsed.component === 'string') {
+      return { type: 'component', component: parsed.component };
+    }
+  } catch { /* Earlier V2 rows stored descriptions as unencoded text. */ }
+  return text;
+}
+
 /** Module-private persistence; each transaction contains only worlds and world_tags SQL. */
 export class WorldRepository {
   constructor(private readonly db: DatabaseSync) {}
 
-  get(id: string): WorldRecord | null {
+  get(id: string): WorldRow | null {
     const row = this.db.prepare('SELECT * FROM worlds WHERE id = ?').get(id);
     if (!row) return null;
     const nullableJson = (key: string): JsonValue | null =>
@@ -29,7 +66,7 @@ export class WorldRepository {
       id: String(row.id),
       spec_version: String(row.spec_version),
       name: String(row.name),
-      description: row.description === null ? null : String(row.description),
+      description: readDescription(row.description),
       cover: row.cover === null ? null : String(row.cover),
       characters_json: JSON.parse(String(row.characters_json)) as JsonValue[],
       openings_json: JSON.parse(String(row.openings_json)) as JsonValue[],
@@ -49,7 +86,7 @@ export class WorldRepository {
     };
   }
 
-  list({ tag, limit = 50, offset = 0 }: WorldListOptions): WorldRecord[] {
+  list({ tag, limit = 50, offset = 0 }: WorldListOptions): WorldRow[] {
     const args: SQLInputValue[] = [];
     let filter = '';
     if (tag !== undefined) {
@@ -61,30 +98,30 @@ export class WorldRepository {
     return rows.map(row => this.get(String(row.id))!);
   }
 
-  create(id: string, content: WorldContent, tags: readonly string[], value: JsonObject): WorldRecord {
+  create(id: string, content: WorldContentRow, tags: readonly string[], value: JsonObject): WorldRow {
     const values = contentValues(content);
     const state = encodeJson(value, 'object');
     return transaction(this.db, () => {
       const now = Date.now();
-      const columns = ['id', ...worldContentFields, 'state', 'created_at', 'updated_at'];
-      this.db.prepare('INSERT INTO worlds (' + columns.join(', ') + ') VALUES (' + columns.map(() => '?').join(', ') + ')')
+      const fields = ['id', ...contentColumns, 'state', 'created_at', 'updated_at'];
+      this.db.prepare('INSERT INTO worlds (' + fields.join(', ') + ') VALUES (' + fields.map(() => '?').join(', ') + ')')
         .run(id, ...values, state, now, now);
       this.writeTags(id, tags);
       return this.get(id)!;
     });
   }
 
-  update(id: string, content: WorldContent, tags?: readonly string[]): WorldRecord {
+  update(id: string, content: WorldContentRow, tags?: readonly string[]): WorldRow {
     const values = contentValues(content);
     return transaction(this.db, () => {
-      this.db.prepare('UPDATE worlds SET ' + worldContentFields.map(field => field + ' = ?').join(', ') + ', updated_at = ? WHERE id = ?')
+      this.db.prepare('UPDATE worlds SET ' + contentColumns.map(field => field + ' = ?').join(', ') + ', updated_at = ? WHERE id = ?')
         .run(...values, Date.now(), id);
       if (tags !== undefined) this.writeTags(id, tags);
       return this.get(id)!;
     });
   }
 
-  listTags(): WorldTag[] {
+  listTags(): { name: string; world_count: number }[] {
     return this.db.prepare('SELECT name, count(*) AS world_count FROM world_tags GROUP BY name ORDER BY name').all()
       .map(row => ({ name: String(row.name), world_count: Number(row.world_count) }));
   }

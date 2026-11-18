@@ -7,6 +7,7 @@ export type UpdatePresetInput = Partial<z.input<typeof presetValueSchema>>;
 export type PresetListOptions = { type?: 'narrative'; limit?: number; offset?: number };
 export type Preset = PresetValue & {
   id: string;
-  created_at: number;
-  updated_at: number;
+  createdAt: number;
+  updatedAt: number;
 };
+export type PresetPage = { items: Preset[]; hasMore: boolean };

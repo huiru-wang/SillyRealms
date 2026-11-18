@@ -33,24 +33,34 @@ async function expectFailure(response: Response, status: number, errorCode?: str
 
 const base = '/api/v1/api-model-configs';
 const model = {
-  id: 'model', name: 'Local model', provider_id: 'provider', model_id: 'model-v1', credential_ref: 'vault:local',
+  id: 'model', name: 'Local model', providerId: 'provider', modelId: 'model-v1', credentialRef: 'vault:local',
+};
+const publicModel = {
+  id: model.id, name: model.name, providerId: model.providerId, modelId: model.modelId,
 };
 
 describe('model configuration HTTP operations', () => {
-  it('persists connection references, updates selected fields and deletes a configuration', async () => {
+  it('uses camel case while keeping credential references and unimplemented credential status out of HTTP', async () => {
     const created = await app.request(base, write('POST', model));
     expect(created.status).toBe(201);
     expect(await created.json()).toEqual({
       success: true, errorCode: null, errorMessage: '',
-      data: { item: { ...model, created_at: expect.any(Number), updated_at: expect.any(Number) } },
+      data: { item: { ...publicModel, createdAt: expect.any(Number), updatedAt: expect.any(Number) } },
     });
+    expect(services.models.require('model').credentialRef).toBe('vault:local');
     const fetched = await app.request(base + '/model');
-    expect((await fetched.json()).data.item).toMatchObject(model);
+    const item = (await fetched.json()).data.item;
+    expect(item).toMatchObject(publicModel);
+    expect(item).not.toHaveProperty('credentialRef');
+    expect(item).not.toHaveProperty('credentialConfigured');
+    expect(Object.keys(item).every(key => !key.includes('_'))).toBe(true);
     const listed = await app.request(base + '?limit=1&offset=0');
-    expect((await listed.json()).data.items.map((item: { id: string }) => item.id)).toEqual(['model']);
-    const updated = await app.request(base + '/model', write('PATCH', { model_id: 'model-v2' }));
+    expect((await listed.json()).data).toMatchObject({
+      items: [publicModel], hasMore: false, nextCursor: null,
+    });
+    const updated = await app.request(base + '/model', write('PATCH', { modelId: 'model-v2' }));
     expect(updated.status).toBe(200);
-    expect((await updated.json()).data.item).toMatchObject({ ...model, model_id: 'model-v2' });
+    expect((await updated.json()).data.item).toMatchObject({ ...publicModel, modelId: 'model-v2' });
 
     const deleted = await app.request(base + '/model', { method: 'DELETE' });
     expect(await deleted.json()).toEqual({ success: true, errorCode: null, errorMessage: '', data: { id: 'model' } });
@@ -64,11 +74,22 @@ describe('model configuration HTTP operations', () => {
     expect(services.models.list()).toEqual([]);
     expect((await app.request(base, write('POST', model))).status).toBe(201);
     await expectFailure(await app.request(base, write('POST', { ...model, name: 'Duplicate ID' })), 409, 'RESOURCE_CONFLICT');
-    await expectFailure(await app.request(base + '/model', write('PATCH', { credential_ref: ' ' })), 400);
+    await expectFailure(await app.request(base + '/model', write('PATCH', { credentialRef: ' ' })), 400);
     await expectFailure(await app.request(base + '/model', write('PATCH', {})), 400);
     for (const query of ['?limit=abc', '?limit=1001', '?offset=-1', '?offset=0.5']) {
       await expectFailure(await app.request(base + query), 400);
     }
     expect(services.models.get('model')).toMatchObject(model);
+  });
+
+  it('paginates model configuration responses using an opaque cursor', async () => {
+    for (const id of ['one', 'two', 'three']) services.models.create({ ...model, id, name: id });
+    const first = (await (await app.request(base + '?limit=2')).json()).data;
+    expect(first).toMatchObject({ hasMore: true, nextCursor: expect.any(String) });
+    const second = (await (await app.request(base + '?limit=2&cursor=' + encodeURIComponent(first.nextCursor))).json()).data;
+    expect(second).toMatchObject({ hasMore: false, nextCursor: null });
+    expect(new Set([...first.items, ...second.items].map((item: { id: string }) => item.id))).toEqual(new Set(['one', 'two', 'three']));
+    expect([...first.items, ...second.items].every(item => !Object.hasOwn(item, 'credentialRef'))).toBe(true);
+    await expectFailure(await app.request(base + '?cursor=invalid'), 400, 'INVALID_REQUEST');
   });
 });

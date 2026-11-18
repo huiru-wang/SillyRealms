@@ -6,16 +6,18 @@ import type {
 } from './schema.js';
 
 export type EntryMetrics = z.infer<typeof metricsSchema>;
-export type SessionRecord = {
-  id: string; world_id: string; preset_id: string; api_model_config_id: string;
-  user_character_id: string; tip_entry_id: string | null; title: string | null;
-  state: JsonObject; usage_json: JsonObject | null; created_at: number; updated_at: number;
+export type Session = {
+  id: string; worldId: string; presetId: string; apiModelConfigId: string;
+  userCharacterId: string; tipEntryId: string | null; title: string | null;
+  state: JsonObject; usage: JsonObject | null; createdAt: number; updatedAt: number;
 };
-export type EntryRecord = {
-  id: string; session_id: string; parent_id: string | null; run_id: string; seq: number;
-  timestamp: number; payload: JsonObject; state: JsonValue[] | null; ext_data: JsonObject;
-  metrics_json: EntryMetrics | null; created_at: number; updated_at: number;
+export type SessionEntry = {
+  id: string; sessionId: string; parentId: string | null; runId: string; seq: number;
+  timestamp: number; payload: JsonObject; state: JsonValue[] | null; extData: JsonObject;
+  metrics: EntryMetrics | null; createdAt: number; updatedAt: number;
 } & ({ type: 'message'; role: 'user' | 'assistant' } | { type: 'compaction'; role: null });
+
+export type SessionPage = { items: Session[]; hasMore: boolean };
 
 export type CreateSessionInput = z.infer<typeof createSessionSchema>;
 export type UpdateSessionInput = z.infer<typeof updateSessionSchema>;
