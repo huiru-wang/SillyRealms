@@ -2,14 +2,16 @@ import { Hono, type Context } from 'hono';
 import { AppError } from '../errors.js';
 import { readJson, success } from '../http/response.js';
 import { requireSessionAccess, type SessionAccessCheck } from '../http/session-access.js';
-import type { SessionService } from '../sessions/service.js';
-import type { StateService } from '../state/service.js';
+import type { SessionService } from '../modules/sessions/service.js';
+import type { StateService } from '../modules/state/service.js';
+import type { SetState } from '../usecases/set-state.js';
 
 type ObjectSnapshot = ReturnType<StateService['requireGlobal']>;
 type MessageSnapshot = ReturnType<StateService['getMessage']>;
 
 export type StateRouteOptions = {
   state: StateService;
+  setState: SetState;
   sessions: SessionService;
   canAccessSession?: SessionAccessCheck;
   shutdownSignal: AbortSignal;
@@ -39,7 +41,7 @@ async function readMessageState(c: Context): Promise<MessageSnapshot> {
   return state;
 }
 
-export function createStateRoutes({ state, sessions, canAccessSession, shutdownSignal }: StateRouteOptions) {
+export function createStateRoutes({ state, setState, sessions, canAccessSession, shutdownSignal }: StateRouteOptions) {
   const routes = new Hono();
   const access = (sessionId: string, request: Request) =>
     requireSessionAccess(sessions, sessionId, request, canAccessSession, shutdownSignal);
@@ -48,7 +50,7 @@ export function createStateRoutes({ state, sessions, canAccessSession, shutdownS
     success(c, { item: state.requireGlobal(c.req.param('worldId')) }));
 
   routes.put('/worlds/:worldId/state', async c =>
-    success(c, { item: state.setGlobal(c.req.param('worldId'), await readObjectState(c)) }));
+    success(c, { item: setState.setGlobal(c.req.param('worldId'), await readObjectState(c)) }));
 
   routes.get('/sessions/:id/state', async c => {
     const id = c.req.param('id');
@@ -59,7 +61,7 @@ export function createStateRoutes({ state, sessions, canAccessSession, shutdownS
   routes.put('/sessions/:id/state', async c => {
     const id = c.req.param('id');
     await access(id, c.req.raw);
-    return success(c, { item: state.setSession(id, await readObjectState(c)) });
+    return success(c, { item: setState.setSession(id, await readObjectState(c)) });
   });
 
   routes.get('/sessions/:id/entries/:entryId/state', async c => {
@@ -71,7 +73,7 @@ export function createStateRoutes({ state, sessions, canAccessSession, shutdownS
   routes.put('/sessions/:id/entries/:entryId/state', async c => {
     const id = c.req.param('id');
     await access(id, c.req.raw);
-    return success(c, { item: state.setMessage(id, c.req.param('entryId'), await readMessageState(c)) });
+    return success(c, { item: setState.setMessage(id, c.req.param('entryId'), await readMessageState(c)) });
   });
   return routes;
 }

@@ -1,5 +1,17 @@
 # 世界卡组件与展示权限
 
+除下节注明的 V2 差异外，本文描述原 Studio/Server 的运行与展示契约。
+
+## StudioV2 内容库边界
+
+- V2 世界卡使用 `spec_version/data`；HTTP 管理详情使用顶层驼峰领域字段，不包含运行 state。已有文本 description 如实展示；新卡导入仍按组件描述协议校验。
+- 世界内容库只读展示作者角色、开局、世界书及状态定义。世界详情沿用原 Studio 的折叠概览、角色条、六个图标 Tab、开局导航及弹窗。角色在头部选择并带入创建确认，弹窗允许选择配置；仅创建基础会话，不执行开局、不生成首条消息或应用 initial_state。
+- 图片、音频、字体及组件文件来自 `/api/v1/worlds/:id/resources/*`；SDK 保留旧来源兼容，并支持 V2 资源根目录。
+- 作者介绍与开局组件使用独立预览来源的 `world-component.html`，开发默认 127.0.0.1:5177；StudioV2 默认 127.0.0.1:5176。预览来源不得与管理来源相同。构建及部署配置见 [StudioV2 管理](../runtime/studio-v2-management.md)。
+- 预览保留 sandbox、CSP、窗口/来源/nonce 校验。宿主只允许读取当前世界 global 路径，从状态响应 `data.item` 投影，不提供完整状态、写操作或会话能力。主题按 appearance 契约传递。组件错误局部展示并允许重试；离开或切换预览销毁旧文档与连接。
+- 组件 path 优先，读取失败不回退 inline。世界管理不启动 Stage，不执行消息展示规则或状态规则。
+
+
 世界卡保持 `spec / spec_version / data` 包装。组件相关字段位于 `data` 根层：
 
 ```json

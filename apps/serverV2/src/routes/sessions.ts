@@ -7,8 +7,8 @@ import { numberQuery, readJson, success } from '../http/response.js';
 import { requireSessionAccess, type SessionAccessCheck } from '../http/session-access.js';
 import type {
   AppendEntryInput, CreateSessionInput, Session, SessionListOptions, SessionService, UpdateEntryInput, UpdateSessionInput,
-} from '../sessions/service.js';
-import type { WorldService } from '../worlds/service.js';
+} from '../modules/sessions/service.js';
+import type { WorldService } from '../modules/worlds/service.js';
 
 export type SessionSummary = Pick<Session, 'id' | 'worldId' | 'presetId' | 'apiModelConfigId' | 'title' | 'updatedAt'>
   & { worldName: string; cover: string | null };
@@ -95,7 +95,7 @@ export function createSessionRoutes({ events, sessions, worlds, canAccessSession
   routes.get('/:id', async c => {
     const id = c.req.param('id');
     await access(id, c.req.raw);
-    return success(c, projectSession(sessions.require(id), worlds));
+    return success(c, { item: projectSession(sessions.require(id), worlds) });
   });
 
   routes.patch('/:id', async c => {

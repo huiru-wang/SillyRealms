@@ -1,0 +1,11 @@
+:root{--chat-bg:var(--reading-bg);--chat-surface:var(--reading-surface);--chat-text:var(--reading-text);--chat-muted:var(--reading-muted);--chat-line:var(--reading-border);--chat-accent:var(--accent);--chat-accent-soft:var(--selection-bg)}
+/* Frame defaults and legacy author helpers. Official reading styles live in the SDK. */
+
+*{box-sizing:border-box}html,body,#root{height:100%;margin:0}body{color:var(--chat-text);background:var(--chat-bg);font-size:14px;line-height:1.55}button,textarea,input{font:inherit}button{cursor:pointer}
+.sr-chat{height:100%;min-height:0;display:flex;flex-direction:column;background:var(--chat-bg)}
+.sr-compose{display:flex;align-items:flex-end;gap:10px;padding:13px max(22px,calc((100% - 780px)/2)) 18px;background:linear-gradient(transparent,var(--chat-bg) 18%)}
+.sr-compose textarea{resize:none;flex:1;min-width:0;min-height:48px;max-height:180px;border:1px solid var(--chat-line);border-radius:12px;padding:12px 14px;background:var(--chat-surface);color:var(--chat-text);font-size:13px;line-height:1.6;box-shadow:0 2px 8px var(--shade);outline:none;transition:border-color .15s,box-shadow .15s}.sr-compose textarea:focus{border-color:var(--focus);box-shadow:0 0 0 3px var(--selection-bg)}.sr-compose textarea::placeholder{color:var(--text-muted)}
+.sr-compose button{min-height:43px;padding:0 18px;border:1px solid var(--chat-accent);border-radius:10px;background:var(--chat-accent);color:var(--action-primary-fg);font-size:12px;font-weight:var(--weight-strong);box-shadow:0 2px 6px var(--shade);transition:background .15s}.sr-compose button:hover{background:var(--action-primary-hover)}.sr-compose button:disabled{opacity:.45;cursor:not-allowed}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
+
+@media(max-width:640px){.sr-compose{gap:7px;padding:10px 12px 13px}.sr-compose textarea{min-height:44px;padding:10px 11px;font-size:16px}.sr-compose button{min-height:42px;padding:0 13px}}

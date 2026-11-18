@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "pnpm --filter @sillyrealms/server dev",
     "test": "pnpm --filter @sillyrealms/server test && pnpm --filter @sillyrealms/server-v2 test",
-    "typecheck": "pnpm --filter @sillyrealms/server typecheck && pnpm --filter @sillyrealms/server-v2 typecheck && pnpm --filter @sillyrealms/studio typecheck",
+    "typecheck": "pnpm --filter @sillyrealms/server typecheck && pnpm --filter @sillyrealms/server-v2 typecheck && pnpm --filter @sillyrealms/studio typecheck && pnpm --filter @sillyrealms/studio-v2 typecheck",
     "lint": "pnpm --filter @sillyrealms/server lint && pnpm --filter @sillyrealms/server-v2 lint",
     "build": "pnpm --filter @sillyrealms/studio build",
     "test:browser": "pnpm --filter @sillyrealms/studio test:theme && pnpm --filter @sillyrealms/studio test:visual",
@@ -13,6 +13,11 @@
     "build:studio": "pnpm --filter @sillyrealms/studio build",
     "test:studio:visual": "pnpm --filter @sillyrealms/studio test:visual",
     "start": "pnpm --filter @sillyrealms/server start",
-    "dev:all": "node scripts/dev.mjs"
+    "dev:all": "node scripts/dev.mjs",
+    "dev:studio-v2": "pnpm --filter @sillyrealms/studio-v2 dev",
+    "dev:server-v2": "pnpm --filter @sillyrealms/server-v2 dev",
+    "build:studio-v2": "pnpm --filter @sillyrealms/studio-v2 build",
+    "test:studio-v2": "pnpm --filter @sillyrealms/studio-v2 test",
+    "dev:world-preview-v2": "pnpm --filter @sillyrealms/studio-v2 dev:world-preview"
   }
 }

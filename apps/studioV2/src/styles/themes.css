@@ -1,0 +1,4 @@
+/* Colors are resolved by theme.ts for Host and isolated renderers. */
+:root{color-scheme:dark}
+[data-theme="light"]{color-scheme:light}
+[data-theme="dark"]{color-scheme:dark}

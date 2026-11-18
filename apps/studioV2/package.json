@@ -1,0 +1,38 @@
+{
+  "name": "@sillyrealms/studio-v2",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build && vite build --mode world-preview",
+    "test": "node --experimental-strip-types --test tests/data.test.mjs tests/worlds.test.mjs",
+    "dev:world-preview": "vite --mode world-preview",
+    "preview:world-preview": "vite preview --mode world-preview"
+  },
+  "dependencies": {
+    "@sillyrealms/sdk": "workspace:*",
+    "lucide-react": "0.468.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-router-dom": "7.9.6",
+    "@sillyrealms/roleplay": "workspace:*",
+    "@lexical/history": "^0.53.0",
+    "@lexical/plain-text": "^0.53.0",
+    "@lexical/react": "^0.53.0",
+    "@lexical/utils": "^0.53.0",
+    "@sillyrealms/ui-compiler": "workspace:*",
+    "@tailwindcss/browser": "4.1.17",
+    "dompurify": "3.2.6",
+    "lexical": "^0.53.0",
+    "marked": "15.0.12"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "4.7.0",
+    "typescript": "6.0.3",
+    "vite": "6.3.5"
+  }
+}

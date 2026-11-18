@@ -2,38 +2,38 @@ import { Hono } from 'hono';
 import { AppError } from '../errors.js';
 import { offsetPage, readOffsetPagination } from '../http/pagination.js';
 import { readJson, success } from '../http/response.js';
-import type { CreateModelInput, ModelConfig, ModelService, UpdateModelInput } from '../models/service.js';
+import type { CredentialService } from '../modules/credentials/service.js';
+import type { ModelConfig, ModelService } from '../modules/models/service.js';
+import type { CreateModelConfig, ModelConfigUsecases, UpdateModelConfig } from '../usecases/model-config.js';
 
-function modelResponse(model: ModelConfig) {
-  return {
+export function createModelRoutes(models: ModelService, credentials: CredentialService, usecases: ModelConfigUsecases) {
+  const routes = new Hono();
+  const view = async (model: ModelConfig) => ({
     id: model.id, name: model.name, providerId: model.providerId, modelId: model.modelId,
     createdAt: model.createdAt, updatedAt: model.updatedAt,
-  };
-}
-
-export function createModelRoutes(models: ModelService) {
-  const routes = new Hono();
-
-  routes.get('/', c => {
-    const pagination = readOffsetPagination(c, 'models', { defaultLimit: 100, maxLimit: 1000 });
+    credentialStatus: await credentials.status(model.credentialRef),
+  });
+  routes.get('/', async c => {
+    const pagination = readOffsetPagination(c, 'models', { defaultLimit: 50, maxLimit: 1000 });
     const { items, hasMore } = models.listPage(pagination);
-    return success(c, offsetPage(items.map(modelResponse), hasMore, pagination, 'models'));
+    // Bound OS credential-store calls instead of spawning one process for every row at once.
+    const result: Awaited<ReturnType<typeof view>>[] = [];
+    for (let offset = 0; offset < items.length; offset += 8) {
+      result.push(...await Promise.all(items.slice(offset, offset + 8).map(view)));
+    }
+    return success(c, offsetPage(result, hasMore, pagination, 'models'));
   });
-  routes.get('/:id', c => success(c, { item: modelResponse(models.require(c.req.param('id'))) }));
-  routes.post('/', async c => {
-    const item = models.create(await readJson<CreateModelInput>(c));
-    return success(c, { item: modelResponse(item) }, 201);
-  });
-  routes.patch('/:id', async c => {
-    const item = models.update(c.req.param('id'), await readJson<UpdateModelInput>(c));
-    if (!item) throw new AppError('MODEL_CONFIG_NOT_FOUND');
-    return success(c, { item: modelResponse(item) });
-  });
-  routes.delete('/:id', c => {
+  routes.get('/:id', async c => success(c, { item: await view(models.require(c.req.param('id'))) }));
+  routes.post('/', async c => success(c, {
+    item: await view(await usecases.create(await readJson<CreateModelConfig>(c))),
+  }, 201));
+  routes.patch('/:id', async c => success(c, {
+    item: await view(await usecases.update(c.req.param('id'), await readJson<UpdateModelConfig>(c))),
+  }));
+  routes.delete('/:id', async c => {
     const id = c.req.param('id');
-    if (!models.delete(id)) throw new AppError('MODEL_CONFIG_NOT_FOUND');
+    if (!await usecases.delete(id)) throw new AppError('MODEL_CONFIG_NOT_FOUND');
     return success(c, { id });
   });
-
   return routes;
 }

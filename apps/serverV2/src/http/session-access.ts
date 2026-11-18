@@ -1,5 +1,5 @@
 import { AppError } from '../errors.js';
-import type { SessionService } from '../sessions/service.js';
+import type { SessionService } from '../modules/sessions/service.js';
 
 export type SessionAccessCheck = (sessionId: string, request: Request) => boolean | Promise<boolean>;
 

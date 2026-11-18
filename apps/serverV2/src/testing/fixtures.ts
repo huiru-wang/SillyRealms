@@ -1,4 +1,4 @@
-import type { CreatePresetInput } from '../presets/service.js';
+import type { CreatePresetInput } from '../modules/presets/service.js';
 
 export function narrativePreset(name = 'Story'): CreatePresetInput {
   return {

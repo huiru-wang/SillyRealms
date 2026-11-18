@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { AppError } from '../errors.js';
 
-export const DATABASE_VERSION = 1;
+export const DATABASE_VERSION = 3;
 export const DATABASE_APPLICATION_ID = 0x53525632; // SRV2; distinct from the old Server database.
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
@@ -119,11 +119,22 @@ CREATE INDEX idx_entries_run ON entries(session_id, run_id, seq);
 CREATE INDEX idx_entries_role ON entries(session_id, role, seq);
 `;
 
-const expectedSchema = new Map(SCHEMA_SQL.split(';').map(sql => sql.trim()).filter(Boolean).map(sql => {
-  const match = /^CREATE (?:TABLE|INDEX) (\w+)/.exec(sql);
-  if (!match?.[1]) throw new Error('Invalid internal database schema');
-  return [match[1], sql] as const;
-}));
+const UPGRADE_V2_SQL = 'ALTER TABLE presets ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0)';
+
+const UPGRADE_V3_SQL = 'ALTER TABLE worlds ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0); CREATE INDEX idx_worlds_created ON worlds(created_at, id)';
+
+// Let SQLite normalize ALTER TABLE identically for new and upgraded databases.
+function expectedObjects(version: number) {
+  const reference = new DatabaseSync(':memory:');
+  try {
+    reference.exec(SCHEMA_SQL);
+    if (version >= 2) reference.exec(UPGRADE_V2_SQL);
+    if (version >= 3) reference.exec(UPGRADE_V3_SQL);
+    return new Map(reference.prepare("SELECT name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'")
+      .all().map(row => [String(row.name), String(row.sql)]));
+  } finally { reference.close(); }
+}
+const schemas = new Map([[1, expectedObjects(1)], [2, expectedObjects(2)], [3, expectedObjects(3)]]);
 const normalizeSql = (sql: string) => sql.replace(/\s+/g, ' ').trim().toLowerCase();
 
 function inspectDatabase(db: DatabaseSync) {
@@ -139,11 +150,12 @@ function isEmpty(info: ReturnType<typeof inspectDatabase>) {
 }
 
 function assertCompatible(info: ReturnType<typeof inspectDatabase>) {
-  if (info.version !== DATABASE_VERSION || info.applicationId !== DATABASE_APPLICATION_ID) {
+  if (!schemas.has(info.version) || info.applicationId !== DATABASE_APPLICATION_ID) {
     throw new Error('SERVER_V2_DATABASE_INCOMPATIBLE: expected an independent V2 database at version '
       + DATABASE_VERSION + ', found version ' + info.version + ' (application_id=' + info.applicationId
       + '). Choose a V2 data directory; the existing database was not migrated or reset.');
   }
+  const expectedSchema = schemas.get(info.version)!;
   if (info.objects.length !== expectedSchema.size || info.objects.some(row =>
     !expectedSchema.has(String(row.name))
     || normalizeSql(String(row.sql)) !== normalizeSql(expectedSchema.get(String(row.name))!))) {
@@ -151,7 +163,7 @@ function assertCompatible(info: ReturnType<typeof inspectDatabase>) {
   }
 }
 
-/** Open only an empty database or this exact V2 version. The caller owns close(). */
+/** Open a verified V2 database and apply only known migrations. The caller owns close(). */
 export function openDatabase(path: string): DatabaseSync {
   if (typeof path !== 'string' || !path.trim()) throw new Error('SERVER_V2_DATABASE_PATH_REQUIRED');
   if (path !== ':memory:') mkdirSync(dirname(resolve(path)), { recursive: true });
@@ -159,47 +171,33 @@ export function openDatabase(path: string): DatabaseSync {
   try {
     db.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON');
     const initial = inspectDatabase(db);
-    if (isEmpty(initial)) {
+    if (!isEmpty(initial)) assertCompatible(initial);
+    if (isEmpty(initial) || initial.version < DATABASE_VERSION) {
       db.exec('BEGIN IMMEDIATE');
       try {
-        // Another process may have initialized this file while we waited for the lock.
         const current = inspectDatabase(db);
         if (isEmpty(current)) {
           db.exec(SCHEMA_SQL);
-          const now = Date.now();
-          db.prepare('INSERT INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,NULL,NULL,?,?)').run(now, now);
-          db.exec('PRAGMA application_id=' + DATABASE_APPLICATION_ID + '; PRAGMA user_version=' + DATABASE_VERSION);
+          db.exec(UPGRADE_V2_SQL);
+          db.exec(UPGRADE_V3_SQL);
+          db.exec('PRAGMA application_id=' + DATABASE_APPLICATION_ID);
         } else {
           assertCompatible(current);
+          if (current.version === 1) db.exec(UPGRADE_V2_SQL);
+          if (current.version < 3) db.exec(UPGRADE_V3_SQL);
         }
+        db.exec('PRAGMA user_version=' + DATABASE_VERSION);
+        assertCompatible(inspectDatabase(db));
         db.exec('COMMIT');
       } catch (error) {
         db.exec('ROLLBACK');
         throw error;
       }
-    } else {
-      assertCompatible(initial);
     }
     db.exec('PRAGMA journal_mode=WAL');
     return db;
   } catch (error) {
     db.close();
-    throw error;
-  }
-}
-
-let savepointSequence = 0;
-/** Synchronous, nestable transactions; repositories share the caller-owned connection. */
-export function transaction<T>(db: DatabaseSync, work: () => T): T {
-  const name = 'sr_v2_' + ++savepointSequence;
-  db.exec('SAVEPOINT ' + name);
-  try {
-    const value = work();
-    db.exec('RELEASE SAVEPOINT ' + name);
-    return value;
-  } catch (error) {
-    db.exec('ROLLBACK TO SAVEPOINT ' + name);
-    db.exec('RELEASE SAVEPOINT ' + name);
     throw error;
   }
 }

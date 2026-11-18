@@ -6,18 +6,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../database/connection.js';
+import { bindTransaction } from '../database/transaction.js';
 import { EventHub } from '../events/event-hub.js';
 import type { Page } from '../http/pagination.js';
 import { errorHandler, type FailureResponse, type SuccessResponse } from '../http/response.js';
 import type { SessionAccessCheck } from '../http/session-access.js';
 import { createServices, type Services } from '../services.js';
-import type { SessionEntry } from '../sessions/service.js';
+import type { SessionEntry } from '../modules/sessions/service.js';
 import { narrativePreset } from '../testing/fixtures.js';
+import { createUsecases } from '../usecases.js';
 import { createSessionRoutes, type SessionSummary, type SessionView } from './sessions.js';
 import { createStateRoutes } from './state.js';
 
 let db: DatabaseSync, services: Services, app: Hono, dataRoot: string, shutdown: AbortController;
 let access: SessionAccessCheck | undefined;
+let usecases: ReturnType<typeof createUsecases>;
 const sessionInput = (id: string) => ({
   id, worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player',
 });
@@ -27,11 +30,12 @@ beforeEach(() => {
   dataRoot = mkdtempSync(join(tmpdir(), 'sr-session-state-routes-'));
   db = openDatabase(':memory:');
   services = createServices(db, dataRoot);
+  usecases = createUsecases({ services, transaction: bindTransaction(db) });
   services.presets.create({ ...narrativePreset(), id: 'preset' });
   services.models.create({ id: 'model', name: 'Model', providerId: 'provider', modelId: 'model', credentialRef: 'ref' });
   services.worlds.create({
-    id: 'world', specVersion: '0.1', name: 'World', characters: [], openings: [],
-    stateDefinition: { schema_version: 2 }, state: { day: 1, weather: 'rain' },
+    id: 'world', specVersion: '0.1', name: 'World', characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'start', name: 'Start', content: 'Begin' }],
+    stateDefinition: { schema_version: 2, scopes: {} }, state: { day: 1, weather: 'rain' },
   });
   services.sessions.create({ ...sessionInput('one'), state: { coins: 1, reputation: 0 } });
   services.sessions.create(sessionInput('blocked'));
@@ -43,7 +47,7 @@ beforeEach(() => {
   app.route('/api/v1/sessions', createSessionRoutes({
     sessions: services.sessions, worlds: services.worlds, events: new EventHub(), canAccessSession, shutdownSignal: shutdown.signal,
   }));
-  app.route('/api/v1', createStateRoutes({ state: services.state, sessions: services.sessions, canAccessSession, shutdownSignal: shutdown.signal }));
+  app.route('/api/v1', createStateRoutes({ state: services.state, setState: usecases.setState, sessions: services.sessions, canAccessSession, shutdownSignal: shutdown.signal }));
 });
 afterEach(() => {
   shutdown.abort();
@@ -83,7 +87,7 @@ describe('session HTTP operations', () => {
       const unsubscribe = originalSubscribe(id, listener);
       return () => { cleanup(); unsubscribe(); };
     });
-    const application = createApp({ events, services, canAccessSession: id => id === 'one' });
+    const application = createApp({ events, services, usecases, canAccessSession: id => id === 'one' });
     try {
       const response = await application.request('/api/v1/sessions/one/events', { method: 'HEAD' });
       expect(response.status).toBe(200);
@@ -104,10 +108,10 @@ describe('session HTTP operations', () => {
     }
   });
 
-  it('uses Studio camel inputs, direct detail data and item wrappers for writes', async () => {
+  it('uses camel inputs and item wrappers for detail and writes', async () => {
     const created = await data<{ item: SessionView }>(await request('POST', '/sessions', { ...sessionInput('new'), title: 'Start' }), 201);
     expect(created.item).toMatchObject({ id: 'new', worldId: 'world', title: 'Start', tipEntryId: null, worldName: 'World', cover: null });
-    const detail = await data<SessionView>(await request('GET', '/sessions/new'));
+    const { item: detail } = await data<{ item: SessionView }>(await request('GET', '/sessions/new'));
     expect(detail).toMatchObject({ id: 'new', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' });
     expect(detail).not.toHaveProperty('item');
     expect(Object.keys(detail).some(key => key.includes('_'))).toBe(false);
@@ -124,7 +128,7 @@ describe('session HTTP operations', () => {
 
   it('filters by worldId and advances a scoped cursor across tied timestamps', async () => {
     services.sessions.delete('one'); services.sessions.delete('blocked');
-    services.worlds.create({ id: 'other', specVersion: '0.1', name: 'Other', characters: [], openings: [] });
+    services.worlds.create({ id: 'other', specVersion: '0.1', name: 'Other', characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'start', name: 'Start', content: 'Begin' }] });
     vi.spyOn(Date, 'now').mockReturnValue(100);
     for (const id of ['a', 'b', 'c']) services.sessions.create(sessionInput(id));
     services.sessions.create({ ...sessionInput('foreign'), worldId: 'other' });
@@ -257,7 +261,7 @@ describe('complete scope snapshot HTTP operations', () => {
     expect((await data<{ item: unknown }>(await request('PUT', '/sessions/one/state', { state: { coins: 7 } }))).item).toEqual({ coins: 7 });
     expect((await data<{ item: unknown }>(await request('GET', '/sessions/one/state'))).item).toEqual({ coins: 7 });
     expect(services.state.getSession('blocked')).toEqual({});
-    expect(services.worlds.get('world')!.stateDefinition).toEqual({ schema_version: 2 });
+    expect(services.worlds.get('world')!.stateDefinition).toEqual({ schema_version: 2, scopes: {} });
     expect(services.state.getGlobal('world')).toEqual({ day: 2 });
   });
 

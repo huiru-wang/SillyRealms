@@ -37,7 +37,7 @@ export function parseSRAssetBaseUrl(value: string): URL {
   let url: URL;
   try { url = new URL(value); } catch { throw new Error('世界资源地址无效'); }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password ||
-      url.search || url.hash || !/^\/world-assets\/[^/]+\/$/.test(url.pathname)) {
+      url.search || url.hash || !/^(?:\/world-assets\/[^/]+\/|\/api\/v1\/worlds\/[^/]+\/resources\/)$/.test(url.pathname)) {
     throw new Error('世界资源地址无效');
   }
   return url;

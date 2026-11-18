@@ -13,46 +13,65 @@ const tables = {
 };
 const businessTables = new Set(Object.values(tables).flat());
 const sourcePath = file => relative(sourceRoot, file).split(sep).join('/');
+const moduleOwner = path => /^modules\/([^/]+)\//.exec(path)?.[1] ?? null;
+const composition = new Set(['app.ts', 'server.ts', 'services.ts', 'usecases.ts']);
+const jsonTypes = new Set(['JsonObject', 'JsonValue']);
+
+function typeOnly(node) {
+  return node.importKind === 'type' || node.exportKind === 'type'
+    || (node.specifiers?.length > 0 && node.specifiers.every(item => item.importKind === 'type' || item.exportKind === 'type'));
+}
+function importedName(specifier) {
+  return specifier.imported?.name ?? specifier.imported?.value ?? specifier.local?.name;
+}
 
 const boundaries = {
   meta: {
     type: 'problem',
     schema: [],
     messages: {
-      repository: 'Repository is private: only the owning Service may import it.',
+      repository: 'Repository and stored row types are private to the owning module.',
       module: 'The only public business module entry is service.ts.',
-      reverse: 'Dependencies must flow route -> service -> repository; upward dependencies are forbidden.',
-      storage: 'Services cannot retain database behavior or start transactions; routes cannot access storage.',
-      lifecycle: 'Only startup/database infrastructure may open or close the database.',
-      sqlLayer: 'SQL belongs in the owning Repository, not routes or Services.',
+      readonly: 'Cross-module module dependencies must be named type-only domain types or explicit Readers, never a full Service.',
+      wildcard: 'Export explicit public types and capabilities; wildcard exports can leak module internals.',
+      reverse: 'Modules cannot depend on usecases or HTTP/composition; usecases cannot depend on HTTP/composition.',
+      storage: 'Database capabilities belong in Repositories; usecases may receive only TransactionRunner.',
+      lifecycle: 'Only server/database infrastructure may open or close the database.',
+      sqlLayer: 'SQL belongs in the owning Repository, not routes, usecases or Services.',
       table: '{{module}} Repository cannot implement SQL for table {{table}}.',
     },
   },
   create(context) {
     const filename = context.filename;
     const localPath = sourcePath(filename);
-    const owner = localPath.split('/')[0];
-    const isBusiness = Object.hasOwn(tables, owner);
+    const owner = moduleOwner(localPath);
+    const isModule = owner !== null;
     const isTest = /\.test\.ts$/.test(filename) || localPath.startsWith('testing/');
-    const isRepository = localPath === owner + '/repository.ts';
-    const isService = localPath === owner + '/service.ts';
-    const isTransport = owner === 'routes' || owner === 'http';
+    const isRepository = isModule && localPath === 'modules/' + owner + '/repository.ts';
+    const isService = isModule && localPath === 'modules/' + owner + '/service.ts';
+    const isTransport = /^(?:routes|http)\//.test(localPath);
+    const isUsecase = localPath.startsWith('usecases/');
+    const isDatabase = localPath.startsWith('database/');
+    const isServer = localPath === 'server.ts';
     const privateImports = new Set();
 
-    function checkImport(node, source, exporting = false) {
+    function checkImport(node, source, exporting = false, explicitTypes) {
       if (typeof source !== 'string') return;
-      if (!isTest && isBusiness && (source === 'hono' || source.startsWith('hono/'))) {
+      const typesOnly = explicitTypes !== undefined || typeOnly(node);
+      const names = explicitTypes ?? node.specifiers?.map(importedName) ?? [];
+      if (!isTest && (isModule || isUsecase) && (source === 'hono' || source.startsWith('hono/'))) {
         context.report({ node, messageId: 'reverse' });
       }
-      if (!isTest && (isBusiness || isTransport) && source === 'node:sqlite') {
-        const typeOnly = node.importKind === 'type'
-          || (node.specifiers?.length && node.specifiers.every(item => item.importKind === 'type'));
-        if (isTransport || !typeOnly) context.report({ node, messageId: 'lifecycle' });
+      if (!isTest && source === 'node:sqlite' && !isDatabase && !isServer) {
+        if (isTransport || isUsecase || !typesOnly || (!isService && !isRepository && localPath !== 'services.ts')) {
+          context.report({ node, messageId: 'lifecycle' });
+        }
       }
-      if (!source.startsWith('.')) return;
+      if (!source.startsWith('.') && !source.startsWith('/')) return;
       const target = sourcePath(resolve(dirname(filename), source)).replace(/\.js$/, '.ts');
-      const targetOwner = target.split('/')[0];
-      const repository = target === targetOwner + '/repository.ts';
+      const targetOwner = moduleOwner(target);
+      const targetService = targetOwner !== null && target === 'modules/' + targetOwner + '/service.ts';
+      const repository = targetOwner !== null && target === 'modules/' + targetOwner + '/repository.ts';
       if (repository && (exporting || targetOwner !== owner || (!isService && !isTest))) {
         context.report({ node, messageId: 'repository' });
         return;
@@ -61,9 +80,9 @@ const boundaries = {
         for (const specifier of node.specifiers) privateImports.add(specifier.local.name);
       }
       if (isTest) return;
-      const targetService = target === targetOwner + '/service.ts';
-      if (isBusiness && (targetOwner === 'routes' || targetOwner === 'http'
-        || ['app.ts', 'server.ts', 'services.ts'].includes(target))) {
+      if ((isModule && (target.startsWith('usecases/') || /^(?:routes|http)\//.test(target) || composition.has(target)))
+        || (isUsecase && (/^(?:routes|http)\//.test(target) || composition.has(target)))
+        || (isTransport && composition.has(target))) {
         context.report({ node, messageId: 'reverse' });
         return;
       }
@@ -71,13 +90,36 @@ const boundaries = {
         context.report({ node, messageId: 'reverse' });
         return;
       }
-      if ((isTransport && targetOwner === 'database') || (isService && targetOwner === 'database' && node.importKind !== 'type')) {
-        context.report({ node, messageId: 'storage' });
-        return;
+      if (target.startsWith('database/') && !isDatabase && !isServer) {
+        if (names.includes('openDatabase')) {
+          context.report({ node, messageId: 'lifecycle' });
+          return;
+        }
+        if (isTransport) {
+          context.report({ node, messageId: 'storage' });
+          return;
+        }
+        if (isModule && !isRepository) {
+          if (target !== 'database/connection.ts' || !typesOnly || !names.length || names.some(name => !jsonTypes.has(name))) {
+            context.report({ node, messageId: 'storage' });
+          }
+          return;
+        }
+        if (isUsecase) {
+          const json = target === 'database/connection.ts' && names.length > 0 && names.every(name => jsonTypes.has(name));
+          const transaction = target === 'database/transaction.ts' && names.length === 1 && names[0] === 'TransactionRunner';
+          if (!typesOnly || (!json && !transaction)) context.report({ node, messageId: 'storage' });
+          return;
+        }
       }
-      if (Object.hasOwn(tables, targetOwner) && targetOwner !== owner) {
+      if (targetOwner !== null && targetOwner !== owner) {
         if (isRepository) context.report({ node, messageId: 'reverse' });
         else if (!targetService) context.report({ node, messageId: 'module' });
+        else if (isModule && (!typesOnly || !names.length
+          || node.specifiers?.some(item => item.type !== 'ImportSpecifier' && item.type !== 'ExportSpecifier')
+          || names.some(name => !name || /(?:Service|Repository|Row)$/.test(name)))) {
+          context.report({ node, messageId: 'readonly' });
+        }
       }
     }
 
@@ -91,26 +133,54 @@ const boundaries = {
       }
     }
 
+    function privateExport(node, name) {
+      if (privateImports.has(name)) context.report({ node, messageId: 'repository' });
+    }
+
     return {
       ImportDeclaration: node => checkImport(node, node.source.value),
-      ExportNamedDeclaration(node) {
+      'ExportNamedDeclaration:exit'(node) {
         if (node.source) checkImport(node, node.source.value, true);
-        else for (const specifier of node.specifiers) {
-          if (privateImports.has(specifier.local.name)) context.report({ node, messageId: 'repository' });
+        else {
+          for (const specifier of node.specifiers) privateExport(node, specifier.local.name);
+          if (node.declaration?.id) privateExport(node, node.declaration.id.name);
+          if (node.declaration?.type === 'VariableDeclaration') {
+            for (const item of node.declaration.declarations) {
+              if (item.id.type === 'Identifier') privateExport(node, item.id.name);
+            }
+          }
         }
       },
-      ExportAllDeclaration: node => checkImport(node, node.source.value, true),
+      ExportAllDeclaration(node) {
+        if (!isTest) context.report({ node, messageId: 'wildcard' });
+        checkImport(node, node.source.value, true);
+      },
+      ExportDefaultDeclaration(node) {
+        if (node.declaration.type === 'Identifier') privateExport(node, node.declaration.name);
+      },
+      VariableDeclarator(node) {
+        if (node.id.type === 'Identifier' && node.init?.type === 'Identifier' && privateImports.has(node.init.name)) {
+          privateImports.add(node.id.name);
+        }
+      },
+      TSTypeAliasDeclaration(node) {
+        if (node.typeAnnotation.type === 'TSTypeReference' && node.typeAnnotation.typeName.type === 'Identifier'
+          && privateImports.has(node.typeAnnotation.typeName.name)) privateImports.add(node.id.name);
+      },
       ImportExpression: node => checkImport(node, node.source.value),
+      TSImportType(node) {
+        const source = node.source.value;
+        const name = node.qualifier?.type === 'Identifier' && !node.isTypeOf ? node.qualifier.name : undefined;
+        checkImport(node, source, false, name ? [name] : []);
+      },
       CallExpression(node) {
         const callee = node.callee;
-        if (callee.type === 'Identifier' && callee.name === 'require') {
-          checkImport(node, node.arguments[0]?.value);
-        }
-        if (isTest || owner === 'database' || callee.type !== 'MemberExpression') return;
+        if (callee.type === 'Identifier' && callee.name === 'require') checkImport(node, node.arguments[0]?.value);
+        if (isTest || isDatabase || callee.type !== 'MemberExpression') return;
         const method = callee.computed ? callee.property.value : callee.property.name;
-        if ((isService || isRepository) && method === 'close') {
+        if (!isServer && method === 'close') {
           const receiver = callee.object.type === 'MemberExpression' ? callee.object.property.name : callee.object.name;
-          if (['db', 'database'].includes(receiver)) context.report({ node, messageId: 'lifecycle' });
+          if (['db', 'database', 'connection'].includes(receiver)) context.report({ node, messageId: 'lifecycle' });
         }
         if (isRepository || (method !== 'prepare' && method !== 'exec')) return;
         if (method === 'exec' && callee.object.type === 'Literal' && callee.object.regex) return;

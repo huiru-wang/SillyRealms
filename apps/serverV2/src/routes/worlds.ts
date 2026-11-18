@@ -1,10 +1,13 @@
 import { Hono } from 'hono';
 import { getMimeType } from 'hono/utils/mime';
 import { AppError } from '../errors.js';
-import { offsetPage, readOffsetPagination } from '../http/pagination.js';
-import { readJson, success } from '../http/response.js';
-import type { SessionService } from '../sessions/service.js';
-import type { CreateWorld, World, WorldDownload, WorldPatch, WorldService } from '../worlds/service.js';
+import { decodeCursor, encodeCursor } from '../http/pagination.js';
+import { numberQuery, readJson, success } from '../http/response.js';
+import { readMultipart } from '../http/multipart.js';
+import type { SessionService } from '../modules/sessions/service.js';
+import { worldImportLimits, type World, type WorldDownload, type WorldManagementPatch, type WorldService } from '../modules/worlds/service.js';
+import type { ImportWorld } from '../usecases/import-world.js';
+import type { ExportWorld } from '../usecases/export-world.js';
 
 const mediaTypes: Record<string, string> = {
   ts: 'text/plain', tsx: 'text/plain', jsx: 'text/plain',
@@ -14,6 +17,14 @@ const mediaTypes: Record<string, string> = {
   woff: 'font/woff', woff2: 'font/woff2', ttf: 'font/ttf', otf: 'font/otf', eot: 'application/vnd.ms-fontobject',
 };
 
+function downloadDisposition(filename: string): string {
+  const fallback = /^[\x20-\x7e]+$/.test(filename) ? filename.replace(/["\\\\]/g, '_') : 'world.zip';
+  const base = 'attachment; filename="' + fallback + '"';
+  if (fallback === filename) return base;
+  const encoded = encodeURIComponent(filename).replace(/['()*]/g, char => '%' + char.charCodeAt(0).toString(16).toUpperCase());
+  return base + "; filename*=UTF-8''" + encoded;
+}
+
 async function fileResponse(file: WorldDownload, head: boolean, attachment = false): Promise<Response> {
   const extension = file.filename.split('.').at(-1)!.toLowerCase();
   const type = mediaTypes[extension] ?? getMimeType(file.filename) ?? 'application/octet-stream';
@@ -21,10 +32,11 @@ async function fileResponse(file: WorldDownload, head: boolean, attachment = fal
     'Content-Type': type,
     'Content-Length': String(file.size),
     'X-Content-Type-Options': 'nosniff',
+    'Access-Control-Allow-Origin': '*',
     // A package document opened directly must not become a privileged application page.
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
   });
-  if (attachment) headers.set('Content-Disposition', 'attachment; filename="' + file.filename + '"');
+  if (attachment) headers.set('Content-Disposition', downloadDisposition(file.filename));
   if (head) {
     await file.body.cancel();
     return new Response(null, { headers });
@@ -34,64 +46,67 @@ async function fileResponse(file: WorldDownload, head: boolean, attachment = fal
 
 function worldDetail(world: World) {
   return {
-    id: world.id,
-    specVersion: world.specVersion,
-    createdAt: world.createdAt,
-    updatedAt: world.updatedAt,
-    defaultPresetId: world.defaultPresetId,
-    defaultApiModelConfigId: world.defaultApiModelConfigId,
-    data: {
-      name: world.name,
-      ...(world.description && typeof world.description === 'object' ? { description: world.description } : {}),
-      ...(world.cover !== null ? { cover: world.cover } : {}),
-      tags: world.tags,
-      characters: world.characters,
-      openings: world.openings,
-      ...(world.lorebook !== null ? { lorebook: world.lorebook } : {}),
-      ...(world.stateDefinition !== null ? { state: world.stateDefinition } : {}),
-      ...(world.messageRender !== null ? { message_render: world.messageRender } : {}),
-      ...(world.components !== null ? { components: world.components } : {}),
-      ...(world.stageComponent !== null ? { stage_component: world.stageComponent } : {}),
-      ...(world.extensions !== null ? { extensions: world.extensions } : {}),
-    },
+    id: world.id, revision: world.revision, specVersion: world.specVersion, name: world.name,
+    description: world.description, cover: world.cover, tags: world.tags, characters: world.characters,
+    openings: world.openings, lorebook: world.lorebook, stateDefinition: world.stateDefinition,
+    messageRender: world.messageRender, components: world.components, stageComponent: world.stageComponent,
+    extensions: world.extensions, defaultPresetId: world.defaultPresetId,
+    defaultApiModelConfigId: world.defaultApiModelConfigId, createdAt: world.createdAt, updatedAt: world.updatedAt,
   };
 }
 
-function tagItems(worlds: WorldService) {
-  return worlds.listTags().map(tag => ({ id: tag.name, name: tag.name }));
-}
-
-export function createTagRoutes(worlds: WorldService): Hono {
-  return new Hono().get('/', c => {
-    if (c.req.query('type') !== 'world') throw new AppError('INVALID_REQUEST', '仅支持 type=world 的标签查询');
-    return success(c, { items: tagItems(worlds) });
-  });
-}
-
-export function createWorldRoutes({ worlds, sessions }: { worlds: WorldService; sessions: SessionService }): Hono {
+export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld }: {
+  worlds: WorldService; sessions: SessionService; importWorld?: ImportWorld; exportWorld?: ExportWorld;
+}): Hono {
   const routes = new Hono();
   routes.get('/', c => {
-    const tagId = c.req.query('tagId') ?? '';
-    const scope = 'worlds:' + tagId;
-    const pagination = readOffsetPagination(c, scope);
-    const page = worlds.listPage({ tag: tagId || undefined, ...pagination });
+    if (c.req.query('offset') !== undefined || c.req.query('tagId') !== undefined) throw new AppError('INVALID_REQUEST');
+    const q = (c.req.query('q') ?? '').trim(), tag = (c.req.query('tag') ?? '').trim();
+    const scope = JSON.stringify(['worlds', q, tag]);
+    const cursor = c.req.query('cursor');
+    let before: { createdAt: number; id: string } | undefined;
+    if (cursor !== undefined) {
+      const value = decodeCursor(cursor, scope);
+      if (Object.keys(value).length !== 2 || !Number.isSafeInteger(value.createdAt) || Number(value.createdAt) < 0 || typeof value.id !== 'string' || !value.id) throw new AppError('INVALID_REQUEST');
+      before = { createdAt: Number(value.createdAt), id: value.id };
+    }
+    const page = worlds.listPage({ q, tag: tag || undefined, before, limit: numberQuery(c, 'limit') ?? 24 });
     const counts = sessions.countByWorldIds(page.items.map(world => world.id));
-    const items = page.items.map(world => ({
-      id: world.id, name: world.name, cover: world.cover,
-      tags: world.tags.map(name => ({ id: name, name })),
-      sessionCount: counts[world.id] ?? 0,
-    }));
-    return success(c, offsetPage(items, page.hasMore, pagination, scope));
+    const items = page.items.map(world => ({ ...world, sessionCount: counts[world.id] ?? 0 }));
+    const last = items.at(-1);
+    return success(c, { items, hasMore: page.hasMore, nextCursor: page.hasMore && last ? encodeCursor(scope, { createdAt: last.createdAt, id: last.id }) : null });
   });
-  routes.get('/tags', c => success(c, { items: tagItems(worlds) }));
-  routes.post('/', async c => success(c, { item: worldDetail(worlds.create(await readJson<CreateWorld>(c))) }, 201));
+  routes.get('/tags', c => success(c, { items: worlds.listTags() }));
+  routes.post('/import', async c => {
+    if (!importWorld) throw new AppError('SERVICE_UNAVAILABLE');
+    if (!c.req.header('content-type')?.toLowerCase().startsWith('multipart/form-data')) {
+      throw new AppError('INVALID_REQUEST', '世界导入需要 multipart/form-data');
+    }
+    const body = await readMultipart(c.req.raw, worldImportLimits.zip + 1024 * 1024);
+    const file = body.get('file');
+    if (!(file instanceof File) || body.getAll('file').length !== 1) {
+      throw new AppError('INVALID_REQUEST', '需要一个 file 文件字段');
+    }
+    const extension = file.name.split('.').at(-1)?.toLowerCase();
+    if (extension !== 'json' && extension !== 'zip') throw new AppError('INVALID_WORLD_ORIGINAL_FORMAT');
+    if (file.size > worldImportLimits[extension]) throw new AppError('PAYLOAD_TOO_LARGE');
+    const world = await importWorld({ format: extension, bytes: new Uint8Array(await file.arrayBuffer()) });
+    return success(c, { item: worldDetail(world) }, 201);
+  });
+  routes.get('/:id/export', async c => {
+    if (!exportWorld) throw new AppError('SERVICE_UNAVAILABLE');
+    const response = await fileResponse(await exportWorld(c.req.param('id'), c.req.raw.signal), c.req.method === 'HEAD', true);
+    response.headers.set('Cache-Control', 'no-store');
+    return response;
+  });
   routes.get('/:id/original', async c =>
     fileResponse(await worlds.openOriginal(c.req.param('id'), c.req.raw.signal), c.req.method === 'HEAD', true));
-  routes.get('/:id/package/:path{.+}', async c =>
+  routes.get('/:id/resources/:path{.+}', async c =>
     fileResponse(await worlds.openPackageFile(c.req.param('id'), c.req.param('path'), c.req.raw.signal), c.req.method === 'HEAD'));
-  routes.get('/:id', c => success(c, { item: worldDetail(worlds.require(c.req.param('id'))), warnings: [] }));
+  routes.get('/:id/components', async c => success(c, await worlds.getComponents(c.req.param('id'))));
+  routes.get('/:id', c => success(c, { item: worldDetail(worlds.require(c.req.param('id'))) }));
   routes.patch('/:id', async c => {
-    const item = worlds.update(c.req.param('id'), await readJson<WorldPatch>(c));
+    const item = worlds.updateManagement(c.req.param('id'), await readJson<WorldManagementPatch>(c));
     if (!item) throw new AppError('WORLD_NOT_FOUND');
     return success(c, { item: worldDetail(item) });
   });
@@ -99,15 +114,6 @@ export function createWorldRoutes({ worlds, sessions }: { worlds: WorldService; 
     const id = c.req.param('id');
     if (!await worlds.delete(id)) throw new AppError('WORLD_NOT_FOUND');
     return success(c, { id });
-  });
-  routes.put('/:id/tags', async c => {
-    const body = await readJson<{ tags: string[] }>(c);
-    if (Object.keys(body).length !== 1 || !Object.hasOwn(body, 'tags')) {
-      throw new AppError('INVALID_WORLD_TAGS', '请求正文必须且只能包含 tags 字段');
-    }
-    const item = worlds.setTags(c.req.param('id'), body.tags);
-    if (!item) throw new AppError('WORLD_NOT_FOUND');
-    return success(c, { item: worldDetail(item) });
   });
   return routes;
 }

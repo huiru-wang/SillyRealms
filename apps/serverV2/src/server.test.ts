@@ -25,7 +25,7 @@ function temporaryDirectory() {
 function seedSessions(services: Services, ids: string[]) {
   const preset = services.presets.create(narrativePreset());
   const model = services.models.create({ name: 'Test model', providerId: 'test', modelId: 'test-model', credentialRef: 'test-ref' });
-  const world = services.worlds.create({ name: 'Test world', specVersion: '0.1', characters: [], openings: [] });
+  const world = services.worlds.create({ name: 'Test world', specVersion: '0.1', characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'start', name: 'Start', content: 'Begin' }] });
   for (const id of ids) services.sessions.create({
     id, worldId: world.id, presetId: preset.id, apiModelConfigId: model.id, userCharacterId: 'player',
   });
@@ -104,8 +104,8 @@ describe('Server V2 over HTTP', () => {
     const preset = running.services.presets.create(narrativePreset());
     running.services.settings.update({ defaultPresetId: preset.id, defaultApiModelConfigId: model.id });
     const world = running.services.worlds.create({
-      name: 'Persistent world', specVersion: '0.1', characters: [{ id: 'player', name: 'Player' }],
-      openings: [], tags: ['test'], defaultPresetId: preset.id, defaultApiModelConfigId: model.id,
+      name: 'Persistent world', specVersion: '0.1', characters: [{ id: 'player', name: 'Player', player_selectable: true }],
+      openings: [{ id: 'start', name: 'Start', content: 'Begin' }], tags: ['test'], defaultPresetId: preset.id, defaultApiModelConfigId: model.id,
     });
     const session = running.services.sessions.create({
       worldId: world.id, presetId: preset.id, apiModelConfigId: model.id, userCharacterId: 'player',
@@ -113,7 +113,7 @@ describe('Server V2 over HTTP', () => {
     const entry = running.services.sessions.appendEntry(session.id, {
       runId: 'run-1', type: 'message', role: 'assistant', payload: { text: 'Saved story' }, state: [],
     });
-    running.services.state.setSession(session.id, { gold: 12 });
+    running.usecases.setState.setSession(session.id, { gold: 12 });
     const stream = await connect(running.url, session.id);
     running.events.publish(session.id, { event: 'storage.ready', data: { entryId: entry.id } });
     expect(await stream.readFrame()).toContain(entry.id);

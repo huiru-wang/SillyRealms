@@ -1,27 +1,39 @@
 # Server V2
 
-- 按模块逐步迁移；当前实现事件、业务 HTTP 路由及存储 Service，不预建 engine、任务管理或应用通知。
-- 业务依赖严格单向 `route → service → repository`，不得跨层或反向。HTTP 适配器统一放在根 `routes/`；Service 不导入 route/http，Repository 不导入任何 Service。Route 处理 HTTP 输入输出与传输，Service 承担业务校验、规则及编排，Repository 处理本模块持久化。
-- presets、models、settings、worlds、sessions、state 均以 `service.ts` 为对外入口；跨模块只能调用 Service，公开类型也从 Service 导出。依赖由 `services.ts` 显式装配，禁止循环编排。
-- Service 公共输入输出使用显式驼峰领域类型，存储行到领域对象的映射放在 Service 层，不直接返回存储行，不公开 Row 类型或 `*_json` 等列名。Repository 负责存储 JSON 编解码并返回模块私有记录。仅映射已知结构字段；作者 JSON、状态键、世界卡/预设文档协议中的键保持原样，不做通用递归改名。
-- 按 Studio 消费契约需要的跨模块展示投影由 route 调公开 Service 组合，例如世界的 sessionCount 和会话的 cover/worldName；业务校验和用例编排仍归 Service。HTTP 分页游标只在 route/http 编解码，Service 接收类型化分页位置。
-- Repository 模块内私有，只由本模块 Service 使用；Route、启动入口及其他模块禁止导入、暴露 Repository。世界文件存储同样由 WorldService 对外提供能力。
-- Repository 禁止依赖其他模块 Repository，也禁止实现其他模块属主表或列的 SQL，包括查询、JOIN、存在性检查和更新。表归属：presets → presets；models → api_model_configs；settings → app_settings；worlds → worlds/world_tags；sessions → sessions/entries。
-- State 无独立持久化表，不设 Repository；StateService 编排 WorldService、SessionService 完成 scope 快照与消息状态继承。状态列的 SQL 归表所属模块，普通内容更新不能覆盖运行 state。
-- 连接由启动装配方创建和关闭，Repository 只借用连接；Service 构造时仅把连接传给私有 Repository，不保留连接、不写 SQL、不打开/关闭连接、不执行事务。
-- 不做跨模块强一致性事务、全局回滚或跨 Service 事务回调。单模块必要的多条 SQL 原子写入留在 Repository，例如世界内容和标签、entry 追加与 tip 推进；显式维护 updated_at，不新增触发器。数据库版本和 DDL 属于 database 基础设施。
-- 本期只支持线性叙事：appendEntry 只能接在当前 tip 后，显式 parent 不匹配时失败；追加、seq 分配与 tip 推进原子完成。不提供 setTip；getHistory 只读取当前线性历史。
-- 消息正文、历史关系、state、metrics 各自使用明确字段写入，禁止整行覆盖。状态 set 保存完整 scope 快照；NULL 继承前驱，显式空数组终止继承。
-- 仅开放已实现校验的预设类型；类型与配置统一在 PresetService 校验，引用存在性通过 Service 校验及数据库外键保证，不恢复 assertNarrativePreset。凭据字节不进入模型配置表。
-- 事件连接独立于业务执行。业务发布完整事件；连接层不得查询 Runtime、数据库或决定业务终态。
-- 会话运行完成、失败、停止均不关闭 SSE；断开连接只取消订阅，不取消业务。
-- 事件不持久化或回放；仅包含 `event` 和 `data`，不生成事件 id，不输出 SSE `id:` 字段。
-- 会话范围路由通过 SessionService 检查真实会话，再执行可选 canAccessSession；等待后先检查关闭信号，再确认会话仍存在。未装配 Service 时返回 503。访问适配器不能代替会话存在性检查。
-- 普通 HTTP 响应统一 `{ success, errorCode, errorMessage, data }`：成功 errorCode=null、errorMessage=""，业务结果放 data；失败使用 errors.ts 注册的 code/message、data=null。status 保留正确的 2xx/4xx/5xx；未知异常不泄漏 SQL、路径或堆栈。
-- routes 使用 http/response.ts 的统一 success/errorHandler；JSON 正文和 query 的传输校验在 route/helper，业务校验在 Service。SSE 和文件下载成功响应不包络，开始传输前的错误走统一 JSON 失败响应。
-- 当前状态 HTTP 为完整 scope 快照 GET/PUT；不把 PUT 冒充按路径 PATCH。消息计量仅由进程内 Service 写入；SSE 无公开发布接口。接口契约见 `../../docs/runtime/server-v2-http.md`。
-- V2 使用独立数据根目录和数据库，`user_version=1`；不导入旧 Server 的建表、恢复或计量结算逻辑，不自动改造或清空旧库。
-- 世界删除先执行本模块 DB 删除，外键拒绝时不碰文件；随后清理该世界根目录（source/package）。清理失败报告 WORLD_FILES_DELETE_FAILED，重试允许清理 DB 已不存在的残留目录；不做 DB/文件强事务。文件写入与删除按世界串行，路径校验不得跟随根目录符号链接影响其他世界。
-- 世界文件本期提供固定路径、原件保存和世界删除清理；ZIP 导入导出随用例迁移。目标契约见 `../../plan/sr-server-v2-storage-v1.md`。
-- HTTP 集成测试使用真实回环端口、临时或内存数据库和业务侧 publish，不增加公开事件发布接口。关闭服务须结束 SSE/HTTP 后关闭自有数据库。
-- 运行本包测试、类型检查和 lint；lint 检查模块唯一出口、单向层级、连接生命周期、事务位置及 SQL 表归属。事件生命周期见 `../../docs/runtime/server-v2-events.md`。
+- 本期实施 modules 竖切与应用 usecases、初始化、状态快照写入、世界/预设导入导出；不设计或新增 runtime、engine、模型执行、模型 catalog、通用任务管理或应用通知。
+- 单域操作采用 `route → service → repository`；应用流程采用 `route → usecase → service → repository`。route 可以调用读写能力，跨模块只读展示投影可在 route 组合；跨模块写编排必须进入 usecases。route 不写 SQL、不管理事务。
+- 业务模块统一位于 `modules/<name>`，以 `service.ts` 为唯一公开出口。Repository、存储 Row、schema、parser、validation、assets、archive、card、default、files 均为内部实现；公开领域类型从 service 显式 export type，不使用 export *。启动 services.ts/usecases.ts 显式装配依赖。
+- Service 承担本域规则和持久化能力。跨模块只依赖显式 Reader 类型并调用其只读能力，服务本域校验与计算；不依赖对方完整 Service 或调用写能力。模块不能反向依赖 usecases、routes、http 或启动装配，不得循环依赖。
+- usecases 是完整应用流程层：跨模块写入必须在这里；需要管理多步骤/资源生命周期的单域导入导出也可放这里。用例只调用模块公开 Service，禁止直接导入模块内部文件、写 SQL、打开或关闭数据库。
+- Service 公共输入输出采用显式驼峰领域类型，存储行到领域对象的映射在 Service；Repository 负责存储 JSON 编解码并返回模块私有记录。不递归改名作者 JSON、状态键或正式文档协议。
+- Repository 仅由本模块 Service 使用，不依赖任何 Service、其他模块 Repository 或 usecase。SQL 包括查询/JOIN/存在性检查只碰本模块属主表或列：presets→presets，models→api_model_configs，settings→app_settings，worlds→worlds/world_tags，sessions→sessions/entries。
+- State 无表、无 Repository，StateService 保留 scope 读取及消息前驱继承。完整 scope 写入由 set-state 用例调用 World/Session Service；worlds.state、sessions.state、entries.state 的 SQL 始终归表属主。普通内容更新不能覆盖运行 state。
+- 连接由启动方创建和关闭，所有 Repository 借用同一连接；Service 仅在构造时把连接传给私有 Repository，不保留连接、不写 SQL、不执行事务。usecase 只接收装配方绑定好的 TransactionRunner，不接收原始连接。
+- 跨模块写入及跨模块事务边界归 usecases；本域必要的多条 SQL 原子操作留在 Repository，例如世界内容+标签、entry追加+tip推进。database 负责 DDL/结构事务，显式维护 updated_at，不新增触发器。
+- database/transaction.ts 的回调必须同步，不接受 Promise。事务中不做文件/网络/模型调用；文件与 DB 用暂存、发布、清理/补偿协调，不宣称强原子性。代表提交成功的事件在成功提交后发布。
+- openDatabase 只建立/检查结构，不播种业务数据。启动装配后、监听 HTTP 前调用 initialize，在同一同步事务内创建默认预设和设置。settings 单例存在即视为完成，重复启动不覆盖用户选择或复活已删除预设；保留显式空默认项，失败可整体回滚重试。
+- 本期只支持线性叙事存储：appendEntry 只能接当前 tip，显式 parent 不匹配时报错；追加、seq 分配与 tip 推进原子完成。不提供 setTip；getHistory 只读取当前线性历史。
+- 正文、历史关系、state、metrics 分别写入明确字段，禁止整行覆盖。状态 PUT/set 保存完整 scope 快照；消息 NULL 继承前驱，显式空数组终止继承。本期不迁移按路径 PATCH 或状态规则执行。
+- 仅开放已实现校验的预设类型，类型与配置统一在 PresetService 校验；引用通过 Reader.require 和数据库外键保证，不恢复 assertNarrativePreset。默认模板与导入导出协议属于 presets 内部领域知识；凭据字节不进入模型配置表。
+- 世界导入保留原始字节，不依赖上传原名；JSON/ZIP 验证卡和资源后发布，失败按明确阶段清理。导出由 DB 当前世界卡、当前标签与 package/ 当前资源构建，名称为当前 world.name.zip，原件不参与重建。卡协议与静态状态定义校验属于 worlds；不执行状态规则。
+- worlds 内部按职责组织：parser 负责 JSON 解析、领域转换和初始值提取；validation 集中卡结构、引用、状态定义及 when 静态校验；assets 负责资源读取与完整性；archive 负责导入包和 ZIP 解压/构建；files 负责磁盘生命周期。parser/validation 不读文件，assets 不处理 ZIP，archive 复用解析与校验，不重复定义协议；这些实现仍只通过 service.ts 对外提供能力。
+- 包内文件 HTTP 入口为 `/api/v1/worlds/:id/resources/*`，相对于磁盘 package/ 根目录，保留 assets/、components/ 等目录前缀；不能将其缩减为仅素材读取。存储目录和路径安全规则独立于路由名称。
+- 世界删除先删本模块 DB，外键拒绝时不碰文件；随后清理整个世界目录。文件失败报告 WORLD_FILES_DELETE_FAILED，重试允许清理 DB 已不存在的残留目录；不做 DB/文件强事务。原件写入/发布/删除按世界串行，路径校验拒绝不安全根目录和符号链接逃逸。
+- 事件连接独立于业务执行，只负责传输；不得查询数据库或判断业务终态。会话完成、失败、停止不关闭 SSE；断开只取消订阅。事件不持久化或回放，仅 event/data，不生成 SSE id。
+- 会话路由先经 SessionService 检查真实会话，再执行可选 canAccessSession；等待后先检查关闭信号，再确认会话仍存在。访问适配器不能代替会话存在性检查。
+- 普通 HTTP 统一 `{ success, errorCode, errorMessage, data }`，错误集中 errors.ts 映射并保留正确状态码；未知异常不泄漏 SQL、路径或堆栈。SSE/文件下载保留原始正文，传输开始前错误仍用 JSON 失败包络。
+- routes 使用 http/response.ts，HTTP 正文/query/游标处理留在传输层，业务校验留在 Service。跨模块列表/详情展示投影由 route 调公开 Service 组合。接口契约见 `../../docs/runtime/server-v2-http.md`。
+- V2 使用独立数据根目录和数据库，user_version=3；只迁移结构匹配的 V2 v1/v2 库，依次添加预设 revision、世界 revision 及导入时间索引，不自动改造/清空旧 Server 库，不导入旧 Server 的建表、恢复或执行逻辑。现有 V2 设置记录保留原值，不进行隐式补种迁移。
+- 本轮仅做函数级测试、typecheck、lint，不启动真实服务或执行 HTTP/浏览器链路验证。函数测试使用内存或临时库、临时文件以及最小凭据替身，不访问真实 Keychain；架构测试检查入口/层级/SQL属主，类型测试检查 Reader 不具有写方法。关闭 HTTP/SSE 后再关库。
+
+## StudioV2 管理接口
+
+- 当前接入世界内容库、预设、模型配置、设置及基础会话。预设 CRUD 使用驼峰领域 config；文件导入导出协议由 presets codec 独立转换。列表返回摘要，详情按需加载；PATCH 必须带 expectedRevision，通过 Repository CAS 更新并递增 revision。
+- credentials 独立管理外部密钥存储，models 表只保存 credentialRef。model-config 用例协调写入、补偿和删除清理，按模型串行，不在 SQLite 事务内等待外部存储；HTTP 不接收引用或返回密钥，状态不冒充模型连通性验证。
+- 默认凭据适配器是 macOS Keychain，引用按 V2 dataRoot 隔离；不复用旧 Server 凭据命名空间，不增加明文降级存储。跨资源补偿不等于崩溃原子性。
+- 会话创建验证世界中的可扮演角色，只建立基础记录。更新不允许改变 worldId/userCharacterId；不顺带初始化 opening、消息、执行或计量。详情统一返回 data.item。
+
+- 世界列表直接读取摘要并批量取标签，以 createdAt/id 游标分页；管理 PATCH 只接受名称、标签、默认配置及 expectedRevision，CAS 原子更新，不重写作者内容或运行状态。HTTP 不开放 POST /worlds 或作者内容编辑。
+- 组件读取复用 worlds/assets，path 优先且失败不回退 inline；按组件返回错误。API Origin 校验只信任服务同源和配置的 Studio 来源，跨来源仅允许资源 GET/HEAD；这不是用户认证。
+
+- HTTP multipart 从适配器提供的 headers/body 流解析并限制实际字节数；不能将 Node 适配器的轻量 Request 直接交给原生 new Request 克隆。保持超限与格式错误的独立错误码。

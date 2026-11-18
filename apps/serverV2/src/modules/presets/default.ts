@@ -1,0 +1,93 @@
+import type { PresetValue } from './types.js';
+
+export const DEFAULT_PRESET_ID = 'sr-default-preset';
+
+// Owned by V2; this template has no runtime dependency on the previous server.
+const value: PresetValue = {
+  "type": "narrative",
+  "name": "标准叙事",
+  "description": "基于会话绑定的预设构建上下文。默认使用滚动摘要，启用世界状态更新和缓慢、中速、快速三个行动建议。",
+  "config": {
+    "schemaVersion": 1,
+    "nodes": [
+      {
+        "id": "main",
+        "name": "主提示",
+        "kind": "system",
+        "role": "system",
+        "enabled": true,
+        "prompt": "你负责根据世界设定、角色设定、聊天历史和玩家输入继续故事。\n尊重玩家对自己角色行动与对白的控制权，不擅自替玩家作出重要决定。\n保持人物性格、关系、已发生事件和场景信息一致；结合距离、在场情况和角色知情范围判断行为，不让角色无依据地知道秘密或远处发生的事件。\n区分已发生事实与计划、猜测和未完成的尝试，不把行动建议当成已经发生的事件。\n叙述具体、自然，避免重复总结和无关解释；使用与对话一致的语言。\n动作与环境使用普通叙述，实际对白使用中文双引号。\n不输出任务确认、内部分析或规则解释。"
+      },
+      {
+        "id": "personaInfo",
+        "name": "用户信息",
+        "kind": "system",
+        "role": "system",
+        "enabled": true,
+        "prompt": "<用户信息>\n{{persona.prompt}}\n</用户信息>"
+      },
+      {
+        "id": "characterInfo",
+        "name": "角色信息",
+        "kind": "system",
+        "role": "system",
+        "enabled": true,
+        "prompt": "<角色信息>\n{{characters.prompts}}\n</角色信息>"
+      },
+      {
+        "id": "worldInfo",
+        "name": "世界书",
+        "kind": "system",
+        "role": "system",
+        "enabled": true,
+        "prompt": "<世界书>\n{{world.lore}}\n</世界书>"
+      },
+      {
+        "id": "chatHistory",
+        "name": "会话历史",
+        "kind": "system",
+        "role": "auto",
+        "enabled": true,
+        "prompt": "<已有摘要>\n{{history.summary}}\n</已有摘要>\n{{history.messages}}"
+      },
+      {
+        "id": "userInput",
+        "name": "用户输入",
+        "kind": "system",
+        "role": "user",
+        "enabled": true,
+        "prompt": "{{input.text}}"
+      },
+      {
+        "id": "worldState",
+        "name": "世界状态",
+        "kind": "postprocess",
+        "role": "system",
+        "enabled": true,
+        "prompt": "<世界状态>\n本轮任务：完成正文后，输出一个state_update块；没有变化也输出空数组。\n\n状态和更新规则：\n{{state.entries}}\n\n更新与输出协议：\n只记录本轮已经发生且可确认的变化，不重复结算，不提前执行计划或建议。只更新本轮激活的状态及已有规则覆盖的字段。优先使用叶子路径；value为该路径的完整新值，不是增量或合并补丁。替换对象或数组须遵守对应规则并保留仍需存在的内容。路径父对象必须存在，不使用数组索引或规则模板[]，null不表示删除。每项包含path、value，可选reason，最多100项。正文后输出且仅输出一个<state_update>合法JSON数组</state_update>；无变化输出<state_update>[]</state_update>。JSON不加代码围栏、注释或外层容器。若本轮还有行动建议任务，随后输出其数据块；最后一个数据块后立即结束。\n</世界状态>"
+      },
+      {
+        "id": "actionSuggestions",
+        "name": "行动建议",
+        "kind": "postprocess",
+        "role": "system",
+        "enabled": true,
+        "prompt": "<行动建议>\n行动建议是提供给玩家选择的下一步行动，不代表已经执行。\n根据本轮正文结束后的情境，按以下顺序生成三个建议：\n1. 缓慢：停留在当前场景，通过观察、交流或细节互动展开故事。\n2. 中速：采取具体行动，推进眼前事件或当前目标。\n3. 快速：主动推动关键事件，尝试让局面进入新的阶段。\n\n生成要求：\n- 建议具体、简短，符合当前情境，三个方向有明显区别。\n- 只描述玩家可以尝试的行动，不预先保证结果。\n- 每条不超过50个字符，不附加速度标签或解释。\n\n输出要求：\n- 每轮回复必须输出且仅输出一个 <action_suggestions> 块，内容为三个字符串的 JSON 数组，依次对应缓慢、中速、快速推进。\n- 完整回复的固定顺序：同时存在 <世界状态> 指令时，叙事正文 → state_update → action_suggestions；不存在 <世界状态> 指令时，叙事正文 → action_suggestions。\n- 所有要求的数据块输出完整后，回复才算完成。不得只输出正文，不得省略数据块。\n- 实际数据块不使用外层标签或 Markdown 代码围栏；最后一个数据块结束后立即结束回复，不再追加正文。\n- 正文要展示保留标签时使用 HTML 实体。\n\n输出格式（按当前情境重新生成内容）：\n<action_suggestions>\n[\"向店员打听最近的见闻。\", \"询问药水价格，为旅程准备补给。\", \"提议立即出发，前往失踪者最后出现的地点。\"]\n</action_suggestions>\n</行动建议>"
+      }
+    ],
+    "contextStrategy": {
+      "strategy": "rolling_summary",
+      "maxContextTokens": 32768,
+      "maxOutputTokens": 2048,
+      "summaryPrompt": "请将以下聊天历史整理成一份供后续故事续写使用的摘要。\n\n如果历史开头包含已有摘要，请将它与后续对话合并，输出一份完整的新摘要。\n\n摘要要求：\n- 按事件顺序概括重要进展，合并重复信息，省略无关细节。\n- 保留主要人物、人物关系及其重要变化。\n- 保留明确发生的时间、地点、物品和其他关键状态变化；同一信息发生变化时，以最新事实为准。\n- 保留重要约定、当前目标、未解决的冲突和线索。\n- 区分已经发生的事实与计划、猜测、承诺，不把尚未发生的事情写成结果。\n- 不补造信息，不继续故事，不生成行动建议。\n- 使用与聊天历史一致的语言，保持准确、简洁。\n\n只输出摘要正文。"
+    },
+    "modelParameters": {
+      "temperature": 1,
+      "thinkingEnabled": false
+    }
+  }
+};
+
+export function defaultPreset(): PresetValue {
+  return structuredClone(value);
+}

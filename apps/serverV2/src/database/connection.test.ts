@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DATABASE_APPLICATION_ID, DATABASE_VERSION, encodeJson, openDatabase, transaction } from './connection.js';
+import { DATABASE_APPLICATION_ID, DATABASE_VERSION, encodeJson, openDatabase } from './connection.js';
+import { transaction } from './transaction.js';
 
 describe('V2 database lifecycle and constraints', () => {
   let db: DatabaseSync;
@@ -21,28 +22,59 @@ describe('V2 database lifecycle and constraints', () => {
 
   function seedSession() {
     db.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)').run('m', 'Model', 'provider', 'model', 'credential-ref', 1, 1);
-    db.prepare('INSERT INTO presets VALUES(?,?,?,?,?,?,?)').run('p', 'narrative', 'Preset', null, '{}', 1, 1);
+    db.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('p', 'narrative', 'Preset', null, '{}', 1, 1);
   }
 
-  it('initializes only the seven business tables and nullable defaults', () => {
+  it('initializes the seven tables without inserting business data', () => {
     const tables = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all();
     expect(tables.map(row => row.name)).toEqual(['api_model_configs', 'app_settings', 'entries', 'presets', 'sessions', 'world_tags', 'worlds']);
     expect(db.prepare('PRAGMA foreign_keys').get()?.foreign_keys).toBe(1);
     expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(DATABASE_VERSION);
     expect(db.prepare('PRAGMA application_id').get()?.application_id).toBe(DATABASE_APPLICATION_ID);
     expect(db.prepare("SELECT name FROM sqlite_schema WHERE type='trigger'").all()).toEqual([]);
-    expect(db.prepare('SELECT default_preset_id,default_api_model_config_id FROM app_settings WHERE id=1').get())
-      .toMatchObject({ default_preset_id: null, default_api_model_config_id: null });
+    expect(db.prepare('SELECT * FROM app_settings').all()).toEqual([]);
+    expect(db.prepare('SELECT * FROM presets').all()).toEqual([]);
   });
 
   it('reopens persisted values without reseeding or mutating application content', () => {
     const path = file();
     const first = openDatabase(path);
-    first.prepare('UPDATE app_settings SET updated_at=? WHERE id=1').run(123);
+    first.prepare('INSERT INTO app_settings VALUES(1,NULL,NULL,123,123)').run();
     first.close();
     const second = openDatabase(path);
     try { expect(second.prepare('SELECT updated_at FROM app_settings WHERE id=1').get()?.updated_at).toBe(123); }
     finally { second.close(); }
+  });
+
+  it('upgrades a verified V1 database without reseeding data and reopens the V2 schema', () => {
+    const path = file();
+    const previous = openDatabase(path);
+    previous.exec("ALTER TABLE presets DROP COLUMN revision; ALTER TABLE worlds DROP COLUMN revision; DROP INDEX idx_worlds_created; PRAGMA user_version=1; INSERT INTO app_settings VALUES(1,NULL,NULL,123,123)");
+    previous.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('preserved', 'narrative', 'Keep', null, '{}', 7, 8);
+    previous.close();
+    const upgraded = openDatabase(path);
+    expect(upgraded.prepare('SELECT revision,name,created_at FROM presets').get()).toMatchObject({ revision: 1, name: 'Keep', created_at: 7 });
+    expect(upgraded.prepare('SELECT default_preset_id,updated_at FROM app_settings').get()).toMatchObject({ default_preset_id: null, updated_at: 123 });
+    upgraded.close();
+    const reopened = openDatabase(path);
+    expect(reopened.prepare('PRAGMA user_version').get()?.user_version).toBe(DATABASE_VERSION);
+    reopened.close();
+  });
+
+  it('upgrades V2 worlds in place and keeps their content and timestamps', () => {
+    const path = file();
+    const previous = openDatabase(path);
+    previous.exec("ALTER TABLE worlds DROP COLUMN revision; DROP INDEX idx_worlds_created; PRAGMA user_version=2");
+    previous.prepare("INSERT INTO worlds(id,spec_version,name,characters_json,openings_json,state,created_at,updated_at) VALUES('w','0.1','Keep','[]','[]','{\"coins\":7}',10,20)").run();
+    previous.exec("INSERT INTO world_tags VALUES('w','tag',0)");
+    previous.close();
+    const upgraded = openDatabase(path);
+    expect(upgraded.prepare('SELECT revision,name,state,created_at,updated_at FROM worlds').get()).toMatchObject({ revision: 1, name: 'Keep', state: '{"coins":7}', created_at: 10, updated_at: 20 });
+    expect(upgraded.prepare('SELECT name FROM world_tags').get()?.name).toBe('tag');
+    upgraded.close();
+    const reopened = openDatabase(path);
+    expect(reopened.prepare('PRAGMA user_version').get()?.user_version).toBe(DATABASE_VERSION);
+    reopened.close();
   });
 
   it.each([0, 1, 7, 99])('refuses an unrelated or old version %s database without altering it', version => {
@@ -68,6 +100,7 @@ describe('V2 database lifecycle and constraints', () => {
   });
 
   it('rolls back a nested operation without committing the surrounding transaction', () => {
+    db.prepare('INSERT INTO app_settings VALUES(1,NULL,NULL,1,1)').run();
     transaction(db, () => {
       db.prepare('UPDATE app_settings SET updated_at=10 WHERE id=1').run();
       expect(() => transaction(db, () => {
@@ -85,8 +118,8 @@ describe('V2 database lifecycle and constraints', () => {
 
   it('enforces references, JSON shapes, unique names and message roles at the SQL boundary', () => {
     seedSession();
-    expect(() => db.prepare('INSERT INTO presets VALUES(?,?,?,?,?,?,?)').run('p2', 'narrative', 'Preset', null, '{}', 1, 1)).toThrow();
-    expect(() => db.prepare('INSERT INTO presets VALUES(?,?,?,?,?,?,?)').run('p2', 'narrative', 'Other', null, '[]', 1, 1)).toThrow();
+    expect(() => db.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('p2', 'narrative', 'Preset', null, '{}', 1, 1)).toThrow();
+    expect(() => db.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('p2', 'narrative', 'Other', null, '[]', 1, 1)).toThrow();
     db.prepare("INSERT INTO worlds(id,spec_version,name,characters_json,openings_json,state,created_at,updated_at) VALUES('w','0.1','World','[]','[]','{}',1,1)").run();
     db.prepare("INSERT INTO world_tags VALUES('w','adventure',0)").run();
     db.prepare("INSERT INTO sessions(id,world_id,preset_id,api_model_config_id,user_character_id,state,created_at,updated_at) VALUES('s','w','p','m','player','{}',1,1)").run();
