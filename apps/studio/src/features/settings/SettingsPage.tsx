@@ -1,3 +1,5 @@
+import {Panel} from '../../components/ui/Field';
+import {Button} from '../../components/ui/Button';
 import {Select} from '../../components/ui/Select';
 import React,{useEffect,useState} from 'react';
 import {useOutletContext} from 'react-router-dom';
@@ -25,16 +27,16 @@ export function SettingsPage(){
   {error&&<ErrorNotice message={error}/>}{presets.error&&<ErrorNotice message={presets.error} onRetry={presets.reload}/>}{models.error&&<ErrorNotice message={models.error} onRetry={models.reload}/>}
   {saved&&<div className="preset-save-ok" role="status"><Check size={16}/>{saved}</div>}
   <div className="settings-stack">
-   <section className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><MonitorCog size={18}/></span><div><h2>外观</h2></div></div>
+   <Panel className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><MonitorCog size={18}/></span><div><h2>外观</h2></div></div>
     <label className="settings-row settings-theme-row"><span><strong>主题</strong></span><Select aria-label="主题" value={theme} onChange={e=>{if(e.target.value!==theme)toggleTheme();}}><option value="light">浅色</option><option value="dark">深色</option></Select></label>
-   </section>
-   <section className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><SlidersHorizontal size={18}/></span><div><h2>默认运行配置</h2><p>导入世界卡时继承一次。修改这里不会改变现有世界和会话。</p></div></div>
+   </Panel>
+   <Panel className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><SlidersHorizontal size={18}/></span><div><h2>默认运行配置</h2><p>导入世界卡时继承一次。修改这里不会改变现有世界和会话。</p></div></div>
      {!settings.value?<Loading text="读取配置…"/>:<div className="settings-rows">
        <label className="settings-row"><span><strong>默认预设</strong><small>决定提示词、上下文编排和生成策略。</small></span><Select required aria-label="默认预设" disabled={!presets.value?.items?.length} value={defaultPreset} onChange={e=>{setDefaultPreset(e.target.value);setSaved('');}}><option value="" disabled>请选择预设</option>{presets.value?.items?.map((p:any)=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></label>
        <label className="settings-row"><span><strong>默认模型</strong><small>新导入世界卡将使用此 API 连接。</small></span><Select required aria-label="默认模型" disabled={!models.value?.items?.length} value={defaultModel} onChange={e=>{setDefaultModel(e.target.value);setSaved('');}}><option value="" disabled>请选择模型</option>{models.value?.items?.map((m:any)=><option key={m.id} value={m.id}>{m.name} · {m.modelId}{!m.credentialConfigured?'（缺少密钥）':''}</option>)}</Select></label>
-       <div className="settings-row settings-row-action"><button className="button primary" disabled={saving||!canSave} onClick={()=>void save()}>{saving?'保存中…':'保存默认配置'}</button></div>
+       <div className="settings-row settings-row-action"><Button variant="primary" loading={saving} disabled={!canSave} onClick={()=>void save()}>{saving?'保存中…':'保存默认配置'}</Button></div>
      </div>}
-   </section>
+   </Panel>
   </div>
  </main>;
 }

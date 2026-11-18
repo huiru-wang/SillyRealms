@@ -1,3 +1,7 @@
+import {applyAppearance,applyTheme,builtinTheme,STORY_COLOR_MAP} from './styles/theme';
+import './styles/tokens.css';
+import './styles/themes.css';
+applyTheme(builtinTheme('dark'));
 import React from 'react';
 import {createModuleLoader} from '../../../packages/sr-ui-compiler/src/loader';
 import '@tailwindcss/browser';
@@ -61,7 +65,7 @@ window.addEventListener('message',function receive(event){
       document.documentElement.dataset.theme=payload.value==='dark'?'dark':'light';
     } else if(payload.type==='appearance') {
       if(Number.isFinite(payload.bottomInset)&&payload.bottomInset>=0&&payload.bottomInset<=800)document.documentElement.style.setProperty('--sr-story-bottom-inset',payload.bottomInset+'px');
-      for(const [name,value] of Object.entries(payload.colors??{})){if(/^--sr-story-(bg|surface|text|muted|border|accent|focus)$/.test(name)&&typeof value==='string'&&CSS.supports('color',value))document.documentElement.style.setProperty(name,value);}
+      if(applyAppearance(payload)){for(const [target,source] of Object.entries(STORY_COLOR_MAP))document.documentElement.style.setProperty('--sr-story-'+target,payload.colors['--'+source]);}
       const size=payload.fontSize;
       if(Number.isInteger(size)&&size>=13&&size<=21){
         window.dispatchEvent(new Event('sr:font-size-will-change'));

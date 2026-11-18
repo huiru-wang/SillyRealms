@@ -1,3 +1,4 @@
+import {Input,Textarea} from '../../components/ui/Field';
 import {Select} from '../../components/ui/Select';
 import {useEffect, useId, useRef, useState} from 'react';
 import type {FormEvent} from 'react';
@@ -88,7 +89,7 @@ export function PromptEditorDialog({title, initialValue, metadata = false, descr
       </> : <>
         <span className={styles.dialogHint}>应用后，记得保存预设</span>
         <Button onClick={cancel}>取消</Button>
-        <Button tone="accent" type="submit" form={formId} disabled={restoring}>应用</Button>
+        <Button variant="primary" type="submit" form={formId} disabled={restoring}>应用</Button>
       </>}
     </div>}>
     <form id={formId} onSubmit={apply} className={styles.promptForm}>
@@ -99,7 +100,7 @@ export function PromptEditorDialog({title, initialValue, metadata = false, descr
       {error && <p className={styles.formError} role="alert">{error}</p>}
       {metadata && <div className={styles.nodeFields}>
         <label className={styles.field}>节点名称
-          <input aria-label="节点名称" required maxLength={80} value={value.name}
+          <Input aria-label="节点名称" required maxLength={80} value={value.name}
             onChange={event => {setValue({...value, name: event.target.value}); setDiscard(false); setError('');}}/>
         </label>
         <label className={styles.field}>消息角色
@@ -110,7 +111,7 @@ export function PromptEditorDialog({title, initialValue, metadata = false, descr
         </label>
       </div>}
       <label className={styles.field}>提示词正文
-        <textarea ref={inputRef} className={styles.promptInput} aria-label="提示词正文" rows={14} disabled={restoring}
+        <Textarea ref={inputRef} className={styles.promptInput} aria-label="提示词正文" rows={14} disabled={restoring}
           placeholder="在这里编写提示词…" value={value.prompt}
           onChange={event => {setValue({...value, prompt: event.target.value}); setDiscard(false);}}
           onKeyDown={event => {

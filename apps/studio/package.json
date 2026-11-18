@@ -9,7 +9,8 @@
     "dev:stage": "vite --mode stage",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
-    "test:visual": "node tests/visual/production.mjs"
+    "test:visual": "node tests/ui/browser.mjs",
+    "test:theme": "node --experimental-strip-types --test tests/ui/theme.test.mjs"
   },
   "dependencies": {
     "@sillyrealms/sdk": "workspace:*",

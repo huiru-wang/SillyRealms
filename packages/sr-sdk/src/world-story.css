@@ -49,9 +49,9 @@
 .sr-story .sr-state-heading button,
 .sr-story .sr-state-error button {
   appearance: none; font: inherit; font-size: 12px; font-weight: 500; line-height: 1.4;
-  border: 1px solid transparent; border-radius: 8px; min-height: 36px; padding: 7px 10px;
+  border: 1px solid transparent; border-radius: var(--radius-control, 8px); min-height: var(--touch-target, 40px); padding: 7px 10px;
   color: var(--_story-muted); background: transparent; cursor: pointer;
-  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+  transition: color var(--motion-fast, 160ms) ease, background-color var(--motion-fast, 160ms) ease, border-color var(--motion-fast, 160ms) ease;
 }
 .sr-story .sr-story-toolbar button { display: inline-flex; align-items: center; gap: 8px; }
 .sr-story .sr-story-toolbar button[aria-expanded="true"] { color: var(--_story-text); background: color-mix(in srgb, var(--_story-accent) 9%, transparent); }

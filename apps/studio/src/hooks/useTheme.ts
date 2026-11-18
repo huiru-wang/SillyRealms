@@ -1,14 +1,9 @@
 import {useEffect,useState} from 'react';
-export type Theme = 'dark'|'light';
-function getStoredTheme():Theme {
-  try { return localStorage.getItem('sr-studio-theme')==='light'?'light':'dark'; }
-  catch { return 'dark'; }
-}
+import {builtinTheme,setTheme,type ThemeMode} from '../styles/theme';
+export type Theme=ThemeMode;
 export function useTheme(){
-  const [theme,setTheme]=useState<Theme>(getStoredTheme);
-  useEffect(()=>{
-    document.documentElement.dataset.theme=theme;
-    try {localStorage.setItem('sr-studio-theme',theme);}catch{}
-  },[theme]);
-  return {theme,toggleTheme:()=>setTheme(t=>t==='dark'?'light':'dark')};
+ const read=():Theme=>document.documentElement.dataset.theme==='light'?'light':'dark';
+ const [theme,update]=useState<Theme>(read);
+ useEffect(()=>{const sync=()=>update(read());document.addEventListener('sr:appearance-changed',sync);return()=>document.removeEventListener('sr:appearance-changed',sync);},[]);
+ return {theme,toggleTheme:()=>setTheme(builtinTheme(read()==='dark'?'light':'dark'))};
 }

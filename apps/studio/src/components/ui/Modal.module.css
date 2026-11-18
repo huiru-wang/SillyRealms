@@ -1,6 +1,6 @@
 .backdrop{
-  position:fixed;inset:0;z-index:50;display:grid;place-items:center;
-  background:rgba(9,8,13,.68);padding:20px;backdrop-filter:blur(6px);
+  position:fixed;inset:0;z-index:var(--z-modal);display:grid;place-items:center;
+  background:var(--shade);padding:var(--space-4);backdrop-filter:blur(6px);
   opacity:0;
   transition:opacity var(--motion-overlay) var(--ease-standard);
 }
@@ -8,7 +8,7 @@
   display:flex;flex-direction:column;min-width:0;
   width:min(440px,100%);max-height:calc(100dvh - 40px);
   border:1px solid var(--stroke-strong);
-  border-radius:17px;background:var(--surface);box-shadow:var(--drop-shadow);
+  border-radius:var(--radius-overlay);background:var(--surface);box-shadow:var(--shadow-dialog);
   overflow:hidden;
   opacity:0;transform:translateY(9px) scale(.987);
   transition:opacity var(--motion-overlay) var(--ease-standard),
@@ -18,19 +18,19 @@
 .backdrop[data-state="open"] .panel{opacity:1;transform:translateY(0) scale(1)}
 .header{
   display:flex;align-items:center;justify-content:space-between;gap:12px;
-  flex-shrink:0;padding:21px 23px;border-bottom:1px solid var(--stroke);
+  flex-shrink:0;padding:var(--space-4) var(--overlay-padding);border-bottom:1px solid var(--stroke);
 }
-.header h2{min-width:0;margin:0;font-size:17px;font-weight:600;overflow-wrap:anywhere}
-.header button{flex:none;width:44px;height:44px;display:grid;place-items:center;border-radius:9px;color:var(--text-muted)}
-.header button:hover{background:var(--surface-hover);color:var(--text)}
+.header h2{min-width:0;margin:0;font-size:var(--font-20);font-weight:600;overflow-wrap:anywhere}
+
+
 .body{
   flex:1 1 auto;min-height:0;min-width:0;overflow-y:auto;overscroll-behavior:contain;
-  padding:21px 23px 26px;line-height:1.7;color:var(--text-secondary);
+  padding:var(--overlay-padding);line-height:1.7;color:var(--text-secondary);
 }
 .body p{margin:0 0 12px}
 .footer{
-  display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-shrink:0;
-  padding:16px 23px;border-top:1px solid var(--stroke);
+  display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:var(--space-3);flex-shrink:0;
+  padding:var(--space-4) var(--overlay-padding);border-top:1px solid var(--stroke);
 }
 .backdrop[data-size="editor"]{padding:24px}
 .backdrop[data-size="editor"] .panel{width:min(760px,100%);max-height:calc(100dvh - 48px)}

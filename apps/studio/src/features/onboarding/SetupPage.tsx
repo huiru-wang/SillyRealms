@@ -1,3 +1,5 @@
+import {Button} from '../../components/ui/Button';
+import {Input,Textarea} from '../../components/ui/Field';
 import {Select} from '../../components/ui/Select';
 import React,{useEffect,useState} from 'react';
 import {Link,useNavigate} from 'react-router-dom';
@@ -44,13 +46,13 @@ export function SetupPage(){
        <div className="setup-form"><label>使用现有模型<Select aria-label="使用现有模型" value={existing} onChange={e=>setExisting(e.target.value)}>{currentConfigs.map(c=><option key={c.id} value={c.id}>{c.name} · {c.modelId}{!c.credentialConfigured?'（缺少密钥）':''}</option>)}</Select></label><p className="setup-hint"><ShieldCheck size={15}/> 已保存的 API Key 不会在此页面重新显示。</p>{!currentConfigs.some(c=>c.credentialConfigured)&&<p className="setup-hint">现有连接缺少凭据。<Link to="/models">前往模型连接补充 API Key <ArrowRight size={14}/></Link></p>}</div>:
        <div className="setup-form"><label>模型服务商<Select aria-label="模型服务商" value={provider} onChange={e=>{const p=providers.find(x=>x.providerId===e.target.value);setProvider(e.target.value);setModel(p?.models[0]?.id??'');}}><option value="">选择服务商</option>{providers.map(p=><option key={p.providerId} value={p.providerId}>{p.providerId}</option>)}</Select></label>
          <label>模型<Select aria-label="模型" value={model} onChange={e=>setModel(e.target.value)}><option value="">选择模型</option>{models.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</Select></label>
-         <label>连接名称（可选）<input value={name} onChange={e=>setName(e.target.value)} placeholder="例如：我的叙事模型"/></label>
-         <label>API Key<input type="password" autoComplete="off" value={key} onChange={e=>setKey(e.target.value)} placeholder="填写模型服务商提供的 API Key"/></label>
+         <label>连接名称（可选）<Input value={name} onChange={e=>setName(e.target.value)} placeholder="例如：我的叙事模型"/></label>
+         <label>API Key<Input type="password" autoComplete="off" value={key} onChange={e=>setKey(e.target.value)} placeholder="填写模型服务商提供的 API Key"/></label>
          <p className="setup-hint"><KeyRound size={15}/> 凭据保存在本机安全存储中，不需要每次输入。</p>
        </div>}
      {presets.value&&!preferredPresetId&&<p className="setup-hint">尚无可用预设。<Link to="/presets">先创建叙事预设 <ArrowRight size={14}/></Link></p>}
      {(error||defaults.error||configs.error||catalog.error||presets.error)&&<ErrorNotice message={error||defaults.error||configs.error||catalog.error||presets.error}/>}
-     {complete?<Link className="button primary setup-submit" to="/worlds">进入世界库 <ArrowRight size={17}/></Link>:<button className="button primary setup-submit" disabled={busy||!defaults.value||!catalog.value||!presets.value} onClick={()=>void save()}>{busy?'正在保存…':'保存并进入世界库'} <ArrowRight size={17}/></button>}
+     {complete?<Link className="sr-button" data-variant="primary" to="/worlds">进入世界库 <ArrowRight size={17}/></Link>:<Button variant="primary" disabled={busy||!defaults.value||!catalog.value||!presets.value} onClick={()=>void save()}>{busy?'正在保存…':'保存并进入世界库'} <ArrowRight size={17}/></Button>}
      <div className="setup-bottom"><span>无需预先配置 Prompt 或世界状态</span><Link to="/worlds">先浏览世界库</Link></div>
    </section>
  </main>;

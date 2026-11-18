@@ -1,8 +1,11 @@
+import {PageHeader} from '../../components/ui/PageHeader';
+import {Switch} from '../../components/ui/Switch';
+import {Input,Textarea} from '../../components/ui/Field';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronRight, Copy, FileText, GripVertical, Layers3, LockKeyhole, MoreHorizontal, Plus, SlidersHorizontal, Star, Trash2, Undo2 } from 'lucide-react';
-import { Button } from '../../components/ui/Button';
+import { Button,UploadButton } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import type { ContextStrategy, PresetNode, StudioPreset } from './types';
 import { getPresetValidationError, usePresetStore } from './PresetStore';
@@ -24,13 +27,6 @@ function roleLabel(role: string) {
   return role === 'auto' ? '原始角色' : role.charAt(0).toUpperCase() + role.slice(1);
 }
 
-function Switch({ checked, label, onChange, id, describedBy }: {
-  checked: boolean; label: string; onChange: () => void; id?: string; describedBy?: string;
-}) {
-  return <button id={id} type="button" role="switch" aria-checked={checked} aria-label={label} aria-describedby={describedBy} className={styles.switchButton} onClick={onChange}>
-    <span className={styles.switchTrack}><span /></span>
-  </button>;
-}
 
 export function PresetLibraryPage() {
   const store = usePresetStore();
@@ -290,10 +286,11 @@ export function PresetLibraryPage() {
   }
 
   return <section className={styles.page} data-preset-workspace data-detail={!!presetId}>
-    <header className={styles.pageHeader}>
-      <div className={styles.pageIdentity}><h1>预设</h1></div>
-      <div className="actions"><label className="button upload-button">导入<input aria-label="导入预设" type="file" accept=".json,application/json" disabled={store.busy} onChange={event=>{const file=event.target.files?.[0];if(file)void perform(async()=>select(await store.importPreset(await file.text())));event.target.value='';}}/></label><Button className={styles.createButton} disabled={store.busy} type="button" aria-label="新建预设" icon={<Plus size={17} />} onClick={create}>新建预设</Button></div>
-    </header>
+    <PageHeader title="预设" className={styles.pageHeader} identityClassName={styles.pageIdentity} actions={<>
+      <UploadButton aria-label="导入预设" accept=".json,application/json" disabled={store.busy} onChange={event=>{const file=event.target.files?.[0];if(file)void perform(async()=>select(await store.importPreset(await file.text())));}}>导入</UploadButton>
+      <Button variant={presetId?'secondary':'primary'} disabled={store.busy} aria-label="新建预设" icon={<Plus size={16}/>} onClick={create}>新建预设</Button>
+    </>}/>
+
     <div className={styles.workspace}>
       <section className={styles.library} aria-label="预设库">{store.loading&&<p role="status">正在加载预设…</p>}{store.error&&<p role="alert">{store.error}<button onClick={()=>void store.reload()}>重试</button></p>}
         <div className={styles.presetList} data-preset-list tabIndex={0} aria-label="预设列表">
@@ -325,11 +322,11 @@ export function PresetLibraryPage() {
                   <button type="button" autoFocus disabled={preset.id === defaultPresetId} onClick={() => { void perform(async()=>{await setDefaultPreset(preset.id);closeMenu('preset');setStatus('已设为默认预设');}); }}><Star size={14} />设为默认</button>
                   <button type="button" onClick={() => { void perform(async()=>{const id=await duplicatePreset(preset.id);setMenu(null);select(id);}); }}><Copy size={14} />复制预设</button>
                   <button type="button" disabled={!dirty} onClick={() => { revertPreset(preset.id); closeMenu('preset'); setError(''); setStatus('已恢复保存的版本'); }}><Undo2 size={14} />放弃更改</button>
-                  <a className="button" href={'/api/v1/presets/'+encodeURIComponent(preset.id)+'/export'}>导出已保存预设</a><div className={styles.menuDivider} />
+                  <a href={'/api/v1/presets/'+encodeURIComponent(preset.id)+'/export'}>导出已保存预设</a><div className={styles.menuDivider} />
                   <button type="button" onClick={() => { focusMenuTrigger('preset'); setDialog({ kind: 'deletePreset' }); setMenu(null); }}><Trash2 size={14} />删除预设</button>
                 </div>}
               </div>
-              <Button type="submit" form={formId} tone="accent" aria-label="保存预设" disabled={!dirty||store.busy}>保存预设</Button>
+              <Button type="submit" form={formId} variant="primary" aria-label="保存预设" disabled={!dirty||store.busy}>保存预设</Button>
             </div>
           </>}
         </div>
@@ -338,8 +335,8 @@ export function PresetLibraryPage() {
           <section className={styles.formSection} aria-labelledby={formId + '-basic'} data-preset-section="basic">
             <div className={styles.sectionHeading}><h3 id={formId + '-basic'}>基本信息</h3></div>
             <div className={styles.basicFields}>
-              <label className={styles.field}>预设名称<input ref={nameRef} aria-label="预设名称" required value={preset.name} onChange={event => update({ name: event.target.value })} /></label>
-              <label className={styles.field}>预设描述<input aria-label="预设描述" placeholder="简短描述这个预设的叙事方式" value={preset.description} onChange={event => update({ description: event.target.value })} /></label>
+              <label className={styles.field}>预设名称<Input ref={nameRef} aria-label="预设名称" required value={preset.name} onChange={event => update({ name: event.target.value })} /></label>
+              <label className={styles.field}>预设描述<Input aria-label="预设描述" placeholder="简短描述这个预设的叙事方式" value={preset.description} onChange={event => update({ description: event.target.value })} /></label>
             </div>
           </section>
           <section className={styles.formSection} aria-labelledby={formId + '-model'} data-preset-section="model">
@@ -350,7 +347,7 @@ export function PresetLibraryPage() {
                   <label htmlFor={formId + '-temperature'}>温度</label>
                   <p id={formId + '-temperature-help'}>较低的值更稳定，较高的值增加变化。</p>
                 </div>
-                <input className={styles.parameterInput} id={formId + '-temperature'} aria-label="温度" aria-describedby={formId + '-temperature-help'} type="number" required min={0} max={2} step="any" value={preset.temperature} onChange={event => update({ temperature: Number(event.target.value) })} />
+                <Input className={styles.parameterInput} id={formId + '-temperature'} aria-label="温度" aria-describedby={formId + '-temperature-help'} type="number" required min={0} max={2} step="any" value={preset.temperature} onChange={event => update({ temperature: Number(event.target.value) })} />
               </div>
               <div className={styles.parameterRow}>
                 <div className={styles.settingCopy}>
@@ -373,8 +370,8 @@ export function PresetLibraryPage() {
               </label>)}</div>
             </fieldset>
             <div className={styles.budgetRow}>
-              <label className={styles.field}>最大上下文输入<div className={styles.numberField}><input aria-label="最大上下文输入" type="number" required min={2} step={1} value={preset.maxContextTokens || ''} onChange={event => update({ maxContextTokens: Number(event.target.value) })} /><span>tokens</span></div></label>
-              <label className={styles.field}>最大输出长度<div className={styles.numberField}><input aria-label="最大输出长度" type="number" required min={1} step={1} value={preset.maxOutputTokens || ''} onChange={event => update({ maxOutputTokens: Number(event.target.value) })} /><span>tokens</span></div></label>
+              <label className={styles.field}>最大上下文输入<div className={styles.numberField}><Input aria-label="最大上下文输入" type="number" required min={2} step={1} value={preset.maxContextTokens || ''} onChange={event => update({ maxContextTokens: Number(event.target.value) })} /><span>tokens</span></div></label>
+              <label className={styles.field}>最大输出长度<div className={styles.numberField}><Input aria-label="最大输出长度" type="number" required min={1} step={1} value={preset.maxOutputTokens || ''} onChange={event => update({ maxOutputTokens: Number(event.target.value) })} /><span>tokens</span></div></label>
             </div>
             <button type="button" className={styles.summaryButton} onClick={() => setDialog({ kind: 'summary' })}>
               <FileText size={16} aria-hidden="true" /><span><strong>压缩提示词</strong><small>{preset.contextStrategy === 'sliding_window' ? '滑动窗口不使用摘要' : '编辑整理历史时使用的提示词'}</small></span><ChevronRight size={16} aria-hidden="true" />
@@ -407,7 +404,7 @@ export function PresetLibraryPage() {
       onRestore={dialog.kind === 'node' && dialog.node.kind !== 'text' ? () => getDefaultPrompt(dialog.node.id) : undefined}
       onApply={applyPrompt} onClose={() => setDialog(null)} />}
     {preset && dialog?.kind === 'deletePreset' && <Modal title="删除预设" onClose={() => setDialog(null)}
-      footer={<div className={styles.dialogActions}><Button onClick={() => setDialog(null)}>取消</Button><Button onClick={() => {
+      footer={<div className={styles.dialogActions}><Button onClick={() => setDialog(null)}>取消</Button><Button variant="primary" intent="danger" onClick={() => {
         const remaining = presets.filter(item => item.id !== preset.id);
         const next = remaining[Math.min(presets.findIndex(item => item.id === preset.id), remaining.length - 1)];
         void perform(async()=>{await deletePreset(preset.id);setDialog(null);navigate(next?'/presets/'+next.id:'/presets');setStatus('预设已删除');});
@@ -415,7 +412,7 @@ export function PresetLibraryPage() {
       {error&&<p role="alert">{error}</p>}<p>删除“{preset.name}”及其编辑草稿？</p>{preset.id === defaultPresetId && <p>当前为默认项，请先在设置中更换默认预设。被世界或会话引用的预设不能删除。</p>}
     </Modal>}
     {preset && dialog?.kind === 'deleteNode' && <Modal title="删除节点" onClose={() => setDialog(null)}
-      footer={<div className={styles.dialogActions}><Button onClick={() => setDialog(null)}>取消</Button><Button onClick={() => {
+      footer={<div className={styles.dialogActions}><Button onClick={() => setDialog(null)}>取消</Button><Button variant="primary" intent="danger" onClick={() => {
         const index = preset.nodes.findIndex(node => node.id === dialog.node.id);
         const remaining = preset.nodes.filter(node => node.id !== dialog.node.id);
         const next = remaining[index] ?? remaining.at(-1);

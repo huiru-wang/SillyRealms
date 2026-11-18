@@ -1,8 +1,9 @@
+import {Button,IconButton} from '../../components/ui/Button';
 import {SessionRow} from '../sessions/SessionRow';
 import {WorldComponentView} from './WorldComponentView';
 import {useEffect,useLayoutEffect,useRef,useState,type CSSProperties,type KeyboardEvent,type RefObject,type TouchEvent as ReactTouchEvent,type UIEvent,type WheelEvent as ReactWheelEvent} from 'react';
 import {Link,useParams} from 'react-router-dom';
-import {ArrowLeft,BookOpen,BookText,ChevronDown,ChevronLeft,ChevronRight,ChevronUp,Compass,Ellipsis,MessageCircle,Settings2,SlidersHorizontal} from 'lucide-react';
+import {BookOpen,BookText,ChevronDown,ChevronLeft,ChevronRight,ChevronUp,Compass,Ellipsis,MessageCircle,Settings2,SlidersHorizontal} from 'lucide-react';
 import {WorldDocumentRenderer,useSRAssetBaseUrl} from '@sillyrealms/sdk';
 import {WorldAssetsProvider} from '../../world-assets';
 import {Modal} from '../../components/ui/Modal';
@@ -86,7 +87,7 @@ function SessionSection({worldId}:{worldId:string}){
     {error&&<div role="alert" className={styles.emptySessions}><strong>无法加载会话</strong><button onClick={retry}>重试</button></div>}
     {page&&page.items.length>0&&<div className={styles.sessionList}>{page.items.map(session=><SessionRow key={session.id} id={session.id} worldId={worldId} title={session.title} updatedAt={session.updatedAt} actions={<div className={styles.sessionActions} onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget))setMenu(null);}} onKeyDown={event=>{if(event.key==='Escape')setMenu(null);}}><button className={styles.moreButton} aria-label={(session.title||'未命名会话')+'的更多操作'} aria-expanded={menu===session.id} onClick={()=>setMenu(menu===session.id?null:session.id)}><Ellipsis size={20}/></button>{menu===session.id&&<div className={styles.moreMenu} role="status">暂无可用操作</div>}</div>}/>)}</div>}
     {!loading&&!error&&page?.items.length===0&&<div className={styles.emptySessions}><MessageCircle size={22} aria-hidden="true"/><strong>还没有会话</strong><p>在这个世界开始的故事会显示在这里。</p></div>}
-    {page?.hasMore&&!error&&<button className={styles.actionButton} disabled={loading} onClick={more}>{loading?'加载中…':'加载更多'}</button>}
+    {page?.hasMore&&!error&&<Button disabled={loading} onClick={more}>{loading?'加载中…':'加载更多'}</Button>}
   </>;
 }
 function SectionContent({section,world,characterId}:{section:Section;world:WorldDetail;characterId?:string}){
@@ -111,7 +112,7 @@ function SectionContent({section,world,characterId}:{section:Section;world:World
     doc.addEventListener('touchstart',start,{passive:true});doc.addEventListener('touchend',end,{passive:true});
     frameCleanup.current=()=>{doc.removeEventListener('touchstart',start);doc.removeEventListener('touchend',end);};
   }}>
-    <div className={styles.openingToolbar}><div className={styles.openingNav}><button className={styles.actionButton} disabled={openingIndex===0} onClick={()=>setOpeningIndex(i=>i-1)} aria-label="上一个开局"><ChevronLeft size={15}/></button><span>{openingIndex+1} / {data.openings.length}</span><button className={styles.actionButton} disabled={openingIndex===data.openings.length-1} onClick={()=>setOpeningIndex(i=>i+1)} aria-label="下一个开局"><ChevronRight size={15}/></button></div><div className={styles.openingActions}><button className={styles.stateButton} onClick={()=>setStateOpen(true)}>查看初始状态</button><StartSession world={world} openingId={opening.id} characterId={characterId}/></div></div>{!characterId&&<p className={styles.startError}>此世界尚未配置可扮演角色。</p>}
+    <div className={styles.openingToolbar}><div className={styles.openingNav}><IconButton disabled={openingIndex===0} onClick={()=>setOpeningIndex(i=>i-1)} aria-label="上一个开局"><ChevronLeft size={15}/></IconButton><span aria-label={'第 '+(openingIndex+1)+' 个开局，共 '+data.openings.length+' 个'}>{openingIndex+1}/{data.openings.length}</span><IconButton disabled={openingIndex===data.openings.length-1} onClick={()=>setOpeningIndex(i=>i+1)} aria-label="下一个开局"><ChevronRight size={15}/></IconButton></div><div className={styles.openingActions}><Button size="compact" onClick={()=>setStateOpen(true)}>查看初始状态</Button><StartSession world={world} openingId={opening.id} characterId={characterId}/></div></div>{!characterId&&<p className={styles.startError}>此世界尚未配置可扮演角色。</p>}
     <h3>{opening.name}</h3>{opening.component?<WorldComponentView key={opening.id} world={world} entry={opening.component} title={opening.name}/>:<WorldDocumentRenderer showStyleWarning={false} title={opening.name} content={opening.content}/>}
   </div>{stateOpen&&<Modal title="开局初始状态" size="editor" onClose={()=>setStateOpen(false)}><p className={styles.stateIntro}>“{opening.name}”开始时的消息状态，仅供查看。</p><OpeningState state={data.state} override={opening.initial_state}/></Modal>}</>:<p>这个世界没有开局。</p>;
   if(section==='运行配置')return <WorldConfig world={world}/>;
@@ -125,7 +126,7 @@ export function WorldDetailPage(){
   const [revision,setRevision]=useState(0);
   useEffect(()=>{const c=new AbortController();setWorld(null);setError(false);if(worldId)getWorld(worldId,c.signal).then(result=>setWorld(result.item)).catch(()=>{if(!c.signal.aborted)setError(true);});else setError(true);return()=>c.abort();},[worldId,revision]);
   useEffect(()=>{const refresh=(event:Event)=>{const patch=(event as CustomEvent).detail;if(patch?.id===worldId)setWorld(previous=>previous?{...previous,...patch}:previous);};window.addEventListener('sr:world-config',refresh);return()=>window.removeEventListener('sr:world-config',refresh);},[worldId]);
-  if(!world||world.id!==worldId)return <div className={styles.notFound}>{error?<><h1>无法加载世界卡</h1><p>世界卡可能不存在，或服务暂时不可用。</p><button className={styles.actionButton} onClick={()=>setRevision(n=>n+1)}>重试</button> <Link to="/worlds">返回世界卡</Link></>:<p role="status">正在加载世界卡…</p>}</div>;
+  if(!world||world.id!==worldId)return <div className={styles.notFound}>{error?<><h1>无法加载世界卡</h1><p>世界卡可能不存在，或服务暂时不可用。</p><Button onClick={()=>setRevision(n=>n+1)}>重试</Button> <Link to="/worlds">返回世界卡</Link></>:<p role="status">正在加载世界卡…</p>}</div>;
   return <WorldAssetsProvider worldId={world.id}><WorldDetailView key={world.id} world={world}/></WorldAssetsProvider>;
 }
 function WorldDetailView({world}:{world:WorldDetail}){
@@ -381,7 +382,6 @@ function WorldDetailView({world}:{world:WorldDetail}){
     <div ref={viewport} className={styles.viewport} data-world-viewport>
       <section className={styles.overview} aria-label="世界概览" data-world-overview>
         <div className={styles.overviewToolbar}>
-          <Link className={styles.mobileBack} to="/worlds" aria-label="返回世界卡列表"><ArrowLeft size={20}/></Link>
           <button ref={overviewToggle} className={styles.overviewToggle} onClick={()=>scrollOverview(!isCompact)} aria-label={isCompact?'展开世界概览':'收起世界概览'} title={isCompact?'展开世界概览':'收起世界概览'} aria-expanded={!isCompact}>
             {isCompact?<ChevronDown size={17}/>:<ChevronUp size={17}/>}
           </button>

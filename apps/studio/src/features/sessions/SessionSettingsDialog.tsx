@@ -1,3 +1,5 @@
+import {Button} from '../../components/ui/Button';
+import {Input,Textarea} from '../../components/ui/Field';
 import {Select} from '../../components/ui/Select';
 import React,{useEffect,useRef} from 'react';
 import {X} from 'lucide-react';
@@ -30,7 +32,7 @@ export function SessionSettingsDialog(props:Props){
       <button type="button" className="host-settings-close" aria-label="关闭会话设置" onClick={props.onCancel}><X size={17}/></button>
     </header>
     <div className="host-settings-fields">
-      <label>会话标题<input value={props.title} onChange={event=>props.onTitleChange(event.target.value)} maxLength={120}/></label>
+      <label>会话标题<Input value={props.title} onChange={event=>props.onTitleChange(event.target.value)} maxLength={120}/></label>
       <label>预设<Select aria-label="预设" value={props.preset} onChange={event=>props.onPresetChange(event.target.value)} disabled={props.disabled}><option value="">请选择预设</option>{props.presets.map(item=><option value={item.id} key={item.id}>{item.name}</option>)}</Select></label>
       <label>API 模型<Select aria-label="API 模型" value={props.model} onChange={event=>props.onModelChange(event.target.value)} disabled={props.disabled}><option value="">请选择模型</option>{props.models.map(item=><option value={item.id} key={item.id}>{item.name}{item.modelId?' · '+item.modelId:''}</option>)}</Select></label>
     </div>
@@ -52,8 +54,8 @@ export function SessionSettingsDialog(props:Props){
     </section>
     {props.error&&<p className="host-settings-error" role="alert">{props.error}</p>}
     <footer className="host-settings-dialog-footer">
-      <button type="button" className="button secondary" onClick={props.onCancel}>取消</button>
-      <button type="button" className="button primary" disabled={!props.canSave} onClick={props.onSave}>{props.saving?'保存中…':'保存设置'}</button>
+      <Button type="button" variant="secondary" onClick={props.onCancel}>取消</Button>
+      <Button type="button" variant="primary" disabled={!props.canSave} onClick={props.onSave}>{props.saving?'保存中…':'保存设置'}</Button>
     </footer>
   </dialog>;
 }

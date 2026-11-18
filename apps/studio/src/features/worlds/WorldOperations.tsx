@@ -3,7 +3,7 @@ import {useSRAssetBaseUrl} from '@sillyrealms/sdk';
 import {createPortal} from 'react-dom';
 import {Ellipsis} from 'lucide-react';
 import {useEffect,useRef,useState} from 'react';
-import {Link,useNavigate} from 'react-router-dom';
+import {useNavigate} from 'react-router-dom';
 import {api,json} from '../../api';
 import {useLoad,ErrorNotice} from '../../app/ui';
 import {safeImage,type WorldDetail} from './api/worlds';
@@ -29,8 +29,8 @@ export function StartSession({world,openingId,characterId}:{world:WorldDetail;op
   finally{submitting.current=false;setBusy(false);}
  }
  return <>
-  <Button tone="accent" disabled={!role||!opening||busy} onClick={()=>{if(role&&opening){setError('');setConfirmation({openingId:opening.id,openingName:opening.name,characterId:role.id,characterName:role.name,avatar:role.avatar});}}}>开始会话</Button>
-  {confirmation&&<Modal title="开始会话" onClose={close} onBeforeClose={()=>!submitting.current} footer={<><Button className={styles.startAction} disabled={busy} onClick={close}>取消</Button><Button className={styles.startAction} tone="accent" disabled={busy} onClick={()=>void start()}>{busy?'正在创建…':'确认开始'}</Button></>}>
+  <Button size="compact" variant="primary" disabled={!role||!opening||busy} onClick={()=>{if(role&&opening){setError('');setConfirmation({openingId:opening.id,openingName:opening.name,characterId:role.id,characterName:role.name,avatar:role.avatar});}}}>开始会话</Button>
+  {confirmation&&<Modal title="开始会话" onClose={close} onBeforeClose={()=>!submitting.current} footer={<><Button disabled={busy} onClick={close}>取消</Button><Button variant="primary" loading={busy} onClick={()=>void start()}>{busy?'正在创建…':'确认开始'}</Button></>}>
    <dl className={styles.startSummary} aria-busy={busy}>
     <div><dt>开局</dt><dd>{confirmation.openingName}</dd></div>
     <div><dt>扮演角色</dt><dd><span className={styles.startAvatar} aria-hidden="true">{safeImage(confirmation.avatar,assetBaseUrl)?<img src={safeImage(confirmation.avatar,assetBaseUrl)} alt=""/>:confirmation.characterName.slice(0,1)}</span><span>{confirmation.characterName}</span></dd></div>
@@ -45,7 +45,7 @@ export function WorldConfig({world}:{world:WorldDetail}){
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[saved,setSaved]=useState(false);
  const valid=!!presets.value?.items?.some((p:any)=>p.id===preset)&&!!models.value?.items?.some((m:any)=>m.id===model);
  async function save(){if(!valid){setError('请选择有效的预设和模型。');return;}setBusy(true);setError('');setSaved(false);try{await api('v1/worlds/'+encodeURIComponent(world.id),{method:'PATCH',body:json({defaultPresetId:preset,defaultApiModelConfigId:model})});window.dispatchEvent(new CustomEvent('sr:world-config',{detail:{id:world.id,defaultPresetId:preset,defaultApiModelConfigId:model}}));setSaved(true);}catch(e){setError(e instanceof Error?e.message:'保存失败');}finally{setBusy(false);}}
- return <div className="business-form"><h3>运行配置</h3><p>用于此世界之后创建的会话。</p>{(error||presets.error||models.error)&&<ErrorNotice message={error||presets.error||models.error} onRetry={()=>{void presets.reload();void models.reload();}}/>}<label>预设<Select required aria-label="预设" disabled={!presets.value?.items?.length} value={preset} onChange={e=>{setPreset(e.target.value);setSaved(false);}}><option value="" disabled>请选择预设</option>{presets.value?.items?.map((p:any)=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></label><label>模型<Select required aria-label="模型" disabled={!models.value?.items?.length} value={model} onChange={e=>{setModel(e.target.value);setSaved(false);}}><option value="" disabled>请选择模型</option>{models.value?.items?.map((m:any)=><option key={m.id} value={m.id}>{m.name}{!m.credentialConfigured?'（缺少凭据）':''}</option>)}</Select></label><Button tone="accent" disabled={busy||!valid} onClick={()=>void save()}>{busy?'保存中…':'保存配置'}</Button>{saved&&<p role="status">运行配置已保存</p>}<p><Link to="/presets">管理预设</Link> · <Link to="/models">管理模型</Link></p></div>;
+ return <div className="business-form">{(error||presets.error||models.error)&&<ErrorNotice message={error||presets.error||models.error} onRetry={()=>{void presets.reload();void models.reload();}}/>}<label>预设<Select required aria-label="预设" disabled={!presets.value?.items?.length} value={preset} onChange={e=>{setPreset(e.target.value);setSaved(false);}}><option value="" disabled>请选择预设</option>{presets.value?.items?.map((p:any)=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></label><label>模型<Select required aria-label="模型" disabled={!models.value?.items?.length} value={model} onChange={e=>{setModel(e.target.value);setSaved(false);}}><option value="" disabled>请选择模型</option>{models.value?.items?.map((m:any)=><option key={m.id} value={m.id}>{m.name}{!m.credentialConfigured?'（缺少凭据）':''}</option>)}</Select></label><Button variant="primary" loading={busy} disabled={!valid} onClick={()=>void save()}>{busy?'保存中…':'保存配置'}</Button>{saved&&<p role="status">运行配置已保存</p>}</div>;
 }
 export function WorldActions({world}:{world:WorldDetail}){
  const [confirm,setConfirm]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState(false);
@@ -70,5 +70,5 @@ export function WorldActions({world}:{world:WorldDetail}){
  <a role="menuitem" href={'/api/v1/worlds/'+encodeURIComponent(world.id)+'/export'} onClick={()=>closeMenu(true)}>导出世界卡</a>
  <button role="menuitem" onClick={()=>{closeMenu(true);setConfirm(true);}}>删除世界卡</button>
  </div>,document.body)}
- {confirm&&<Modal title="删除世界卡" onBeforeClose={()=>!busy} onClose={()=>{setConfirm(false);trigger.current?.focus();}}><p>删除“{world.data.name}”及其全部会话和历史？此操作无法撤销。</p>{error&&<ErrorNotice message={error}/>}<div className="actions"><Button disabled={busy} onClick={()=>{setConfirm(false);trigger.current?.focus();}}>取消</Button><Button disabled={busy} onClick={()=>void remove()}>{busy?'删除中…':'确认删除'}</Button></div></Modal>}</>;
+ {confirm&&<Modal title="删除世界卡" onBeforeClose={()=>!busy} onClose={()=>{setConfirm(false);trigger.current?.focus();}}><p>删除“{world.data.name}”及其全部会话和历史？此操作无法撤销。</p>{error&&<ErrorNotice message={error}/>}<div className="actions"><Button disabled={busy} onClick={()=>{setConfirm(false);trigger.current?.focus();}}>取消</Button><Button variant="primary" intent="danger" loading={busy} onClick={()=>void remove()}>{busy?'删除中…':'确认删除'}</Button></div></Modal>}</>;
 }

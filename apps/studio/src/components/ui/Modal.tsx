@@ -1,3 +1,4 @@
+import {IconButton} from './Button';
 import {useCallback,useEffect,useId,useRef,useState,type ReactNode} from 'react';
 import {createPortal} from 'react-dom';
 import {X} from 'lucide-react';
@@ -82,7 +83,7 @@ export function Modal({title,onClose,children,size='default',footer,onBeforeClos
       <section ref={panelRef} className={styles.panel} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header className={styles.header}>
           <h2 id={titleId}>{title}</h2>
-          <button ref={closeRef} type="button" aria-label="关闭弹窗" onClick={requestClose}><X size={18}/></button>
+          <IconButton ref={closeRef} type="button" aria-label="关闭弹窗" onClick={requestClose}><X size={20}/></IconButton>
         </header>
         <div className={styles.body}>{children}</div>
         {hasFooter&&<footer className={styles.footer}>{footer}</footer>}

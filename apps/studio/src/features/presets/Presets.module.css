@@ -1,15 +1,14 @@
 .page{
-  container-name:preset-workspace;container-type:inline-size;
-  height:100dvh;min-width:0;display:flex;flex-direction:column;
-  --page-inset:34px;
+  container-name:library-workspace;container-type:inline-size;
+  height:var(--page-viewport-height,100dvh);min-width:0;display:flex;flex-direction:column;
+
   padding:var(--page-header-top) var(--page-inset) 24px;overflow:hidden;
   transition:padding-left var(--motion-layout) var(--ease-layout),padding-right var(--motion-layout) var(--ease-layout);
 }
-:global([data-collapsed="true"]) .page{--page-inset:68px}
-.pageHeader{display:flex;align-items:center;justify-content:space-between;gap:20px;min-height:49px;margin-bottom:28px;flex-shrink:0}
-.pageIdentity{display:flex;align-items:baseline;gap:12px;min-width:0}
-.pageHeader h1{font-size:29px;line-height:1.16;font-weight:560;letter-spacing:-.045em;margin:0}
-.workspace{display:grid;grid-template-columns:240px minmax(0,1fr);gap:28px;min-height:0;flex:1}
+
+.pageIdentity{min-width:0}
+
+.workspace{display:grid;grid-template-columns:var(--workspace-list-width) minmax(0,1fr);gap:var(--workspace-gap);min-height:0;flex:1}
 .library{min-width:0;min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--stroke);padding-right:20px}
 .iconButton{width:44px;height:44px;display:grid;place-items:center;flex-shrink:0;border-radius:var(--radius-sm);color:var(--text-secondary);transition:background var(--motion-fast)}
 .presetList{flex:1;min-height:0;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-width:thin;scrollbar-color:var(--stroke-strong) transparent;padding:3px 3px 24px}
@@ -18,33 +17,25 @@
 .itemHeading strong{font-size:14px;font-weight:500;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;min-width:0}
 .defaultState{flex-shrink:0;margin-left:auto;font-size:11px;color:var(--text-muted)}
 .itemDescription{width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:18px;color:var(--text-muted)}
-.presetItem[aria-pressed="true"],.presetItem[aria-pressed="true"]:hover{background:var(--accent-selected);border-color:var(--stroke)}
+.presetItem[aria-pressed="true"],.presetItem[aria-pressed="true"]:hover{background:var(--selection-bg);border-color:var(--stroke)}
 .presetItem[aria-pressed="true"] .itemDescription{color:var(--text-secondary)}
 .dirtyDot{display:inline-block;flex-shrink:0;width:5px;height:5px;border-radius:50%;background:var(--accent)}
 .editor{display:flex;flex-direction:column;min-width:0;min-height:0}
 .editorHeader{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:59px;padding-bottom:14px;flex-shrink:0;border-bottom:1px solid var(--stroke)}
 .editorIdentity{min-width:0;display:flex;align-items:center;gap:12px}
-.editorIdentity h2{font-size:18px;font-weight:550;line-height:26px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.editorIdentity h2{font-size:18px;font-weight:var(--weight-strong);line-height:26px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .saveState{display:flex;align-items:center;gap:5px;white-space:nowrap;font-size:12px;color:var(--text-muted)}
 .editorActions{display:flex;align-items:center;gap:6px;flex-shrink:0}
-.editorActions>button{min-height:44px;padding:0 15px;font-size:13px}
-.editorActions>button:disabled{opacity:.46;cursor:default;transform:none}
+
 .editorContent{min-height:0;min-width:0;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-width:thin;scrollbar-color:var(--stroke-strong) transparent;padding:24px 8px 32px 0}
 .editorContent:focus-visible,.presetList:focus-visible{outline:1px solid var(--focus);outline-offset:-1px}
 .formSection{padding-bottom:24px;margin-bottom:24px;border-bottom:1px solid var(--stroke)}
 .formSection:last-child{border-bottom:0;margin-bottom:0;padding-bottom:0}
 .sectionHeading{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:24px;margin-bottom:14px}
-.sectionHeading h3{font-size:14px;font-weight:550;line-height:22px;margin:0;color:var(--text)}
+.sectionHeading h3{font-size:14px;font-weight:var(--weight-strong);line-height:22px;margin:0;color:var(--text)}
 .basicFields{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.4fr);gap:16px}
 .field{display:flex;flex-direction:column;gap:8px;min-width:0;font-size:12px;font-weight:400;line-height:18px;color:var(--text-secondary)}
-.field input,.field textarea,.field select,.parameterInput{
-  width:100%;min-width:0;border:1px solid var(--stroke-strong);border-radius:var(--radius-sm);
-  background:var(--sidebar-bg);color:var(--text);padding:11px 12px;font:inherit;font-size:14px;line-height:20px;
-  transition:border-color var(--motion-fast),background var(--motion-fast);
-}
-.field input,.field select,.parameterInput{height:44px}
-.field input::placeholder,.field textarea::placeholder{color:var(--text-muted)}
-.field :is(input,textarea,select):focus-visible,.parameterInput:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+
 .fieldHelp{margin:12px 0 0;font-size:12px;line-height:1.7;color:var(--text-muted)}
 .settingsGroup{border:1px solid var(--stroke);border-radius:var(--radius-md);background:var(--surface)}
 .parameterRow{display:flex;align-items:center;justify-content:space-between;gap:20px;min-height:78px;padding:14px 16px}
@@ -53,7 +44,7 @@
 .settingCopy label{display:block;font-size:14px;line-height:22px;font-weight:500;color:var(--text)}
 .settingCopy p{margin:4px 0 0;font-size:12px;line-height:19px;color:var(--text-secondary)}
 .parameterInput{width:96px;flex:0 0 96px;font-variant-numeric:tabular-nums}
-.parameterRow .switchButton{margin-right:-6px}
+
 .strategyField{border:0;margin:0 0 16px;padding:0;min-width:0}
 .strategyField legend{font-size:12px;color:var(--text-secondary);line-height:18px;margin-bottom:8px;padding:0}
 .strategies{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
@@ -64,7 +55,7 @@
 .strategyTitle strong{font-size:13px;line-height:20px;font-weight:500;color:var(--text)}
 .strategyBody small{font-size:12px;line-height:19px;color:var(--text-secondary)}
 .strategyCheck{display:grid;place-items:center;flex-shrink:0;width:16px;height:16px;border-radius:50%;border:1px solid var(--stroke-strong);color:transparent;transition:background var(--motion-fast),color var(--motion-fast)}
-.strategyChoice input:checked+.strategyBody{border-color:var(--stroke-strong);background:var(--accent-selected)}
+.strategyChoice input:checked+.strategyBody{border-color:var(--stroke-strong);background:var(--selection-bg)}
 .strategyChoice input:checked+.strategyBody .strategyCheck{background:var(--text);border-color:var(--text);color:var(--sidebar-bg)}
 .strategyChoice input:focus-visible+.strategyBody{outline:2px solid var(--focus);outline-offset:2px}
 .budgetRow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:end;gap:16px}
@@ -90,11 +81,7 @@
 .nodeMain small{display:block;max-width:100%;font-size:12px;line-height:18px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nodeLead,.nodeFixed,.nodeTrailing{display:grid;place-items:center;width:44px;height:44px;color:var(--text-muted)}
 .nodeFixed{opacity:.7}
-.switchButton{display:grid;place-items:center;flex:0 0 44px;width:44px;height:44px;border-radius:var(--radius-xs)}
-.switchTrack{display:block;position:relative;width:30px;height:18px;padding:3px;background:var(--surface-hover);border:1px solid var(--stroke-strong);border-radius:12px;transition:background var(--motion-fast),border-color var(--motion-fast)}
-.switchTrack span{display:block;width:10px;height:10px;border-radius:50%;background:var(--text-muted);transition:transform var(--motion-fast),background var(--motion-fast)}
-.switchButton[aria-checked="true"] .switchTrack{background:var(--accent);border-color:transparent}
-.switchButton[aria-checked="true"] .switchTrack span{transform:translateX(12px);background:var(--sidebar-bg)}
+
 .nodeRow[data-disabled="true"] .nodeMain>span{color:var(--text-muted)}
 .dragHandle{display:grid;place-items:center;width:44px;min-height:44px;color:var(--text-muted);border-radius:var(--radius-xs);cursor:grab;touch-action:none;user-select:none}
 .dragHandle:active{cursor:grabbing}
@@ -104,7 +91,7 @@
 .nodeRow[data-drop="after"]::after{bottom:-1px}
 .nodeMore{display:grid;place-items:center;width:44px;height:44px;color:var(--text-muted);border-radius:var(--radius-xs);transition:background var(--motion-fast)}
 .menuAnchor{position:relative;flex-shrink:0}
-.menuPanel{position:absolute;right:0;top:calc(100% + 4px);z-index:8;min-width:168px;padding:5px;background:var(--surface-raised);border:1px solid var(--stroke-strong);border-radius:var(--radius-sm);box-shadow:var(--drop-shadow);animation:menu-in var(--motion-reveal) var(--ease-standard)}
+.menuPanel{position:absolute;right:0;top:calc(100% + 4px);z-index:var(--z-popover);min-width:168px;padding:5px;background:var(--surface-raised);border:1px solid var(--stroke-strong);border-radius:var(--radius-sm);box-shadow:var(--drop-shadow);animation:menu-in var(--motion-reveal) var(--ease-standard)}
 .menuPanel[data-placement="above"]{top:auto;bottom:calc(100% + 4px)}
 .menuPanel button,.menuPanel a{display:flex;align-items:center;gap:10px;min-height:44px;width:100%;padding:8px 10px;border:0;border-radius:var(--radius-xs);background:transparent;white-space:nowrap;text-align:left;font-size:12px;color:var(--text-secondary)}
 .menuPanel button:disabled{opacity:.35;cursor:default}
@@ -116,11 +103,11 @@
 .emptyEditor{display:flex;flex:1;align-items:center;justify-content:center;flex-direction:column;gap:13px;color:var(--text-muted);padding:24px;text-align:center}
 .emptyEditor h2{font-size:17px;font-weight:500;margin:0;color:var(--text-secondary)}
 .emptyEditor p{font-size:13px;margin:0 0 10px;line-height:1.7}
-.formError{padding:12px;border:1px solid var(--stroke-strong);border-radius:var(--radius-sm);font-size:13px;line-height:1.6;color:var(--text);background:var(--accent-soft);margin:0 0 20px}
-.toast{position:fixed;bottom:25px;left:50%;transform:translateX(-50%);z-index:25;display:flex;align-items:center;gap:9px;max-width:calc(100vw - 32px);padding:12px 17px;font-size:12px;border:1px solid var(--stroke-strong);border-radius:var(--radius-sm);background:var(--surface-raised);box-shadow:var(--drop-shadow);animation:menu-in var(--motion-reveal) var(--ease-standard);pointer-events:none}
+.formError{padding:12px;border:1px solid var(--danger);border-radius:var(--radius-sm);font-size:13px;line-height:1.6;color:var(--danger);background:var(--danger-bg);margin:0 0 20px}
+.toast{position:fixed;bottom:25px;left:50%;transform:translateX(-50%);z-index:var(--z-notice);display:flex;align-items:center;gap:9px;max-width:calc(100vw - 32px);padding:12px 17px;font-size:12px;border:1px solid var(--stroke-strong);border-radius:var(--radius-sm);background:var(--surface-raised);box-shadow:var(--drop-shadow);animation:menu-in var(--motion-reveal) var(--ease-standard);pointer-events:none}
 .srOnly{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .dialogActions{display:flex;align-items:center;justify-content:flex-end;gap:9px;min-width:0;width:100%}
-.dialogActions>button{min-height:44px}
+
 .dialogHint{margin-right:auto;font-size:12px;color:var(--text-muted)}
 .discardMessage{margin-right:auto;font-size:12px;line-height:1.6;color:var(--text-secondary)}
 .promptForm{display:flex;flex-direction:column;gap:18px}
@@ -150,20 +137,20 @@
  .strategyChoice input:not(:checked):hover+.strategyBody{background:var(--surface-hover);border-color:var(--stroke-strong)}
  .dragHandle:hover{color:var(--text)}
 }
-@container preset-workspace (max-width:1000px){
- .workspace{grid-template-columns:216px minmax(0,1fr);gap:24px}
+@container library-workspace (max-width:1000px){
+
  .library{padding-right:16px}
  .editorIdentity{align-items:flex-start;flex-direction:column;gap:2px}
  .editorIdentity h2{max-width:100%;font-size:17px}
 }
-@container preset-workspace (max-width:780px){
+@container library-workspace (max-width:744px){
  .basicFields{grid-template-columns:minmax(0,1fr)}
  .workspace{display:block;position:relative}
  .library,.editor{height:100%;width:100%}
  .library{padding-right:0;border:0}
  .page[data-detail="false"] .editor{display:none}
  .page[data-detail="true"] .library{display:none}
- .page[data-detail="true"] .pageHeader{min-height:0;height:0;margin:0}
+ .page[data-detail="true"] .pageHeader{display:none}
  .page[data-detail="true"] .pageIdentity{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
  .page[data-detail="true"] .pageHeader>:not(.pageIdentity){display:none}
  .listBack{display:flex;align-items:center;gap:6px;min-height:44px;color:var(--text-secondary);font-size:13px;flex-shrink:0;padding:0}
@@ -175,24 +162,19 @@
  .editorContent{padding-right:2px}
  .presetItem{height:76px;padding:12px 15px}
 }
-@media(max-width:1340px) and (min-width:1081px){
- .page{--page-inset:28px}
- :global([data-collapsed="true"]) .page{--page-inset:50px}
-}
+
 @media(max-width:1080px){
- .page,:global([data-collapsed="true"]) .page{--page-inset:25px;padding-top:var(--page-header-top)}
+ .page,:global([data-collapsed="true"]) .page{padding-top:var(--page-header-top)}
 }
 @media(max-width:760px){
- .page,:global([data-collapsed="true"]) .page{--page-inset:16px;padding-top:16px;padding-bottom:16px}
- .pageHeader{min-height:44px;margin-bottom:24px;gap:8px}
- .pageHeader h1{font-size:23px}
- .pageHeader .createButton{min-height:44px;padding:0 11px;font-size:13px}
+ .page,:global([data-collapsed="true"]) .page{padding-top:var(--page-header-top);padding-bottom:16px}
+
  .editorHeader{padding-bottom:16px}
  .editorContent{padding-top:24px}
  .field input,.field textarea,.parameterInput{font-size:16px}
  .parameterRow{gap:12px;padding:12px;min-height:84px}
  .parameterInput{width:76px;flex-basis:76px}
- .parameterRow .switchButton{margin-right:-4px}
+
  .strategies,.budgetRow{gap:12px}
  .strategyBody{padding:12px 10px}
  .nodeRow{min-height:70px}
@@ -201,7 +183,10 @@
  .dialogActions{flex-wrap:wrap}
  .dialogHint,.discardMessage{width:100%;margin:0 0 3px}
  .promptInput{min-height:270px}
- .toast{bottom:16px}
+ .toast{bottom:calc(var(--mobile-nav-space,0px) + 8px)}
+ .listBack{display:none}
+ .editorHeader{grid-template-areas:"identity actions";gap:8px}
+ .editorIdentity{flex-direction:column;align-items:flex-start;gap:2px}
  .page[data-detail="false"]{height:auto;min-height:100%;overflow:visible}
  .page[data-detail="false"] .workspace{flex:none}
  .page[data-detail="false"] .library{height:auto}
@@ -209,10 +194,14 @@
 }
 @media(max-width:360px){
  .budgetRow{grid-template-columns:minmax(0,1fr)}
- .editorActions>button{padding-inline:11px}
+
  .nodeRow{grid-template-columns:44px minmax(0,1fr) 44px 44px}
 }
 @media(prefers-reduced-motion:reduce){
- .page,.presetItem,.iconButton,.field input,.field textarea,.parameterInput,.strategyBody,.strategyCheck,.summaryButton,.textButton,.nodeRow,.nodeMore,.switchTrack,.switchTrack span{transition:none}
  .menuPanel,.toast{animation:none}
+}
+
+@media(max-width:760px){
+ .page[data-detail="true"]{padding-bottom:0}
+ .page[data-detail="true"] .editorContent{flex:1;padding-bottom:var(--mobile-nav-space);scroll-padding-bottom:var(--mobile-nav-space)}
 }

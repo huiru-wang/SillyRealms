@@ -9,7 +9,7 @@
 .sr-composer-editor p{margin:0;min-height:1.65em;white-space:pre-wrap;overflow-wrap:anywhere}
 .sr-composer-editor p+p{margin-top:6px}
 .sr-composer-block{position:relative;display:block;box-sizing:border-box;min-height:2.2em;margin:5px 0;padding:7px 10px 7px 70px;border-left:3px solid transparent;border-radius:var(--radius-sm);white-space:pre-wrap;overflow-wrap:anywhere}
-.sr-composer-block::before{position:absolute;left:10px;top:7px;color:inherit;font-size:11px;font-weight:650;line-height:1.6;opacity:.78;content:attr(data-label);user-select:none}
+.sr-composer-block::before{position:absolute;left:10px;top:7px;color:inherit;font-size:11px;font-weight:var(--weight-strong);line-height:1.6;opacity:.78;content:attr(data-label);user-select:none}
 .sr-composer-speech{border-left-color:var(--accent);background:var(--accent-soft);color:var(--text)}
 .sr-composer-instruction{border-left-color:var(--text-muted);background:var(--canvas);color:var(--text)}
 .sr-composer-error{margin:0;color:var(--text-secondary);font-size:12px}

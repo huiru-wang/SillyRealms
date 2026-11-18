@@ -12,11 +12,11 @@ pnpm dev:all
 
 生产运行：`pnpm build && pnpm start`，访问 http://localhost:3000。单独开发可用 `pnpm dev` 和 `pnpm dev:studio`。Studio 代理可通过 SR_STUDIO_SERVER_URL 配置。
 
-检查：`pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm build`、`pnpm test:browser`。浏览器集成测试使用真实 API/SSE、隔离内存 SQLite 和离线测试 Provider；测试数据不打包进产品。测试截图位于 tests/visual/output。
+检查：`pnpm --filter @sillyrealms/studio typecheck`、`pnpm build`、`pnpm test:browser`。UI 浏览器回归连接运行中的 Studio 和真实只读数据，需要已有世界卡、预设、模型及可运行的介绍组件；不创建业务数据、不调用模型。支持 `STUDIO_URL`、`CHROME_PATH`，截图路径由测试输出。组件、主题与验收规则见 [UI SPEC](../../docs/design/UI-SPEC.md)。
 
 单文件旧 UI 需要显式离线转换；v4 的组件库和介绍/开局文本在备份后自动迁移到 v5。见 [组件契约](../../docs/design/world-components.md)。单文件迁移工具默认只检查。
 
-架构、职责和运行限制见 [Studio 前端](../../docs/technical/studio-frontend.md)。
+平台视觉与作者组件的职责边界见 [设计规范](../../docs/design/README.md)。
 
 会话 Stage 与详情的介绍、开局预览共用独立静态资源服务：生产默认端口 3001（`SILLYREALMS_STAGE_PORT`），开发默认 5175（`SR_STUDIO_STAGE_PORT`）。`pnpm dev:studio` 同时启动两套前端监听；`pnpm dev:all` 再启动 Server。局域网访问沿用浏览器当前 hostname，需开放主站和 Stage 两个端口。端口占用会使启动失败，不自动换端口。
 

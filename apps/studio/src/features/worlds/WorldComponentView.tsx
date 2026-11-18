@@ -1,3 +1,5 @@
+import {readAppearance} from '../../styles/theme';
+import {Button} from '../../components/ui/Button';
 import {useEffect,useRef,useState} from 'react';
 import {compileComponents} from '../../../../../packages/sr-ui-compiler/src/index';
 import {api} from '../../api';
@@ -32,7 +34,7 @@ function MountedWorldComponent({world,entry,title,retry}:{world:WorldDetail;entr
       if(connected){fail();return;}
       frame.current?.contentWindow?.postMessage({type:'sr-world-probe',nonce},expectedOrigin);
     };
-    function appearance(){if(gone)return;const style=getComputedStyle(document.documentElement);port?.postMessage({type:'appearance',theme:document.documentElement.dataset.theme,colors:Object.fromEntries(['--text','--text-muted','--surface','--accent'].map(key=>[key,style.getPropertyValue(key).trim()]))});}
+    function appearance(){if(gone)return;port?.postMessage({type:'appearance',...readAppearance()});}
     function render(){if(ready&&compiled){appearance();port?.postMessage({type:'render',entry,modules:compiled,assetBaseUrl:worldAssetBaseUrl(expectedOrigin,world.id)});}}
     const listener=(event:MessageEvent)=>{
       if(gone||connected||!expectedOrigin||event.source!==frame.current?.contentWindow||event.origin!==expectedOrigin||event.data?.type!=='sr-world-ready'||event.data.nonce!==nonce)return;
@@ -64,6 +66,6 @@ function MountedWorldComponent({world,entry,title,retry}:{world:WorldDetail;entr
     }).catch(fail);
     return()=>{gone=true;clearTimeout(timer);abort.abort();theme.disconnect();port?.close();onFrameLoad.current=undefined;window.removeEventListener('message',listener);};
   },[world.id,world.data.components,entry]);
-  if(error)return <div role="alert"><p>{error}</p><button className="button" onClick={retry}>重试</button></div>;
+  if(error)return <div role="alert"><p>{error}</p><Button variant="secondary" onClick={retry}>重试</Button></div>;
   return <>{!loaded&&<p role="status">正在加载组件…</p>}{source&&<iframe key={source} ref={frame} title={title} data-world-component={entry} src={source} sandbox="allow-scripts allow-same-origin" onLoad={()=>onFrameLoad.current?.()} style={{display:'block',width:'100%',height,border:0,visibility:loaded?'visible':'hidden'}}/>}</>;
 }

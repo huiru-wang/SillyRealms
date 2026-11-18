@@ -38,7 +38,8 @@ export function AppShell(){
   const nav=useNavigate();
   const location=useLocation();
   const isWorldDetail=Boolean(useMatch('/worlds/:worldId'));
-  const showMobileNav=['/worlds','/sessions','/presets','/more','/models','/settings','/setup'].includes(location.pathname.replace(/\/+$/,'')||'/');
+  const isLibraryDetail=/^\/(?:worlds|presets|models)\/[^/]+\/?$/.test(location.pathname);
+  const showMobileNav=isLibraryDetail||['/worlds','/sessions','/presets','/more','/models','/settings','/setup'].includes(location.pathname.replace(/\/+$/,'')||'/');
   const {presets,defaultPresetId}=usePresetStore();
   const presetShortcuts=[...presets.filter(preset=>preset.id===defaultPresetId),...presets.filter(preset=>preset.id!==defaultPresetId)].slice(0,2);
   const toggleCollapsed=()=>{
@@ -115,9 +116,9 @@ export function AppShell(){
         </div>
       </div>
     </aside>
-    <main className={[styles.main,isWorldDetail?styles.worldDetailMain:'',showMobileNav?styles.mobileListMain:''].join(' ')} id="main-content" tabIndex={-1}><Outlet context={{theme,toggleTheme}}/></main>
+    <main className={[styles.main,isWorldDetail?styles.worldDetailMain:'',showMobileNav?(isLibraryDetail?styles.mobileDetailMain:styles.mobileListMain):''].join(' ')} id="main-content" tabIndex={-1}><Outlet context={{theme,toggleTheme}}/></main>
     {showMobileNav&&<nav className={styles.mobileNav} aria-label="手机主导航">
-      {MOBILE_NAV.map(({path,label,Icon})=><NavLink key={path} to={path} end aria-label={label} className={({isActive})=>[styles.mobileNavItem,(isActive||path==='/settings'&&['/more','/setup'].includes(location.pathname))?styles.mobileNavSelected:''].join(' ')}><Icon size={20} strokeWidth={1.8} aria-hidden="true"/><span>{label}</span></NavLink>)}
+      {MOBILE_NAV.map(({path,label,Icon})=><NavLink key={path} to={path} end={path==='/sessions'||path==='/settings'} aria-label={label} className={({isActive})=>[styles.mobileNavItem,(isActive||path==='/settings'&&['/more','/setup'].includes(location.pathname))?styles.mobileNavSelected:''].join(' ')}><Icon size={20} strokeWidth={1.8} aria-hidden="true"/><span>{label}</span></NavLink>)}
     </nav>}
 
   </div>;

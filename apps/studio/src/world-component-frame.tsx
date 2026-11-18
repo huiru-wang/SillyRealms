@@ -1,3 +1,7 @@
+import {applyAppearance,applyTheme,builtinTheme} from './styles/theme';
+import './styles/tokens.css';
+import './styles/themes.css';
+applyTheme(builtinTheme('dark'));
 import React from 'react';
 import * as ReactDOMClient from 'react-dom/client';
 import * as JSXRuntime from 'react/jsx-runtime';
@@ -45,8 +49,7 @@ window.addEventListener('message',event=>{
       const request=pending.get(data.id);if(!request)return;clearTimeout(request.timer);pending.delete(data.id);
       if(data.error)request.reject(Error(data.error));else request.resolve(data.data);
     } else if(data.type==='appearance') {
-      document.documentElement.dataset.theme=data.theme==='light'?'light':'dark';
-      for(const [key,value] of Object.entries(data.colors??{}))if(/^--(text|text-muted|surface|accent)$/.test(key)&&typeof value==='string'&&CSS.supports('color',value))document.documentElement.style.setProperty(key,value);
+      applyAppearance(data);
     } else if(data.type==='render') {
       try {
         const load=createModuleLoader(data.modules.code,data.modules.errors,{'react':React,'react-dom/client':ReactDOMClient,'react/jsx-runtime':JSXRuntime,'@sillyrealms/sdk':sdk},(source,module,require)=>new Function('module','exports','require','React',source)(module,module.exports,require,React));

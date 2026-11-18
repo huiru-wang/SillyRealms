@@ -1,3 +1,4 @@
+import {readAppearance} from './styles/theme';
 import {isPostprocessError} from '../../../packages/sr-sdk/src/postprocess-feedback';
 import {ActionSuggestionStore} from './features/sessions/action-suggestions';
 import {stateManifest} from './features/sessions/state-manifest';
@@ -86,10 +87,7 @@ export function SessionHost({id}:{id:string}) {
   const [bottomInset,setBottomInset]=useState(0);
   const appearanceRef=useRef({fontSize,bottomInset,colors:{} as Record<string,string>});
   const syncAppearance=useCallback(()=>{
-    const css=getComputedStyle(document.documentElement);
-    const keys=['bg','surface','text','muted','border','accent','focus'];
-    const sources=['--canvas','--surface','--text','--text-muted','--stroke','--accent','--focus'];
-    appearanceRef.current={fontSize:fontSizeRef.current,bottomInset:appearanceRef.current.bottomInset,colors:Object.fromEntries(keys.map((key,i)=>['--sr-story-'+key,css.getPropertyValue(sources[i]).trim()]))};
+    appearanceRef.current={fontSize:fontSizeRef.current,bottomInset:appearanceRef.current.bottomInset,...readAppearance()};
     port.current?.postMessage({type:'appearance',...appearanceRef.current});
   },[]);
   useEffect(()=>{appearanceRef.current.bottomInset=bottomInset;syncAppearance();},[bottomInset,fontSize,syncAppearance]);
@@ -286,7 +284,7 @@ export function SessionHost({id}:{id:string}) {
     };
     window.addEventListener('message',listener);
     const themeObserver=new MutationObserver(()=>{port.current?.postMessage({type:'theme',value:document.documentElement.dataset.theme??'light'});syncAppearance();});
-    themeObserver.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme','data-palette']});
+    themeObserver.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme','data-theme-id','style']});
     let gone=false;
     const loadSettings=()=>{
     void (async()=>{

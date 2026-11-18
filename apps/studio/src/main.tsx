@@ -6,7 +6,10 @@ import {AssetOriginProvider} from './world-assets';
 import './styles/reset.css';
 import './styles/tokens.css';
 import './styles/themes.css';
+import {initializeTheme} from './styles/theme';
 import './styles/globals.css';
+
+initializeTheme();
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -18,3 +21,5 @@ createRoot(document.getElementById('root')!).render(
 
 import './features/sessions/composer/roleplay-composer.css';
 import './styles/business.css';
+
+import './styles/components.css';

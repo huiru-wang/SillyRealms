@@ -1,3 +1,5 @@
+import {PageHeader} from '../../components/ui/PageHeader';
+import {Input,Field} from '../../components/ui/Field';
 import {Select} from '../../components/ui/Select';
 import {Modal} from '../../components/ui/Modal';
 import {Button} from '../../components/ui/Button';
@@ -62,7 +64,7 @@ export function ModelsPage(){
  };
  const openCreate=()=>{setError('');setFeedback('');setDraft(empty());};
  return <section className={styles.page} data-model-workspace data-detail={!!modelId}>
-  <header className={styles.pageHeader}><h1>模型</h1><Button tone="accent" icon={<Plus size={17}/>} disabled={busy} onClick={openCreate}>添加模型</Button></header>
+  <PageHeader title="模型" actions={<Button variant="primary" icon={<Plus size={17}/>} disabled={busy} onClick={openCreate}>添加模型</Button>}/>
   {error&&!draft&&!deleting&&<ErrorNotice message={error}/>}
   {feedback&&<p className={styles.feedback} role="status"><Check size={15}/>{feedback}</p>}
   <div className={styles.workspace}>
@@ -92,22 +94,22 @@ export function ModelsPage(){
       {defaults.error&&<ErrorNotice message={defaults.error} onRetry={defaults.reload}/>}
       <div className={styles.connectionActions}>
        <Button className={'model-test-button'+(testResults[selected.id]==='success'?' is-success':testResults[selected.id]==='failed'?' is-failed':'')} disabled={!selected.credentialConfigured||checking!==null||busy} title="实际调用模型服务商测试连接" aria-live="polite" icon={testResults[selected.id]==='success'?<Check size={15}/>:<Wifi size={15}/>} onClick={()=>void test(selected)}>{checking===selected.id?'测试中…':testResults[selected.id]==='success'?'测试成功':testResults[selected.id]==='failed'?'测试失败，重试':'测试连接'}</Button>
-       <button className={styles.deleteButton} disabled={busy||checking!==null} aria-label="删除连接" onClick={()=>{setError('');setDeleting(selected);}}><Trash2 size={16}/>删除配置</button>
+       <Button variant="ghost" intent="danger" icon={<Trash2 size={16}/>} disabled={busy||checking!==null} aria-label="删除连接" onClick={()=>{setError('');setDeleting(selected);}}>删除配置</Button>
       </div>
      </div>
     </>:configs.value&&<div className={styles.empty}><KeyRound size={26}/><h2>{modelId?'模型配置不存在':'选择一个模型配置'}</h2><p>{modelId?'该配置可能已被删除，请从列表选择其他配置。':'在左侧查看连接信息和凭据状态。'}</p>{modelId&&<Link to="/models">返回模型列表</Link>}</div>}
    </section>
   </div>
-  {draft&&<Modal title={draft.id?'编辑模型连接':'添加模型连接'} onBeforeClose={()=>!pending.current} onClose={()=>setDraft(null)} footer={<><Button disabled={busy} onClick={()=>setDraft(null)}>取消</Button><Button tone="accent" disabled={busy} onClick={()=>void persist()}>{busy?'保存中…':'保存模型'}</Button></>}>
+  {draft&&<Modal title={draft.id?'编辑模型连接':'添加模型连接'} onBeforeClose={()=>!pending.current} onClose={()=>setDraft(null)} footer={<><Button disabled={busy} onClick={()=>setDraft(null)}>取消</Button><Button variant="primary" loading={busy} onClick={()=>void persist()}>{busy?'保存中…':'保存模型'}</Button></>}>
     {error&&<ErrorNotice message={error}/>}
     {catalog.error&&<ErrorNotice message={catalog.error} onRetry={catalog.reload}/>}
     <div className="editor-form">
-      <label>连接名称<input value={draft.name} onChange={e=>setDraft({...draft,name:e.target.value})} placeholder="例如：我的 DeepSeek"/></label>
-      <label>服务商<Select aria-label="服务商" value={draft.providerId} onChange={e=>{const provider=providers.find(p=>p.providerId===e.target.value);setDraft({...draft,providerId:e.target.value,modelId:provider?.models[0]?.id??''});}}><option value="">选择服务商</option>{draft.providerId&&!providers.some(p=>p.providerId===draft.providerId)&&<option value={draft.providerId}>{draft.providerId}</option>}{providers.map(p=><option key={p.providerId} value={p.providerId}>{p.providerId}</option>)}</Select></label>
-      <label>模型<Select aria-label="模型" value={draft.modelId} onChange={e=>setDraft({...draft,modelId:e.target.value})}><option value="">选择模型</option>{draft.modelId&&!available.some(m=>m.id===draft.modelId)&&<option value={draft.modelId}>{draft.modelId}</option>}{available.map(m=><option value={m.id} key={m.id}>{m.name}</option>)}</Select></label>
-      <label>API Key<input type="password" autoComplete="off" value={draft.apiKey} onChange={e=>setDraft({...draft,apiKey:e.target.value})} placeholder={draft.id?'留空则保留原有密钥':'输入 API Key'}/></label>
+      <Field label="连接名称"><Input value={draft.name} onChange={e=>setDraft({...draft,name:e.target.value})} placeholder="例如：我的 DeepSeek"/></Field>
+      <Field label="服务商"><Select aria-label="服务商" value={draft.providerId} onChange={e=>{const provider=providers.find(p=>p.providerId===e.target.value);setDraft({...draft,providerId:e.target.value,modelId:provider?.models[0]?.id??''});}}><option value="">选择服务商</option>{draft.providerId&&!providers.some(p=>p.providerId===draft.providerId)&&<option value={draft.providerId}>{draft.providerId}</option>}{providers.map(p=><option key={p.providerId} value={p.providerId}>{p.providerId}</option>)}</Select></Field>
+      <Field label="模型"><Select aria-label="模型" value={draft.modelId} onChange={e=>setDraft({...draft,modelId:e.target.value})}><option value="">选择模型</option>{draft.modelId&&!available.some(m=>m.id===draft.modelId)&&<option value={draft.modelId}>{draft.modelId}</option>}{available.map(m=><option value={m.id} key={m.id}>{m.name}</option>)}</Select></Field>
+      <Field label="API Key"><Input type="password" autoComplete="off" value={draft.apiKey} onChange={e=>setDraft({...draft,apiKey:e.target.value})} placeholder={draft.id?'留空则保留原有密钥':'输入 API Key'}/></Field>
     </div>
   </Modal>}
-  {deleting&&<Modal title="删除模型配置" onBeforeClose={()=>!pending.current} onClose={()=>setDeleting(null)} footer={<><Button disabled={busy} onClick={()=>setDeleting(null)}>取消</Button><Button disabled={busy} onClick={()=>void remove()}>{busy?'正在删除…':'确认删除'}</Button></>}><p>确定删除「{deleting.name}」？被世界卡、会话或应用默认引用的配置不能删除。</p>{error&&<ErrorNotice message={error}/>}</Modal>}
+  {deleting&&<Modal title="删除模型配置" onBeforeClose={()=>!pending.current} onClose={()=>setDeleting(null)} footer={<><Button disabled={busy} onClick={()=>setDeleting(null)}>取消</Button><Button variant="primary" intent="danger" loading={busy} onClick={()=>void remove()}>{busy?'正在删除…':'确认删除'}</Button></>}><p>确定删除「{deleting.name}」？被世界卡、会话或应用默认引用的配置不能删除。</p>{error&&<ErrorNotice message={error}/>}</Modal>}
  </section>;
 }
