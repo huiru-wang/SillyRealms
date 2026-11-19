@@ -1,5 +1,9 @@
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
-import type { Api, AssistantMessage, AssistantMessageEvent, Context, Model, SimpleStreamOptions, StopReason } from '@earendil-works/pi-ai';
+import { getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
+import type {
+  Api, AssistantMessage, AssistantMessageEvent, Context, Model, ModelInputModality,
+  ModelThinkingLevel, SimpleStreamOptions, StopReason, ThinkingLevelMap,
+} from '@earendil-works/pi-ai';
 import { AppError, type ErrorCode } from '../../errors.js';
 import { hasInputUsageReport, normalizeUsage, type PiUsage } from './usage.js';
 
@@ -11,8 +15,17 @@ export type PiOptions = {
 };
 export type PiModelInfo = {
   providerId: string; modelId: string; name: string; contextWindow: number; maxTokens: number;
-  reasoning: boolean; narrativeCompatible: boolean; supportsMidConversationSystemMessages: boolean;
+  api: string; input: ModelInputModality[]; reasoning: boolean;
+  /** Effective supported levels from the installed SDK, including off when supported. */
+  thinkingLevels: ModelThinkingLevel[];
+  /** Provider mappings; null values mark unsupported levels, absent keys use SDK defaults. */
+  thinkingLevelMap: ThinkingLevelMap | null;
+  /** SDK best-effort lifetimes in seconds, not the cacheRetention request preference. */
+  promptCache: { short: number | null; long: number | null } | null;
+  narrativeCompatible: boolean; supportsMidConversationSystemMessages: boolean;
 };
+export type PiProviderInfo = { providerId: string; name: string; models: PiModelInfo[] };
+const thinkingLevelNames: readonly ModelThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 export type PiEvent =
   | { type: 'text_delta'; delta: string }
   | { type: 'done'; text: string; stopReason: StopReason; hasToolCalls: boolean; usage: PiUsage | null }
@@ -20,7 +33,7 @@ export type PiEvent =
 
 /** Narrow SDK seam for finite iterator tests; there is only one production implementation. */
 export type PiSdk = {
-  getProviders(): readonly { id: string }[];
+  getProviders(): readonly { id: string; name: string }[];
   getModels(provider?: string): readonly PiModel[];
   getModel(provider: string, id: string): PiModel | undefined;
   streamSimple(model: PiModel, context: Context, options: SimpleStreamOptions): AsyncIterable<AssistantMessageEvent>;
@@ -95,14 +108,25 @@ function sdkContext(model: PiModel, messages: readonly PiMessage[]): Context {
 export class PiClient {
   constructor(private readonly sdk: PiSdk = builtinModels()) {}
 
-  listModels(): PiModelInfo[] {
-    return this.sdk.getProviders().flatMap(provider => this.sdk.getModels(provider.id).map(original => {
-      const model = adaptModel(original);
-      const ordered = supportsMidConversationSystemMessages(model);
-      return { providerId: model.provider, modelId: model.id, name: model.name,
-        contextWindow: model.contextWindow, maxTokens: model.maxTokens, reasoning: model.reasoning,
-        narrativeCompatible: ordered, supportsMidConversationSystemMessages: ordered };
-    }));
+  listProviders(): PiProviderInfo[] {
+    return this.sdk.getProviders().map(provider => ({
+      providerId: provider.id, name: provider.name,
+      models: this.sdk.getModels(provider.id).map(original => {
+        const model = adaptModel(original);
+        const ordered = supportsMidConversationSystemMessages(model);
+        const thinkingLevelMap: ThinkingLevelMap | null = model.thinkingLevelMap === undefined ? null
+          : Object.fromEntries(thinkingLevelNames.flatMap(level => {
+            const value = model.thinkingLevelMap?.[level];
+            return value === undefined ? [] : [[level, value]];
+          }));
+        return { providerId: model.provider, modelId: model.id, name: model.name,
+          contextWindow: model.contextWindow, maxTokens: model.maxTokens, api: model.api, input: [...model.input],
+          reasoning: model.reasoning, thinkingLevels: getSupportedThinkingLevels(model), thinkingLevelMap,
+          promptCache: model.promptCache === undefined ? null
+            : { short: model.promptCache.short ?? null, long: model.promptCache.long ?? null },
+          narrativeCompatible: ordered, supportsMidConversationSystemMessages: ordered };
+      }),
+    })).filter(provider => provider.models.length > 0);
   }
 
   resolve(providerId: string, modelId: string): PiModel {

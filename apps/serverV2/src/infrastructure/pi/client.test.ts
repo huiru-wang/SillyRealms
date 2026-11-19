@@ -21,7 +21,7 @@ function message(text: string, overrides: Partial<AssistantMessage> = {}): Assis
 }
 function sdk(stream: PiSdk['streamSimple'], definitions = [model()]): PiSdk {
   return {
-    getProviders: () => [...new Set(definitions.map(value => value.provider))].map(id => ({ id })),
+    getProviders: () => [...new Set(definitions.map(value => value.provider))].map(id => ({ id, name: id + ' Models' })),
     getModels: provider => definitions.filter(value => !provider || value.provider === provider),
     getModel: (provider, id) => definitions.find(value => value.provider === provider && value.id === id),
     streamSimple: stream,
@@ -208,15 +208,85 @@ describe('PiClient SDK boundary', () => {
     const resolved = client.resolve('deepseek', 'deepseek-flash');
     expect(resolved.compat).toMatchObject({ supportsMidConvoSystemMessages: true });
     expect(flash.compat).toEqual({});
-    expect(client.listModels()).toEqual([{
-      providerId: 'deepseek', modelId: 'deepseek-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 32000,
-      maxTokens: 4096, reasoning: true, narrativeCompatible: true, supportsMidConversationSystemMessages: true,
+    expect(client.listProviders()).toEqual([{
+      providerId: 'deepseek', name: 'deepseek Models', models: [{
+        providerId: 'deepseek', modelId: 'deepseek-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 32000,
+        maxTokens: 4096, api: 'openai-completions', input: ['text'], reasoning: true,
+        thinkingLevels: ['off', 'minimal', 'low', 'medium', 'high'], thinkingLevelMap: null, promptCache: null,
+        narrativeCompatible: true, supportsMidConversationSystemMessages: true,
+      }],
     }]);
-    expect(JSON.stringify(client.listModels())).not.toContain('secret-test-key');
+    expect(JSON.stringify(client.listProviders())).not.toContain('secret-test-key');
     expect(() => client.resolve('deepseek', 'missing')).toThrow('MODEL_NOT_FOUND');
     for (const variant of variants) {
       const other = new PiClient(sdk(finite([]), [variant]));
-      expect(other.listModels()[0]?.narrativeCompatible).toBe(false);
+      expect(other.listProviders()[0]?.models[0]?.narrativeCompatible).toBe(false);
     }
+  });
+});
+
+describe('provider catalog metadata', () => {
+  it('groups models by SDK provider name and identity without merging duplicate model IDs', () => {
+    const definitions = [
+      model({ provider: 'alpha', id: 'same', name: 'Alpha model', input: ['text', 'image'] }),
+      model({ provider: 'beta', id: 'same', name: 'Beta model', api: 'openai-responses', reasoning: false }),
+      model({ provider: 'alpha', id: 'other', name: 'Other Alpha model' }),
+    ];
+    const stream = vi.fn(finite([]));
+    const source = sdk(stream, definitions);
+    source.getProviders = () => [
+      { id: 'beta', name: 'Beta Official' }, { id: 'alpha', name: 'Alpha Official' }, { id: 'dynamic', name: 'No static models' },
+    ];
+    const catalog = new PiClient(source).listProviders();
+    expect(catalog.map(provider => [provider.providerId, provider.name, provider.models.map(item => item.modelId)])).toEqual([
+      ['beta', 'Beta Official', ['same']], ['alpha', 'Alpha Official', ['same', 'other']],
+    ]);
+    expect(catalog[0]?.models[0]).toMatchObject({
+      providerId: 'beta', api: 'openai-responses', input: ['text'], reasoning: false, thinkingLevels: ['off'],
+    });
+    expect(catalog[1]?.models[0]).toMatchObject({ providerId: 'alpha', input: ['text', 'image'] });
+    expect(stream).not.toHaveBeenCalled();
+  });
+
+  it('preserves raw thinking mappings and uses the SDK effective supported-level calculation', () => {
+    const mapped = model({ thinkingLevelMap: {
+      off: null, minimal: null, low: 'light', medium: null, high: 'deep', max: 'maximum',
+    } });
+    const catalog = new PiClient(sdk(finite([]), [mapped])).listProviders();
+    expect(catalog[0]?.models[0]).toMatchObject({
+      thinkingLevels: ['low', 'high', 'max'],
+      thinkingLevelMap: { off: null, minimal: null, low: 'light', medium: null, high: 'deep', max: 'maximum' },
+    });
+    expect(catalog[0]?.models[0]?.thinkingLevelMap).not.toHaveProperty('xhigh');
+  });
+
+  it('returns prompt-cache lifetimes only when the model supplies them, keeping missing tiers explicitly unknown', () => {
+    const catalog = new PiClient(sdk(finite([]), [
+      model({ id: 'known', promptCache: { short: 300, long: 3600 } }),
+      model({ id: 'partial', promptCache: { short: 60 } }),
+      model({ id: 'unknown', compat: { supportsLongCacheRetention: true } }),
+    ])).listProviders();
+    expect(catalog[0]?.models.map(value => value.promptCache)).toEqual([
+      { short: 300, long: 3600 }, { short: 60, long: null }, null,
+    ]);
+  });
+
+  it('returns independent allowlisted metadata rather than writable SDK objects or provider connection details', () => {
+    const definition = model({ input: ['text', 'image'], thinkingLevelMap: { low: 'low' }, promptCache: { short: 300 },
+      headers: { Authorization: 'secret-test-key' } });
+    const client = new PiClient(sdk(finite([]), [definition]));
+    const info = client.listProviders()[0]!.models[0]!;
+    info.input.push('text');
+    info.thinkingLevelMap!.low = null;
+    info.promptCache!.short = 1;
+    info.thinkingLevels.length = 0;
+    expect(definition.input).toEqual(['text', 'image']);
+    expect(definition.thinkingLevelMap).toEqual({ low: 'low' });
+    expect(definition.promptCache).toEqual({ short: 300 });
+    const serialized = JSON.stringify(client.listProviders());
+    expect(serialized).not.toContain('secret-test-key');
+    expect(serialized).not.toContain('baseUrl');
+    expect(serialized).not.toContain('headers');
+    expect(serialized).not.toContain('cost');
   });
 });

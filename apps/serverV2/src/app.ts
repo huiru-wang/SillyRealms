@@ -46,7 +46,7 @@ export function createApp({ events, services, usecases, canAccessSession, studio
     app.route('/api/v1/api-model-configs', createModelRoutes(
       services.models, services.credentials, usecases.modelConfigs, usecases.testModel, shutdown.signal,
     ));
-    app.route('/api/v1/providers', createProviderRoutes({ listModels: usecases.listModels }));
+    app.route('/api/v1/providers', createProviderRoutes({ listProviders: usecases.listProviders }));
     app.route('/api/v1/sessions', createNarrativeRoutes({
       sessions: services.sessions, narrative: usecases.narrative, canAccessSession, shutdownSignal: shutdown.signal,
     }));

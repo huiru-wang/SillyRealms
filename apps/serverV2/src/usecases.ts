@@ -20,7 +20,7 @@ export function createUsecases({ services, transaction, events, pi = new PiClien
   return {
     narrative: createNarrativeUsecases({ ...services, events, pi }),
     testModel: createTestModel({ models: services.models, credentials: services.credentials, pi }),
-    listModels: () => pi.listModels(),
+    listProviders: () => pi.listProviders(),
     modelConfigs: createModelConfigUsecases(services),
     initialize: createInitialize({ presets, settings, transaction }),
     setState: createSetState({ worlds, sessions }),

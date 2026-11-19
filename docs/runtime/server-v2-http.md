@@ -8,7 +8,7 @@ HTTP适配器位于 `apps/serverV2/src/routes/`，可调用业务模块Service�
 
 Service 公共输入输出采用显式驼峰领域类型，存储行到领域对象的转换位于 Service，存储行及列名留在模块内部。HTTP 使用 V2 管理接口契约；跨模块展示字段由 route 调属主 Service 组合，不放回 Repository JOIN 或相互依赖的 Service 展示逻辑。作者 JSON、状态键及文档协议里的键不做递归改名。
 
-业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；StudioV2 接入世界内容库、预设、模型配置、设置和基础会话，旧 Server/Studio 保持独立。数据库 user_version=3，只迁移结构匹配的 V2 v1/v2 库（v2 添加预设 revision，v3 添加世界 revision 和 created_at/id 索引），拒绝未知结构和旧 Server 库。createApp传入services时必须同时传入usecases；server在监听HTTP前执行initialize，业务播种不在openDatabase内。
+业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；StudioV2 接入世界内容库、预设、模型配置、设置和基础会话，旧 Server/Studio 保持独立。数据库 user_version=3，只迁移结构匹配的 V2 v1/v2 库（v2 添加预设 revision，v3 添加世界 revision 和 created_at/id 索引），拒绝未知结构和旧 Server 库。createApp传入services时必须同时传入usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureDefault 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
 
 ## 普通 JSON 响应
 
@@ -80,7 +80,7 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 | GET / POST | /api-model-configs | 模型配置列表 / 创建 |
 | GET / PATCH / DELETE | /api-model-configs/:id | 模型配置读取 / 修改 / 删除 |
 | POST | /api-model-configs/:id/test | 使用已保存配置执行一次短文本连通性检测 |
-| GET | /providers/models | pi 静态模型目录与消息顺序兼容性 |
+| GET | /providers/models | 按 provider 分组的 pi 静态模型目录、能力参数与消息顺序兼容性 |
 | GET / PATCH | /app-settings | 读取 / 更新应用默认预设、模型 |
 
 预设列表支持 type、limit、cursor；模型配置列表支持 limit、cursor，也保留显式 offset 分页。cursor 与 offset 不能同时使用；游标绑定对应资源及筛选条件，不能挪到其他查询。Service 只接收类型化分页参数，HTTP 负责游标编码。
@@ -93,7 +93,23 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 
 模型创建接收 `{name,providerId,modelId,apiKey}`，ID 由服务端生成；PATCH 接收上述字段的非空子集，省略 apiKey 保留原值，更换 providerId 必须同时提供新 apiKey。客户端不能传 credentialRef。响应为 `{id,name,providerId,modelId,credentialStatus,createdAt,updatedAt}`，不返回密钥或引用。credentialStatus 为 configured（凭据存在）、missing（未保存或不属于当前存储）、unavailable（存储不可访问），不代表已验证模型调用。
 
-`GET /providers/models` 返回 `data.items`，每项为 `{providerId,modelId,name,contextWindow,maxTokens,reasoning,narrativeCompatible,supportsMidConversationSystemMessages}`，来自固定版本 pi 的内置目录，不保存到模型配置表。`narrativeCompatible` 表示能保持包含中途 system 节点的叙事消息顺序；标记为 false 的模型，在实际编译结果没有中途 system 消息时仍可调用。未知模型不会自动替换。
+`GET /providers/models` 返回 `data.items: ProviderModelGroup[]`，每组为 `{providerId,name,models: ModelInfo[]}`，来自固定版本 pi 的内置聊天模型目录，不平铺 provider 与模型，也不保存到模型配置表。前端先选 provider，再从该组 models 选择模型。
+
+| ModelInfo 字段 | 含义 |
+| --- | --- |
+| providerId、modelId、name | 服务商 ID、模型 ID 与目录名称 |
+| contextWindow、maxTokens | 上下文窗口与模型最大输出 tokens |
+| reasoning | 是否为推理模型 |
+| thinkingLevelMap | SDK 原始档位映射或 null；映射中的 null 表示该档不支持，缺少键可能使用 SDK 默认 |
+| thinkingLevels | 由 SDK getSupportedThinkingLevels(model) 计算的有效档位；非推理模型只有 off，客户端不复制推导规则 |
+| api | 模型所用协议标识 |
+| input | 支持的输入模态列表 |
+| promptCache | SDK 缓存元信息 `{short:number|null,long:number|null}` 或 null，单位秒；缺少某档时该档为 null |
+| narrativeCompatible、supportsMidConversationSystemMessages | 是否可保持叙事编排中的中途 system 消息顺序 |
+
+promptCache 是 SDK 提供的最佳估计保留时长，缺失表示未提供，不等于不支持；它与请求 cacheRetention 偏好不同，返回长档时长不表示当前调用已启用长档，也不保证供应商实际保留期限。本次只展示目录能力，不修改生成或缓存请求配置。接口不返回 SDK baseUrl、headers、凭据或原始模型对象。
+
+`narrativeCompatible` 为 false 的模型，在实际编译结果没有中途 system 消息时仍可调用。未知模型不会自动替换。
 
 `POST /api-model-configs/:id/test` 只读取已保存模型配置及其凭据，发起一次短文本调用，传给 pi 的 maxTokens 为 min(64, model.maxTokens)，整体等待上限 30 秒，不自动重试。成功返回 `data:{connected:true,providerId,modelId,durationMs,usage}`；usage 为标准 token 字段或 null。失败使用普通错误包络，不返回 `connected:false`、供应商原文、模型回复或凭据引用。此接口不创建会话、entry 或 run，也不修改 credentialStatus；检测成功不保证任意叙事消息顺序都兼容。
 

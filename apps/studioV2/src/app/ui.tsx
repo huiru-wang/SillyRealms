@@ -5,19 +5,6 @@ import {AlertCircle,ArrowRight,LoaderCircle,Search,Layers3} from 'lucide-react';
 import {Link} from 'react-router-dom';
 import {api} from '../api';
 
-/** Shared loading and request state; API responses are already unwrapped by api(). */
-export function useLoad(path:string|null,allPages=false){
-  const [value,setValue]=useState<any>(null),[error,setError]=useState(''),[loading,setLoading]=useState(false);
-  const generation=useRef(0);
-  const reload=useCallback(async()=>{
-    if(!path)return;const id=++generation.current;setLoading(true);
-    try{const result=await api(path);if(allPages){while(result.hasMore&&result.nextCursor&&id===generation.current){const next=await api(path+(path.includes('?')?'&':'?')+'cursor='+encodeURIComponent(result.nextCursor));result.items.push(...next.items);result.hasMore=next.hasMore;result.nextCursor=next.nextCursor;}}if(id===generation.current){setValue(result);setError('');}}
-    catch(e){if(id===generation.current)setError(e instanceof Error?e.message:String(e));}
-    finally{if(id===generation.current)setLoading(false);}
-  },[path,allPages]);
-  useEffect(()=>{setValue(null);setError('');void reload();return()=>{generation.current++;};},[path,reload]);
-  return {value,error,loading,reload};
-}
 export function usePaged(path:string){
   const [value,setValue]=useState<any>(null),[error,setError]=useState(''),[loading,setLoading]=useState(false);
   const generation=useRef(0);

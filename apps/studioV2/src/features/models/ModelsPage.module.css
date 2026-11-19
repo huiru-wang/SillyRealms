@@ -38,6 +38,17 @@
 .feedback{display:flex;align-items:center;gap:8px;margin:0 0 16px;font-size:var(--font-13);color:var(--text-secondary)}
 .back{display:none}
 
+.catalogFields{display:grid;gap:var(--space-3);min-width:0}
+.catalogStatus{display:flex;align-items:center;flex-wrap:wrap;gap:var(--space-2);margin:0;font-size:var(--font-12);line-height:1.6;color:var(--text-muted)}
+.catalogStatus svg{flex:none}
+.metadataSection{margin-bottom:var(--space-4)}
+.modelSpecs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-3) var(--space-4);margin:0;padding:var(--space-3) var(--space-4);border:1px solid var(--stroke);border-radius:var(--radius-item);min-width:0}
+.modelSpecs>div{min-width:0}
+.modelSpecs dt{font-size:var(--font-11);line-height:1.5;color:var(--text-muted);margin-bottom:var(--space-1)}
+.modelSpecs dd{display:grid;gap:var(--space-1);margin:0;min-width:0;font-size:var(--font-12);line-height:1.5;color:var(--text);overflow-wrap:anywhere}
+.modelSpecs dd small{font-size:var(--font-11);line-height:1.5;color:var(--text-muted)}
+.specWide{grid-column:1/-1}
+
 @container library-workspace (max-width:744px){
  .workspace{display:flex;flex-direction:column;gap:0}.library{border:0;padding:0;flex:1}.detail{display:none;flex:1}.page[data-detail="true"] .library{display:none}.page[data-detail="true"] .detail{display:flex}
  .back{display:flex;align-items:center;gap:8px;min-height:44px;align-self:flex-start;margin-bottom:12px;font-size:var(--font-12);color:var(--text-secondary)}
