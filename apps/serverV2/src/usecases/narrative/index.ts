@@ -17,7 +17,7 @@ const submitSchema = z.object({
 }).strict();
 type ActiveRun = { runId: string; controller: AbortController; completion: Promise<void> };
 
-/** A single-process admission gate, not a persistent task store or execution engine. */
+/** Session execution lock spans user persistence, optional summary, narrative and settlement. */
 export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
   const active = new Map<string, ActiveRun>();
   let shuttingDown = false;

@@ -1,3 +1,4 @@
+import { AppError } from '../errors.js';
 import type { TransactionRunner } from '../infrastructure/database/transaction.js';
 import type { EventHub } from '../infrastructure/events/event-hub.js';
 import type { AppendEntryInput, SessionService } from '../modules/sessions/service.js';
@@ -11,6 +12,7 @@ export function createAppendEntry({ sessions, state, transaction, events }: {
   events: EventHub;
 }) {
   return (sessionId: string, input: AppendEntryInput) => {
+    if (input.type === 'compaction') throw new AppError('INVALID_REQUEST', '摘要仅允许由叙事流程创建');
     // Inherited state cannot change the effective view when appending to the current tip.
     if (input.state === undefined || input.state === null) return sessions.appendEntry(sessionId, input);
     const result = transaction(() => {

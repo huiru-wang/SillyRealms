@@ -12,6 +12,7 @@ export type MaterialSources = {
   playerId: string;
   inputText: string;
   history: readonly NarrativeHistoryMessage[];
+  summary?: string;
 };
 export const systemVariableNames = [
   'user', 'persona.prompt', 'characters.prompts', 'world.lore',
@@ -68,7 +69,7 @@ function compareRulePaths(left: string, right: string): number {
 /** Select material from captured author data; this function never reads or writes storage. */
 export function selectNarrativeMaterials(input: MaterialSources, conditions: Conditions): NarrativeMaterials {
   const { world, views, playerId, history, inputText } = input;
-  const scan = [...history.map(item => narrativeForActivation(item.text, item.role)), narrativeForActivation(inputText, 'user')];
+  const scan = [input.summary ?? '', ...history.map(item => narrativeForActivation(item.text, item.role)), narrativeForActivation(inputText, 'user')];
   const diagnostics: NarrativeMaterials['diagnostics'] = [];
   const active = (source: { id: string; enabled?: boolean; load?: LoadRule }, path: string) => {
     const result = source.enabled === false ? { active: false, reason: 'disabled' }
@@ -121,7 +122,7 @@ export function selectNarrativeMaterials(input: MaterialSources, conditions: Con
       'persona.prompt': text(playerActive ? prose(render(player.prompt ?? '')) : ''),
       'characters.prompts': text(selected.map(({ character }) => prose(render(character.prompt ?? ''))).filter(Boolean).join('\n\n')),
       'world.lore': text(lore.map(({ entry }) => prose(render(entry.content))).join('\n\n')),
-      'history.summary': text(''),
+      'history.summary': text(input.summary ?? ''),
       'history.messages': { type: 'messages', value: history },
       'input.text': text(inputText),
       'state.entries': text(entries),

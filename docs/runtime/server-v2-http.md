@@ -162,8 +162,8 @@ PATCH 仅接受 name、tags、defaultPresetId、defaultApiModelConfigId 的非�
 |---|---|---|
 | GET / POST | /sessions | 会话列表 / 创建 |
 | GET / PATCH / DELETE | /sessions/:id | 会话读取 / 修改 / 删除 |
-| GET / POST | /sessions/:id/entries | 消息/摘要列表 / 追加 |
-| GET / PATCH | /sessions/:id/entries/:entryId | 单条读取 / 正文或 extData 更新 |
+| GET / POST | /sessions/:id/entries | 消息/摘要列表 / 追加普通消息 |
+| GET / PATCH | /sessions/:id/entries/:entryId | 单条读取 / 普通消息正文或 extData 更新 |
 | GET | /sessions/:id/history | 当前完整线性历史 |
 | POST | /sessions/:id/narrative/runs | 保存用户消息并受理一次叙事生成 |
 | POST | /sessions/:id/narrative/runs/:runId/stop | 显式停止当前匹配的叙事生成 |
@@ -175,6 +175,8 @@ PATCH 仅接受 name、tags、defaultPresetId、defaultApiModelConfigId 的非�
 会话列表支持 worldId、limit、cursor，不提供关键词搜索。route 解析游标位置后调用 SessionService；列表项的 worldName/cover 通过 WorldService 在 route 组合，同一请求缓存重复世界读取。SessionService 只返回自身的 Session 领域对象。条目列表支持 afterSeq、limit。整数 query 必须是合法安全整数，再由 Service 校验允许范围。
 
 会话详情 GET 返回 `data.item: SessionView`，包含 worldId、presetId、apiModelConfigId、userCharacterId、tipEntryId、title 等驼峰字段。PATCH 仅支持 title/presetId/apiModelConfigId，世界与玩家身份创建后不再修改。StudioV2 不挂载 SessionHost，不主动请求本节的条目、历史、Run 或 SSE 接口。
+
+摘要仅由叙事流程生成：POST entries 禁止 type=compaction；PATCH entries 禁止修改 compaction 的 payload/extData，也禁止向普通消息写入 summary 元数据。成功摘要通过 entries/history/runs 读取，payload.summary 为文本，extData.summary 为 {coveredThroughEntryId,sourceHash}，指标保存在该 entry.metrics；state=null 继承。savedMessageIds 不包含摘要，tipEntryId 可以指向摘要。
 
 ### 创建可用会话
 
@@ -209,7 +211,7 @@ SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt
 
 `expectedTipEntryId` 必填；没有历史时为 null，有历史时传最后读取的 tip。输入必须有非空白内容，保存原始文本。请求不接受模型或预设覆盖、requestId、工具列表、prepare 参数。会话存在性、权限、输入、tip 与同会话并发校验失败时，使用 HTTP 错误包络且不追加用户消息；同会话已有运行返回 RUN_ALREADY_ACTIVE/409，tip 过期返回 TIP_CONFLICT/409。
 
-受理时先独立保存用户消息，再准备上下文和模型请求。202 的 data 为 `{runId,userEntryId,assistantEntryId}`。此时 userEntryId 已持久化，assistantEntryId 仅预分配；202 不代表生成成功。之后的配置、历史、预算、凭据或模型错误通过 `run.stopped` 的 stop_reason 返回，保留用户消息；SSE 不返回 error 对象或 errorCode/errorMessage。
+受理时先独立保存用户消息，再准备上下文和模型请求。202 的 data 为 `{runId,userEntryId,assistantEntryId}`。此时 userEntryId 已持久化，assistantEntryId 仅预分配；202 不代表生成成功。上下文按预设自动裁剪或执行至多一次摘要；一次摘要后仍超限通过 stop_reason=summary_capacity_exceeded 结束，保留已保存用户、摘要与摘要 metrics，摘要失败为 summary_failed。失败/中断摘要不保存记录或计量；成功摘要未知 usage 为 null。之后的配置、历史、预算、凭据或模型错误通过 `run.stopped` 的 stop_reason 返回，保留用户消息；SSE 不返回 error 对象或 errorCode/errorMessage。
 
 助手正常完成、失败或停止时独立保存完整或部分公开快照，包含 content、reasoning_content 与 tool_calls；只有公开 reasoning 或工具请求时也保留，完全没有公开内容时只保留用户。SDK 最终快照采用替换语义。助手写入失败不回滚用户，外部追加导致 tip 变化时不覆盖新消息。终态 savedMessageIds 与 tipEntryId 表达实际保存结果；后续编译只采用消息正文，不把 reasoning/工具请求当作提示词正文。内容与计量见 [叙事执行](server-v2-narrative.md)。
 
@@ -341,7 +343,7 @@ set-state 用例在同步事务内读取、保存、计算变更与收集接收�
 
 ## SSE 与下载例外
 
-- SSE 成功返回原始 `text/event-stream`，只有 event/data 帧，data 均为 JSON 对象，不套 HTTP 包络、不输出裸 [DONE]。run.created、run.delta、run.usage 和 run.completed/run.stopped 使用完整运行身份；每个 accepted run 仅发一次总 usage，再发唯一终态。字段与连接生命周期见 [会话事件](server-v2-events.md)。
+- SSE 成功返回原始 `text/event-stream`，只有 event/data 帧，data 均为 JSON 对象，不套 HTTP 包络、不输出裸 [DONE]。run.created、run.summarizing、run.summarized、run.delta、run.usage 和 run.completed/run.stopped 使用完整运行身份；每个 accepted run 仅发一次总 usage，再发唯一终态。字段与连接生命周期见 [会话事件](server-v2-events.md)。
 - SSE 的 HEAD 只返回响应头，不建立订阅、心跳或事件流。
 - 文件成功返回原始字节流，保留MIME、长度和attachment下载头；HEAD 返回响应头且释放已打开资源。
 - SSE 握手或文件打开之前的失败仍是普通 HTTP JSON 失败包络；传输已经开始后不把流改成 JSON 包络。

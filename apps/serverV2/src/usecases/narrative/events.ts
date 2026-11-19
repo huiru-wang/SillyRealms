@@ -37,9 +37,11 @@ type SavedRun = RunEventFields & {
   tipEntryId: string | null;
 };
 
-/** Events produced by the current single-request narrative implementation. */
+/** Events produced by the narrative execution. */
 export type NarrativeEvent =
   | { event: 'run.created'; data: RunEventFields & { messages: [SavedUserMessage] } }
+  | { event: 'run.summarizing'; data: RunEventFields }
+  | { event: 'run.summarized'; data: RunEventFields & { entryId: string } }
   | { event: 'run.delta'; data: RunEventFields & { messageId: string; messages: [AssistantDeltaMessage] } }
   | { event: 'run.usage'; data: RunEventFields & { usage: NarrativeUsage | null } }
   | { event: 'run.completed'; data: SavedRun }

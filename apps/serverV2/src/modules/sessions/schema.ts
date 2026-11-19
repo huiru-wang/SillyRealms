@@ -46,7 +46,8 @@ export const updateSessionSchema = z.object({
   presetId: identifier.optional(), apiModelConfigId: identifier.optional(),
   title: z.string().nullable().optional(),
 }).strict();
-const editableExtData = jsonObject.refine(value => !Object.hasOwn(value, 'narrative'), 'narrative 由服务端维护');
+const internalExtData = jsonObject.refine(value => !Object.hasOwn(value, 'narrative'), 'narrative 由服务端维护');
+const editableExtData = internalExtData.refine(value => !Object.hasOwn(value, 'summary'), 'summary 由服务端维护');
 const appendFields = {
   id: identifier.optional(), parentId: identifier.nullable().optional(), runId: identifier,
   timestamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
@@ -55,7 +56,7 @@ const appendFields = {
 };
 export const appendEntrySchema = z.discriminatedUnion('type', [
   z.object({ ...appendFields, type: z.literal('message'), role: z.enum(['user', 'assistant']) }).strict(),
-  z.object({ ...appendFields, type: z.literal('compaction'), role: z.null() }).strict(),
+  z.object({ ...appendFields, type: z.literal('compaction'), role: z.null(), extData: internalExtData.optional() }).strict(),
 ]);
 export const updateEntrySchema = z.object({
   payload: jsonObject.optional(), extData: editableExtData.optional(),
@@ -78,6 +79,7 @@ export const narrativeStopReasonSchema = z.enum([
   'provider_context_window_exceeded', 'model_not_found', 'model_capability_unsupported',
   'credential_not_configured', 'credential_unavailable', 'context_budget_exceeded',
   'invalid_context', 'output_incomplete', 'model_output_invalid', 'tool_execution_unsupported',
+  'summary_capacity_exceeded', 'summary_failed',
   'message_persist_failed', 'tip_conflict', 'session_deleted', 'internal_error',
 ]);
 export const narrativeOutcomeSchema = z.discriminatedUnion('status', [

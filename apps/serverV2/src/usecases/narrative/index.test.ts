@@ -359,7 +359,7 @@ describe('pre-request and persistence failures', () => {
   });
 
   it('retains saved users on unsupported context and preserves provider/model metadata where known', async () => {
-    services.sessions.appendEntry('session', { id: 'summary', runId: 'old', type: 'compaction', role: null, payload: { summary: 'Old' } });
+    services.sessions.appendEntry('session', { id: 'bad', runId: 'old', type: 'message', role: 'assistant', payload: { message: { role: 'user', content: 'Wrong role', timestamp: 100 } } });
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'invalid_context' } });
     expect(seen[0]).toMatchObject({ event: 'run.created', data: { provider: model.providerId, model: model.modelId } });

@@ -162,7 +162,11 @@ export class SessionService {
 
   updateEntry(sessionId: string, entryId: string, input: UpdateEntryInput): SessionEntry {
     identifier.parse(sessionId); identifier.parse(entryId);
-    return toSessionEntry(this.#repository.updateEntry(sessionId, entryId, updateEntrySchema.parse(input)));
+    const patch = updateEntrySchema.parse(input);
+    if (this.#requireEntry(sessionId, entryId).type === 'compaction' && (patch.payload !== undefined || patch.extData !== undefined)) {
+      throw new AppError('INVALID_REQUEST', '摘要内容及覆盖范围仅允许由服务内部维护');
+    }
+    return toSessionEntry(this.#repository.updateEntry(sessionId, entryId, patch));
   }
 
   /** NULL means no record; usage:null means a real request without reported usage. */

@@ -1,3 +1,4 @@
+import { contextBudget } from './context-policy.js';
 import { AppError } from '../../errors.js';
 import type { ModelInfo, ModelMessage } from '../../infrastructure/model/client.js';
 import type { NarrativeSnapshot } from './context.js';
@@ -56,10 +57,10 @@ export function estimateInputTokens(messages: readonly ModelMessage[]): number {
   return tokens;
 }
 
-/** Pure core compilation. All visible history is retained and every postprocess node is excluded. */
+/** Pure compilation of the selected history; budget enforcement belongs to context preparation. */
 export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick<ModelInfo, 'contextWindow' | 'maxTokens'>): CompiledNarrativeContext {
   const config = snapshot.preset.config, messages: ModelMessage[] = [];
-  let inputCount = 0, historyCount = 0;
+  let inputCount = 0, historyCount = 0, summaryCount = 0;
   for (const node of config.nodes) {
     if (!node.enabled || node.kind === 'postprocess') continue;
     let pending = '';
@@ -69,6 +70,7 @@ export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick
     };
     for (const segment of parsePromptTemplate(node.prompt)) {
       if (segment.type === 'text') { pending += segment.value; continue; }
+      if (segment.name === 'history.summary') summaryCount++;
       if (segment.name === 'input.text') {
         inputCount++;
         if (node.id !== 'userInput' || node.role !== 'user') throw new AppError('INVALID_NARRATIVE_TEMPLATE');
@@ -87,15 +89,9 @@ export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick
     flush();
   }
   if (inputCount !== 1 || historyCount !== 1) throw new AppError('INVALID_NARRATIVE_TEMPLATE');
-  const maxTokens = config.contextStrategy.maxOutputTokens;
-  if (![maxTokens, config.contextStrategy.maxContextTokens, model.maxTokens, model.contextWindow].every(value => Number.isSafeInteger(value) && value > 0)
-    || maxTokens > model.maxTokens) throw new AppError('INVALID_MODEL_BUDGET');
-  const inputBudget = Math.min(config.contextStrategy.maxContextTokens, model.contextWindow - maxTokens);
-  if (inputBudget <= 0) throw new AppError('INVALID_MODEL_BUDGET');
+  if (config.contextStrategy.strategy === 'rolling_summary' && summaryCount !== 1) throw new AppError('INVALID_NARRATIVE_TEMPLATE');
+  const { maxTokens, inputBudget } = contextBudget(config, model);
   const estimatedInputTokens = estimateInputTokens(messages);
-  if (estimatedInputTokens > inputBudget) {
-    throw new AppError('CONTEXT_BUDGET_EXCEEDED', '预计输入 ' + estimatedInputTokens + ' tokens，当前预算 ' + inputBudget + ' tokens');
-  }
   return {
     messages, maxTokens, inputBudget, estimatedInputTokens,
     ...(config.modelParameters.temperature === undefined ? {} : { temperature: config.modelParameters.temperature }),

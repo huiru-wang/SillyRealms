@@ -6,6 +6,9 @@ import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../../infrastructure/database/connection.js';
 import { createServices, type Services } from '../../services.js';
 import { narrativePreset } from '../../testing/fixtures.js';
+import { planContext } from './prepare-context.js';
+import { historyBoundaries, readSummary, sourceHash } from './history.js';
+import { summaryNarrative } from './summary.js';
 import { captureNarrativeContext } from './context.js';
 import { compileNarrativeContext, parsePromptTemplate } from './compile.js';
 
@@ -66,9 +69,11 @@ describe('synchronous narrative snapshot', () => {
     expect(services.sessions.getEntryState('session', 'current-user')).toBeNull();
   });
 
-  it('rejects unsupported compaction and invalid messages after leaving the submitted user saved', () => {
+  it('captures legacy compaction separately without treating it as a visible history message', () => {
     services.sessions.appendEntry('session', { id: 'summary', runId: 'summary', type: 'compaction', role: null, payload: { summary: 'Earlier' } });
-    expect(() => capture()).toThrow('NARRATIVE_HISTORY_UNSUPPORTED');
+    const captured = capture();
+    expect(captured.history).toEqual([]);
+    expect(captured.historyEntries[0]?.type).toBe('compaction');
     expect(services.sessions.require('session').tipEntryId).toBe('current-user');
   });
 
@@ -161,7 +166,7 @@ describe('core narrative compilation', () => {
   it('expands history with its native roles and keeps custom nodes at their original positions', () => {
     const preset = services.presets.require('preset');
     preset.config.nodes[0]!.prompt = 'Main';
-    preset.config.nodes.find(node => node.id === 'chatHistory')!.prompt = 'Before\n{{history.messages}}\nAfter';
+    preset.config.nodes.find(node => node.id === 'chatHistory')!.prompt = '{{history.summary}}Before\n{{history.messages}}\nAfter';
     preset.config.nodes.splice(5, 0, { id: 'custom', name: 'Custom', kind: 'text', role: 'assistant', enabled: true, prompt: 'A custom example' });
     services.presets.update('preset', { config: preset.config });
     append('u0', 'user', 'Past input');
@@ -174,7 +179,7 @@ describe('core narrative compilation', () => {
     expect(compiled.messages.filter(item => item.content === 'Current input')).toHaveLength(1);
   });
 
-  it('retains all history for either configured strategy and fails budgets without silently trimming', () => {
+  it('compiles over-budget candidates without trimming or rejecting them before context policy runs', () => {
     for (let index = 0; index < 7; index++) {
       append('u' + index, 'user', 'Input ' + index);
       append('a' + index, 'assistant', 'Answer ' + index);
@@ -185,7 +190,8 @@ describe('core narrative compilation', () => {
     expect(sliding.messages).toEqual(rolling.messages);
     expect(sliding.messages).toHaveLength(15);
     snapshot.preset.config.contextStrategy.maxContextTokens = sliding.estimatedInputTokens - 1;
-    expect(() => compileNarrativeContext(snapshot, model)).toThrow('CONTEXT_BUDGET_EXCEEDED');
+    const over = compileNarrativeContext(snapshot, model);
+    expect(over.estimatedInputTokens).toBeGreaterThan(over.inputBudget);
     expect(snapshot.history).toHaveLength(14);
   });
 
@@ -223,8 +229,108 @@ describe('core narrative compilation', () => {
     const snapshot = capture();
     snapshot.preset.config.modelParameters = { temperature: 0.4, thinkingEnabled: true };
     const compiled = compileNarrativeContext(snapshot, { contextWindow: 6000, maxTokens: 4096 });
-    expect(compiled).toMatchObject({ maxTokens: 4096, inputBudget: 1904, temperature: 0.4, thinkingEnabled: true });
+    expect(compiled).toMatchObject({ maxTokens: 4096, inputBudget: 880, temperature: 0.4, thinkingEnabled: true });
     expect(() => compileNarrativeContext(snapshot, { contextWindow: 6000, maxTokens: 1000 })).toThrow('INVALID_MODEL_BUDGET');
     expect(() => compileNarrativeContext(snapshot, { contextWindow: 4096, maxTokens: 4096 })).toThrow('INVALID_MODEL_BUDGET');
+  });
+});
+
+describe('context selection policies', () => {
+  function configure(strategy: 'rolling_summary' | 'sliding_window', budget: number) {
+    const preset = services.presets.require('preset');
+    preset.config.contextStrategy.strategy = strategy;
+    preset.config.contextStrategy.maxContextTokens = budget;
+    services.presets.update('preset', { config: preset.config });
+  }
+
+  it('slides at complete run boundaries and leaves persisted messages intact', () => {
+    configure('sliding_window', 200);
+    services.sessions.appendEntry('session', { id: 'u0', runId: 'past', type: 'message', role: 'user',
+      payload: { message: { role: 'user', content: 'x'.repeat(1200), timestamp: 0 } } });
+    services.sessions.appendEntry('session', { id: 'a0', runId: 'past', type: 'message', role: 'assistant',
+      payload: { message: { role: 'assistant', content: 'Small answer', timestamp: 1 } } });
+    append('recent', 'assistant', 'Recent');
+    const selected = planContext(capture(), model, services.state);
+    expect(selected.summary).toBeUndefined();
+    expect(selected.compiled.messages.map(message => message.content)).toEqual(['Recent', 'Current input']);
+    expect(services.sessions.getHistory('session')).toHaveLength(4);
+  });
+
+  it('keeps the longest candidate under the hard limit if no soft-target candidate exists, despite nonmonotonic activation', () => {
+    configure('sliding_window', 200);
+    const preset = services.presets.require('preset');
+    preset.config.nodes.find(node => node.id === 'worldInfo')!.prompt = '{{world.lore}}';
+    services.presets.update('preset', { config: preset.config });
+    services.worlds.update('world', { lorebook: { entries: [{ id: 'dynamic', content: 'l'.repeat(1200),
+      load: { mode: 'on_mention', keywords: ['Current'], exclude_keywords: ['suppress'] } }] } });
+    append('old', 'assistant', 'x'.repeat(1200));
+    append('kept', 'assistant', 'suppress ' + 's'.repeat(180));
+    const selected = planContext(capture(), model, services.state);
+    expect(selected.compiled.messages.map(message => message.content)).toEqual(['suppress ' + 's'.repeat(180), 'Current input']);
+    expect(selected.compiled.estimatedInputTokens).toBeGreaterThan(120);
+    expect(selected.compiled.estimatedInputTokens).toBeLessThanOrEqual(200);
+  });
+
+  it('fails oversized current input rather than truncating it or deleting stored history', () => {
+    configure('sliding_window', 200); append('prior', 'assistant', 'Before');
+    const captured = capture('x'.repeat(900));
+    expect(() => planContext(captured, model, services.state)).toThrow('CONTEXT_BUDGET_EXCEEDED');
+    expect(services.sessions.getHistory('session')).toHaveLength(2);
+  });
+
+  it('never splits an interleaved run even when doing so would fit the context', () => {
+    configure('sliding_window', 200);
+    for (const [id, runId, content] of [['a', 'same', 'x'.repeat(1200)], ['b', 'middle', 'short'], ['c', 'same', 'end']]) {
+      services.sessions.appendEntry('session', { id, runId: runId!, type: 'message', role: 'assistant',
+        payload: { message: { role: 'assistant', content: content!, timestamp: 0 } } });
+    }
+    const captured = capture();
+    expect(historyBoundaries(captured.historyEntries)).toEqual([0, 3]);
+    expect(planContext(captured, model, services.state).compiled.messages.map(item => item.content)).toEqual(['Current input']);
+  });
+
+  it('protects five historical runs including an initial assistant and user-only/hidden-output runs', () => {
+    configure('rolling_summary', 200);
+    append('opening', 'assistant', 'x'.repeat(1200));
+    append('user-only', 'user', 'Attempt');
+    append('hidden', 'assistant', '');
+    append('recent-a', 'assistant', 'Recent A');
+    append('recent-b', 'assistant', 'Recent B');
+    expect(() => planContext(capture(), model, services.state)).toThrow('SUMMARY_CAPACITY_EXCEEDED');
+  });
+
+  it('switches to sliding using original messages rather than dropping already summarized source material', () => {
+    configure('sliding_window', 500);
+    append('old', 'assistant', 'Original story');
+    const entries = services.sessions.getHistory('session');
+    services.sessions.appendEntry('session', { id: 'compact', type: 'compaction', role: null, runId: 'compact-run',
+      payload: { summary: 'Saved summary' }, extData: { summary: { coveredThroughEntryId: 'old', sourceHash: sourceHash(entries) } } });
+    const selected = planContext(capture(), model, services.state);
+    expect(selected.compiled.messages.map(message => message.content)).toEqual(['Original story', 'Current input']);
+  });
+
+  it('reuses only a summary with a valid complete boundary and unchanged covered source', () => {
+    append('old', 'assistant', 'Original');
+    const entries = services.sessions.getHistory('session');
+    const metadata = { coveredThroughEntryId: 'old', sourceHash: sourceHash(entries) };
+    const compact = services.sessions.appendEntry('session', { id: 'compact', type: 'compaction', role: null, runId: 'compact-run',
+      payload: { summary: 'Saved summary' }, extData: { summary: metadata } });
+    expect(readSummary([...entries, compact], entries)).toEqual({ text: 'Saved summary', coveredCount: 1 });
+    expect(readSummary([...entries, { ...compact, extData: { summary: { ...metadata, sourceHash: 'stale' } } }], entries)).toBeNull();
+    expect(readSummary([...entries, { ...compact, extData: { summary: { ...metadata, coveredThroughEntryId: 'other' } } }], entries)).toBeNull();
+    expect(readSummary([...entries, { ...compact, extData: {} }], entries)).toBeNull();
+    expect(planContext(capture(), model, services.state).compiled.messages.map(message => message.content)).toEqual(['Saved summary', 'Current input']);
+  });
+
+  it.each(['{{history.messages}}', '{{history.summary}}{{history.summary}}{{history.messages}}'])('rejects missing or duplicate rolling-summary placement: %s', prompt => {
+    const captured = capture(); captured.preset.config.nodes.find(node => node.id === 'chatHistory')!.prompt = prompt;
+    expect(() => planContext(captured, model, services.state)).toThrow('INVALID_NARRATIVE_TEMPLATE');
+    captured.preset.config.contextStrategy.strategy = 'sliding_window';
+    expect(() => planContext(captured, model, services.state)).not.toThrow();
+  });
+
+  it('excludes player instruction ranges from summary source but preserves visible story text', () => {
+    expect(summaryNarrative('Story\n<sr_instruction>\nhidden instruction\n</sr_instruction>\nContinued', 'user')).not.toContain('hidden instruction');
+    expect(summaryNarrative('Story\n<sr_instruction>\nhidden instruction\n</sr_instruction>\nContinued', 'user')).toContain('Continued');
   });
 });

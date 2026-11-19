@@ -47,12 +47,16 @@ run.created 中用户消息的 timestamp 是其保存时的消息时间。messag
 | event | 特有 data 字段 | 含义 |
 | --- | --- | --- |
 | run.created | messages: [{id,role:"user",content,timestamp}] | 已受理且用户消息已保存；不保证模型调用已开始 |
+| run.summarizing | 无额外字段 | 摘要输入校验通过，准备发起摘要调用 |
+| run.summarized | entryId | 完整摘要及其 metrics 已保存，entryId 为 compaction ID |
 | run.delta | messageId、messages（固定一个元素） | 同一条助手消息的正文、公开 reasoning 或工具调用增量，以及最终公开快照 |
 | run.usage | usage | 本轮总用量快照，每个已受理 run 仅发布一次，不带 messageId/requestId |
 | run.completed | savedMessageIds、tipEntryId | 本轮成功并完成持久化结算 |
 | run.stopped | savedMessageIds、tipEntryId、stop_reason | 取消或失败已经结算；只使用原因码，不含 error、errorCode 或 errorMessage |
 
 普通请求校验或用户写入失败不创建 run.created。用户保存后的准备、生成、停止和保存错误都通过同一轮的 run.stopped 收敛，不再发布 run.started、message.delta 或 run.failed。
+
+摘要事件共用 runId/sessionId/provider/model/timestamp；不发布 run.phase、generating，不含 data.phase。摘要内部流不发 run.delta。顺序为 run.created → 可选 run.summarizing → run.summarized → 正文 run.delta → run.usage → 唯一终态。摘要失败或取消没有 summarized；成功摘要落库后预算仍超限，summarized 后直接 usage → stopped(summary_capacity_exceeded)，没有正文调用。
 
 ### 增量与定稿
 
@@ -112,15 +116,15 @@ usage 为以下对象或 null：
 
 输入总量包含缓存读写，缓存字段是细分；total_tokens=input_tokens+output_tokens，reasoning 已包含在输出时不重复相加。计量是快照，不能将累计值重复相加。
 
-没有开始 SDK 调用尝试时，总量为真实全零；已经开始调用但没有可信统计时为 null。内部 request_started 仅表明调用尝试，不承诺网络已经发送字节。停止不等待迟到 usage，也不在终态后补发。本期只有一次模型调用，其最终计量就是本轮总量；未来增加调用时应先按请求归集，再发布一份完整总量，缺失的统计不得用已知小计冒充总量。
+没有开始 SDK 调用尝试时，总量为真实全零；已经开始调用但没有可信统计时为 null。内部 request_started 仅表明调用尝试，不承诺网络已经发送字节。停止不等待迟到 usage，也不在终态后补发。本轮总量汇总成功保存的摘要调用和正文调用；参与统计的任一次 usage 未知则总量为 null。失败/中断摘要不保存记录也不计量，只有失败摘要且无正文调用时总量为零；不作为供应商精确账单。
 
-usage 不代表消息保存成功。现有 metrics 随助手 entry 保存；没有可保存助手或保存失败时，实时 usage 不一定有历史指标载体，不新增 run 表或账单存储。
+usage 不代表消息保存成功。摘要 metrics 随成功的 compaction 保存，正文 metrics 随助手 entry 保存；没有可保存助手或保存失败时，实时 usage 不一定有历史指标载体，不新增 run 表或账单存储。
 
 ### 终态与保存结果
 
-savedMessageIds 表达本轮结算确认保存的消息，tipEntryId 是结算读取的实际会话 tip。部分消息已保存时也列入 savedMessageIds；保存失败时不把预分配助手 ID 列为已保存。会话不存在时 tip 可为 null。独立的删除操作不由生成回滚或恢复。
+savedMessageIds 表达本轮结算确认保存的消息，tipEntryId 是结算读取的实际会话 tip。部分消息已保存时也列入 savedMessageIds；保存失败时不把预分配助手 ID 列为已保存。compaction 不列入 savedMessageIds，但摘要后未保存正文时 tipEntryId 可以指向 compaction。会话不存在时 tip 可为 null。独立的删除操作不由生成回滚或恢复。
 
-停止原因包括用户取消、服务关闭、模型或凭据不可用、上下文/输出错误及持久化失败，采用稳定的小写原因码。典型值为 cancelled、server_shutdown、provider_error、provider_context_window_exceeded、model_not_found、credential_not_configured、context_budget_exceeded、output_incomplete、model_output_invalid、tool_execution_unsupported、message_persist_failed、tip_conflict。保存失败优先于原来的取消或生成原因。详细异常留在服务端，不对外转发 SDK 错误对象。
+停止原因包括用户取消、服务关闭、模型或凭据不可用、上下文/输出错误及持久化失败，采用稳定的小写原因码。典型值为 cancelled、server_shutdown、provider_error、provider_context_window_exceeded、model_not_found、credential_not_configured、context_budget_exceeded、summary_capacity_exceeded、summary_failed、output_incomplete、model_output_invalid、tool_execution_unsupported、message_persist_failed、tip_conflict。保存失败优先于原来的取消或生成原因。详细异常留在服务端，不对外转发 SDK 错误对象。
 
 例如模型请求失败，但部分助手内容已保存：
 
@@ -151,7 +155,7 @@ data: {"runId":"r-1","sessionId":"s-1","provider":"deepseek","model":"deepseek-f
 - 工具结果仍使用 run.delta，messages 为单个 `{role:"tool",delta:{tool_call_id,name,status,content,is_error}}`，由未来的业务执行层产生。当前不执行工具或保存 role=tool entry。
 - action_suggestions.changed 使用 sessionId、runId、messageId、items；items 整组替换，空数组表示清空，不追加重复事件。
 
-预留扩展独立于模型 run 生命周期，未来可以在叙事终态后发布。定义类型不等于迁移摘要或扩展执行逻辑。
+预留扩展独立于模型 run 生命周期，未来可以在叙事终态后发布。定义类型不等于迁移扩展执行逻辑。
 
 ## 连接生命周期
 

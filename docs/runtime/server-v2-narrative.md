@@ -2,9 +2,9 @@
 
 ## 能力与目录边界
 
-ServerV2 在现有会话上提供单次模型调用、正文/公开 reasoning/工具请求增量和显式停止。用户受理时先保存；助手完整或部分公开内容在正常结束、失败或停止时独立结算。两条消息不使用整体事务。SSE 只使用 ServerV2 自有契约，外部仅发布一次 run 总 usage，异常终态仅使用 stop_reason。
+ServerV2 在现有会话上提供按预设整理上下文、可选一次摘要调用、一次正文调用、正文/公开 reasoning/工具请求增量和显式停止。用户受理时先保存；助手完整或部分公开内容在正常结束、失败或停止时独立结算。用户、成功摘要及助手各自保存，不使用跨模型调用的整体事务。SSE 只使用 ServerV2 自有契约，外部仅发布一次 run 总 usage，异常终态仅使用 stop_reason。
 
-StudioV2 仍只接入管理与作者预览，未挂载叙事运行 UI。原 Server/Studio 保持独立。当前不迁移摘要、自动裁剪、模型输出扩展、叙事自动状态更新、行动建议，不提供 Agent/tool loop、重试、重启恢复、执行状态表或事件回放。
+StudioV2 仍只接入管理与作者预览，未挂载叙事运行 UI。原 Server/Studio 保持独立。当前不迁移模型输出扩展、叙事自动状态更新、行动建议，不提供 Agent/tool loop、重试、重启恢复、执行状态表或事件回放。
 
 会话创建由独立 create-session 用例完成开局选择、{{user}} 替换、session/message 初始状态和首条 assistant 消息的一次事务保存，只发 session.created。首条消息是普通 run 分组的一部分，不分类；其正文参与后续历史，状态被后继继承，不执行模型。
 
@@ -13,9 +13,12 @@ StudioV2 仍只接入管理与作者预览，未挂载叙事运行 UI。原 Serv
 | 位置 | 职责 |
 | --- | --- |
 | `src/usecases/narrative/index.ts` | 提交校验、同会话内存占位、同步保存用户和捕获快照、停止与关闭 |
-| `src/usecases/narrative/execute.ts` | 消费一条自有模型流、聚合/替换公开快照、保存助手并形成 usage 与终态 |
+| `src/usecases/narrative/execute.ts` | 编排上下文整理与正文调用，保存助手并汇总 usage 与终态 |
 | `src/usecases/narrative/context.ts` | 通过公开 Service 捕获会话、世界、预设、模型配置、历史和状态视图 |
-| `src/usecases/narrative/materials.ts`、`compile.ts` | 材料激活、模板替换、消息编译和本地输入预算检查 |
+| `src/usecases/narrative/materials.ts`、`compile.ts` | 按候选历史重新激活材料、模板替换与纯消息编译/估算 |
+| `src/usecases/narrative/context-policy.ts`、`history.ts` | 输入预算、完整 run 边界、摘要覆盖来源校验与可见正文投影 |
+| `src/usecases/narrative/prepare-context.ts`、`summary.ts` | 滑动窗口/滚动摘要选择、摘要输入、保存与最终预算复核 |
+| `src/usecases/narrative/model-call.ts` | 两类调用共用的取消、流结果收集和指标；正文直接经 EventHub 发布增量 |
 | `src/infrastructure/model/client.ts` | SDK 无关的模型目录、输入消息、增量/快照、结束原因、用量及 ModelClient 接口 |
 | `src/infrastructure/pi/` | 固定版本 pi 的 ModelClient 实现，内部解析 SDK 模型并转换公开消息 |
 | `src/infrastructure/database/` | 数据库连接、结构及同步事务工具 |
@@ -32,12 +35,12 @@ StudioV2 仍只接入管理与作者预览，未挂载叙事运行 UI。原 Serv
 1. HTTP 检查来源、真实会话和可选访问权限。用例检查输入非空白、expectedTipEntryId、同会话并发和停机状态；拒绝的请求不追加消息。
 2. 首次 await 前占用当前会话，生成 runId、userEntryId、assistantEntryId。用户消息立即追加到请求指定的前驱；写入失败则不受理、不调用模型。
 3. 用户保存后同步捕获本轮领域快照。历史中排除且只排除本轮新用户消息，message 状态从原 tip 读取。上下文准备失败作为本轮执行错误处理，已经保存的用户消息保留。
-4. 返回 202 及受理标识，发布带已保存 user 消息的 run.created；其后解析模型、编译消息、检查顺序、读取凭据并调用 ModelClient 一次。尚未取得模型配置时 provider/model 为 null。
+4. 返回 202 及受理标识，发布带已保存 user 消息的 run.created；其后解析模型、规划上下文、检查顺序和读取凭据；按需要执行一次摘要，然后调用正文模型。尚未取得模型配置时 provider/model 为 null。
 5. 模型 delta 映射为 run.delta，正文、reasoning 和工具参数分别累积；final snapshot 权威替换公开内容，不要求与之前 delta 拼接完全一致。没有增量时也可以用快照输出最终消息。
-6. 模型结束、错误、输出不完整或停止都进入保存步骤。有非空白正文、公开 reasoning 或工具请求时独立追加助手，parentId 必须仍为本轮 userEntryId。完全没有公开内容时不造空助手。
+6. 模型结束、错误、输出不完整或停止都进入保存步骤。有非空白正文、公开 reasoning 或工具请求时独立追加助手，parentId 为本轮成功保存的 compaction ID，没有摘要时为 userEntryId。完全没有公开内容时不造空助手。
 7. 保存助手后将结束结果写入用户 entry 的 extData.narrative，再释放当前会话占位，发布唯一一次 run.usage，再发布唯一 run.completed 或 run.stopped。stop_reason 区分取消、关闭和失败，保存失败优先；不对外发布 error 对象或 run.failed。
 
-同会话同时只允许一轮，冲突返回 RUN_ALREADY_ACTIVE，不排队；不同会话独立执行。内存 Map 只持有取消和完成信息，不承担可恢复任务存储。
+同会话同时只允许一轮，冲突返回 RUN_ALREADY_ACTIVE，不排队；不同会话独立执行。内存 Map 是本进程的会话执行锁，覆盖用户保存、摘要、正文和结算；失败/取消/关闭均释放。编辑、删除、手工追加及状态写入暂不接入此锁，仍保留既有 tip 冲突检查。不提供多进程锁或可恢复任务存储。
 
 run.completed 要求模型正常 done、finishReason=stop、无工具请求、正文非空且助手写入成功。length/deferred 或缺少终态按 output_incomplete 结束；工具请求按 tool_execution_unsupported 结束；只有 reasoning 的正常结果仍保留但不视为完整正文回答。SDK 最终结果可以修正增量，明确的 snapshot 使用替换语义。模型消息 finish 与 run 持久化成功分开：生成正常而保存失败，最终仍为 run.stopped。
 
@@ -83,35 +86,63 @@ entry.role 与 payload.message.role 一致。同轮已有消息共享 runId；re
 | 助手写入失败或 tip 冲突 | 保留用户，savedMessageIds 不包含预分配助手 ID，不宣称已保存 |
 | 只有空白正文和 reasoning、没有工具请求 | 不创建助手消息 |
 
-失败或停止的部分消息是正式可读记录，下一轮只读取其可见正文。只有 reasoning/tool_calls 而没有正文的助手记录不生成伪空模型历史，记录及真实前驱/tip 仍保留，状态从真实 pre-submit tip 读取。计量随助手保存，完全没有可保存助手时没有历史指标载体；实时 run.usage 仍按规则发布，这些指标不是完整账单。session.usage 不累加。
+失败或停止的部分消息是正式可读记录，下一轮只读取其可见正文。只有 reasoning/tool_calls 而没有正文的助手记录不生成伪空模型历史，记录及真实前驱/tip 仍保留，状态从真实 pre-submit tip 读取。正文计量随助手保存，完全没有可保存助手时没有历史指标载体；实时 run.usage 仍按规则发布，这些指标不是完整账单。session.usage 不累加。
 
-内部 usage 为 `{inputTokens,outputTokens,totalTokens,cacheReadTokens,cacheWriteTokens}` 或 null，SSE run.usage 映射为 snake_case。输入总量包含缓存：inputTokens=input+cacheRead+cacheWrite；cache 字段是输入细分，reasoning 已计入输出时不再次相加。没有 SDK 调用尝试时总量为真实零；尝试后无可信上报、字段无效或总量口径不一致时为 null，不把 SDK 初始零值当作已上报零。每个 accepted run 只发布一次结算总量，不带 messageId/requestId，也不在停止后等待或补发迟到统计。
+内部 usage 为 `{inputTokens,outputTokens,totalTokens,cacheReadTokens,cacheWriteTokens}` 或 null，SSE run.usage 映射为 snake_case。输入总量包含缓存：inputTokens=input+cacheRead+cacheWrite；cache 字段是输入细分，reasoning 已计入输出时不再次相加。没有 SDK 调用尝试时总量为真实零；尝试后无可信上报、字段无效或总量口径不一致时为 null，不把 SDK 初始零值当作已上报零。每个 accepted run 只发布一次结算总量，不带 messageId/requestId，也不在停止后等待或补发迟到统计。总量为成功保存摘要的调用用量加正文调用用量，任一参与统计的调用 usage 未知则总量为 null。失败/中断摘要既不保存记录也不计量；只有失败摘要而无正文调用时总量为零，允许与供应商实际消耗存在误差。
 
 ## 上下文与首版能力
 
 所有配置来自当前会话的 worldId、userCharacterId、presetId 和 apiModelConfigId，不因应用默认项更新而切换。快照在凭据或模型异步等待前完成，本轮不受后续配置或消息内容编辑影响。
 
-只接受合法的 user/assistant 历史消息，payload.message 的角色须与 entry.role 一致，content 为文本、timestamp 为有效非负数。兼容原来的纯正文 payload；reasoning/tool_calls 不进入正文投影、材料关键词扫描或模型提示词。已有 compaction 条目明确返回 NARRATIVE_HISTORY_UNSUPPORTED，不忽略摘要边界后继续生成。原 tip 为 null 或没有继承消息快照时，message 视图为空；叙事提交不重复初始化 opening，新会话已由创建用例保存首条消息及状态。
+只接受合法的 user/assistant 历史消息，payload.message 的角色须与 entry.role 一致，content 为文本、timestamp 为有效非负数。兼容原来的纯正文 payload；reasoning/tool_calls 不进入正文投影、材料关键词扫描或模型提示词。compaction 独立于普通正文投影；rolling_summary 校验最新摘要的覆盖边界与 sourceHash 后复用，旧摘要没有合法元数据或来源被修改时忽略摘要并回到完整原文。原 tip 为 null 或没有继承消息快照时，message 视图为空；叙事提交不重复初始化 opening，新会话已由创建用例保存首条消息及状态。
 
-角色与世界书保留 load.mode、keywords、keyword_logic、exclude_keywords、when 及 order 语义。角色通过 load.mode=never 禁用；世界书条目还支持 enabled=false。角色卡协议没有角色 enabled 字段，导入不会保留该字段。匹配区分大小写，扫描历史叙事与当前输入；用户系统指令块不用于触发关键词。when 通过 StateService 对已捕获的 global/session/message 视图进行受限 AST 求值，不执行任意 JavaScript，也不写状态。
+角色与世界书保留 load.mode、keywords、keyword_logic、exclude_keywords、when 及 order 语义。角色通过 load.mode=never 禁用；世界书条目还支持 enabled=false。角色卡协议没有角色 enabled 字段，导入不会保留该字段。匹配区分大小写，扫描本次保留的历史叙事、有效摘要与当前输入；每个裁剪候选重新激活材料，不假定 token 估算随裁剪单调递减。用户系统指令块不用于触发关键词。when 通过 StateService 对已捕获的 global/session/message 视图进行受限 AST 求值，不执行任意 JavaScript，也不写状态。
 
 预设节点按原顺序编译。history.messages 展开为原角色消息，自定义文本节点保留位置和角色；input.text 只在 userInput 节点插入一次。模板只识别固定变量与转义，不执行对象路径，不再次扫描已替换数据。
 
-当前仅使用完整历史，不执行后处理。这是已实现行为，不提供 capabilities HTTP 或提交响应字段。
+当前不执行后处理，不提供 capabilities HTTP 或提交响应字段。所有 kind=postprocess 节点被排除，包含默认 worldState 和 actionSuggestions；不发送扩展输出指令，也不解析或执行模型扩展块。自定义模板仍可读取 state.entries，缺少值明确标为未设置，不用 initial 补值。
 
-完整历史参与编译；history.summary 为空。即使预设保存了 rolling_summary 或 sliding_window，也不会运行摘要或裁剪。所有 kind=postprocess 节点被排除，包含默认 worldState 和 actionSuggestions；不发送扩展输出指令，也不解析或执行模型扩展块。自定义模板仍可读取 state.entries 中的现有状态和声明，缺少值时明确标为未设置，不用 initial 补值。
+### 自动裁剪与滚动摘要
+
+按 entries.runId 划分完整轮次，首条开场 assistant 和只有用户的失败轮次均正常计数。当前提交不进入历史整理范围，始终保留。仅有 reasoning/tool_calls 的记录不成为模型正文，但仍参与完整轮次边界；交错 runId 不允许被拆开。
+
+- sliding_window：从最旧完整 run 开始移除模型输入中的历史，选择符合软目标的最长连续后缀；达不到软目标则使用符合硬预算的最长候选。允许移除全部旧历史，不删除或改写数据库条目，不生成摘要，也不复用旧摘要替代原文。
+- rolling_summary：复用有效旧摘要及未覆盖原文，保护最近 5 个历史 run；选择更早的完整前缀，必要时与旧摘要合并生成一份摘要。摘要输入排除玩家指令区段，不携带 reasoning/tool_calls。每轮最多一次摘要，不为单独重写旧摘要发起调用；无可压缩前缀且超限时报 summary_capacity_exceeded。
+- history.summary 单独承载摘要，history.messages 只承载未覆盖原文。rolling_summary 要求启用的非后处理模板中恰好出现一次 history.summary，否则 invalid_context；不修改已有预设文档。摘要与保留原文重新参与材料激活。
+- 摘要和正文共用本轮模型与凭据。摘要只接受正常 stop、非空正文且无工具请求的最终快照；允许最终快照修正之前增量。摘要失败/截断/中断不保存任何摘要记录及指标，不生成空 compaction。
+- 成功摘要先独立保存并发布 run.summarized，再复核最终上下文。不超过硬预算即可继续；仍超限直接 summary_capacity_exceeded 结束，保留用户、完整摘要及其 metrics。不再次摘要、不额外裁剪、不切换策略。
+
+成功摘要保存为同一个 run 内的 entry：
+
+```ts
+{
+  type: 'compaction', role: null, parentId: userEntryId, runId,
+  payload: { summary: '完整摘要正文' }, state: null,
+  extData: { summary: { coveredThroughEntryId, sourceHash } },
+  metrics: { requests: [{ requestId, provider, modelId, usage, durationMs, firstTextMs? }] }
+}
+```
+
+sourceHash 为覆盖前缀内全部 message 的 id/seq/runId/role/content 规范化 JSON 的 SHA-256，排除 state、metrics、时间戳和 compaction；覆盖到完整 run 边界。仅用于下次读取时识别历史编辑，不是请求指纹或恢复机制。首次存储 summary 时，coverage 是全部覆盖范围而非仅本次新增前缀。状态仍从真实 tip 的前驱继承，不从摘要重建。
+
+成功摘要的 usage 可以为 null；失败或中断摘要无记录、无计量。正文 metrics 仍属于 assistant，user.metrics 为 null，不重复计数。HTTP 通用追加禁止 compaction，通用编辑禁止修改摘要 payload/extData 或在普通消息伪造 summary 元数据。摘要只经叙事用例调用 SessionService 保存。
+
+物理顺序为 user → 可选 compaction → 可选 assistant，各自分配 seq，父链和 tip 原子推进。savedMessageIds 仅列 message，实际 tipEntryId 可能是 compaction；五轮分页与 afterSeq 返回的完整分组包含摘要记录。摘要正文不作为聊天 delta 推送。
 
 ### 预算和生成参数
 
 读取预设 maxContextTokens、maxOutputTokens、temperature、thinkingEnabled。请求中的 maxOutputTokens 必须为正且不超过模型目录 maxTokens；本地输入预算为：
 
 ```text
-min(preset.maxContextTokens, model.contextWindow - preset.maxOutputTokens)
+B = min(preset.maxContextTokens, model.contextWindow - preset.maxOutputTokens - 1024)
+T = floor(B * 60%)
 ```
 
-输入预算非正返回 INVALID_MODEL_BUDGET；固定本地粗估超限返回 CONTEXT_BUDGET_EXCEEDED。粗估与实际计费用量分开，不建立 usage 校准或请求指纹。供应商拒绝实际窗口超限时返回对应失败，不重试、不删历史。
+输入预算非正返回 INVALID_MODEL_BUDGET。估算达到 B 时整理；T 是软目标，B 是硬上限。滑动窗口无法满足 B 返回 context_budget_exceeded；摘要输入超限、无可压缩前缀而超限或一次摘要后仍超限返回 summary_capacity_exceeded。没有可整理历史且恰好等于 B 时允许生成。粗估与实际计费用量分开，不建立 usage 校准或请求指纹。供应商拒绝实际窗口超限时返回对应失败，不重试、不删历史。
 
-maxOutputTokens 交给 pi 既有预算映射，供应商实际输出参数可能因 thinking/context 调整；这不是对供应商总输出参数的精确保证，也不会据此压缩输入历史。thinkingEnabled 开启且目录模型支持 reasoning 时请求 medium；关闭时沿用 pi 的默认映射，能否完全关闭取决于 SDK 对该模型的能力描述。
+maxOutputTokens 交给 pi 既有预算映射，供应商实际输出参数可能因 thinking/context 调整；这不是对供应商总输出参数的精确保证，上下文整理按上述输入预算执行。thinkingEnabled 开启且目录模型支持 reasoning 时请求 medium；关闭时沿用 pi 的默认映射，能否完全关闭取决于 SDK 对该模型的能力描述。
+
+摘要输出上限 S=min(2048, model.maxTokens)，摘要输入上限 min(floor(model.contextWindow*75%), model.contextWindow-S-1024)。它是独立辅助调用预算，可以大于主叙事 maxContextTokens；超出时不发起调用、不分块重试。temperature/thinkingEnabled 沿用本轮预设。
 
 ## 模型与连通性
 

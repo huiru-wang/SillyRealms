@@ -1,6 +1,6 @@
 # Server V2
 
-- 本期在 modules/usecases 管理能力上实施叙事首版：单次 SDK 无关模型流（pi 适配实现）、核心提示词编译、统一 SSE、提交/停止、消息独立持久化、目录和连通性检测。不设计 runtime、engine、通用任务、Agent/tool loop、恢复、摘要或模型输出扩展（自动状态更新/行动建议），不迁移 StudioV2 运行页。state HTTP 整理仅修改服务端，Studio/StudioV2 与 SDK transport 的接入另行处理。
+- 本期在 modules/usecases 管理能力上实施叙事首版：SDK 无关模型流、可选一次滚动摘要或滑动窗口裁剪（pi 适配实现）、核心提示词编译、统一 SSE、提交/停止、消息独立持久化、目录和连通性检测。不设计 runtime、engine、通用任务、Agent/tool loop、恢复或模型输出扩展（自动状态更新/行动建议），不迁移 StudioV2 运行页。state HTTP 整理仅修改服务端，Studio/StudioV2 与 SDK transport 的接入另行处理。
 - 单域操作采用 `route → service → repository`；应用流程采用 `route → usecase → service → repository`。route 可以调用读写能力，跨模块只读展示投影可在 route 组合；跨模块写编排必须进入 usecases。route 不写 SQL、不管理事务。
 - 业务模块统一位于 `modules/<name>`，以 `service.ts` 为唯一公开出口。Repository、存储 Row、schema、parser、validation、assets、archive、card、default、files 均为内部实现；公开领域类型从 service 显式 export type，不使用 export *。启动 services.ts/usecases.ts 显式装配依赖。
 - Service 承担本域规则和持久化能力。跨模块只依赖显式 Reader 类型并调用其只读能力，服务本域校验与计算；不依赖对方完整 Service 或调用写能力。模块不能反向依赖 usecases、routes、http 或启动装配，不得循环依赖。
@@ -21,7 +21,7 @@
 - worlds 内部按职责组织：parser 负责 JSON 解析、领域转换和初始值提取；validation 集中卡结构、引用、状态定义及 when 静态校验；assets 负责资源读取与完整性；archive 负责导入包和 ZIP 解压/构建；files 负责磁盘生命周期。parser/validation 不读文件，assets 不处理 ZIP，archive 复用解析与校验，不重复定义协议；这些实现仍只通过 service.ts 对外提供能力。
 - 包内文件 HTTP 入口为 `/api/v1/worlds/:id/resources/*`，相对于磁盘 package/ 根目录，保留 assets/、components/ 等目录前缀；不能将其缩减为仅素材读取。存储目录和路径安全规则独立于路由名称。
 - 世界删除先删本模块 DB，外键拒绝时不碰文件；随后清理整个世界目录。文件失败报告 WORLD_FILES_DELETE_FAILED，重试允许清理 DB 已不存在的残留目录；不做 DB/文件强事务。原件写入/发布/删除按世界串行，路径校验拒绝不安全根目录和符号链接逃逸。
-- 事件连接独立于业务执行，只负责传输；不得查询数据库或判断终态。SSE data 均为 JSON：run.created/run.delta/run.usage/run.completed/run.stopped；失败统一 stop_reason，不含 error 对象/errorCode/errorMessage、不发裸 [DONE]。每个 accepted run 保存结算后只发一次总 usage 再唯一终态；无调用尝试为零、尝试后未知为 null。delta 定稿 snapshot 明确 replace，模型 finish 不等于 run 保存成功；终态带 savedMessageIds/tipEntryId。system/tool result/actions 只预留类型，不生产。state.changed 保持 state 模块公开的 {path,scope,value} 契约，由 set-state/append-entry 用例在实际变更成功提交后发布；PATCH 逐项提交后通知，再处理下一项。global 经 SessionService 查询全部所属会话广播；session/message 仅发所属会话。message 比较当前 tip 的有效继承对象，历史修改被后继快照覆盖则不发；PUT 或独立快照追加使用 path:"" 表示完整 scope 替换，{} 清空，null 是字段值而非删除。空 path 不对 PATCH 输入开放。读取、初始化、同值、缺失路径忽略、失败及回滚不通知。StateService 只计算变化，EventHub 不查库；新增改变状态的业务流程必须经用例编排提交后发布。叙事 null 状态追加不改变有效视图。SSE 传输入口仍属于 events 基建。
+- 事件连接独立于业务执行，只负责传输；不得查询数据库或判断终态。SSE data 均为 JSON：run.created/run.summarizing/run.summarized/run.delta/run.usage/run.completed/run.stopped；失败统一 stop_reason，不含 error 对象/errorCode/errorMessage、不发裸 [DONE]。每个 accepted run 保存结算后只发一次总 usage 再唯一终态；无参与计量的调用为零、参与计量的任一次调用未知为 null；失败/中断摘要不保存记录也不计量。delta 定稿 snapshot 明确 replace，模型 finish 不等于 run 保存成功；终态带 savedMessageIds/tipEntryId。system/tool result/actions 只预留类型，不生产。state.changed 保持 state 模块公开的 {path,scope,value} 契约，由 set-state/append-entry 用例在实际变更成功提交后发布；PATCH 逐项提交后通知，再处理下一项。global 经 SessionService 查询全部所属会话广播；session/message 仅发所属会话。message 比较当前 tip 的有效继承对象，历史修改被后继快照覆盖则不发；PUT 或独立快照追加使用 path:"" 表示完整 scope 替换，{} 清空，null 是字段值而非删除。空 path 不对 PATCH 输入开放。读取、初始化、同值、缺失路径忽略、失败及回滚不通知。StateService 只计算变化，EventHub 不查库；新增改变状态的业务流程必须经用例编排提交后发布。叙事 null 状态追加不改变有效视图。SSE 传输入口仍属于 events 基建。
 - 会话终态不关闭 SSE；断开只取消订阅。事件不持久化或回放，仅 event/data，无 SSE id。传输用 pull 保序分块，控制器缓冲 256 KiB、总未读预算 8 MiB，超限只关闭慢订阅，不阻塞执行或其他连接。
 - 会话路由先经 SessionService 检查真实会话，再执行可选 canAccessSession；等待后先检查关闭信号，再确认会话仍存在。访问适配器不能代替会话存在性检查。
 - 普通 HTTP 统一 `{ success, errorCode, errorMessage, data }`，错误集中 errors.ts 映射并保留正确状态码；未知异常不泄漏 SQL、路径或堆栈。SSE/文件下载保留原始正文，传输开始前错误仍用 JSON 失败包络。
@@ -49,3 +49,12 @@
 - 每个 run 首条 entry.extData.narrative 保存 completed+finishedAt，或 stopped+stopReason+finishedAt。助手保存后写结束结果，再发 usage/终态；失败保留消息，无结束记录且不活跃返回 unknown。通用 entry 编辑不能传入/删除 narrative，写结果保留其他扩展。该字段不是恢复日志，running 只在内存中。
 - metrics.requests 移除 status，增加 provider（新记录为实际 providerId，旧数据未知为 null）。读旧 JSON 丢弃 status，不猜测供应商、不批量迁移；新写入严格校验。usage 只汇总已记录的已知 token 并报告未知请求数，不写累计账本。
 - /api/v1/runtime/config 返回隔离舞台的公开 origin/entryPath 与 debug，不重复 port。stageOrigin/debug 由装配提供，CLI 使用 SERVER_V2_STAGE_ORIGIN/SERVER_V2_DEBUG；不与 Studio 同源，不允许 HTTPS 降级，不新增监听进程。
+
+## 上下文整理
+
+- narrative 的 history/context-policy/prepare-context/summary 分担纯历史边界与预算、策略编排和摘要输入。编译器返回候选估算而不直接拒绝超限；每个候选重新激活材料。共用 model-call 处理可取消读取、快照与指标，正文直接经 EventHub 发 delta，摘要不发布聊天内容。不增加 RunStore、通用策略框架或任务表。
+- 输入硬预算 min(preset.maxContextTokens, model.contextWindow-maxOutputTokens-1024)，软目标 60%。sliding_window 只裁剪模型输入中的完整 run；rolling_summary 保护最近 5 个历史 run，当前用户始终保留，每轮最多一次摘要。history.summary 恰好注入一次，history.messages 仅为保留原文，postprocess 仍排除。
+- 只在摘要正常完成、非空且无工具请求后追加 compaction，state=null，与 user/assistant 同 run；payload.summary 存完整文本，extData.summary 存 coveredThroughEntryId/sourceHash，metrics 存本次请求。摘要失败/取消无记录、无计量；成功但缺失用量时 requests[].usage=null。正文 metrics 仍在 assistant，user.metrics=null。
+- 成功保存后发布 run.summarized，再复核上下文；仍超限 summary_capacity_exceeded 结束并保留用户、摘要和用量，不重试或继续裁剪。run.summarizing/run.summarized 共用身份字段且无 phase，不新增 generating。终态 savedMessageIds 只列 message，tip 可指向 compaction。
+- active Map 是会话执行锁，覆盖首次 await 前占位至摘要/正文/结束保存完成；取消与异常释放，终态通知前释放。编辑、删除和其他写入口接入锁后续处理，当前仍使用已有 parent/tip 校验。
+- sourceHash 只验证已覆盖原文的 id/seq/runId/role/content，后续读取发现编辑或旧摘要元数据缺失则回退完整原文；不对异步期间的历史编辑添加版本、恢复或冲突机制。HTTP 禁止创建 compaction；通用编辑禁止修改其 payload/extData 和普通消息 summary 元数据。
