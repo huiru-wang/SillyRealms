@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { AppError } from '../errors.js';
-import type { EventHub } from '../events/event-hub.js';
-import { createSessionEventsResponse } from '../events/session-events.js';
+import type { EventHub } from '../infrastructure/events/event-hub.js';
+import { createSessionEventsResponse } from '../infrastructure/events/session-events.js';
 import { decodeCursor, encodeCursor } from '../http/pagination.js';
 import { numberQuery, readJson, success } from '../http/response.js';
 import { requireSessionAccess, type SessionAccessCheck } from '../http/session-access.js';

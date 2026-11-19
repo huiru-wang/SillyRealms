@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { openDatabase } from '../database/connection.js';
+import { openDatabase } from '../infrastructure/database/connection.js';
 import { createServices, type Services } from '../services.js';
 import { narrativePreset } from '../testing/fixtures.js';
 import { createSetState, type SetState } from './set-state.js';

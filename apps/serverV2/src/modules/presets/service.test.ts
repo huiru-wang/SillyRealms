@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
-import { openDatabase } from '../../database/connection.js';
+import { openDatabase } from '../../infrastructure/database/connection.js';
 import { ModelService } from '../models/service.js';
 import { SettingsService } from '../settings/service.js';
 import { PresetService, type CreatePresetInput } from './service.js';

@@ -1,6 +1,6 @@
-import { transaction } from '../../database/transaction.js';
+import { transaction } from '../../infrastructure/database/transaction.js';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
-import { encodeJson, type JsonObject, type JsonValue } from '../../database/connection.js';
+import { encodeJson, type JsonObject, type JsonValue } from '../../infrastructure/database/connection.js';
 import type { WorldDescription, WorldListOptions } from './types.js';
 
 /** Decoded storage rows stay inside this module; only the Service exposes domain objects. */

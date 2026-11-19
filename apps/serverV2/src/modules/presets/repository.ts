@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { encodeJson } from '../../database/connection.js';
+import { encodeJson } from '../../infrastructure/database/connection.js';
 import type { PresetValue } from './types.js';
 
 type StoredConfig = {

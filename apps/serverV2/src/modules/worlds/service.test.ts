@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openDatabase } from '../../database/connection.js';
+import { openDatabase } from '../../infrastructure/database/connection.js';
 import { createServices } from '../../services.js';
 import { narrativePreset } from '../../testing/fixtures.js';
 import type { WorldService, WorldPatch } from './service.js';

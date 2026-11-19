@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import type { JsonObject } from '../../database/connection.js';
+import type { JsonObject } from '../../infrastructure/database/connection.js';
 import { AppError } from '../../errors.js';
 import type { ModelReader } from '../models/service.js';
 import type { PresetReader } from '../presets/service.js';

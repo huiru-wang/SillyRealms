@@ -1,4 +1,4 @@
-import type { TransactionRunner } from '../database/transaction.js';
+import type { TransactionRunner } from '../infrastructure/database/transaction.js';
 import type { PresetService } from '../modules/presets/service.js';
 import type { SettingsService } from '../modules/settings/service.js';
 

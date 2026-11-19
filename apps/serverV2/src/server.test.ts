@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from './app.js';
-import { EventHub } from './events/event-hub.js';
+import { EventHub } from './infrastructure/events/event-hub.js';
 import type { Services } from './services.js';
 import { narrativePreset } from './testing/fixtures.js';
 import { startServer } from './server.js';
@@ -79,7 +79,7 @@ describe('Server V2 over HTTP', () => {
     const response = await app.request('/api/v1/sessions/anything/events');
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ success: false, errorCode: 'SERVICE_UNAVAILABLE', errorMessage: '业务服务尚未就绪', data: null });
-    app.shutdown();
+    await app.shutdown();
   });
 
   it('opens independent storage and rejects missing sessions instead of accepting fake sessions', async () => {

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { openDatabase } from '../database/connection.js';
+import { openDatabase } from '../infrastructure/database/connection.js';
 import type { Page } from '../http/pagination.js';
 import { errorHandler, type SuccessResponse } from '../http/response.js';
 import { createServices } from '../services.js';

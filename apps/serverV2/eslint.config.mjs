@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import tseslint from 'typescript-eslint';
 
 const sourceRoot = fileURLToPath(new URL('./src/', import.meta.url));
+const legacyRoot = fileURLToPath(new URL('../server/', import.meta.url));
 const tables = {
   presets: ['presets'],
   models: ['api_model_configs'],
@@ -31,6 +32,9 @@ const boundaries = {
     schema: [],
     messages: {
       repository: 'Repository and stored row types are private to the owning module.',
+      legacy: 'Server V2 cannot import original Server internals; migrate the required implementation.',
+      infrastructure: 'Infrastructure cannot depend on business modules, usecases, HTTP or composition.',
+      pi: 'The pi adapter cannot depend on database or events infrastructure, and modules cannot perform model execution.',
       module: 'The only public business module entry is service.ts.',
       readonly: 'Cross-module module dependencies must be named type-only domain types or explicit Readers, never a full Service.',
       wildcard: 'Export explicit public types and capabilities; wildcard exports can leak module internals.',
@@ -51,7 +55,9 @@ const boundaries = {
     const isService = isModule && localPath === 'modules/' + owner + '/service.ts';
     const isTransport = /^(?:routes|http)\//.test(localPath);
     const isUsecase = localPath.startsWith('usecases/');
-    const isDatabase = localPath.startsWith('database/');
+    const isDatabase = localPath.startsWith('infrastructure/database/');
+    const isInfrastructure = localPath.startsWith('infrastructure/');
+    const isPi = localPath.startsWith('infrastructure/pi/');
     const isServer = localPath === 'server.ts';
     const privateImports = new Set();
 
@@ -59,7 +65,11 @@ const boundaries = {
       if (typeof source !== 'string') return;
       const typesOnly = explicitTypes !== undefined || typeOnly(node);
       const names = explicitTypes ?? node.specifiers?.map(importedName) ?? [];
-      if (!isTest && (isModule || isUsecase) && (source === 'hono' || source.startsWith('hono/'))) {
+      if (source === '@sillyrealms/server' || source.startsWith('@sillyrealms/server/')) {
+        context.report({ node, messageId: 'legacy' });
+        return;
+      }
+      if (!isTest && (isModule || isUsecase || isInfrastructure) && (source === 'hono' || source.startsWith('hono/'))) {
         context.report({ node, messageId: 'reverse' });
       }
       if (!isTest && source === 'node:sqlite' && !isDatabase && !isServer) {
@@ -68,7 +78,12 @@ const boundaries = {
         }
       }
       if (!source.startsWith('.') && !source.startsWith('/')) return;
-      const target = sourcePath(resolve(dirname(filename), source)).replace(/\.js$/, '.ts');
+      const targetPath = resolve(dirname(filename), source);
+      if (targetPath.startsWith(legacyRoot)) {
+        context.report({ node, messageId: 'legacy' });
+        return;
+      }
+      const target = sourcePath(targetPath).replace(/\.js$/, '.ts');
       const targetOwner = moduleOwner(target);
       const targetService = targetOwner !== null && target === 'modules/' + targetOwner + '/service.ts';
       const repository = targetOwner !== null && target === 'modules/' + targetOwner + '/repository.ts';
@@ -80,6 +95,15 @@ const boundaries = {
         for (const specifier of node.specifiers) privateImports.add(specifier.local.name);
       }
       if (isTest) return;
+      if (isInfrastructure && (targetOwner !== null || target.startsWith('usecases/') || /^(?:routes|http)\//.test(target) || composition.has(target))) {
+        context.report({ node, messageId: 'infrastructure' });
+        return;
+      }
+      if ((isPi && /^infrastructure\/(?:database|events)\//.test(target))
+        || (isModule && target.startsWith('infrastructure/pi/'))) {
+        context.report({ node, messageId: 'pi' });
+        return;
+      }
       if ((isModule && (target.startsWith('usecases/') || /^(?:routes|http)\//.test(target) || composition.has(target)))
         || (isUsecase && (/^(?:routes|http)\//.test(target) || composition.has(target)))
         || (isTransport && composition.has(target))) {
@@ -90,7 +114,7 @@ const boundaries = {
         context.report({ node, messageId: 'reverse' });
         return;
       }
-      if (target.startsWith('database/') && !isDatabase && !isServer) {
+      if (target.startsWith('infrastructure/database/') && !isDatabase && !isServer) {
         if (names.includes('openDatabase')) {
           context.report({ node, messageId: 'lifecycle' });
           return;
@@ -100,14 +124,14 @@ const boundaries = {
           return;
         }
         if (isModule && !isRepository) {
-          if (target !== 'database/connection.ts' || !typesOnly || !names.length || names.some(name => !jsonTypes.has(name))) {
+          if (target !== 'infrastructure/database/connection.ts' || !typesOnly || !names.length || names.some(name => !jsonTypes.has(name))) {
             context.report({ node, messageId: 'storage' });
           }
           return;
         }
         if (isUsecase) {
-          const json = target === 'database/connection.ts' && names.length > 0 && names.every(name => jsonTypes.has(name));
-          const transaction = target === 'database/transaction.ts' && names.length === 1 && names[0] === 'TransactionRunner';
+          const json = target === 'infrastructure/database/connection.ts' && names.length > 0 && names.every(name => jsonTypes.has(name));
+          const transaction = target === 'infrastructure/database/transaction.ts' && names.length === 1 && names[0] === 'TransactionRunner';
           if (!typesOnly || (!json && !transaction)) context.report({ node, messageId: 'storage' });
           return;
         }

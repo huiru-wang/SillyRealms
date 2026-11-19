@@ -3,7 +3,7 @@ import {mkdtemp,mkdir,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
-import {openDatabase} from '../../database/connection.js';
+import {openDatabase} from '../../infrastructure/database/connection.js';
 import {createServices} from '../../services.js';
 import {worldCardFixture} from './test-fixtures.js';
 import {cardToWorld,parseCard} from './parser.js';

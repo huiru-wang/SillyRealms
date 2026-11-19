@@ -1,6 +1,6 @@
 # Server V2
 
-- 本期实施 modules 竖切与应用 usecases、初始化、状态快照写入、世界/预设导入导出；不设计或新增 runtime、engine、模型执行、模型 catalog、通用任务管理或应用通知。
+- 本期在 modules/usecases 管理能力上实施叙事首版：单次 pi 模型流、核心提示词编译、提交/停止、消息独立持久化、目录和连通性检测。不设计 runtime、engine、通用任务、Agent/tool loop、恢复、摘要或扩展（状态更新/行动建议），不迁移 StudioV2 运行页。
 - 单域操作采用 `route → service → repository`；应用流程采用 `route → usecase → service → repository`。route 可以调用读写能力，跨模块只读展示投影可在 route 组合；跨模块写编排必须进入 usecases。route 不写 SQL、不管理事务。
 - 业务模块统一位于 `modules/<name>`，以 `service.ts` 为唯一公开出口。Repository、存储 Row、schema、parser、validation、assets、archive、card、default、files 均为内部实现；公开领域类型从 service 显式 export type，不使用 export *。启动 services.ts/usecases.ts 显式装配依赖。
 - Service 承担本域规则和持久化能力。跨模块只依赖显式 Reader 类型并调用其只读能力，服务本域校验与计算；不依赖对方完整 Service 或调用写能力。模块不能反向依赖 usecases、routes、http 或启动装配，不得循环依赖。
@@ -9,8 +9,10 @@
 - Repository 仅由本模块 Service 使用，不依赖任何 Service、其他模块 Repository 或 usecase。SQL 包括查询/JOIN/存在性检查只碰本模块属主表或列：presets→presets，models→api_model_configs，settings→app_settings，worlds→worlds/world_tags，sessions→sessions/entries。
 - State 无表、无 Repository，StateService 保留 scope 读取及消息前驱继承。完整 scope 写入由 set-state 用例调用 World/Session Service；worlds.state、sessions.state、entries.state 的 SQL 始终归表属主。普通内容更新不能覆盖运行 state。
 - 连接由启动方创建和关闭，所有 Repository 借用同一连接；Service 仅在构造时把连接传给私有 Repository，不保留连接、不写 SQL、不执行事务。usecase 只接收装配方绑定好的 TransactionRunner，不接收原始连接。
+- database 和 events 统一位于 infrastructure；pi 适配只依赖 SDK/网络，不反向依赖 modules/usecases/HTTP/数据库/EventHub。基础设施搬迁同步维护 ESLint 边界，不导入原 Server 内部实现。
+- 叙事请求通过输入/会话/tip/并发校验后立即保存 user，模型准备或生成失败不回滚；assistant 完整/半截正文独立保存，停止也保留已收正文。两条消息不使用整体事务；单条 appendEntry/seq/tip 原子推进继续由 Repository 实现。无正文不造空助手，迟到输出丢弃，正常关机先结算再关库。
 - 跨模块写入及跨模块事务边界归 usecases；本域必要的多条 SQL 原子操作留在 Repository，例如世界内容+标签、entry追加+tip推进。database 负责 DDL/结构事务，显式维护 updated_at，不新增触发器。
-- database/transaction.ts 的回调必须同步，不接受 Promise。事务中不做文件/网络/模型调用；文件与 DB 用暂存、发布、清理/补偿协调，不宣称强原子性。代表提交成功的事件在成功提交后发布。
+- infrastructure/database/transaction.ts 的回调必须同步，不接受 Promise。事务中不做文件/网络/模型调用；文件与 DB 用暂存、发布、清理/补偿协调，不宣称强原子性。代表提交成功的事件在成功提交后发布。
 - openDatabase 只建立/检查结构，不播种业务数据。启动装配后、监听 HTTP 前调用 initialize，在同一同步事务内创建默认预设和设置。settings 单例存在即视为完成，重复启动不覆盖用户选择或复活已删除预设；保留显式空默认项，失败可整体回滚重试。
 - 本期只支持线性叙事存储：appendEntry 只能接当前 tip，显式 parent 不匹配时报错；追加、seq 分配与 tip 推进原子完成。不提供 setTip；getHistory 只读取当前线性历史。
 - 正文、历史关系、state、metrics 分别写入明确字段，禁止整行覆盖。状态 PUT/set 保存完整 scope 快照；消息 NULL 继承前驱，显式空数组终止继承。本期不迁移按路径 PATCH 或状态规则执行。

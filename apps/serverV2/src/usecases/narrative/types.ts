@@ -1,0 +1,45 @@
+import type { CredentialService } from '../../modules/credentials/service.js';
+import type { ModelService } from '../../modules/models/service.js';
+import type { PresetService } from '../../modules/presets/service.js';
+import type { SessionService } from '../../modules/sessions/service.js';
+import type { StateService } from '../../modules/state/service.js';
+import type { WorldService } from '../../modules/worlds/service.js';
+import type { EventHub } from '../../infrastructure/events/event-hub.js';
+import type { PiClient } from '../../infrastructure/pi/client.js';
+import type { NarrativeSnapshot } from './context.js';
+
+export type SubmitInput = {
+  sessionId: string;
+  input: { text: string };
+  expectedTipEntryId: string | null;
+};
+
+export type AcceptedNarrative = {
+  runId: string;
+  userEntryId: string;
+  /** Reserved at acceptance; terminal events identify whether this entry was actually saved. */
+  assistantEntryId: string;
+  capabilities: { historyPolicy: 'full'; postprocess: false };
+};
+
+export type NarrativeDependencies = {
+  sessions: SessionService;
+  worlds: WorldService;
+  presets: PresetService;
+  models: ModelService;
+  state: StateService;
+  credentials: Pick<CredentialService, 'get'>;
+  pi: Pick<PiClient, 'resolve' | 'assertMessageOrder' | 'stream'>;
+  events: EventHub;
+};
+
+export type PreparedNarrative = { snapshot: NarrativeSnapshot } | { error: unknown };
+
+export type NarrativeExecution = {
+  sessionId: string;
+  runId: string;
+  userEntryId: string;
+  assistantEntryId: string;
+  prepared: PreparedNarrative;
+  signal: AbortSignal;
+};

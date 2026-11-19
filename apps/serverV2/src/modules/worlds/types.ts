@@ -1,4 +1,4 @@
-import type { JsonObject, JsonValue } from '../../database/connection.js';
+import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
 
 export type WorldDescription = string | { type: 'component'; component: string } | null;
 

@@ -6,7 +6,7 @@ import { AppError, ERRORS, type ErrorCode } from '../errors.js';
 export type SuccessResponse<T> = { success: true; errorCode: null; errorMessage: ''; data: T };
 export type FailureResponse = { success: false; errorCode: ErrorCode; errorMessage: string; data: null };
 
-export function success<T>(c: Context, data: T, status: 200 | 201 = 200): Response {
+export function success<T>(c: Context, data: T, status: 200 | 201 | 202 = 200): Response {
   const body: SuccessResponse<T> = { success: true, errorCode: null, errorMessage: '', data };
   return c.json(body, status);
 }

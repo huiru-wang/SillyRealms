@@ -5,12 +5,12 @@ import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
 import { createApp } from '../app.js';
-import { bindTransaction } from '../database/transaction.js';
+import { bindTransaction } from '../infrastructure/database/transaction.js';
 import { errorHandler } from '../http/response.js';
 import { createPresetRoutes } from './presets.js';
 import { createUsecases } from '../usecases.js';
-import { openDatabase } from '../database/connection.js';
-import { EventHub } from '../events/event-hub.js';
+import { openDatabase } from '../infrastructure/database/connection.js';
+import { EventHub } from '../infrastructure/events/event-hub.js';
 import { createServices, type Services } from '../services.js';
 import { narrativePreset } from '../testing/fixtures.js';
 
@@ -20,10 +20,11 @@ beforeEach(() => {
   dataRoot = mkdtempSync(join(tmpdir(), 'sr-config-http-'));
   services = createServices(db, dataRoot);
   services.settings.ensure({ defaultPresetId: null, defaultApiModelConfigId: null });
-  const usecases = createUsecases({ services, transaction: bindTransaction(db) });
-  app = createApp({ events: new EventHub(), services, usecases });
+  const events = new EventHub();
+  const usecases = createUsecases({ services, transaction: bindTransaction(db), events });
+  app = createApp({ events, services, usecases });
 });
-afterEach(() => { app.shutdown(); db.close(); rmSync(dataRoot, { recursive: true, force: true }); });
+afterEach(async () => { await app.shutdown(); db.close(); rmSync(dataRoot, { recursive: true, force: true }); });
 
 function write(method: string, body: unknown): RequestInit {
   return { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(method === 'PATCH' ? { expectedRevision: 1, ...body as object } : body) };

@@ -46,7 +46,7 @@
 
 ## V2 Workspace Boundary
 
-- `apps/studioV2` connects only to `apps/serverV2`; keep the original Studio/Server independent. The current frontend scope is world library management, presets, model configurations, settings, and basic session management.
+- `apps/studioV2` connects only to `apps/serverV2`; keep the original Studio/Server independent. ServerV2 implements single-call narrative submission/stop with user-first persistence, partial assistant output preservation and shared session events; see [Server V2 narrative](docs/runtime/server-v2-narrative.md). The current frontend remains management and author preview only: world library, presets, model configurations, settings, and basic sessions; narrative runtime UI, summaries and narrative extensions are not migrated.
 - Reuse the copied Studio UI primitives and semantic tokens within StudioV2. Its five mounted management pages use `PageHeader`; runtime/world-authoring screens are not mounted.
 - Follow [StudioV2 management](docs/runtime/studio-v2-management.md) and [Server V2 HTTP](docs/runtime/server-v2-http.md). Verify this integration at function level plus typecheck/lint; do not start services or add mock end-to-end environments for this task.
 

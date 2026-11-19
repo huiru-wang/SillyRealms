@@ -1,7 +1,11 @@
-import type { JsonObject, JsonValue } from '../../database/connection.js';
+import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
 import { AppError } from '../../errors.js';
 import type { SessionReader } from '../sessions/service.js';
 import type { WorldReader } from '../worlds/service.js';
+import { isSafeStateKey, validateStateJson } from '@sillyrealms/sdk/state-validation';
+import { evaluateWhen, type StateViews } from './when.js';
+
+export type { StateViews } from './when.js';
 
 function identifier(value: string): string {
   if (typeof value !== 'string' || !value.trim() || value !== value.trim()) throw new AppError('INVALID_STATE_OWNER');
@@ -65,5 +69,30 @@ export class StateService {
   requireMessage(sessionId: string, entryId: string): JsonValue[] | null {
     if (!this.#sessions.getEntry(identifier(sessionId), identifier(entryId))) throw new AppError('ENTRY_NOT_FOUND');
     return this.getMessage(sessionId, entryId);
+  }
+
+  /** Read an independent view at the supplied predecessor; never initialize opening state. */
+  getViews(input: { worldId: string; sessionId: string; entryId: string | null }): StateViews {
+    const global = this.requireGlobal(input.worldId), session = this.requireSession(input.sessionId);
+    const entries = input.entryId === null ? [] : this.requireMessage(input.sessionId, input.entryId) ?? [];
+    const message: JsonObject = Object.create(null);
+    try {
+      validateStateJson(global); validateStateJson(session);
+      for (const entry of entries) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.key !== 'string'
+          || !isSafeStateKey(entry.key) || !Object.hasOwn(entry, 'value') || Object.hasOwn(message, entry.key)) {
+          throw new AppError('INVALID_NARRATIVE_STATE');
+        }
+        validateStateJson(entry.value);
+        message[entry.key] = entry.value;
+      }
+    } catch { throw new AppError('INVALID_NARRATIVE_STATE'); }
+    return structuredClone({ global, session, message });
+  }
+
+  /** A bounded, read-only condition over the caller's captured views. */
+  evaluateWhen(expression: string, views: StateViews): boolean {
+    try { return evaluateWhen(expression, views); }
+    catch { throw new AppError('INVALID_NARRATIVE_STATE'); }
   }
 }

@@ -4,9 +4,13 @@ import { offsetPage, readOffsetPagination } from '../http/pagination.js';
 import { readJson, success } from '../http/response.js';
 import type { CredentialService } from '../modules/credentials/service.js';
 import type { ModelConfig, ModelService } from '../modules/models/service.js';
+import type { TestModel } from '../usecases/test-model.js';
 import type { CreateModelConfig, ModelConfigUsecases, UpdateModelConfig } from '../usecases/model-config.js';
 
-export function createModelRoutes(models: ModelService, credentials: CredentialService, usecases: ModelConfigUsecases) {
+export function createModelRoutes(
+  models: ModelService, credentials: CredentialService, usecases: ModelConfigUsecases,
+  testModel: TestModel, shutdownSignal: AbortSignal,
+) {
   const routes = new Hono();
   const view = async (model: ModelConfig) => ({
     id: model.id, name: model.name, providerId: model.providerId, modelId: model.modelId,
@@ -23,6 +27,9 @@ export function createModelRoutes(models: ModelService, credentials: CredentialS
     }
     return success(c, offsetPage(result, hasMore, pagination, 'models'));
   });
+  routes.post('/:id/test', async c => success(c, await testModel(
+    c.req.param('id'), AbortSignal.any([c.req.raw.signal, shutdownSignal]),
+  )));
   routes.get('/:id', async c => success(c, { item: await view(models.require(c.req.param('id'))) }));
   routes.post('/', async c => success(c, {
     item: await view(await usecases.create(await readJson<CreateModelConfig>(c))),

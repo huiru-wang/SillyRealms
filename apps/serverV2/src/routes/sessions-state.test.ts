@@ -5,9 +5,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { openDatabase } from '../database/connection.js';
-import { bindTransaction } from '../database/transaction.js';
-import { EventHub } from '../events/event-hub.js';
+import { openDatabase } from '../infrastructure/database/connection.js';
+import { bindTransaction } from '../infrastructure/database/transaction.js';
+import { EventHub } from '../infrastructure/events/event-hub.js';
 import type { Page } from '../http/pagination.js';
 import { errorHandler, type FailureResponse, type SuccessResponse } from '../http/response.js';
 import type { SessionAccessCheck } from '../http/session-access.js';
@@ -19,6 +19,7 @@ import { createSessionRoutes, type SessionSummary, type SessionView } from './se
 import { createStateRoutes } from './state.js';
 
 let db: DatabaseSync, services: Services, app: Hono, dataRoot: string, shutdown: AbortController;
+let events: EventHub;
 let access: SessionAccessCheck | undefined;
 let usecases: ReturnType<typeof createUsecases>;
 const sessionInput = (id: string) => ({
@@ -30,7 +31,8 @@ beforeEach(() => {
   dataRoot = mkdtempSync(join(tmpdir(), 'sr-session-state-routes-'));
   db = openDatabase(':memory:');
   services = createServices(db, dataRoot);
-  usecases = createUsecases({ services, transaction: bindTransaction(db) });
+  events = new EventHub();
+  usecases = createUsecases({ services, transaction: bindTransaction(db), events });
   services.presets.create({ ...narrativePreset(), id: 'preset' });
   services.models.create({ id: 'model', name: 'Model', providerId: 'provider', modelId: 'model', credentialRef: 'ref' });
   services.worlds.create({
@@ -45,12 +47,13 @@ beforeEach(() => {
   app = new Hono();
   app.onError(errorHandler);
   app.route('/api/v1/sessions', createSessionRoutes({
-    sessions: services.sessions, worlds: services.worlds, events: new EventHub(), canAccessSession, shutdownSignal: shutdown.signal,
+    sessions: services.sessions, worlds: services.worlds, events, canAccessSession, shutdownSignal: shutdown.signal,
   }));
   app.route('/api/v1', createStateRoutes({ state: services.state, setState: usecases.setState, sessions: services.sessions, canAccessSession, shutdownSignal: shutdown.signal }));
 });
-afterEach(() => {
+afterEach(async () => {
   shutdown.abort();
+  await usecases.narrative.shutdown();
   vi.restoreAllMocks();
   db.close();
   rmSync(dataRoot, { recursive: true, force: true });
@@ -80,7 +83,6 @@ async function failure(response: Response, code: string, status: number) {
 
 describe('session HTTP operations', () => {
   it('serves authorized SSE HEAD requests without allocating a stream or subscription', async () => {
-    const events = new EventHub();
     const originalSubscribe = events.subscribe.bind(events);
     const cleanup = vi.fn();
     const subscribe = vi.spyOn(events, 'subscribe').mockImplementation((id, listener) => {
@@ -104,7 +106,7 @@ describe('session HTTP operations', () => {
       }
       expect(subscribe).not.toHaveBeenCalled();
     } finally {
-      application.shutdown();
+      await application.shutdown();
     }
   });
 
@@ -135,7 +137,7 @@ describe('session HTTP operations', () => {
     app = new Hono();
     app.onError(errorHandler);
     app.route('/api/v1/sessions', createSessionRoutes({
-      sessions: services.sessions, worlds: services.worlds, events: new EventHub(), shutdownSignal: shutdown.signal,
+      sessions: services.sessions, worlds: services.worlds, events, shutdownSignal: shutdown.signal,
     }));
     const first = await data<Page<SessionSummary>>(await request('GET', '/sessions?worldId=world&limit=2'));
     expect(first.items.map(item => item.id)).toEqual(['c', 'b']);

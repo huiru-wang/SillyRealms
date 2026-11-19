@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { openDatabase } from '../database/connection.js';
+import { openDatabase } from '../infrastructure/database/connection.js';
 import { createServices } from '../services.js';
 import { unzipBytes, worldCardFixture, zipBytes } from '../modules/worlds/test-fixtures.js';
 import { createImportWorld, type ImportWorld } from './import-world.js';

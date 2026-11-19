@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import type { JsonObject, JsonValue } from '../../database/connection.js';
+import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
 import type {
   appendEntrySchema, createSessionSchema, entryListSchema, metricsSchema,
   sessionListSchema, updateEntrySchema, updateSessionSchema,

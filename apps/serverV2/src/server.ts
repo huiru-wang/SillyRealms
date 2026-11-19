@@ -4,9 +4,9 @@ import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createApp, type AppOptions } from './app.js';
-import { openDatabase } from './database/connection.js';
-import { bindTransaction } from './database/transaction.js';
-import { EventHub } from './events/event-hub.js';
+import { openDatabase } from './infrastructure/database/connection.js';
+import { bindTransaction } from './infrastructure/database/transaction.js';
+import { EventHub } from './infrastructure/events/event-hub.js';
 import type { CredentialStore } from './modules/credentials/service.js';
 import { createServices } from './services.js';
 import { createUsecases } from './usecases.js';
@@ -33,7 +33,7 @@ export async function startServer({
   const database = openDatabase(databasePath ?? join(root, 'database.sqlite'));
   try {
     const services = createServices(database, root, credentialStore);
-    const usecases = createUsecases({ services, transaction: bindTransaction(database) });
+    const usecases = createUsecases({ services, transaction: bindTransaction(database), events });
     usecases.initialize();
     const app = createApp({ events, services, usecases, canAccessSession, studioOrigin });
     const server = createServer(getRequestListener(app.fetch, { overrideGlobalObjects: false }));
@@ -42,15 +42,14 @@ export async function startServer({
       server.listen(port, '127.0.0.1');
       await listening;
     } catch (error) {
-      app.shutdown();
+      await app.shutdown();
       throw error;
     }
 
     let closing: Promise<void> | undefined;
     const close = (): Promise<void> => {
       if (closing) return closing;
-      app.shutdown();
-      closing = new Promise<void>((resolveClose, reject) => {
+      closing = app.shutdown().finally(() => new Promise<void>((resolveClose, reject) => {
         // Finish SSE before releasing the shared database; bound shutdown for stalled clients.
         const deadline = setTimeout(() => server.closeAllConnections(), 3500);
         deadline.unref();
@@ -59,7 +58,7 @@ export async function startServer({
           if (error) reject(error); else resolveClose();
         });
         server.closeIdleConnections();
-      }).finally(() => database.close());
+      })).finally(() => database.close());
       return closing;
     };
     return { server, events, services, usecases, close };

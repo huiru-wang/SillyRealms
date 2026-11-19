@@ -2,7 +2,9 @@
 
 ## 调用边界
 
-HTTP适配器位于 `apps/serverV2/src/routes/`，可调用业务模块Service或应用usecase的读写能力。单域操作直接调用Service，跨模块写编排及导入导出流程交给usecases；跨模块只读展示投影可在route组合。业务模块位于modules/<name>，唯一出口是service.ts，Repository 及 parser/validation/assets/archive/files、预设 card/default 等内部实现私有。Service跨模块只依赖Reader只读能力；usecase不写SQL，只借用绑定到共享连接的同步事务能力，Repository保留本域必要原子性。
+HTTP适配器位于 `apps/serverV2/src/routes/`，可调用业务模块Service或应用usecase的读写能力。单域操作直接调用Service，跨模块写编排及导入导出流程交给usecases；跨模块只读展示投影可在route组合。业务模块位于modules/<name>，唯一出口是service.ts，Repository 及 parser/validation/assets/archive/files、预设 card/default 等内部实现私有。Service跨模块只依赖Reader只读能力；usecase不写SQL，需要事务的用例只接收绑定到共享连接的同步事务能力，Repository保留本域必要原子性。叙事用例不接收事务能力，用户与助手分别保存。
+
+数据库连接与结构、EventHub/SSE、pi 模型适配分别位于 `src/infrastructure/database/`、`src/infrastructure/events/`、`src/infrastructure/pi/`。叙事生命周期位于 `src/usecases/narrative/`，不进入 transport 或基础设施；pi 适配不读写业务存储、不发布业务事件。
 
 Service 公共输入输出采用显式驼峰领域类型，存储行到领域对象的转换位于 Service，存储行及列名留在模块内部。HTTP 使用 V2 管理接口契约；跨模块展示字段由 route 调属主 Service 组合，不放回 Repository JOIN 或相互依赖的 Service 展示逻辑。作者 JSON、状态键及文档协议里的键不做递归改名。
 
@@ -39,13 +41,13 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 
 - 单项读取、创建及更新的 data 为 `{ item }`，包括会话详情和预设默认模板；删除为 `{ id }`。
 - 世界、预设、模型、会话列表返回 `{ items, hasMore, nextCursor }`；标签、条目和线性历史返回 `{ items }`。
-- 创建返回 201，普通成功返回 200。删除也返回 200 包络，不使用无正文的 204。
+- 资源创建返回 201，叙事受理返回 202，普通成功返回 200。删除也返回 200 包络，不使用无正文的 204。
 - 健康检查返回成功包络，data 为 `{ ok: true }`。
 - 失败保留正确的 HTTP 4xx/5xx 状态，不用 200 表示失败。
 - 错误码、中文描述及 HTTP 状态统一定义在 `src/errors.ts`。可公开的参数详情并入 errorMessage，不新增 detail/error 等字段。
 - 未知异常统一为 INTERNAL_ERROR/500，不暴露原始 SQL、路径、堆栈或回调异常内容。
 
-普通JSON写入请求使用 `Content-Type: application/json`（也接受 application/*+json），正文必须是 JSON 对象。普通结构字段使用 Service 的 camelCase 命名。世界卡 data 及预设导入导出文件保留各自文档协议；预设 CRUD 使用领域配置结构。业务校验由 Service 完成。
+普通JSON写入请求使用 `Content-Type: application/json`（也接受 application/*+json），正文必须是 JSON 对象。普通结构字段使用 Service 的 camelCase 命名。世界卡 data 及预设导入导出文件保留各自文档协议；预设 CRUD 使用领域配置结构。业务校验由对应 Service 或用例完成。叙事 stop 与模型 test 不要求请求正文。
 
 | 情况 | HTTP | 常用 errorCode |
 |---|---|---|
@@ -77,6 +79,8 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 | GET / PATCH / DELETE | /presets/:id | 预设读取 / 修改 / 删除 |
 | GET / POST | /api-model-configs | 模型配置列表 / 创建 |
 | GET / PATCH / DELETE | /api-model-configs/:id | 模型配置读取 / 修改 / 删除 |
+| POST | /api-model-configs/:id/test | 使用已保存配置执行一次短文本连通性检测 |
+| GET | /providers/models | pi 静态模型目录与消息顺序兼容性 |
 | GET / PATCH | /app-settings | 读取 / 更新应用默认预设、模型 |
 
 预设列表支持 type、limit、cursor；模型配置列表支持 limit、cursor，也保留显式 offset 分页。cursor 与 offset 不能同时使用；游标绑定对应资源及筛选条件，不能挪到其他查询。Service 只接收类型化分页参数，HTTP 负责游标编码。
@@ -87,7 +91,11 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 
 默认模板接口返回 `data.item`，没有 ID/revision，不创建持久化记录。导入仍接收便携文档 `{name,description,config_json:{schemaVersion:3,nodes},context_strategy,model_parameters}`，导入成功返回领域详情。导出使用同一便携文档协议，当前名称加 .json，排除 ID、revision、时间戳；GET/HEAD 下载成功不套包络。文件协议转换属于 presets 模块，不影响 CRUD 配置结构。
 
-模型创建接收 `{name,providerId,modelId,apiKey}`，ID 由服务端生成；PATCH 接收上述字段的非空子集，省略 apiKey 保留原值，更换 providerId 必须同时提供新 apiKey。客户端不能传 credentialRef。响应为 `{id,name,providerId,modelId,credentialStatus,createdAt,updatedAt}`，不返回密钥或引用。credentialStatus 为 configured（凭据存在）、missing（未保存或不属于当前存储）、unavailable（存储不可访问），不代表已验证模型调用。无 catalog 或连接测试接口。
+模型创建接收 `{name,providerId,modelId,apiKey}`，ID 由服务端生成；PATCH 接收上述字段的非空子集，省略 apiKey 保留原值，更换 providerId 必须同时提供新 apiKey。客户端不能传 credentialRef。响应为 `{id,name,providerId,modelId,credentialStatus,createdAt,updatedAt}`，不返回密钥或引用。credentialStatus 为 configured（凭据存在）、missing（未保存或不属于当前存储）、unavailable（存储不可访问），不代表已验证模型调用。
+
+`GET /providers/models` 返回 `data.items`，每项为 `{providerId,modelId,name,contextWindow,maxTokens,reasoning,narrativeCompatible,supportsMidConversationSystemMessages}`，来自固定版本 pi 的内置目录，不保存到模型配置表。`narrativeCompatible` 表示能保持包含中途 system 节点的叙事消息顺序；标记为 false 的模型，在实际编译结果没有中途 system 消息时仍可调用。未知模型不会自动替换。
+
+`POST /api-model-configs/:id/test` 只读取已保存模型配置及其凭据，发起一次短文本调用，传给 pi 的 maxTokens 为 min(64, model.maxTokens)，整体等待上限 30 秒，不自动重试。成功返回 `data:{connected:true,providerId,modelId,durationMs,usage}`；usage 为标准 token 字段或 null。失败使用普通错误包络，不返回 `connected:false`、供应商原文、模型回复或凭据引用。此接口不创建会话、entry 或 run，也不修改 credentialStatus；检测成功不保证任意叙事消息顺序都兼容。
 
 凭据由独立 credentials 模块保存，默认适配 macOS Keychain，引用按 V2 dataRoot 隔离，数据库只存引用。其他平台默认返回存储不可用，可由启动装配注入 CredentialStore。模型用例协调凭据和配置：写入数据库失败时补偿凭据；删除先检查数据库引用并删记录，再删凭据。凭据清理失败返回 CREDENTIAL_DELETE_FAILED/503，可重试相同 DELETE；补偿失败返回 CREDENTIAL_COMPENSATION_FAILED/500。跨资源流程不是数据库强事务，未提供进程崩溃恢复保证。
 
@@ -142,6 +150,8 @@ PATCH 仅接受 name、tags、defaultPresetId、defaultApiModelConfigId 的非�
 | GET / PATCH | /sessions/:id/entries/:entryId | 单条读取 / 正文或 extData 更新 |
 | GET | /sessions/:id/history | 当前完整线性历史 |
 | GET | /sessions/:id/runs/:runId/entries | 按 runId 分组读取条目 |
+| POST | /sessions/:id/runs | 保存用户消息并受理一次叙事生成 |
+| POST | /sessions/:id/runs/:runId/stop | 显式停止当前匹配的叙事生成 |
 | GET / HEAD | /sessions/:id/events | SSE 事件连接 / 仅检查响应头 |
 
 会话列表支持 worldId、limit、cursor，不提供关键词搜索。route 解析游标位置后调用 SessionService；列表项的 worldName/cover 通过 WorldService 在 route 组合，同一请求缓存重复世界读取。SessionService 只返回自身的 Session 领域对象。条目列表支持 afterSeq、limit。整数 query 必须是合法安全整数，再由 Service 校验允许范围。
@@ -150,9 +160,30 @@ PATCH 仅接受 name、tags、defaultPresetId、defaultApiModelConfigId 的非�
 
 本期只做线性追加。parentId 可省略，默认当前 tip；显式值不匹配时返回 TIP_CONFLICT。新条目、seq 与 tip 的原子更新归 SessionRepository；没有 setTip 或分支切换接口。
 
-SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt/updatedAt，payload 与状态内容保持原键。HTTP 追加条目不接受 metrics，也不提供编辑计量的 HTTP 路由；计量由进程内 SessionService 写入。runId 只用于条目分组，本期没有 Run 执行路由。
+SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt/updatedAt，payload 与状态内容保持原键。HTTP 追加条目不接受 metrics，也不提供编辑计量的 HTTP 路由；计量由进程内 SessionService 写入。runId 关联本轮已保存的用户消息和可选助手消息；按 runId 读取 entries 不是查询持久化运行状态。
 
 会话范围的读取、修改、状态及 SSE 入口先确认真实会话，再执行可选访问检查；拒绝与不存在统一返回 SESSION_NOT_FOUND。异步检查结束后先检查停机，再确认会话仍存在。配置了访问检查时，会话列表只返回获准条目。
+
+## 叙事提交与停止
+
+`POST /sessions/:id/runs` 正文为：
+
+```json
+{
+  "input": { "text": "走进庭院，观察门口的守卫。" },
+  "expectedTipEntryId": null
+}
+```
+
+`expectedTipEntryId` 必填；没有历史时为 null，有历史时传最后读取的 tip。输入必须有非空白内容，保存原始文本。请求不接受模型或预设覆盖、requestId、工具列表、prepare 参数。会话存在性、权限、输入、tip 与同会话并发校验失败时，使用 HTTP 错误包络且不追加用户消息；同会话已有运行返回 RUN_ALREADY_ACTIVE/409，tip 过期返回 TIP_CONFLICT/409。
+
+受理时先独立保存用户消息，再准备上下文和模型请求。202 的 data 为 `{runId,userEntryId,assistantEntryId,capabilities:{historyPolicy:"full",postprocess:false}}`。此时 userEntryId 已持久化，assistantEntryId 仅预分配；202 不代表生成成功。之后的配置、历史、预算、凭据或模型错误通过 `run.failed` 事件返回，保留用户消息。
+
+助手正常完成、失败或停止时独立保存已收到的非空白正文，包括半截输出；没有正文就只保留用户消息。助手写入失败不回滚用户，外部追加导致 tip 变化时不覆盖新消息。成功或失败事件中的 assistantEntryId 非 null 才表示助手消息已保存；部分正文成为后续轮次的历史。正文与计量的具体契约见 [叙事执行](server-v2-narrative.md)。
+
+`POST /sessions/:id/runs/:runId/stop` 返回 `data:{runId,stopping:true}`。仅匹配该会话当前内存运行；不匹配或已结束返回 RUN_NOT_FOUND/404。返回值表示已请求停止，最终以 `run.stopped` 或保存失败时的 `run.failed` 为准。断开 POST 或 SSE 都不会代替显式 stop。
+
+客户端应先连接 `/sessions/:id/events` 再提交；事件可能早于 POST 响应，按 runId/messageId 关联。断线后重新读取 entries/history 判断已保存内容，不自动重发提交。没有运行状态查询、事件回放、恢复、自动重试或请求去重接口；当前 StudioV2 仍只接入管理和作者预览，未挂载叙事运行 UI。
 
 ## 完整状态快照
 
@@ -170,7 +201,7 @@ PUT 正文必须且只能包含 state，例如：
 
 GET 和 PUT 的成功 data 均为 `{ item: 状态值 }`。PUT 完整替换该 scope 快照；它不是按路径合并接口。消息 GET 返回沿前驱继承后的有效快照；PUT 写入的是指定条目本身。消息 null 恢复继承，空数组表示明确的空快照；有效的 null 与消息不存在分别返回成功和 404。
 
-状态读取与前驱继承留在StateService，PUT经set-state用例调用属主World/Session Service。世界卡导入仅做状态定义的静态校验；状态规则执行、按路径PATCH和模型输出状态更新协议尚未迁入。当前 scope GET/PUT 与旧 SDK 的聚合 state.read/path PATCH 是不同契约，不能把此次字段适配理解为 Studio 已完整切换 V2。当前路由不增加 Run/State 并发锁或时序保证。
+状态读取与前驱继承留在StateService，PUT经set-state用例调用属主World/Session Service。世界卡导入仅做状态定义的静态校验；状态更新规则执行、按路径PATCH和模型输出状态更新协议尚未迁入。当前 scope GET/PUT 与旧 SDK 的聚合 state.read/path PATCH 是不同契约，不能把此次字段适配理解为 Studio 已完整切换 V2。当前路由不增加 Run/State 并发锁或时序保证。
 
 ## SSE 与下载例外
 

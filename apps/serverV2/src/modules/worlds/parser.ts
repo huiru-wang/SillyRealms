@@ -1,5 +1,5 @@
 import type { StateScope } from '@sillyrealms/sdk/state-validation';
-import type { JsonObject, JsonValue } from '../../database/connection.js';
+import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
 import type { CreateWorld, World } from './types.js';
 import { CardError, validateCard, type WorldCard } from './validation.js';
 

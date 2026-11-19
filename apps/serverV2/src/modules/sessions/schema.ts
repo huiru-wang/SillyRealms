@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { JsonObject, JsonValue } from '../../database/connection.js';
+import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
 
 export const identifier = z.string().min(1).refine(value => value === value.trim(), 'Identifiers cannot have surrounding whitespace');
 const jsonObject = z.custom<JsonObject>(value => value !== null && typeof value === 'object' && !Array.isArray(value));

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { openDatabase } from '../../database/connection.js';
+import { openDatabase } from '../../infrastructure/database/connection.js';
 import { createServices, type Services } from '../../services.js';
 import type { SessionService } from '../sessions/service.js';
 import { narrativePreset } from '../../testing/fixtures.js';
@@ -87,5 +87,30 @@ describe('read-only scope snapshots and inheritance', () => {
     expect(() => state.getMessage('one', 'child')).toThrow('INVALID_PARENT_CHAIN');
     db.prepare('UPDATE entries SET parent_id=? WHERE id=?').run('child', 'child');
     expect(() => state.getMessage('one', 'child')).toThrow('INVALID_PARENT_CHAIN');
+  });
+
+  it('builds read-only views at an explicit predecessor and never initializes missing message state', () => {
+    expect(state.getViews({ worldId: 'world', sessionId: 'one', entryId: null })).toEqual({
+      global: { day: 1 }, session: { reputation: 0 }, message: {},
+    });
+    append('root');
+    sessions.setEntryState('one', 'root', [{ key: 'coins', value: 3 }]);
+    append('child');
+    const views = state.getViews({ worldId: 'world', sessionId: 'one', entryId: 'child' });
+    expect(views.message).toEqual({ coins: 3 });
+    expect(state.evaluateWhen('getState("coins") === 3 && getState("day") === 1', views)).toBe(true);
+    views.message.coins = 99;
+    expect(state.getViews({ worldId: 'world', sessionId: 'one', entryId: 'child' }).message).toEqual({ coins: 3 });
+    expect(sessions.getEntryState('one', 'child')).toBeNull();
+    sessions.setEntryState('one', 'child', []);
+    expect(state.getViews({ worldId: 'world', sessionId: 'one', entryId: 'child' }).message).toEqual({});
+  });
+
+  it('rejects malformed or duplicate message-state roots instead of interpreting them', () => {
+    append('root');
+    sessions.setEntryState('one', 'root', [{ key: 'coins', value: 1 }, { key: 'coins', value: 2 }]);
+    expect(() => state.getViews({ worldId: 'world', sessionId: 'one', entryId: 'root' })).toThrow('INVALID_NARRATIVE_STATE');
+    sessions.setEntryState('one', 'root', [1]);
+    expect(() => state.getViews({ worldId: 'world', sessionId: 'one', entryId: 'root' })).toThrow('INVALID_NARRATIVE_STATE');
   });
 });
