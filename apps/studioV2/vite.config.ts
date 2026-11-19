@@ -1,12 +1,12 @@
 import {defineConfig,loadEnv,type Plugin} from 'vite';
 import react from '@vitejs/plugin-react';
 import {resolve} from 'node:path';
+import {allowsEntry} from './entry-policy';
 
 function onlyEntry(preview:boolean):Plugin {
  const filter=(req:{url?:string},res:{statusCode:number;end:(text:string)=>void},next:()=>void)=>{
   const pathname=new URL(req.url??'/', 'http://localhost').pathname;
-  const allowed=preview?'/world-component.html':'/index.html';
-  if((preview&&pathname.startsWith('/api/'))||(pathname.endsWith('.html')&&pathname!==allowed)||(preview&&pathname==='/')){res.statusCode=404;res.end('Not found');return;}
+  if(!allowsEntry(pathname,preview)){res.statusCode=404;res.end('Not found');return;}
   next();
  };
  return {name:'v2-entry-boundary',configureServer(server){server.middlewares.use(filter);},configurePreviewServer(server){server.middlewares.use(filter);}};
@@ -24,6 +24,6 @@ export default defineConfig(({mode})=>{
    proxy:preview?undefined:{'/api':env.SR_STUDIO_V2_SERVER_URL??'http://127.0.0.1:3001'}},
   preview:{host:'127.0.0.1',port:preview?5177:5176,strictPort:true,headers:preview?{'Content-Security-Policy':csp+'; frame-ancestors '+studio}:undefined,
    proxy:preview?undefined:{'/api':env.SR_STUDIO_V2_SERVER_URL??'http://127.0.0.1:3001'}},
-  build:{outDir:preview?'dist-preview':'dist',rollupOptions:{input:resolve(process.cwd(),preview?'world-component.html':'index.html')}},
+  build:{outDir:preview?'dist-preview':'dist',rollupOptions:{input:preview?{stage:resolve(process.cwd(),'frame.html'),world:resolve(process.cwd(),'world-component.html')}:resolve(process.cwd(),'index.html')}},
  };
 });

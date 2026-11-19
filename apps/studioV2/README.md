@@ -17,3 +17,5 @@ StudioV2 默认 http://127.0.0.1:5176，API 默认 http://127.0.0.1:3001。代�
 范围和数据行为见 [管理工作区](../../docs/runtime/studio-v2-management.md)，接口见 [ServerV2 HTTP](../../docs/runtime/server-v2-http.md)，视觉规范见 [UI SPEC](../../docs/design/UI-SPEC.md)。
 
 作者组件预览默认使用独立来源 http://127.0.0.1:5177，管理和静态内容不依赖它。生产构建分别输出 dist 与 dist-preview，必须分开来源部署；来源配置和 CSP 约束见管理工作区文档。
+
+隔离服务同时提供 `world-component.html` 与 `frame.html`，均进入 dist-preview。ServerV2 `/api/v1/runtime/config` 通过 SERVER_V2_STAGE_ORIGIN 发布完整舞台来源，SERVER_V2_DEBUG=true 开启公开 debug 标志。当前仅提供舞台文档入口，管理页尚未挂载新会话运行 UI。

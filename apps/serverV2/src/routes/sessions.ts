@@ -145,12 +145,6 @@ export function createSessionRoutes({ events, sessions, worlds, canAccessSession
     return success(c, { items: sessions.getHistory(id) });
   });
 
-  routes.get('/:id/runs/:runId/entries', async c => {
-    const id = c.req.param('id');
-    await access(id, c.req.raw);
-    return success(c, { items: sessions.listRunEntries(id, c.req.param('runId')) });
-  });
-
   routes.get('/:id/events', async c => {
     const id = c.req.param('id');
     await access(id, c.req.raw);

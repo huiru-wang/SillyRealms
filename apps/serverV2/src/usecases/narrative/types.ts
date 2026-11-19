@@ -20,7 +20,6 @@ export type AcceptedNarrative = {
   userEntryId: string;
   /** Reserved at acceptance; terminal events identify whether this entry was actually saved. */
   assistantEntryId: string;
-  capabilities: { historyPolicy: 'full'; postprocess: false };
 };
 
 export type NarrativeDependencies = {

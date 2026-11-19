@@ -1,10 +1,11 @@
 import { transaction } from '../../infrastructure/database/transaction.js';
 import type { DatabaseSync } from 'node:sqlite';
+import { readStoredMetrics } from './schema.js';
 import { AppError } from '../../errors.js';
 import { encodeJson, type JsonObject, type JsonValue } from '../../infrastructure/database/connection.js';
 import type {
   AppendEntryInput, CreateSessionInput, EntryListOptions, EntryMetrics,
-  SessionListOptions, UpdateEntryInput, UpdateSessionInput,
+  SessionListOptions, UpdateEntryInput, UpdateSessionInput, EntryRunListOptions, NarrativeOutcome,
 } from './types.js';
 
 export type SessionRow = {
@@ -46,7 +47,7 @@ function decodeEntry(row: Record<string, unknown>): EntryRow {
     payload: JSON.parse(String(row.payload)) as JsonObject,
     state: row.state === null ? null : JSON.parse(String(row.state)) as JsonValue[],
     ext_data: JSON.parse(String(row.ext_data)) as JsonObject,
-    metrics_json: row.metrics_json === null ? null : JSON.parse(String(row.metrics_json)) as EntryMetrics,
+    metrics_json: row.metrics_json === null ? null : readStoredMetrics(JSON.parse(String(row.metrics_json))),
     created_at: Number(row.created_at), updated_at: Number(row.updated_at),
   };
 }
@@ -159,12 +160,46 @@ export class SessionRepository {
       .all(sessionId, runId).map(decodeEntry);
   }
 
+  listEntryRuns(sessionId: string, options: EntryRunListOptions) {
+    const forward = options.afterSeq !== undefined;
+    const groups = this.#db.prepare(
+      'SELECT run_id, min(seq) AS first_seq, max(seq) AS last_seq FROM entries WHERE session_id=? GROUP BY run_id ' +
+      (forward ? 'HAVING max(seq)>? ORDER BY max(seq) ASC ' : 'HAVING min(seq)<? ORDER BY min(seq) DESC ') + 'LIMIT 6',
+    ).all(sessionId, forward ? options.afterSeq! : options.beforeSeq ?? Number.MAX_SAFE_INTEGER);
+    const selected = groups.slice(0, 5);
+    if (!selected.length) return { items: [], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null };
+    const entries = this.#db.prepare('SELECT * FROM entries WHERE session_id=? AND run_id IN (' +
+      selected.map(() => '?').join(',') + ') ORDER BY seq').all(sessionId, ...selected.map(row => String(row.run_id))).map(decodeEntry);
+    const items = selected.map(row => ({ runId: String(row.run_id), firstSeq: Number(row.first_seq),
+      lastSeq: Number(row.last_seq), entries: entries.filter(entry => entry.run_id === row.run_id) }));
+    // A run may gain another entry later; forward progress is its last saved seq, never its first seq.
+    return { items, hasMore: groups.length > 5,
+      nextBeforeSeq: forward || groups.length <= 5 ? null : items.at(-1)!.firstSeq,
+      nextAfterSeq: Math.max(...items.map(item => item.lastSeq)) };
+  }
+
+  listMetrics(sessionId: string): EntryMetrics[] {
+    return this.#db.prepare('SELECT metrics_json FROM entries WHERE session_id=? AND metrics_json IS NOT NULL')
+      .all(sessionId).map(row => readStoredMetrics(JSON.parse(String(row.metrics_json))));
+  }
+
+  setNarrativeOutcome(sessionId: string, entryId: string, outcome: NarrativeOutcome): EntryRow {
+    return transaction(this.#db, () => {
+      const current = this.#requireEntry(sessionId, entryId);
+      if (current.type !== 'message' || current.role !== 'user') throw new AppError('INVALID_REQUEST');
+      this.#db.prepare('UPDATE entries SET ext_data=?,updated_at=? WHERE session_id=? AND id=?')
+        .run(encodeJson({ ...current.ext_data, narrative: outcome }, 'object'), Date.now(), sessionId, entryId);
+      return this.#requireEntry(sessionId, entryId);
+    });
+  }
+
   updateEntry(sessionId: string, entryId: string, patch: UpdateEntryInput): EntryRow {
     return transaction(this.#db, () => {
       const current = this.#requireEntry(sessionId, entryId);
       if (patch.payload === undefined && patch.extData === undefined) return current;
       const payload = encodeJson(patch.payload ?? current.payload, 'object');
-      const ext = encodeJson(patch.extData ?? current.ext_data, 'object');
+      const ext = encodeJson(patch.extData === undefined ? current.ext_data : { ...patch.extData,
+        ...(current.ext_data.narrative === undefined ? {} : { narrative: current.ext_data.narrative }) }, 'object');
       const now = Date.now();
       this.#db.prepare('UPDATE entries SET payload=?,ext_data=?,updated_at=? WHERE session_id=? AND id=?')
         .run(payload, ext, now, sessionId, entryId);

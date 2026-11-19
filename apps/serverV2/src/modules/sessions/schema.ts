@@ -19,7 +19,7 @@ export const metricsSchema = z.object({
   requests: z.array(z.object({
     requestId: identifier,
     modelId: identifier,
-    status: z.enum(['completed', 'failed', 'cancelled']),
+    provider: identifier.nullable(),
     usage: usageSchema.nullable(),
     durationMs: duration.optional(),
     firstTextMs: duration.optional(),
@@ -46,18 +46,19 @@ export const updateSessionSchema = z.object({
   presetId: identifier.optional(), apiModelConfigId: identifier.optional(),
   title: z.string().nullable().optional(),
 }).strict();
+const editableExtData = jsonObject.refine(value => !Object.hasOwn(value, 'narrative'), 'narrative 由服务端维护');
 const appendFields = {
   id: identifier.optional(), parentId: identifier.nullable().optional(), runId: identifier,
   timestamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   payload: jsonObject, state: jsonArray.nullable().optional(),
-  extData: jsonObject.optional(), metrics: metricsSchema.nullable().optional(),
+  extData: editableExtData.optional(), metrics: metricsSchema.nullable().optional(),
 };
 export const appendEntrySchema = z.discriminatedUnion('type', [
   z.object({ ...appendFields, type: z.literal('message'), role: z.enum(['user', 'assistant']) }).strict(),
   z.object({ ...appendFields, type: z.literal('compaction'), role: z.null() }).strict(),
 ]);
 export const updateEntrySchema = z.object({
-  payload: jsonObject.optional(), extData: jsonObject.optional(),
+  payload: jsonObject.optional(), extData: editableExtData.optional(),
 }).strict();
 export const sessionListSchema = z.object({
   worldId: identifier.optional(),
@@ -71,3 +72,33 @@ export const entryListSchema = z.object({
   afterSeq: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
   limit: z.number().int().min(1).max(1000).default(100),
 }).strict();
+
+export const narrativeStopReasonSchema = z.enum([
+  'cancelled', 'server_shutdown', 'provider_aborted', 'provider_error',
+  'provider_context_window_exceeded', 'model_not_found', 'model_capability_unsupported',
+  'credential_not_configured', 'credential_unavailable', 'context_budget_exceeded',
+  'invalid_context', 'output_incomplete', 'model_output_invalid', 'tool_execution_unsupported',
+  'message_persist_failed', 'tip_conflict', 'session_deleted', 'internal_error',
+]);
+export const narrativeOutcomeSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('completed'), finishedAt: z.number().int().nonnegative() }).strict(),
+  z.object({ status: z.literal('stopped'), stopReason: narrativeStopReasonSchema,
+    finishedAt: z.number().int().nonnegative() }).strict(),
+]);
+export const entryRunListSchema = z.object({
+  beforeSeq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  afterSeq: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+}).strict().refine(value => value.beforeSeq === undefined || value.afterSeq === undefined,
+  'beforeSeq 与 afterSeq 不能同时提供');
+
+/** Legacy metrics are normalized on read; all new writes use the strict current schema. */
+export function readStoredMetrics(value: unknown) {
+  if (value && typeof value === 'object' && 'requests' in value && Array.isArray(value.requests)) {
+    return metricsSchema.parse({ ...value, requests: value.requests.map((request: Record<string, unknown>) => {
+      const result = { ...request, provider: request.provider ?? null };
+      Reflect.deleteProperty(result, 'status');
+      return result;
+    }) });
+  }
+  return metricsSchema.parse(value);
+}

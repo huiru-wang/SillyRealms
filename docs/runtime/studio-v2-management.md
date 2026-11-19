@@ -48,14 +48,16 @@ ServerV2 默认为 127.0.0.1:3001，数据目录 runtime/server-v2；可配置 S
 
 ## 作者内容预览与部署
 
-预览入口 `world-component.html` 使用独立来源，默认 `http://127.0.0.1:5177`。`dev:world-preview-v2` 仅用于作者介绍/开局预览；未启动它时管理和静态内容仍可用，组件显示加载错误及重试。它不启动 runtime 或会话 Stage。
+预览入口 `world-component.html` 使用独立来源，默认 `http://127.0.0.1:5177`。`dev:world-preview-v2` 提供作者介绍/开局预览及隔离的 frame.html 舞台文档；未启动它时管理和静态内容仍可用，组件显示加载错误及重试。提供静态舞台入口不等于接通会话运行 UI；当前管理页仍不挂载 SessionHost。
 
-`pnpm --filter @sillyrealms/studio-v2 build` 分别构建 `dist`（管理）和 `dist-preview`（预览）。两个目录必须部署在不同来源；不能把预览文档放回管理来源。配置如下：
+`pnpm --filter @sillyrealms/studio-v2 build` 分别构建 `dist`（管理）和 `dist-preview`（world-component.html 与 frame.html 隔离文档）。两个目录必须部署在不同来源；不能把预览文档放回管理来源。配置如下：
 
 | 配置 | 用途 |
 |---|---|
 | VITE_STUDIO_ORIGIN | 预览只信任的宿主来源，默认 http://127.0.0.1:5176 |
 | VITE_WORLD_PREVIEW_ORIGIN | 管理页加载预览的来源，默认 http://127.0.0.1:5177 |
+| SERVER_V2_STAGE_ORIGIN | runtime/config 对外返回的舞台 origin，默认 http://127.0.0.1:5177；与隔离部署地址一致 |
+| SERVER_V2_DEBUG | true 时 runtime/config 返回 debug:true，默认 false |
 | SERVER_V2_STUDIO_ORIGIN | API 接受的 Studio 来源，应与 VITE_STUDIO_ORIGIN 一致 |
 | SR_STUDIO_V2_SERVER_URL | 管理页 /api 反向代理地址，预览不配置 API 代理 |
 
@@ -68,3 +70,5 @@ ServerV2 默认为 127.0.0.1:3001，数据目录 runtime/server-v2；可配置 S
 ## 本轮验证边界
 
 只执行函数级测试、TypeScript 类型检查和服务端架构 lint。不启动开发服务、不访问真实凭据、不执行 HTTP、浏览器或模型调用链路测试。前端函数测试覆盖预设转换、世界资源地址、预览来源/权限、状态投影、下载与编译缓存；服务端函数测试覆盖世界摘要/版本/组件读取、导入导出与文件清理、会话身份、状态和数据库迁移。预览配置只做函数加载检查；未执行真实浏览器隔离、视觉或媒体播放验收。
+
+ServerV2 的 `/api/v1/runtime/config` 使用 `{stage:{origin,entryPath},debug}`，不再传单独 port。StudioV2 stageURL 按完整 origin 构造 frame.html，校验隔离与 HTTPS，并保留 hostOrigin/nonce。Vite 的 world-preview 模式开放 frame.html/world-component.html 并一同打入 dist-preview，禁止 API 代理；管理模式拒绝这两个 HTML 入口。保留的 host 已更新配置路径，其他会话 transport/UI 的新叙事接口适配仍未挂载，本轮不声称可直接运行完整会话舞台。

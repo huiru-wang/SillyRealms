@@ -327,7 +327,7 @@ export function SessionHost({id}:{id:string}) {
   useEffect(()=>{
     const abort=new AbortController();
     resetStageConnection();setStageSource(null);setStageError('');debugRef.current=false;
-    void api('v1/runtime/web-config',{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(10000)])}).then(config=>{
+    void api('v1/runtime/config',{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(10000)])}).then(config=>{
       if(abort.signal.aborted)return;
       debugRef.current=config.debug===true;
       const mountNonce=nonce+'.'+stageAttempt,url=stageURL(config,location.origin,mountNonce);

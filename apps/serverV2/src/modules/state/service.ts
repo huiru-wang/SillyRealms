@@ -2,17 +2,23 @@ import type { JsonObject, JsonValue } from '../../infrastructure/database/connec
 import { AppError } from '../../errors.js';
 import type { SessionReader } from '../sessions/service.js';
 import type { WorldReader } from '../worlds/service.js';
-import { isSafeStateKey, validateStateJson } from '@sillyrealms/sdk/state-validation';
+import { validateStateJson } from '@sillyrealms/sdk/state-validation';
 import { evaluateWhen, type StateViews } from './when.js';
+import { parseStatePath, prepareStatePatch } from './patch.js';
+import { messageValues, replaceMessageValue } from './snapshot.js';
+import type { PreparedStatePatch, StateUpdate } from './types.js';
 
 export type { StateViews } from './when.js';
+export type { PreparedStatePatch, StateUpdate, StateWriteResult, StateEvent } from './types.js';
+export type { StateDefinition, StateDiagnostic, StateSchema, StateScope, StateValidationCode } from '@sillyrealms/sdk/state-validation';
+export { StateValidationError } from '@sillyrealms/sdk/state-validation';
 
 function identifier(value: string): string {
   if (typeof value !== 'string' || !value.trim() || value !== value.trim()) throw new AppError('INVALID_STATE_OWNER');
   return value;
 }
 
-/** Read-only scope access and inheritance; owning modules persist their state columns. */
+/** Read-only scope access, inheritance and field preparation; owners persist their columns. */
 export class StateService {
   readonly #worlds: WorldReader;
   readonly #sessions: SessionReader;
@@ -71,23 +77,40 @@ export class StateService {
     return this.getMessage(sessionId, entryId);
   }
 
+  prepareGlobalPatch(worldId: string, update: StateUpdate): PreparedStatePatch<JsonObject> {
+    const world = this.#worlds.require(identifier(worldId));
+    return prepareStatePatch(world.state, world.stateDefinition, 'global', update);
+  }
+
+  prepareSessionPatch(sessionId: string, update: StateUpdate): PreparedStatePatch<JsonObject> {
+    const session = this.#sessions.require(identifier(sessionId));
+    const world = this.#worlds.require(session.worldId);
+    return prepareStatePatch(session.state, world.stateDefinition, 'session', update);
+  }
+
+  prepareMessagePatch(sessionId: string, entryId: string, update: StateUpdate): PreparedStatePatch<JsonValue[] | null> {
+    const session = this.#sessions.require(identifier(sessionId));
+    const entry = this.#sessions.getEntry(session.id, identifier(entryId));
+    if (!entry) throw new AppError('ENTRY_NOT_FOUND');
+    const world = this.#worlds.require(session.worldId);
+    const root = parseStatePath(update.path, 'message')[0]!;
+    const inherited = this.getMessage(session.id, entry.id);
+    const prepared = prepareStatePatch(messageValues(inherited, root), world.stateDefinition, 'message', update);
+    // Ignored or equal writes must not materialize an inherited snapshot.
+    if (!prepared.changed) return { snapshot: entry.state, changed: false };
+    return { snapshot: replaceMessageValue(inherited!, root, prepared.snapshot[root]!), changed: true };
+  }
+
   /** Read an independent view at the supplied predecessor; never initialize opening state. */
   getViews(input: { worldId: string; sessionId: string; entryId: string | null }): StateViews {
     const global = this.requireGlobal(input.worldId), session = this.requireSession(input.sessionId);
     const entries = input.entryId === null ? [] : this.requireMessage(input.sessionId, input.entryId) ?? [];
-    const message: JsonObject = Object.create(null);
     try {
       validateStateJson(global); validateStateJson(session);
-      for (const entry of entries) {
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.key !== 'string'
-          || !isSafeStateKey(entry.key) || !Object.hasOwn(entry, 'value') || Object.hasOwn(message, entry.key)) {
-          throw new AppError('INVALID_NARRATIVE_STATE');
-        }
-        validateStateJson(entry.value);
-        message[entry.key] = entry.value;
-      }
+      const message = messageValues(entries);
+      for (const value of Object.values(message)) validateStateJson(value);
+      return structuredClone({ global, session, message });
     } catch { throw new AppError('INVALID_NARRATIVE_STATE'); }
-    return structuredClone({ global, session, message });
   }
 
   /** A bounded, read-only condition over the caller's captured views. */

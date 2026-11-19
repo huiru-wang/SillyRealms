@@ -76,7 +76,7 @@ finish_reason 描述一次模型输出结束，不代表数据库保存成功或
 
 ### 一次运行的总 usage
 
-每个已受理 run 在消息结算后发布一次 run.usage，随后发布唯一 run.completed 或 run.stopped。运行占位在发布结算事件前释放；终态后不再发送本轮增量或用量。SSE 连接继续存在。
+每个已受理 run 在消息保存及用户 entry 的结束结果结算后发布一次 run.usage，随后发布唯一 run.completed 或 run.stopped。运行占位在发布结算事件前释放；终态后不再发送本轮增量或用量。SSE 连接继续存在。
 
 usage 为以下对象或 null：
 
@@ -118,7 +118,7 @@ data: {"runId":"r-1","sessionId":"s-1","provider":"deepseek","model":"deepseek-f
 
 - system 编译产物仍使用 run.delta，messages 为单个 `{role:"system",delta:{content}}`，不落库、不推送。
 - 工具结果仍使用 run.delta，messages 为单个 `{role:"tool",delta:{tool_call_id,name,status,content,is_error}}`，由未来的业务执行层产生。当前不执行工具或保存 role=tool entry。
-- state.changed 使用 sessionId、scope、changes；scope=message 时必须有 messageId，scope=global/session 不以消息 ID 冒充所属对象。changes 为 `[{path,value}]` 的状态键赋值通知，不承诺路径 PATCH 或删除语义。
+- state.changed 引用 state 模块公开契约，data 为 `{path,scope,value}`，表示一个状态路径及其完整新值，与 SRStateAPI 的事件结构一致。当前仅保留类型，状态 PUT/PATCH 与叙事均不发布该事件，也不实现 global 广播。事件传输仍由会话 events 基建承载；状态 HTTP 契约见 [状态接口](server-v2-http.md#状态接口)。
 - action_suggestions.changed 使用 sessionId、runId、messageId、items；items 整组替换，空数组表示清空，不追加重复事件。
 
 预留扩展独立于模型 run 生命周期，未来可以在叙事终态后发布。定义类型不等于迁移摘要或扩展执行逻辑。
@@ -136,3 +136,9 @@ data: {"runId":"r-1","sessionId":"s-1","provider":"deepseek","model":"deepseek-f
 正常关闭先停止受理、取消活跃叙事，等待部分内容保存和 usage/终态发布，再关闭 SSE、HTTP 与数据库。关闭 HTTP 阶段超过 3.5 秒的剩余连接会被强制断开；close 可重复调用。强制杀进程不会经过结算，内存中尚未保存的助手内容可能丢失。
 
 验证使用有限模型流、内存或临时 SQLite、直接 EventHub 订阅和 ReadableStream reader，配合 typecheck/lint；不启动服务、访问真实模型或 Keychain，也不新增前端/HTTP 模拟环境。
+
+## 查询配合
+
+事件传输仍为 `/api/v1/sessions/:id/events`，没有 narrative/events、SSE id 或回放。轮次查询位于 narrative/runs：客户端重连后按已有 seq 补查新增 entries，并刷新原来运行中的那一轮的详情；退出后重新进入则读取最新 5 轮。未落库的断线分片无需补齐，现有最终 snapshot 保持替换语义。
+
+用户 entry 的 extData.narrative 保存 `{status,finishedAt,stopReason?}`，正常完成为 completed，其他结算为 stopped，stopReason 与本事件契约相同；写入失败不回滚已存消息。metrics.requests 改为 provider/modelId/requestId/usage/时间信息，不再存 status。公开事件结构没有因此改变。

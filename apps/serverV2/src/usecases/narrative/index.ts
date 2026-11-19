@@ -1,3 +1,4 @@
+import type { EntryRun, EntryRunListOptions } from '../../modules/sessions/service.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { AppError } from '../../errors.js';
@@ -69,7 +70,7 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
     }).finally(() => {
       if (active.get(sessionId) === run) active.delete(sessionId);
     });
-    return { runId, userEntryId, assistantEntryId, capabilities: { historyPolicy: 'full', postprocess: false } };
+    return { runId, userEntryId, assistantEntryId };
   };
 
   const stop = (sessionId: string, runId: string): { runId: string; stopping: true } => {
@@ -88,7 +89,28 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
     return closing;
   };
 
-  return { submit, stop, shutdown };
+  const projectRun = (sessionId: string, item: EntryRun) => {
+    const current = active.get(sessionId);
+    const user = item.entries.find(entry => entry.role === 'user');
+    const outcome = user ? dependencies.sessions.getNarrativeOutcome(user) : null;
+    const state = outcome ?? (current?.runId === item.runId
+      ? { status: current.controller.signal.aborted ? 'stopping' as const : 'running' as const }
+      : { status: 'unknown' as const });
+    return { ...item, ...state };
+  };
+  const list = (sessionId: string, options: EntryRunListOptions = {}) => {
+    const page = dependencies.sessions.listEntryRuns(sessionId, options);
+    return { ...page, items: page.items.map(item => projectRun(sessionId, item)),
+      activeRunId: active.get(sessionId)?.runId ?? null };
+  };
+  const get = (sessionId: string, runId: string) => {
+    const entries = dependencies.sessions.listRunEntries(sessionId, runId);
+    if (!entries.length) throw new AppError('RUN_NOT_FOUND');
+    return projectRun(sessionId, { runId, firstSeq: entries[0]!.seq, lastSeq: entries.at(-1)!.seq, entries });
+  };
+  const usage = (sessionId: string) => dependencies.sessions.recordedUsage(sessionId);
+
+  return { submit, stop, shutdown, list, get, usage };
 }
 
 export type NarrativeUsecases = ReturnType<typeof createNarrativeUsecases>;

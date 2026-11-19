@@ -1,6 +1,8 @@
+import type { NarrativeStopReason } from '../../modules/sessions/service.js';
 import type {
   ModelDelta, ModelFinishReason, ModelSnapshot,
 } from '../../infrastructure/model/client.js';
+import type { StateEvent } from '../../modules/state/service.js';
 
 export type RunEventFields = {
   runId: string;
@@ -20,13 +22,7 @@ export type AssistantDeltaMessage = {
   snapshot?: ModelSnapshot;
 };
 
-export type NarrativeStopReason =
-  | 'cancelled' | 'server_shutdown' | 'provider_aborted' | 'provider_error'
-  | 'provider_context_window_exceeded' | 'model_not_found' | 'model_capability_unsupported'
-  | 'credential_not_configured' | 'credential_unavailable' | 'context_budget_exceeded'
-  | 'invalid_context' | 'output_incomplete' | 'model_output_invalid'
-  | 'tool_execution_unsupported' | 'message_persist_failed' | 'tip_conflict'
-  | 'session_deleted' | 'internal_error';
+export type { NarrativeStopReason } from '../../modules/sessions/service.js';
 
 export type NarrativeUsage = {
   input_tokens: number;
@@ -56,10 +52,7 @@ export type NarrativeSettlement = {
   terminal: NarrativeTerminalEvent;
 };
 
-type StateValue = null | boolean | number | string | StateValue[] | { [key: string]: StateValue };
-type StateScope = { scope: 'global' | 'session'; messageId?: never } | { scope: 'message'; messageId: string };
-
-/** Reserved wire shapes only: no tools, state writes or suggestions are executed in this version. */
+/** Reserved wire shapes only; narrative tools, state updates and suggestions are not produced. */
 export type ReservedNarrativeEvent =
   | { event: 'run.delta'; data: RunEventFields & {
     messageId: string; messages: [{ role: 'system'; delta: { content: string } }];
@@ -70,5 +63,5 @@ export type ReservedNarrativeEvent =
       delta: { tool_call_id: string; name: string; status: string; content: string; is_error: boolean };
     }];
   } }
-  | { event: 'state.changed'; data: { sessionId: string } & StateScope & { changes: { path: string; value: StateValue }[] } }
+  | StateEvent
   | { event: 'action_suggestions.changed'; data: { sessionId: string; runId: string; messageId: string; items: string[] } };

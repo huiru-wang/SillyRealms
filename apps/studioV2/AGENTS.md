@@ -20,3 +20,5 @@
 
 - 世界详情以原 Studio 的 WorldDetailPage.tsx / WorldDetailPage.module.css 为 UI 基线，完整保留折叠头部、角色条同步、六个图标 Tab、开局导航、弹窗和滚动交互；禁止用新面板布局替换。只适配 V2 顶层领域字段、分页、刷新和管理写入约束。
 - 世界入口在头部选择角色，创建确认沿用该角色；开局名称可作为会话标题，但不提交 openingId 或初始化开局。名称标签在更多菜单弹窗编辑，默认项在运行配置 Tab 编辑。
+
+- 隔离 world-preview 服务/构建同时提供 frame.html 与 world-component.html，管理来源拒绝这两个入口。runtime/config 使用明确的 stage.origin/entryPath/debug，不接受 port 推导。当前仅补齐静态舞台入口，SessionHost 与会话 SDK transport 尚未接入新叙事接口，不将管理页改造成运行页。

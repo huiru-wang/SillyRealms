@@ -225,11 +225,9 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
   // A final-snapshot observer can still cancel before persistence begins.
   if (signal.aborted) stopReason = cancellationReason(signal);
 
-  const requestStatus = stopReason === 'cancelled' || stopReason === 'server_shutdown'
-    ? 'cancelled' : stopReason === undefined ? 'completed' : 'failed';
   const metrics: EntryMetrics | null = attempted && requestId && model !== null ? {
     requests: [{
-      requestId, modelId: model, status: requestStatus, usage,
+      requestId, provider, modelId: model, usage,
       durationMs: performance.now() - startedAt!,
       ...(firstTextMs === undefined ? {} : { firstTextMs }),
     }],
@@ -265,6 +263,16 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
     savedMessageIds = [];
     tipEntryId = null;
     stopReason = 'message_persist_failed';
+  }
+
+  // Outcome belongs to the durable user entry, even if no assistant could be saved.
+  try {
+    sessions.setNarrativeOutcome(sessionId, userEntryId, stopReason === undefined
+      ? { status: 'completed', finishedAt: Date.now() }
+      : { status: 'stopped', stopReason, finishedAt: Date.now() });
+  } catch {
+    // Keep saved messages; a missing outcome remains unknown after restart.
+    if (stopReason !== 'session_deleted') stopReason = 'message_persist_failed';
   }
 
   const total = attempted ? usage : zeroUsage();

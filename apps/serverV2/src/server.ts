@@ -11,7 +11,7 @@ import type { CredentialStore } from './modules/credentials/service.js';
 import { createServices } from './services.js';
 import { createUsecases } from './usecases.js';
 
-export type ServerOptions = Partial<Pick<AppOptions, 'events' | 'canAccessSession' | 'studioOrigin'>> & {
+export type ServerOptions = Partial<Pick<AppOptions, 'events' | 'canAccessSession' | 'studioOrigin' | 'stageOrigin' | 'debug'>> & {
   port?: number;
   dataRoot?: string;
   databasePath?: string;
@@ -25,7 +25,7 @@ export async function startServer({
   events = new EventHub(),
   canAccessSession,
   credentialStore,
-  studioOrigin,
+  studioOrigin, stageOrigin, debug,
 }: ServerOptions = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid SERVER_V2_PORT');
   if (!dataRoot.trim()) throw new Error('Invalid SERVER_V2_DATA_ROOT');
@@ -35,7 +35,7 @@ export async function startServer({
     const services = createServices(database, root, credentialStore);
     const usecases = createUsecases({ services, transaction: bindTransaction(database), events });
     usecases.initialize();
-    const app = createApp({ events, services, usecases, canAccessSession, studioOrigin });
+    const app = createApp({ events, services, usecases, canAccessSession, studioOrigin, stageOrigin, debug });
     const server = createServer(getRequestListener(app.fetch, { overrideGlobalObjects: false }));
     const listening = once(server, 'listening');
     try {
@@ -74,6 +74,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       port: Number(process.env.SERVER_V2_PORT ?? '3001'),
       dataRoot: process.env.SERVER_V2_DATA_ROOT,
       studioOrigin: process.env.SERVER_V2_STUDIO_ORIGIN,
+      stageOrigin: process.env.SERVER_V2_STAGE_ORIGIN,
+      debug: process.env.SERVER_V2_DEBUG === 'true',
     });
     const address = running.server.address();
     if (address && typeof address !== 'string') console.log('Server V2: http://127.0.0.1:' + address.port);

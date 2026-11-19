@@ -114,3 +114,119 @@ describe('read-only scope snapshots and inheritance', () => {
     expect(() => state.getViews({ worldId: 'world', sessionId: 'one', entryId: 'root' })).toThrow('INVALID_NARRATIVE_STATE');
   });
 });
+
+describe('read-only field preparation with state v2 definitions', () => {
+  const count = { type: 'number', initial: 1, description: 'Count', rules: { count: 'Keep the count' }, min: 0, max: 10 };
+  const profile = {
+    type: 'json', initial: { coins: 1, nested: { value: 2 }, items: [{ name: 'key' }] }, description: 'Profile',
+    rules: {
+      profile: 'Keep the profile', 'profile.coins': 'Coins', 'profile.nested': 'Nested',
+      'profile.nested.value': 'Value', 'profile.items': 'Items', 'profile.items[]': 'Item',
+      'profile.items[].name': 'Name', 'profile.optional': 'Optional', 'profile.optional.child': 'Child',
+    },
+  };
+  const definitions = { count, profile, absent: { type: 'boolean', initial: false, description: 'Absent', rules: { absent: 'Optional runtime root' } } };
+
+  beforeEach(() => {
+    services.worlds.update('world', { stateDefinition: {
+      schema_version: 2, scopes: { global: definitions, session: definitions, message: definitions },
+    } });
+    services.worlds.setState('world', { count: 1, profile: profile.initial });
+    sessions.setState('one', { count: 1, profile: profile.initial });
+    append('root');
+    sessions.setEntryState('one', 'root', [{ key: 'count', value: 1 }, { key: 'profile', value: profile.initial }]);
+    append('child');
+  });
+
+  it('prepares independent object and root replacements without persisting', () => {
+    const prepared = state.prepareGlobalPatch('world', { path: 'profile.nested.value', value: 7 });
+    expect(prepared).toEqual({ changed: true, snapshot: { count: 1, profile: { ...profile.initial, nested: { value: 7 } } } });
+    expect(state.getGlobal('world')).toEqual({ count: 1, profile: profile.initial });
+    const input = { coins: 9 };
+    const session = state.prepareSessionPatch('one', { path: 'profile', value: input });
+    input.coins = 99;
+    expect(session).toEqual({ changed: true, snapshot: { count: 1, profile: { coins: 9 } } });
+    expect(state.getSession('one')).toEqual({ count: 1, profile: profile.initial });
+  });
+
+  it('ignores missing roots, intermediate nodes and leaves without creating them', () => {
+    for (const path of ['missing', 'absent', 'profile.missing', 'profile.optional', 'profile.optional.child', 'profile.coins.child']) {
+      expect(state.prepareGlobalPatch('world', { path, value: 8 })).toEqual({
+        changed: false, snapshot: { count: 1, profile: profile.initial },
+      });
+    }
+    expect(state.getGlobal('world')).toEqual({ count: 1, profile: profile.initial });
+  });
+
+  it('ignores paths without a declared root even when a snapshot contains a value', () => {
+    services.worlds.setState('world', { unregistered: 3 });
+    expect(state.prepareGlobalPatch('world', { path: 'unregistered', value: 4 })).toEqual({
+      changed: false, snapshot: { unregistered: 3 },
+    });
+  });
+
+  it('validates only the affected root type, range and complete rules coverage', () => {
+    expect(() => state.prepareGlobalPatch('world', { path: 'count', value: 11 })).toThrow('STATE_OUT_OF_RANGE');
+    expect(() => state.prepareSessionPatch('one', { path: 'count', value: 'invalid' })).toThrow('INVALID_STATE_VALUE');
+    expect(() => state.prepareMessagePatch('one', 'child', { path: 'profile', value: { coins: 9, unruled: true } }))
+      .toThrow('STATE_RULE_MISSING: message.profile.unruled');
+    expect(() => state.prepareGlobalPatch('world', { path: 'profile.items', value: [{ name: 'key', extra: true }] }))
+      .toThrow('STATE_RULE_MISSING: global.profile.items[].extra');
+    expect(state.getGlobal('world')).toEqual({ count: 1, profile: profile.initial });
+    expect(sessions.getEntryState('one', 'child')).toBeNull();
+  });
+
+  it('rejects unsafe or unsupported paths even when the root is absent', () => {
+    for (const path of ['', 'missing..value', '__proto__.value', 'profile.constructor', 'profile.items[0]', 'profile.items.0.name']) {
+      expect(() => state.prepareGlobalPatch('world', { path, value: 7 })).toThrow('INVALID_STATE_PATH');
+    }
+    expect(() => state.prepareGlobalPatch('world', { path: 'profile', value: JSON.parse('{"__proto__":{"polluted":true}}') }))
+      .toThrow('INVALID_STATE_KEY');
+    expect(Object.hasOwn(Object.prototype, 'polluted')).toBe(false);
+  });
+
+  it('does not validate unrelated definitions, missing roots or existing values', () => {
+    const world = services.worlds.require('world');
+    vi.spyOn(services.worlds, 'require').mockReturnValue({
+      ...world,
+      stateDefinition: { schema_version: 2, scopes: { global: { count, broken: 'invalid definition' }, session: 'invalid scope' } },
+      state: { count: 1, broken: { unruled: true } },
+    });
+    expect(state.prepareGlobalPatch('world', { path: 'count', value: 2 })).toEqual({
+      changed: true, snapshot: { count: 2, broken: { unruled: true } },
+    });
+  });
+
+  it('copies inherited message state while leaving the owner and predecessor untouched', () => {
+    const prepared = state.prepareMessagePatch('one', 'child', { path: 'profile.coins', value: 8 });
+    expect(prepared).toEqual({
+      changed: true,
+      snapshot: [{ key: 'count', value: 1 }, { key: 'profile', value: { ...profile.initial, coins: 8 } }],
+    });
+    expect(sessions.getEntryState('one', 'root')).toEqual([{ key: 'count', value: 1 }, { key: 'profile', value: profile.initial }]);
+    expect(sessions.getEntryState('one', 'child')).toBeNull();
+  });
+
+  it('never materializes inheritance for ignored or unchanged message writes', () => {
+    for (const [path, value] of [['missing', 8], ['profile.optional.child', 8], ['profile.coins', 1]] as const) {
+      expect(state.prepareMessagePatch('one', 'child', { path, value })).toEqual({ changed: false, snapshot: null });
+    }
+    sessions.setEntryState('one', 'child', []);
+    expect(state.prepareMessagePatch('one', 'child', { path: 'count', value: 3 })).toEqual({ changed: false, snapshot: [] });
+    expect(sessions.getEntryState('one', 'child')).toEqual([]);
+  });
+
+  it('preserves unrelated message values without validating their definitions', () => {
+    sessions.setEntryState('one', 'root', [{ key: 'count', value: 'invalid number' }, { key: 'profile', value: profile.initial }]);
+    expect(state.prepareMessagePatch('one', 'child', { path: 'profile.coins', value: 8 })).toEqual({
+      changed: true,
+      snapshot: [{ key: 'count', value: 'invalid number' }, { key: 'profile', value: { ...profile.initial, coins: 8 } }],
+    });
+  });
+
+  it('keeps owner lookup failures distinct from field validation failures', () => {
+    expect(() => state.prepareGlobalPatch('missing', { path: 'count', value: 2 })).toThrow('WORLD_NOT_FOUND');
+    expect(() => state.prepareSessionPatch('missing', { path: 'count', value: 2 })).toThrow('SESSION_NOT_FOUND');
+    expect(() => state.prepareMessagePatch('one', 'missing', { path: 'count', value: 2 })).toThrow('ENTRY_NOT_FOUND');
+  });
+});

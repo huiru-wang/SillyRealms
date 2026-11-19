@@ -8,16 +8,19 @@ import type { WorldReader } from '../worlds/service.js';
 import { SessionRepository, type EntryRow, type SessionRow } from './repository.js';
 import {
   appendEntrySchema, createSessionSchema, entryListSchema, identifier, metricsSchema,
-  sessionListSchema, updateEntrySchema, updateSessionSchema,
+  sessionListSchema, updateEntrySchema, updateSessionSchema, narrativeOutcomeSchema, entryRunListSchema,
 } from './schema.js';
 import type {
   AppendEntryInput, CreateSessionInput, EntryListOptions, EntryMetrics, SessionEntry,
   SessionListOptions, SessionPage, Session, UpdateEntryInput, UpdateSessionInput,
+  NarrativeOutcome, EntryRunListOptions, EntryRunPage,
 } from './types.js';
 
 export type {
   AppendEntryInput, CreateSessionInput, EntryListOptions, EntryMetrics, SessionEntry,
   SessionListOptions, SessionPage, Session, UpdateEntryInput, UpdateSessionInput,
+  NarrativeOutcome, EntryRunListOptions, EntryRunPage,
+  NarrativeStopReason, EntryRun,
 } from './types.js';
 
 type Dependencies = { worlds: WorldReader; presets: PresetReader; models: ModelReader };
@@ -117,6 +120,35 @@ export class SessionService {
   listRunEntries(sessionId: string, runId: string): SessionEntry[] {
     this.require(sessionId);
     return this.#repository.listRunEntries(sessionId, identifier.parse(runId)).map(toSessionEntry);
+  }
+
+  listEntryRuns(sessionId: string, options: EntryRunListOptions = {}): EntryRunPage {
+    this.require(sessionId);
+    const page = this.#repository.listEntryRuns(sessionId, entryRunListSchema.parse(options));
+    return { ...page, items: page.items.map(item => ({ ...item, entries: item.entries.map(toSessionEntry) })) };
+  }
+
+  recordedUsage(sessionId: string) {
+    this.require(sessionId);
+    const knownUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    let recordedRequestCount = 0, unknownUsageRequestCount = 0;
+    for (const metrics of this.#repository.listMetrics(sessionId)) for (const request of metrics.requests) {
+      recordedRequestCount++;
+      if (request.usage === null) { unknownUsageRequestCount++; continue; }
+      for (const key of Object.keys(knownUsage) as Array<keyof typeof knownUsage>) knownUsage[key] += request.usage[key];
+    }
+    return { knownUsage, recordedRequestCount, unknownUsageRequestCount };
+  }
+
+  setNarrativeOutcome(sessionId: string, userEntryId: string, outcome: NarrativeOutcome): SessionEntry {
+    identifier.parse(sessionId); identifier.parse(userEntryId);
+    return toSessionEntry(this.#repository.setNarrativeOutcome(sessionId, userEntryId, narrativeOutcomeSchema.parse(outcome)));
+  }
+
+  getNarrativeOutcome(entry: SessionEntry): NarrativeOutcome | null {
+    if (entry.type !== 'message' || entry.role !== 'user') return null;
+    const result = narrativeOutcomeSchema.safeParse(entry.extData.narrative);
+    return result.success ? result.data : null;
   }
 
   getHistory(sessionId: string): SessionEntry[] {

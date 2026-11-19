@@ -8,6 +8,7 @@ import type { SetState } from '../usecases/set-state.js';
 
 type ObjectSnapshot = ReturnType<StateService['requireGlobal']>;
 type MessageSnapshot = ReturnType<StateService['getMessage']>;
+type StateUpdates = Parameters<SetState['patchGlobal']>[1];
 
 export type StateRouteOptions = {
   state: StateService;
@@ -41,39 +42,69 @@ async function readMessageState(c: Context): Promise<MessageSnapshot> {
   return state;
 }
 
+async function readUpdates(c: Context): Promise<StateUpdates> {
+  const body = await readJson<{ updates?: unknown }>(c);
+  if (Object.keys(body).length !== 1 || !Object.hasOwn(body, 'updates') || !Array.isArray(body.updates)) {
+    throw new AppError('INVALID_REQUEST', '请求正文必须且只能包含 updates 数组');
+  }
+  for (const update of body.updates) {
+    if (update === null || typeof update !== 'object' || Array.isArray(update)
+      || Object.keys(update).length !== 2 || !Object.hasOwn(update, 'path') || typeof update.path !== 'string'
+      || update.path.length === 0 || !Object.hasOwn(update, 'value')) {
+      throw new AppError('INVALID_REQUEST', '每个更新必须且只能包含非空 path 和 value');
+    }
+  }
+  return body.updates as StateUpdates;
+}
+
 export function createStateRoutes({ state, setState, sessions, canAccessSession, shutdownSignal }: StateRouteOptions) {
   const routes = new Hono();
   const access = (sessionId: string, request: Request) =>
     requireSessionAccess(sessions, sessionId, request, canAccessSession, shutdownSignal);
 
-  routes.get('/worlds/:worldId/state', c =>
+  routes.get('/global/:worldId', c =>
     success(c, { item: state.requireGlobal(c.req.param('worldId')) }));
 
-  routes.put('/worlds/:worldId/state', async c =>
+  routes.patch('/global/:worldId', async c =>
+    success(c, setState.patchGlobal(c.req.param('worldId'), await readUpdates(c))));
+
+  routes.put('/global/:worldId', async c =>
     success(c, { item: setState.setGlobal(c.req.param('worldId'), await readObjectState(c)) }));
 
-  routes.get('/sessions/:id/state', async c => {
-    const id = c.req.param('id');
-    await access(id, c.req.raw);
-    return success(c, { item: state.requireSession(id) });
+  routes.get('/session/:sessionId', async c => {
+    const sessionId = c.req.param('sessionId');
+    await access(sessionId, c.req.raw);
+    return success(c, { item: state.requireSession(sessionId) });
   });
 
-  routes.put('/sessions/:id/state', async c => {
-    const id = c.req.param('id');
-    await access(id, c.req.raw);
-    return success(c, { item: setState.setSession(id, await readObjectState(c)) });
+  routes.patch('/session/:sessionId', async c => {
+    const sessionId = c.req.param('sessionId');
+    await access(sessionId, c.req.raw);
+    return success(c, setState.patchSession(sessionId, await readUpdates(c)));
   });
 
-  routes.get('/sessions/:id/entries/:entryId/state', async c => {
-    const id = c.req.param('id');
-    await access(id, c.req.raw);
-    return success(c, { item: state.requireMessage(id, c.req.param('entryId')) });
+  routes.put('/session/:sessionId', async c => {
+    const sessionId = c.req.param('sessionId');
+    await access(sessionId, c.req.raw);
+    return success(c, { item: setState.setSession(sessionId, await readObjectState(c)) });
   });
 
-  routes.put('/sessions/:id/entries/:entryId/state', async c => {
-    const id = c.req.param('id');
-    await access(id, c.req.raw);
-    return success(c, { item: setState.setMessage(id, c.req.param('entryId'), await readMessageState(c)) });
+  routes.get('/message/:sessionId/:entryId', async c => {
+    const sessionId = c.req.param('sessionId');
+    await access(sessionId, c.req.raw);
+    return success(c, { item: state.requireMessage(sessionId, c.req.param('entryId')) });
+  });
+
+  routes.patch('/message/:sessionId/:entryId', async c => {
+    const sessionId = c.req.param('sessionId');
+    await access(sessionId, c.req.raw);
+    return success(c, setState.patchMessage(sessionId, c.req.param('entryId'), await readUpdates(c)));
+  });
+
+  routes.put('/message/:sessionId/:entryId', async c => {
+    const sessionId = c.req.param('sessionId');
+    await access(sessionId, c.req.raw);
+    return success(c, { item: setState.setMessage(sessionId, c.req.param('entryId'), await readMessageState(c)) });
   });
   return routes;
 }

@@ -24,7 +24,7 @@ export function createUsecases({ services, transaction, events, modelClient = ne
     listProviders: () => modelClient.listProviders(),
     modelConfigs: createModelConfigUsecases(services),
     initialize: createInitialize({ presets, settings, transaction }),
-    setState: createSetState({ worlds, sessions }),
+    setState: createSetState({ worlds, sessions, state: services.state, transaction }),
     importWorld: createImportWorld({ worlds, settings }),
     exportWorld: createExportWorld({ worlds }),
     importPreset: createImportPreset({ presets }),

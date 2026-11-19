@@ -165,9 +165,11 @@ PATCH 仅接受 name、tags、defaultPresetId、defaultApiModelConfigId 的非�
 | GET / POST | /sessions/:id/entries | 消息/摘要列表 / 追加 |
 | GET / PATCH | /sessions/:id/entries/:entryId | 单条读取 / 正文或 extData 更新 |
 | GET | /sessions/:id/history | 当前完整线性历史 |
-| GET | /sessions/:id/runs/:runId/entries | 按 runId 分组读取条目 |
-| POST | /sessions/:id/runs | 保存用户消息并受理一次叙事生成 |
-| POST | /sessions/:id/runs/:runId/stop | 显式停止当前匹配的叙事生成 |
+| POST | /sessions/:id/narrative/runs | 保存用户消息并受理一次叙事生成 |
+| POST | /sessions/:id/narrative/runs/:runId/stop | 显式停止当前匹配的叙事生成 |
+| GET | /sessions/:id/narrative/runs | 每页最多 5 轮的完整历史或 afterSeq 补查 |
+| GET | /sessions/:id/narrative/runs/:runId | 已保存消息与轮次状态 |
+| GET | /sessions/:id/narrative/usage | 已记录的模型用量汇总 |
 | GET / HEAD | /sessions/:id/events | SSE 事件连接 / 仅检查响应头 |
 
 会话列表支持 worldId、limit、cursor，不提供关键词搜索。route 解析游标位置后调用 SessionService；列表项的 worldName/cover 通过 WorldService 在 route 组合，同一请求缓存重复世界读取。SessionService 只返回自身的 Session 领域对象。条目列表支持 afterSeq、limit。整数 query 必须是合法安全整数，再由 Service 校验允许范围。
@@ -176,13 +178,13 @@ PATCH 仅接受 name、tags、defaultPresetId、defaultApiModelConfigId 的非�
 
 本期只做线性追加。parentId 可省略，默认当前 tip；显式值不匹配时返回 TIP_CONFLICT。新条目、seq 与 tip 的原子更新归 SessionRepository；没有 setTip 或分支切换接口。
 
-SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt/updatedAt，payload 与状态内容保持原键。HTTP 追加条目不接受 metrics，也不提供编辑计量的 HTTP 路由；计量由进程内 SessionService 写入。runId 关联本轮已保存的用户消息和可选助手消息；按 runId 读取 entries 不是查询持久化运行状态。
+SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt/updatedAt，payload 与状态内容保持原键。HTTP 追加条目不接受 metrics，也不提供编辑计量的 HTTP 路由；计量由进程内 SessionService 写入。runId 关联本轮已保存的用户消息和可选助手消息；轮次详情组合 entries 与用户 entry 的 extData.narrative；缺少结束结果且无活跃运行时状态为 unknown。
 
 会话范围的读取、修改、状态及 SSE 入口先确认真实会话，再执行可选访问检查；拒绝与不存在统一返回 SESSION_NOT_FOUND。异步检查结束后先检查停机，再确认会话仍存在。配置了访问检查时，会话列表只返回获准条目。
 
 ## 叙事提交与停止
 
-`POST /sessions/:id/runs` 正文为：
+`POST /sessions/:id/narrative/runs` 正文为：
 
 ```json
 {
@@ -193,31 +195,124 @@ SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt
 
 `expectedTipEntryId` 必填；没有历史时为 null，有历史时传最后读取的 tip。输入必须有非空白内容，保存原始文本。请求不接受模型或预设覆盖、requestId、工具列表、prepare 参数。会话存在性、权限、输入、tip 与同会话并发校验失败时，使用 HTTP 错误包络且不追加用户消息；同会话已有运行返回 RUN_ALREADY_ACTIVE/409，tip 过期返回 TIP_CONFLICT/409。
 
-受理时先独立保存用户消息，再准备上下文和模型请求。202 的 data 为 `{runId,userEntryId,assistantEntryId,capabilities:{historyPolicy:"full",postprocess:false}}`。此时 userEntryId 已持久化，assistantEntryId 仅预分配；202 不代表生成成功。之后的配置、历史、预算、凭据或模型错误通过 `run.stopped` 的 stop_reason 返回，保留用户消息；SSE 不返回 error 对象或 errorCode/errorMessage。
+受理时先独立保存用户消息，再准备上下文和模型请求。202 的 data 为 `{runId,userEntryId,assistantEntryId}`。此时 userEntryId 已持久化，assistantEntryId 仅预分配；202 不代表生成成功。之后的配置、历史、预算、凭据或模型错误通过 `run.stopped` 的 stop_reason 返回，保留用户消息；SSE 不返回 error 对象或 errorCode/errorMessage。
 
 助手正常完成、失败或停止时独立保存完整或部分公开快照，包含 content、reasoning_content 与 tool_calls；只有公开 reasoning 或工具请求时也保留，完全没有公开内容时只保留用户。SDK 最终快照采用替换语义。助手写入失败不回滚用户，外部追加导致 tip 变化时不覆盖新消息。终态 savedMessageIds 与 tipEntryId 表达实际保存结果；后续编译只采用消息正文，不把 reasoning/工具请求当作提示词正文。内容与计量见 [叙事执行](server-v2-narrative.md)。
 
-`POST /sessions/:id/runs/:runId/stop` 返回 `data:{runId,stopping:true}`。仅匹配该会话当前内存运行；不匹配或已结束返回 RUN_NOT_FOUND/404。返回值表示已请求停止，最终以 `run.stopped` 及其 stop_reason 为准；保存失败优先于普通取消。断开 POST 或 SSE 都不会代替显式 stop。
+`POST /sessions/:id/narrative/runs/:runId/stop` 返回 `data:{runId,stopping:true}`。仅匹配该会话当前内存运行；不匹配或已结束返回 RUN_NOT_FOUND/404。返回值表示已请求停止，最终以 `run.stopped` 及其 stop_reason 为准；保存失败优先于普通取消。断开 POST 或 SSE 都不会代替显式 stop。
 
-客户端应先连接 `/sessions/:id/events` 再提交；事件可能早于 POST 响应，按 runId/messageId 关联。断线后重新读取 entries/history 判断已保存内容，不自动重发提交。没有运行状态查询、事件回放、恢复、自动重试或请求去重接口；当前 StudioV2 仍只接入管理和作者预览，未挂载叙事运行 UI。
+客户端应先连接 `/sessions/:id/events` 再提交；事件可能早于 POST 响应，按 runId/messageId 关联。断线后重新读取 entries/history 判断已保存内容，不自动重发提交。没有事件回放、重启续跑、自动重试或请求去重接口；当前 StudioV2 仍只接入管理和作者预览，未挂载叙事运行 UI。
 
-## 完整状态快照
+## 叙事查询与用量
 
-| Scope | GET / PUT 路径 | state 值 |
-|---|---|---|
-| global | /worlds/:worldId/state | 完整 JSON 对象 |
-| session | /sessions/:id/state | 完整 JSON 对象 |
-| message | /sessions/:id/entries/:entryId/state | 完整 JSON 数组或 null |
+旧 `/sessions/:id/runs`、`/sessions/:id/runs/:runId/stop`、`/sessions/:id/runs/:runId/entries` 路径不保留别名。事件仍使用 `/sessions/:id/events`，不新增 narrative/events 或 capabilities，提交响应也不返回 capabilities。
 
-PUT 正文必须且只能包含 state，例如：
+`GET /sessions/:id/narrative/runs` 支持以下互斥模式。每页固定上限 5 轮，limit 可省略或为 5，其他值返回 INVALID_REQUEST。
+
+| 查询 | 行为 |
+| --- | --- |
+| 无 cursor/afterSeq | 按每轮首条 entry.seq 倒序返回最新 5 轮 |
+| cursor | 按游标指定的首条 seq 向前倒序查询，不受之后追加的消息影响 |
+| afterSeq | 按每轮最后已保存 entry.seq 升序返回 seq 大于该位置的轮次，最多 5 轮 |
+
+返回 `data:{items,hasMore,nextCursor,nextAfterSeq,activeRunId}`。每个 item 为 `{runId,firstSeq,lastSeq,entries,status,finishedAt?,stopReason?}`，entries 按 seq 升序，包含该轮所有已保存条目，单轮不被拆页。cursor 绑定会话；cursor 与 afterSeq 不可同时传。前向查询按最后 seq 排序，以免非连续 runId 分组导致遗漏；不是按 run 创建位置筛选。
+
+向前翻页使用 nextCursor；增量补查使用 nextAfterSeq，hasMore=true 时继续补查。nextAfterSeq 是本页最大 lastSeq，不是事件序号；空页为 null，客户端保持原检查点。浏览历史页面的 nextAfterSeq 不应覆盖客户端已知的较大检查点。activeRunId 是查询时该会话仍活跃的轮次，不受分页范围限制。
+
+`GET /sessions/:id/narrative/runs/:runId` 返回 `data.item`，结构与列表相同。无 entries 返回 RUN_NOT_FOUND。status 为 completed/stopped（来自已保存结果），running/stopping（来自匹配的内存运行），或 unknown（无活跃运行且没有有效结束结果）。详情只返回已保存消息，不提供未落库正文快照。
+
+重连时先建立原 SSE，再用页面最新已保存 seq 补查，按 runId 替换完整轮次；同时刷新页面原来处于运行中的轮次详情，因为仅修改结束结果不会产生新 seq。页面无数据时重新读取最新一页。断线期间尚未保存的分片不回放、不保证显示完整；已有最终 snapshot 采用整体替换，终态后补查 entries。不为此增加分片落库或恢复系统。
+
+用户 entry 的 extData.narrative 仅由服务内部写入：
+
+```ts
+type NarrativeOutcome =
+  | { status: 'completed'; finishedAt: number }
+  | { status: 'stopped'; stopReason: NarrativeStopReason; finishedAt: number };
+```
+
+finishedAt 为结算 Unix 毫秒；stopReason 与当前 SSE 的原因类型一致，例如 cancelled、provider_error、output_incomplete、message_persist_failed。创建用户时仍为 extData:{}；先保存已有助手内容，再记录用户结束结果，最后发布终态。没有助手输出也会记录结果。写入仅替换 narrative 字段，保留其他扩展；通用 POST/PATCH entry 不能传 narrative，通用 extData 替换会保留服务端已存 narrative。结果写入失败不回滚已有消息，刷新后可能 unknown；不持久化 running 或执行恢复日志，不新增表。
+
+metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstTextMs?}`，不再写 status。新请求 provider 取实际调用的 providerId；读取旧 metrics 时移除 status，缺少 provider 返回 null，不根据当前模型配置推断。旧 JSON 不做批量重写，新写入严格使用新结构。
+
+`GET /sessions/:id/narrative/usage` 返回 `data:{knownUsage,recordedRequestCount,unknownUsageRequestCount}`。knownUsage 包含 inputTokens/outputTokens/totalTokens/cacheReadTokens/cacheWriteTokens，是已有 metrics 中可信 usage 的合计；unknownUsageRequestCount 统计 usage:null 的已记录请求，不将其视为零。没有助手 entry 等原因导致未记录的请求不在计数中，因此这是已记录用量而非完整账单；不写 session.usage 或增加计量表。
+
+## 舞台部署配置
+
+`GET /runtime/config` 返回 `data:{stage:{origin,entryPath:"/frame.html"},debug}`，Cache-Control 为 no-store。origin 是含端口的完整公开 HTTP(S) 来源，不另返回 port，也不按请求 Host 猜测。来源不能与 Studio 同源；HTTPS Studio 不允许 HTTP 舞台。debug 是前端调试开关，不返回内部环境变量或凭据。
+
+默认舞台来源 `http://127.0.0.1:5177`；CLI 配置 SERVER_V2_STAGE_ORIGIN、SERVER_V2_DEBUG=true，以及已有 SERVER_V2_STUDIO_ORIGIN。舞台由独立静态来源提供，ServerV2 配置接口不启动额外监听器。StudioV2 隔离构建包含 frame.html 和 world-component.html，管理来源仅有 index.html；运行 UI/SDK transport 尚未接入本轮叙事与 state 契约。
+
+## 状态接口
+
+状态 HTTP 统一归属 state 模块。以下三个 scope 各提供 GET、PATCH、PUT，共 9 个接口；本表仍省略统一的 `/api/v1` 前缀。
+
+| Scope | 方法 | 路径 | GET/PUT 的状态值 |
+|---|---|---|---|
+| global | GET / PATCH / PUT | /state/global/:worldId | 完整 JSON 对象 |
+| session | GET / PATCH / PUT | /state/session/:sessionId | 完整 JSON 对象 |
+| message | GET / PATCH / PUT | /state/message/:sessionId/:entryId | 完整 JSON 数组或 null |
+
+不提供 `GET /state/views`。需要全部状态时，调用方分别请求三个 scope。原 `/worlds/:worldId/state`、`/sessions/:id/state`、`/sessions/:id/entries/:entryId/state` 的 GET/PUT 全部移除，不保留别名。
+
+session/message 的所有方法按路径中的 sessionId 调用 `requireSessionAccess`；message 还检查 entryId 是否属于该会话。global 检查 worldId 对应世界存在。权限及所属对象错误在请求层返回，空 PATCH 批次也不能绕过这些检查。
+
+### 读取与整快照写
+
+GET 和 PUT 的成功 data 均为 `{ item: 状态值 }`。PUT 正文必须且只能包含 state，例如：
 
 ```json
 { "state": { "gold": 20, "weather": "rain" } }
 ```
 
-GET 和 PUT 的成功 data 均为 `{ item: 状态值 }`。PUT 完整替换该 scope 快照；它不是按路径合并接口。消息 GET 返回沿前驱继承后的有效快照；PUT 写入的是指定条目本身。消息 null 恢复继承，空数组表示明确的空快照；有效的 null 与消息不存在分别返回成功和 404。
+PUT 完整替换所选 scope，用于初始化、重置或恢复已保存快照。global/session 接受 JSON 对象。message 接受 `[{ "key": "gold", "value": 20 }]` 形式的快照数组或 null；GET 返回沿前驱继承后的有效快照，PUT 写入指定条目自身。消息 null 恢复继承，显式空数组终止继承；没有有效继承值时 GET 成功返回 null，消息不存在返回 404。
 
-状态读取与前驱继承留在StateService，PUT经set-state用例调用属主World/Session Service。世界卡导入仅做状态定义的静态校验；状态更新规则执行、按路径PATCH和模型输出状态更新协议尚未迁入。当前 scope GET/PUT 与旧 SDK 的聚合 state.read/path PATCH 是不同契约，不能把此次字段适配理解为 Studio 已完整切换 V2。当前路由不增加 Run/State 并发锁或时序保证。
+### 字段级写
+
+PATCH 正文必须且只能包含 updates，数组每项必须且只能包含字符串 path 和显式 value；scope 由 URL 决定，不在每项中重复提供：
+
+```json
+{
+  "updates": [
+    { "path": "coins", "value": 20 },
+    { "path": "inventory.keys", "value": 1 }
+  ]
+}
+```
+
+一次请求只操作一个 scope。空 updates 返回空结果数组。请求结构错误整体拒绝；结构有效后，按输入顺序逐项处理，结果顺序与输入一致，重复路径的后项读取前项已提交的值。
+
+每项采用独立同步事务：读取当前状态、计算候选值、校验目标根、保存变更。某项失败仅回滚该项，保留先前成功项并继续后续项。不存在跨项或跨 scope 的整体事务。
+
+path 支持根名及对象点分路径，例如 `inventory.keys`。目标根、中间节点或末级字段不存在时，成功忽略且不创建节点；快照中的根没有对应 state 定义时也成功忽略。非法路径仍返回字段错误；不接受原型相关危险键、数组索引或 rules 中的 `[]` 模板路径。数组通过已有路径整体替换；value 是完整新值，null 是值而非删除操作。
+
+字段实际存在时，使用与原 Server 相同的共享 `state-validation` 定义、类型及 rules 校验能力，检查受影响根的声明和更新后完整根值；不扫描或校验同 scope 的其他根。检查包含根类型、number 根的 min/max、安全 JSON、大小/深度以及 rules 路径覆盖。rules 是自然语言说明，校验其存在性和覆盖，不执行说明中的业务条件；SDK 字段写不受根的 load 激活条件限制。
+
+缺失路径以及新值与当前值相同的成功项都不写数据库。message PATCH 从指定条目的有效继承状态计算；实际变更时将结果保存为该条目的独立快照，不改前驱。成功忽略及未变化项保持该条目原有的 null 继承状态。
+
+PATCH 成功接受批次时使用标准 HTTP 成功包络，`data` 为 `StateWriteResult[]`。单项均包含 path、scope、success、errorCode、errorMessage：
+
+- 成功项：`success:true, errorCode:null, errorMessage:""`，包括实际写入、未变化和缺失路径忽略。
+- 失败项：`success:false`，携带业务 errorCode/errorMessage；状态校验错误可附加 stateScope、statePath、rulePath，指向实际失败的根、字段或规则。
+- 外层 success 表示批次已处理，不代表每项均成功。即使全部项失败，逐项结果仍在 data 数组中返回。
+
+StateService 负责读取、继承、业务校验和候选快照计算。set-state 用例通过绑定的 TransactionRunner 管理每项事务，并调用表属主 World/Session Service 写入。state 不增加表或 Repository，路由不写 SQL、不管理事务。内部 getViews/evaluateWhen 保留给叙事上下文和材料条件使用；本期仍不解析或执行模型状态更新扩展，不增加 Run/State 并发锁或时序保证。
+
+### 事件与调用方接入边界
+
+`state.changed` 只保留事件契约：
+
+```ts
+{ event: 'state.changed', data: { path, scope, value } }
+```
+
+当前 GET/PUT/PATCH 均不发布此事件，不增加 SSE 端点或广播逻辑。会话 SSE 连接继续由 events 基建承载。
+
+本轮仅整理服务端，未修改 Studio、StudioV2 或 SDK transport。已有世界组件预览对旧 global 路径的调用也尚未迁移。以下是新服务端契约对后续调用方接入的要求，不代表前端已经完成适配：
+
+- 按需读取各 scope；message GET 的数组/null 需解码成 SDK 读取使用的对象视图，全部状态由三个 GET 的结果组合。
+- 混合 scope 的 batch 按 scope 分组请求对应 PATCH，再按原输入顺序合并结果。
+- success:true 包含成功忽略，不能将每个成功结果都当成已写入并把提交值直接加入本地快照。后续 transport 需以重新读取的服务端状态等权威结果同步缓存，避免缺失路径在客户端出现未保存的值。
 
 ## SSE 与下载例外
 
@@ -234,4 +329,4 @@ GET 和 PUT 的成功 data 均为 `{ item: 状态值 }`。PUT 完整替换该 sc
 
 ## 验证
 
-函数验证使用内存或临时 SQLite、临时文件和最小 CredentialStore 替身，不访问真实凭据。配合 `typecheck`、`lint` 检查接口和边界。本次 StudioV2 接入不启动服务、不执行已有 HTTP/网络或浏览器链路测试；这些测试保留在仓库供后续单独运行。架构lint覆盖modules属主、模块唯一出口、Reader依赖、usecases边界、跨层存储访问和SQL属主；类型检查验证Reader不可调用写方法及事务不能接受异步回调。
+函数验证使用内存或临时 SQLite、临时文件和最小 CredentialStore 替身，不访问真实凭据。配合 `typecheck`、`lint` 检查接口和边界。state 路由通过进程内请求验证，不启动真实服务或执行浏览器链路测试，不验证尚未适配的前端。架构lint覆盖modules属主、模块唯一出口、Reader依赖、usecases边界、跨层存储访问和SQL属主；类型检查验证Reader不可调用写方法及事务不能接受异步回调。

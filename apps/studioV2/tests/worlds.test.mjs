@@ -64,3 +64,28 @@ test('world detail keeps the selected playable role and explicit empty defaults'
  assert.equal(initialSessionSelection(world,'npc').character,'');
  assert.equal(initialSessionSelection(world,'missing').character,'');
 });
+
+test('stage configuration uses an explicit isolated origin and keeps the management entry separate',async()=>{
+ const {stageURL}=await import('../src/stage-url.ts');
+ const {allowsEntry}=await import('../entry-policy.ts');
+ const config={stage:{origin:'http://127.0.0.1:5177',entryPath:'/frame.html'},debug:false};
+ const url=stageURL(config,'http://127.0.0.1:5176','nonce');
+ assert.equal(url.origin,config.stage.origin);assert.equal(url.pathname,'/frame.html');
+ assert.equal(url.searchParams.get('hostOrigin'),'http://127.0.0.1:5176');assert.equal(url.hash,'#nonce');
+ assert.throws(()=>stageURL({...config,stage:{...config.stage,origin:'http://127.0.0.1:5176'}},'http://127.0.0.1:5176','nonce'));
+ assert.throws(()=>stageURL(config,'https://studio.test','nonce'));
+ for(const path of ['/frame.html','/world-component.html']){assert.equal(allowsEntry(path,true),true);assert.equal(allowsEntry(path,false),false);}
+ for(const path of ['/api','/api/v1/sessions','/index.html','/'])assert.equal(allowsEntry(path,true),false);
+ assert.equal(allowsEntry('/assets/frame.js',true),true);
+});
+
+test('isolated build includes both renderer documents while management builds only its own entry',async()=>{
+ const {loadConfigFromFile}=await import('vite');
+ const isolated=await loadConfigFromFile({command:'build',mode:'world-preview'});
+ const management=await loadConfigFromFile({command:'build',mode:'production'});
+ assert.ok(isolated&&management);
+ const entries=isolated.config.build.rollupOptions.input;
+ assert.ok(entries.stage.endsWith('/frame.html'));assert.ok(entries.world.endsWith('/world-component.html'));
+ assert.equal(isolated.config.server.proxy,undefined);
+ assert.ok(management.config.build.rollupOptions.input.endsWith('/index.html'));
+});

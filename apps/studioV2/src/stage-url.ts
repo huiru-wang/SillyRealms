@@ -1,13 +1,8 @@
 export function stageURL(config:unknown,host:string,nonce:string):URL {
-  const stage=(config as {stage?:{origin?:unknown;port?:unknown;entryPath?:unknown}}|null)?.stage;
-  if(!stage||stage.entryPath!=='/frame.html'||!Number.isInteger(stage.port)||Number(stage.port)<1||Number(stage.port)>65535)throw Error('故事舞台地址配置无效');
-  const parent=new URL(host);
-  let origin:URL;
-  if(stage.origin===null){origin=new URL(parent.origin);origin.port=String(stage.port);}
-  else {
-    if(typeof stage.origin!=='string')throw Error('故事舞台地址配置无效');
-    origin=new URL(stage.origin);
-  }
+  const stage=(config as {stage?:{origin?:unknown;entryPath?:unknown}}|null)?.stage;
+  if(!stage||stage.entryPath!=='/frame.html'||typeof stage.origin!=='string')throw Error('故事舞台地址配置无效');
+  const parent=new URL(host),origin=new URL(stage.origin);
+  if(origin.origin!==stage.origin)throw Error('故事舞台地址配置无效');
   if(!['http:','https:'].includes(origin.protocol)||origin.username||origin.password||origin.pathname!=='/'||origin.search||origin.hash)throw Error('故事舞台地址配置无效');
   if(origin.origin===parent.origin)throw Error('故事舞台必须使用独立地址');
   if(parent.protocol==='https:'&&origin.protocol!=='https:')throw Error('HTTPS 主站需要 HTTPS 故事舞台地址');

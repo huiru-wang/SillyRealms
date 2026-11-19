@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { runtimeConfig } from './http/runtime-config.js';
 import type { EventHub } from './infrastructure/events/event-hub.js';
 import type { SessionAccessCheck } from './http/session-access.js';
 import { errorHandler, failure, success } from './http/response.js';
@@ -17,14 +18,17 @@ import type { Usecases } from './usecases.js';
 export type AppOptions = {
   events: EventHub;
   studioOrigin?: string;
+  stageOrigin?: string;
+  debug?: boolean;
   canAccessSession?: SessionAccessCheck;
 } & (
   | { services: Services; usecases: Usecases }
   | { services?: undefined; usecases?: undefined }
 );
 
-export function createApp({ events, services, usecases, canAccessSession, studioOrigin = 'http://127.0.0.1:5176' }: AppOptions) {
+export function createApp({ events, services, usecases, canAccessSession, studioOrigin = 'http://127.0.0.1:5176', stageOrigin, debug }: AppOptions) {
   const trustedStudioOrigin = parseStudioOrigin(studioOrigin);
+  const config = runtimeConfig({ studioOrigin: trustedStudioOrigin, stageOrigin, debug });
   const app = new Hono();
   const shutdown = new AbortController();
   let stopping = false;
@@ -40,6 +44,10 @@ export function createApp({ events, services, usecases, canAccessSession, studio
   });
   app.onError(errorHandler);
   app.notFound(c => failure(c, 'NOT_FOUND'));
+  app.get('/api/v1/runtime/config', c => {
+    c.header('Cache-Control', 'no-store');
+    return success(c, config);
+  });
   app.get('/health', c => success(c, { ok: true }));
   if (services) {
     app.route('/api/v1/presets', createPresetRoutes(services.presets, usecases));
@@ -58,7 +66,7 @@ export function createApp({ events, services, usecases, canAccessSession, studio
     app.route('/api/v1/sessions', createSessionRoutes({
       sessions: services.sessions, worlds: services.worlds, events, canAccessSession, shutdownSignal: shutdown.signal,
     }));
-    app.route('/api/v1', createStateRoutes({
+    app.route('/api/v1/state', createStateRoutes({
       state: services.state, setState: usecases.setState, sessions: services.sessions, canAccessSession, shutdownSignal: shutdown.signal,
     }));
   }

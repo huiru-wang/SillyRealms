@@ -2,7 +2,7 @@ import type { z } from 'zod';
 import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
 import type {
   appendEntrySchema, createSessionSchema, entryListSchema, metricsSchema,
-  sessionListSchema, updateEntrySchema, updateSessionSchema,
+  sessionListSchema, updateEntrySchema, updateSessionSchema, narrativeOutcomeSchema, narrativeStopReasonSchema, entryRunListSchema,
 } from './schema.js';
 
 export type EntryMetrics = z.infer<typeof metricsSchema>;
@@ -26,3 +26,9 @@ export type UpdateEntryInput = z.infer<typeof updateEntrySchema>;
 
 export type SessionListOptions = z.input<typeof sessionListSchema>;
 export type EntryListOptions = z.input<typeof entryListSchema>;
+
+export type NarrativeStopReason = z.infer<typeof narrativeStopReasonSchema>;
+export type NarrativeOutcome = z.infer<typeof narrativeOutcomeSchema>;
+export type EntryRunListOptions = z.input<typeof entryRunListSchema>;
+export type EntryRun = { runId: string; firstSeq: number; lastSeq: number; entries: SessionEntry[] };
+export type EntryRunPage = { items: EntryRun[]; hasMore: boolean; nextBeforeSeq: number | null; nextAfterSeq: number | null };

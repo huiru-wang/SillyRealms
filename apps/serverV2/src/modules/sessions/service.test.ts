@@ -29,7 +29,7 @@ function append(sessionId: string, id: string, patch: Partial<AppendEntryInput> 
   } as AppendEntryInput);
 }
 function metrics(id: string, usage: EntryMetrics['requests'][number]['usage'] = null): EntryMetrics {
-  return { requests: [{ requestId: id, modelId: 'actual-model-snapshot', status: 'completed', usage, durationMs: 2500, firstTextMs: 180 }] };
+  return { requests: [{ requestId: id, modelId: 'actual-model-snapshot', provider: 'test-provider', usage, durationMs: 2500, firstTextMs: 180 }] };
 }
 
 describe('session records and references', () => {
@@ -252,5 +252,90 @@ describe('one canonical metrics shape', () => {
       const invalid = { requests: [{ ...metrics('invalid').requests[0], ...patch }] } as unknown as EntryMetrics;
       expect(() => sessions.setMetrics('session', 'summary', invalid)).toThrow();
     }
+  });
+});
+
+describe('run pages, outcomes and recorded usage', () => {
+  it('pages exactly five complete runs backwards, including runs with more than two entries', () => {
+    create();
+    for (let run = 1; run <= 12; run++) {
+      for (let message = 0; message < (run === 8 ? 3 : 2); message++) {
+        append('session', `${run}-${message}`, { runId: `r${run}`, role: message === 0 ? 'user' : 'assistant' });
+      }
+    }
+    const latest = sessions.listEntryRuns('session');
+    expect(latest.items.map(item => item.runId)).toEqual(['r12', 'r11', 'r10', 'r9', 'r8']);
+    expect(latest.items.at(-1)!.entries).toHaveLength(3);
+    const older = sessions.listEntryRuns('session', { beforeSeq: latest.nextBeforeSeq! });
+    expect(older.items.map(item => item.runId)).toEqual(['r7', 'r6', 'r5', 'r4', 'r3']);
+    const oldest = sessions.listEntryRuns('session', { beforeSeq: older.nextBeforeSeq! });
+    expect(oldest.items.map(item => item.runId)).toEqual(['r2', 'r1']);
+    expect(oldest.hasMore).toBe(false);
+    expect(oldest.nextBeforeSeq).toBeNull();
+  });
+
+  it('finds a newly saved assistant in an already seen run and advances through five-run batches', () => {
+    create();
+    const user = append('session', 'user', { role: 'user', runId: 'first' });
+    const assistant = append('session', 'assistant', { runId: 'first' });
+    for (let n = 0; n < 6; n++) append('session', `later-${n}`, { runId: `later-${n}` });
+    const page = sessions.listEntryRuns('session', { afterSeq: user.seq });
+    expect(page.items).toHaveLength(5);
+    expect(page.items[0]).toMatchObject({ runId: 'first', firstSeq: user.seq, lastSeq: assistant.seq });
+    expect(page.items[0]!.entries.map(entry => entry.id)).toEqual(['user', 'assistant']);
+    expect(page.hasMore).toBe(true);
+    const next = sessions.listEntryRuns('session', { afterSeq: page.nextAfterSeq! });
+    expect(next.items.map(item => item.runId)).toEqual(['later-4', 'later-5']);
+    expect(next.hasMore).toBe(false);
+    expect(sessions.listEntryRuns('session', { afterSeq: next.nextAfterSeq! }).items).toEqual([]);
+  });
+
+  it('keeps pages scoped to a session and does not skip interleaved run groups on forward reads', () => {
+    create(); create('other');
+    append('other', 'foreign', { runId: 'r1' });
+    append('session', 'early', { runId: 'r1', role: 'user' });
+    for (let n = 0; n < 6; n++) append('session', `middle-${n}`, { runId: `r${n + 2}` });
+    append('session', 'late', { runId: 'r1' });
+    const first = sessions.listEntryRuns('session', { afterSeq: 0 });
+    const second = sessions.listEntryRuns('session', { afterSeq: first.nextAfterSeq! });
+    expect([...first.items, ...second.items].map(item => item.runId)).toEqual(['r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r1']);
+    expect(second.items.at(-1)!.entries.map(entry => entry.id)).toEqual(['early', 'late']);
+    expect(() => sessions.listEntryRuns('session', { beforeSeq: 2, afterSeq: 1 })).toThrow();
+  });
+
+  it('protects narrative outcome from generic edits while preserving caller-owned extensions', () => {
+    create();
+    const user = append('session', 'user', { role: 'user', extData: { note: 'keep' } });
+    const outcome = { status: 'stopped' as const, stopReason: 'cancelled' as const, finishedAt: 123 };
+    const saved = sessions.setNarrativeOutcome('session', user.id, outcome);
+    expect(saved.extData).toEqual({ note: 'keep', narrative: outcome });
+    expect(saved.seq).toBe(user.seq);
+    expect(sessions.updateEntry('session', user.id, { extData: { label: 'new' } }).extData)
+      .toEqual({ label: 'new', narrative: outcome });
+    expect(() => sessions.updateEntry('session', user.id, { extData: { narrative: outcome } })).toThrow();
+    expect(() => append('session', 'forged', { extData: { narrative: outcome } })).toThrow();
+    const assistant = append('session', 'assistant');
+    expect(() => sessions.setNarrativeOutcome('session', assistant.id, outcome)).toThrow();
+    expect(sessions.getNarrativeOutcome(saved)).toEqual(outcome);
+    expect(sessions.getNarrativeOutcome(assistant)).toBeNull();
+  });
+
+  it('normalizes legacy request status without guessing the provider and only totals recorded usage', () => {
+    create();
+    const known = { inputTokens: 10, outputTokens: 4, totalTokens: 14, cacheReadTokens: 3, cacheWriteTokens: 0 };
+    append('session', 'legacy');
+    db.prepare('UPDATE entries SET metrics_json=? WHERE id=?').run(JSON.stringify({ requests: [{
+      requestId: 'old', modelId: 'old-model', status: 'failed', usage: known,
+    }] }), 'legacy');
+    append('session', 'new', { metrics: metrics('new') });
+    const request = sessions.getEntry('session', 'legacy')!.metrics!.requests[0]!;
+    expect(request).toEqual({ requestId: 'old', modelId: 'old-model', provider: null, usage: known });
+    expect(sessions.recordedUsage('session')).toEqual({
+      knownUsage: known, recordedRequestCount: 2, unknownUsageRequestCount: 1,
+    });
+    expect(sessions.getEntry('session', 'new')!.metrics!.requests[0]!.provider).toBe('test-provider');
+    expect(() => sessions.setMetrics('session', 'new', { requests: [{
+      ...metrics('bad').requests[0]!, status: 'completed',
+    }] } as unknown as EntryMetrics)).toThrow();
   });
 });
