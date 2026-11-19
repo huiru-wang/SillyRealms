@@ -6,10 +6,11 @@ import { decodeCursor, encodeCursor } from '../http/pagination.js';
 import { numberQuery, readJson, success } from '../http/response.js';
 import { requireSessionAccess, type SessionAccessCheck } from '../http/session-access.js';
 import type {
-  AppendEntryInput, CreateSessionInput, Session, SessionListOptions, SessionService, UpdateEntryInput, UpdateSessionInput,
+  AppendEntryInput, Session, SessionListOptions, SessionService, UpdateEntryInput, UpdateSessionInput,
 } from '../modules/sessions/service.js';
 import type { WorldService } from '../modules/worlds/service.js';
 import type { AppendEntry } from '../usecases/append-entry.js';
+import type { CreateSession, CreateSessionInput } from '../usecases/create-session.js';
 
 export type SessionSummary = Pick<Session, 'id' | 'worldId' | 'presetId' | 'apiModelConfigId' | 'title' | 'updatedAt'>
   & { worldName: string; cover: string | null };
@@ -43,11 +44,12 @@ export type SessionRouteOptions = {
   sessions: SessionService;
   worlds: WorldService;
   appendEntry: AppendEntry;
+  createSession: CreateSession;
   canAccessSession?: SessionAccessCheck;
   shutdownSignal: AbortSignal;
 };
 
-export function createSessionRoutes({ events, sessions, worlds, appendEntry, canAccessSession, shutdownSignal }: SessionRouteOptions) {
+export function createSessionRoutes({ events, sessions, worlds, appendEntry, createSession, canAccessSession, shutdownSignal }: SessionRouteOptions) {
   const routes = new Hono();
   const access = (sessionId: string, request: Request) =>
     requireSessionAccess(sessions, sessionId, request, canAccessSession, shutdownSignal);
@@ -91,7 +93,8 @@ export function createSessionRoutes({ events, sessions, worlds, appendEntry, can
 
   routes.post('/', async c => {
     const input = await readJson<CreateSessionInput>(c);
-    return success(c, { item: projectSession(sessions.create(input), worlds) }, 201);
+    const result = createSession(input);
+    return success(c, { item: projectSession(result.item, worlds), entry: result.entry }, 201);
   });
 
   routes.get('/:id', async c => {

@@ -7,6 +7,7 @@ import { validateStateJson } from '@sillyrealms/sdk/state-validation';
 import { evaluateWhen, type StateViews } from './when.js';
 import { parseStatePath, prepareStatePatch } from './patch.js';
 import { messageValues, replaceMessageValue } from './snapshot.js';
+import { prepareInitialSnapshots } from './initial.js';
 import type { PreparedStatePatch, StateUpdate, StateEvent } from './types.js';
 
 export type { StateViews } from './when.js';
@@ -27,6 +28,10 @@ export class StateService {
   constructor({ worlds, sessions }: { worlds: WorldReader; sessions: SessionReader }) {
     this.#worlds = worlds;
     this.#sessions = sessions;
+  }
+
+  prepareInitialSnapshots(definition: JsonValue | null, overrides: unknown) {
+    return prepareInitialSnapshots(definition, overrides);
   }
 
   getGlobal(worldId: string): JsonObject | null {

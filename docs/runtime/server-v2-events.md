@@ -12,6 +12,26 @@ SSE 握手前的错误仍用普通 HTTP JSON 包络；建立后返回原始 text
 
 客户端应先建立事件连接再提交叙事。事件可能早于提交请求的 202 响应，使用 runId/messageId 关联，不能依赖 HTTP 响应和事件先后顺序。
 
+## 会话创建事件
+
+创建会话和首条消息的事务提交成功后，仅发布一次 session.created：
+
+```ts
+{
+  event: 'session.created',
+  data: {
+    sessionId: string,
+    tipEntryId: string,
+    timestamp: number,
+    entry: SessionEntry
+  }
+}
+```
+
+entry 是已保存的完整首条消息，包含 runId、seq、替换 {{user}} 后的正文、初始消息状态与明确的完成结果，不包含 kind/origin。timestamp 使用首条消息时间。事件按 sessionId 通过同一个 EventHub 发布，监听器错误不影响已提交的数据。
+
+创建没有执行叙事，不发布 run.created/run.delta/run.usage/run.completed 或 state.changed。由于首次创建时可能没有 SSE 连接，POST 响应同时提供 item 与 entry；初始显示以响应或历史查询为准，不等待创建事件。失败回滚时不发布任何事件。
+
 ## 运行事件契约
 
 生产中的每个 run 事件都包含：
@@ -76,7 +96,7 @@ finish_reason 描述一次模型输出结束，不代表数据库保存成功或
 
 ### 一次运行的总 usage
 
-每个已受理 run 在消息保存及用户 entry 的结束结果结算后发布一次 run.usage，随后发布唯一 run.completed 或 run.stopped。运行占位在发布结算事件前释放；终态后不再发送本轮增量或用量。SSE 连接继续存在。
+每个已受理的叙事 run 在消息保存及首条 user entry 的结束结果结算后发布一次 run.usage，随后发布唯一 run.completed 或 run.stopped。运行占位在发布结算事件前释放；终态后不再发送本轮增量或用量。SSE 连接继续存在。
 
 usage 为以下对象或 null：
 
@@ -151,4 +171,4 @@ data: {"runId":"r-1","sessionId":"s-1","provider":"deepseek","model":"deepseek-f
 
 事件传输仍为 `/api/v1/sessions/:id/events`，没有 narrative/events、SSE id 或回放。轮次查询位于 narrative/runs：客户端重连后按已有 seq 补查新增 entries，并刷新原来运行中的那一轮的详情；退出后重新进入则读取最新 5 轮。未落库的断线分片无需补齐，现有最终 snapshot 保持替换语义。
 
-用户 entry 的 extData.narrative 保存 `{status,finishedAt,stopReason?}`，正常完成为 completed，其他结算为 stopped，stopReason 与本事件契约相同；写入失败不回滚已存消息。metrics.requests 改为 provider/modelId/requestId/usage/时间信息，不再存 status。公开事件结构没有因此改变。
+每个 run 首条 entry 的 extData.narrative 保存 `{status,finishedAt,stopReason?}`，正常完成为 completed，其他结算为 stopped，stopReason 与本事件契约相同；写入失败不回滚已存消息。metrics.requests 改为 provider/modelId/requestId/usage/时间信息，不再存 status。公开事件结构没有因此改变。

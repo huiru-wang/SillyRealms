@@ -122,7 +122,7 @@ function SectionContent({section,world,characterId,onSaved}:{section:Section;wor
   }}>
     <div className={styles.openingToolbar}><div className={styles.openingNav}><IconButton disabled={openingIndex===0} onClick={()=>setOpeningIndex(i=>i-1)} aria-label="上一个开局"><ChevronLeft size={15}/></IconButton><span aria-label={'第 '+(openingIndex+1)+' 个开局，共 '+data.openings.length+' 个'}>{openingIndex+1}/{data.openings.length}</span><IconButton disabled={openingIndex===data.openings.length-1} onClick={()=>setOpeningIndex(i=>i+1)} aria-label="下一个开局"><ChevronRight size={15}/></IconButton></div><div className={styles.openingActions}><Button size="compact" onClick={()=>setStateOpen(true)}>查看初始状态</Button><StartSession world={world} openingId={opening.id} characterId={characterId}/></div></div>{!characterId&&<p className={styles.startError}>此世界尚未配置可扮演角色。</p>}
     <h3>{opening.name}</h3>{opening.component?<WorldComponentView key={opening.id} world={world} entry={opening.component} title={opening.name}/>:<WorldDocumentRenderer showStyleWarning={false} title={opening.name} content={opening.content}/>}
-  </div>{stateOpen&&<Modal title="开局初始状态" size="editor" onClose={()=>setStateOpen(false)}><p className={styles.stateIntro}>“{opening.name}”声明的消息初始状态，仅供查看；创建基础会话不会应用这些值。</p><OpeningState state={data.stateDefinition??undefined} override={opening.initial_state}/></Modal>}</>:<p>这个世界没有开局。</p>;
+  </div>{stateOpen&&<Modal title="开局初始状态" size="editor" onClose={()=>setStateOpen(false)}><p className={styles.stateIntro}>“{opening.name}”声明的消息初始状态，创建会话时将应用这些值。</p><OpeningState state={data.stateDefinition??undefined} override={opening.initial_state}/></Modal>}</>:<p>这个世界没有开局。</p>;
   if(section==='运行配置')return <WorldConfig world={world} onSaved={onSaved}/>;
   return typeof data.description==='string'?<WorldDocumentRenderer showStyleWarning={false} title="世界介绍" content={data.description}/>:data.description?<WorldComponentView world={world} entry={data.description.component} title="世界介绍"/>:<p>这个世界还没有介绍。</p>;
 }
@@ -132,7 +132,7 @@ function StartSession({world,openingId,characterId}:{world:WorldDetail;openingId
   const character=world.characters.find(item=>item.id===characterId&&item.player_selectable);
   const opening=world.openings.find(item=>item.id===openingId);
   return <><Button size="compact" variant="primary" disabled={!character||!opening} onClick={()=>setOpen(true)}>创建会话</Button>
-    {open&&character&&opening&&<CreateSessionDialog worldId={world.id} lockedWorld worldContext={{characterId:character.id,openingName:opening.name}} onClose={()=>setOpen(false)}/>}
+    {open&&character&&opening&&<CreateSessionDialog worldId={world.id} lockedWorld worldContext={{characterId:character.id,openingId:opening.id,openingName:opening.name}} onClose={()=>setOpen(false)}/>}
   </>;
 }
 

@@ -54,7 +54,9 @@
 
 - StudioV2 world detail preserves the original Studio page structure and interaction model: collapsible overview, character strip, six icon tabs, opening navigation, independent content scrolling and dialogs. Adapt API contracts without replacing these with management panels.
 
-- ServerV2 narrative APIs use `/sessions/:id/narrative` for five-run history, seq catch-up, saved-run details, submission/stop and recorded usage; the session SSE stays independent. Terminal outcomes live only in the user entry's `extData.narrative`, request metrics contain provider instead of status. No runs table, replay or restart recovery.
+- ServerV2 narrative APIs use `/sessions/:id/narrative` for five-run history, seq catch-up, saved-run details, submission/stop and recorded usage; the session SSE stays independent. Terminal outcomes live in each run's first entry's `extData.narrative` regardless of its role, request metrics contain provider instead of status. No runs table, replay or restart recovery.
 - StudioV2's isolated static build now includes both `world-component.html` and `frame.html`; runtime/config publishes the stage origin/entryPath/debug. This exposes the document entry only, not a mounted or fully adapted narrative UI/SDK transport.
 
 - ServerV2 state events use the existing session SSE and `{path,scope,value}` contract. Publish actual effective changes only after commit; global fans out to all sessions of the world, message tracks the current tip's inherited view. Empty event path replaces the whole scope; PATCH inputs still require a nonempty path. State writes and stateful entry appends are orchestrated in usecases, never published by repositories or StateService.
+
+- ServerV2 session creation requires openingId and atomically creates the session, local initial state and first assistant entry. Substitute exact {{user}} placeholders once; preserve current global state. Emit only session.created after commit, no run/state events. Initial messages use ordinary run grouping without kind/origin; StudioV2 submits the selection while stage rendering remains deferred.

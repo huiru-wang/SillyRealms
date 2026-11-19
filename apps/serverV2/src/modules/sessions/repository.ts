@@ -190,7 +190,8 @@ export class SessionRepository {
   setNarrativeOutcome(sessionId: string, entryId: string, outcome: NarrativeOutcome): EntryRow {
     return transaction(this.#db, () => {
       const current = this.#requireEntry(sessionId, entryId);
-      if (current.type !== 'message' || current.role !== 'user') throw new AppError('INVALID_REQUEST');
+      const first = this.#db.prepare('SELECT id FROM entries WHERE session_id=? AND run_id=? ORDER BY seq LIMIT 1').get(sessionId, current.run_id);
+      if (current.type !== 'message' || first?.id !== current.id) throw new AppError('INVALID_REQUEST', '结束结果只能保存在该 run 的首条消息');
       this.#db.prepare('UPDATE entries SET ext_data=?,updated_at=? WHERE session_id=? AND id=?')
         .run(encodeJson({ ...current.ext_data, narrative: outcome }, 'object'), Date.now(), sessionId, entryId);
       return this.#requireEntry(sessionId, entryId);

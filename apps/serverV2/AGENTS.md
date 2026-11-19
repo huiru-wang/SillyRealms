@@ -35,7 +35,7 @@
 - 模型目录由 infrastructure/pi 读取固定版本 SDK，按 provider 分组；公开 contextWindow/maxTokens/reasoning/thinkingLevelMap/thinkingLevels/api/input/promptCache 等安全元数据。有效思考档位使用 SDK helper；缓存保留时长为 SDK 最佳估计秒数，缺失用 null，不推断实际支持或保留承诺。不返回 SDK headers/baseUrl 或密钥。
 - credentials 独立管理外部密钥存储，models 表只保存 credentialRef。model-config 用例协调写入、补偿和删除清理，按模型串行，不在 SQLite 事务内等待外部存储；HTTP 不接收引用或返回密钥，状态不冒充模型连通性验证。
 - 默认凭据适配器是 macOS Keychain，引用按 V2 dataRoot 隔离；不复用旧 Server 凭据命名空间，不增加明文降级存储。跨资源补偿不等于崩溃原子性。
-- 会话创建验证世界中的可扮演角色，只建立基础记录。更新不允许改变 worldId/userCharacterId；不顺带初始化 opening、消息、执行或计量。详情统一返回 data.item。
+- 会话创建经 create-session 用例：要求 openingId，验证世界中的开局与可扮演角色，明确预设/模型引用；同一同步事务初始化 session/message 状态并保存首条 assistant entry、完成结果与 tip。global 保持当前值，opening.initial_state 只整项替换 message 根；正文将全部 {{user}} 一次性替换为角色名。不执行组件/模型，不新增表或 kind/origin。成功仅发布 session.created，data 为 {sessionId,tipEntryId,timestamp,entry}，不发 run.* 或 state.changed。POST 返回 data:{item,entry}，GET 仍为 data.item。更新不允许改变 worldId/userCharacterId，已有会话不自动补写。初始化直接调用属主服务，不嵌套会发布事件的写用例。
 
 - 世界列表直接读取摘要并批量取标签，以 createdAt/id 游标分页；管理 PATCH 只接受名称、标签、默认配置及 expectedRevision，CAS 原子更新，不重写作者内容或运行状态。HTTP 不开放 POST /worlds 或作者内容编辑。
 - 组件读取复用 worlds/assets，path 优先且失败不回退 inline；按组件返回错误。API Origin 校验只信任服务同源和配置的 Studio 来源，跨来源仅允许资源 GET/HEAD；这不是用户认证。
@@ -46,6 +46,6 @@
 
 - 叙事提交、停止、查询与用量统一在 /api/v1/sessions/:id/narrative；旧 /runs 路径不保留别名。SSE 仍为 /sessions/:id/events；不新增 narrative/events 或 capabilities，提交响应不带 capabilities。
 - runs 列表固定最多 5 轮，limit 只允许省略或 5。历史 cursor 按每轮首 entry.seq 倒序；afterSeq 按最后 entry.seq 升序查询受影响完整轮次。Repository SQL 仅操作本域 entries，不新增 runs 表。返回 nextCursor/nextAfterSeq/activeRunId；单轮详情只读已保存内容和当前活跃状态，不提供流式正文恢复。
-- 用户 entry.extData.narrative 保存 completed+finishedAt，或 stopped+stopReason+finishedAt。助手保存后写结束结果，再发 usage/终态；失败保留消息，无结束记录且不活跃返回 unknown。通用 entry 编辑不能传入/删除 narrative，写结果保留其他扩展。该字段不是恢复日志，running 只在内存中。
+- 每个 run 首条 entry.extData.narrative 保存 completed+finishedAt，或 stopped+stopReason+finishedAt。助手保存后写结束结果，再发 usage/终态；失败保留消息，无结束记录且不活跃返回 unknown。通用 entry 编辑不能传入/删除 narrative，写结果保留其他扩展。该字段不是恢复日志，running 只在内存中。
 - metrics.requests 移除 status，增加 provider（新记录为实际 providerId，旧数据未知为 null）。读旧 JSON 丢弃 status，不猜测供应商、不批量迁移；新写入严格校验。usage 只汇总已记录的已知 token 并报告未知请求数，不写累计账本。
 - /api/v1/runtime/config 返回隔离舞台的公开 origin/entryPath 与 debug，不重复 port。stageOrigin/debug 由装配提供，CLI 使用 SERVER_V2_STAGE_ORIGIN/SERVER_V2_DEBUG；不与 Studio 同源，不允许 HTTPS 降级，不新增监听进程。

@@ -174,11 +174,25 @@ PATCH 仅接受 name、tags、defaultPresetId、defaultApiModelConfigId 的非�
 
 会话列表支持 worldId、limit、cursor，不提供关键词搜索。route 解析游标位置后调用 SessionService；列表项的 worldName/cover 通过 WorldService 在 route 组合，同一请求缓存重复世界读取。SessionService 只返回自身的 Session 领域对象。条目列表支持 afterSeq、limit。整数 query 必须是合法安全整数，再由 Service 校验允许范围。
 
-会话详情 GET 返回 `data.item: SessionView`，包含 worldId、presetId、apiModelConfigId、userCharacterId、tipEntryId、title 等驼峰字段。创建接收 worldId/presetId/apiModelConfigId/userCharacterId，可带 id/title；玩家角色必须属于该世界且 player_selectable=true，否则返回 INVALID_SESSION_CHARACTER/422。创建只保存基础记录，不初始化开场、消息或执行任务。PATCH 仅支持 title/presetId/apiModelConfigId，世界与玩家身份创建后不再修改。StudioV2 不挂载 SessionHost，不请求本节的条目、历史、Run 或 SSE 接口。
+会话详情 GET 返回 `data.item: SessionView`，包含 worldId、presetId、apiModelConfigId、userCharacterId、tipEntryId、title 等驼峰字段。PATCH 仅支持 title/presetId/apiModelConfigId，世界与玩家身份创建后不再修改。StudioV2 不挂载 SessionHost，不主动请求本节的条目、历史、Run 或 SSE 接口。
+
+### 创建可用会话
+
+`POST /sessions` 接收 `{worldId,openingId,userCharacterId,presetId,apiModelConfigId,id?,title?}`，不接受客户端 state。配置必须明确提交，不隐式替换；title 省略时使用开局名称，显式 null 保留无标题。不存在或不属于该世界的开局返回 INVALID_SESSION_OPENING/422；角色必须属于该世界且 player_selectable=true，否则返回 INVALID_SESSION_CHARACTER/422。模型和预设通过本域服务检查引用。
+
+create-session 用例在同一个同步事务中校验选择、计算初始快照、创建会话、保存第一条 assistant 消息、写入该 run 的完成结果并推进 tip。任一步失败整体回滚，不留空会话。初始化直接调用属主 Service，不嵌套发布状态事件的用例，不调用模型、凭据服务或作者组件。
+
+- global 使用 worlds.state 当前值，不重置，也不应用开局覆盖。
+- session 按 stateDefinition.scopes.session 各字段 initial 初始化，缺省为 {}。
+- message 按 message 定义 initial 初始化，再应用 opening.initial_state：仅允许已声明根、整项替换、不深度合并，校验完整根值；未覆盖根保留默认值。所有字段均初始化，load/when 不决定字段是否存在。结果保存为 [{key,value}]，无定义时为 []。
+- 正文取 opening.content，一次性将所有精确的 {{user}} 替换为所选玩家角色名称；不修改世界原文，不执行组件或其他模板表达式。
+- 第一条消息 parentId=null、seq=1、type=message、role=assistant，payload.message 使用字符串 content 与 timestamp，metrics=null。分配独立 runId，首条 extData.narrative 保存 completed+finishedAt，不保存 kind、origin 或开局身份元数据。
+
+成功返回 201，`data:{item:SessionView,entry:SessionEntry}`，item.tipEntryId 已指向返回消息。提交后仅发布一次 session.created，不发布 run.* 或 state.changed。会话创建时一般还没有 SSE 订阅，首次展示使用响应或已保存历史，不依赖事件。重复 id 返回冲突，不重复创建；不提供后台任务或自动重试。已有会话不自动补开场、重置状态。
 
 本期只做线性追加。parentId 可省略，默认当前 tip；显式值不匹配时返回 TIP_CONFLICT。新条目、seq 与 tip 的原子更新归 SessionRepository；没有 setTip 或分支切换接口。
 
-SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt/updatedAt，payload 与状态内容保持原键。HTTP 追加条目不接受 metrics，也不提供编辑计量的 HTTP 路由；计量由进程内 SessionService 写入。runId 关联本轮已保存的用户消息和可选助手消息；轮次详情组合 entries 与用户 entry 的 extData.narrative；缺少结束结果且无活跃运行时状态为 unknown。
+SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt/updatedAt，payload 与状态内容保持原键。HTTP 追加条目不接受 metrics，也不提供编辑计量的 HTTP 路由；计量由进程内 SessionService 写入。runId 仅关联同组已保存消息，不区分创建时的首条消息与模型生成；轮次详情组合 entries 与本组首条 entry 的 extData.narrative；缺少结束结果且无活跃运行时状态为 unknown。
 
 会话范围的读取、修改、状态及 SSE 入口先确认真实会话，再执行可选访问检查；拒绝与不存在统一返回 SESSION_NOT_FOUND。异步检查结束后先检查停机，再确认会话仍存在。配置了访问检查时，会话列表只返回获准条目。
 
@@ -223,7 +237,7 @@ SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt
 
 重连时先建立原 SSE，再用页面最新已保存 seq 补查，按 runId 替换完整轮次；同时刷新页面原来处于运行中的轮次详情，因为仅修改结束结果不会产生新 seq。页面无数据时重新读取最新一页。断线期间尚未保存的分片不回放、不保证显示完整；已有最终 snapshot 采用整体替换，终态后补查 entries。不为此增加分片落库或恢复系统。
 
-用户 entry 的 extData.narrative 仅由服务内部写入：
+每个 run 首条 entry 的 extData.narrative 仅由服务内部写入，不限定 user/assistant 角色：
 
 ```ts
 type NarrativeOutcome =

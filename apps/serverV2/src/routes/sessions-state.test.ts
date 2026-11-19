@@ -48,7 +48,7 @@ beforeEach(() => {
   app = new Hono();
   app.onError(errorHandler);
   app.route('/api/v1/sessions', createSessionRoutes({
-    sessions: services.sessions, worlds: services.worlds, appendEntry: usecases.appendEntry, events, canAccessSession, shutdownSignal: shutdown.signal,
+    sessions: services.sessions, worlds: services.worlds, appendEntry: usecases.appendEntry, createSession: usecases.createSession, events, canAccessSession, shutdownSignal: shutdown.signal,
   }));
   app.route('/api/v1/state', createStateRoutes({ state: services.state, setState: usecases.setState, sessions: services.sessions, canAccessSession, shutdownSignal: shutdown.signal }));
 });
@@ -112,8 +112,8 @@ describe('session HTTP operations', () => {
   });
 
   it('uses camel inputs and item wrappers for detail and writes', async () => {
-    const created = await data<{ item: SessionView }>(await request('POST', '/sessions', { ...sessionInput('new'), title: 'Start' }), 201);
-    expect(created.item).toMatchObject({ id: 'new', worldId: 'world', title: 'Start', tipEntryId: null, worldName: 'World', cover: null });
+    const created = await data<{ item: SessionView; entry: SessionEntry }>(await request('POST', '/sessions', { ...sessionInput('new'), openingId: 'start', title: 'Start' }), 201);
+    expect(created.item).toMatchObject({ id: 'new', worldId: 'world', title: 'Start', tipEntryId: created.entry.id, worldName: 'World', cover: null });
     const { item: detail } = await data<{ item: SessionView }>(await request('GET', '/sessions/new'));
     expect(detail).toMatchObject({ id: 'new', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' });
     expect(detail).not.toHaveProperty('item');
@@ -138,7 +138,7 @@ describe('session HTTP operations', () => {
     app = new Hono();
     app.onError(errorHandler);
     app.route('/api/v1/sessions', createSessionRoutes({
-      sessions: services.sessions, worlds: services.worlds, appendEntry: usecases.appendEntry, events, shutdownSignal: shutdown.signal,
+      sessions: services.sessions, worlds: services.worlds, appendEntry: usecases.appendEntry, createSession: usecases.createSession, events, shutdownSignal: shutdown.signal,
     }));
     const first = await data<Page<SessionSummary>>(await request('GET', '/sessions?worldId=world&limit=2'));
     expect(first.items.map(item => item.id)).toEqual(['c', 'b']);
@@ -205,8 +205,8 @@ describe('session HTTP operations', () => {
 
   it('rejects invalid JSON, missing fields and references through the normal error envelope', async () => {
     await failure(await request('POST', '/sessions', {}), 'INVALID_REQUEST', 400);
-    await failure(await request('POST', '/sessions', { ...sessionInput('invalid'), presetId: 'missing' }), 'PRESET_NOT_FOUND', 404);
-    await failure(await request('POST', '/sessions', sessionInput('one')), 'RESOURCE_CONFLICT', 409);
+    await failure(await request('POST', '/sessions', { ...sessionInput('invalid'), openingId: 'start', presetId: 'missing' }), 'PRESET_NOT_FOUND', 404);
+    await failure(await request('POST', '/sessions', { ...sessionInput('one'), openingId: 'start' }), 'RESOURCE_CONFLICT', 409);
     await failure(await app.request('/api/v1/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{' }), 'INVALID_JSON', 400);
     await failure(await app.request('/api/v1/sessions', { method: 'POST', body: '{}' }), 'UNSUPPORTED_MEDIA_TYPE', 415);
     await failure(await request('PATCH', '/sessions/one', []), 'INVALID_REQUEST', 400);

@@ -58,8 +58,8 @@ test('opening state previews preserve complete defaults and reject undeclared ov
 
 test('world detail keeps the selected playable role and explicit empty defaults',async()=>{
  const {initialSessionSelection}=await import('../src/features/sessions/creation.ts');
- const world={characters:[{id:'first',player_selectable:true},{id:'chosen',player_selectable:true},{id:'npc'}],defaultPresetId:null,defaultApiModelConfigId:null};
- assert.deepEqual(initialSessionSelection(world,'chosen'),{character:'chosen',preset:'',model:''});
+ const world={openings:[{id:'start'}],characters:[{id:'first',player_selectable:true},{id:'chosen',player_selectable:true},{id:'npc'}],defaultPresetId:null,defaultApiModelConfigId:null};
+ assert.deepEqual(initialSessionSelection(world,'chosen'),{opening:'start',character:'chosen',preset:'',model:''});
  assert.equal(initialSessionSelection(world).character,'first');
  assert.equal(initialSessionSelection(world,'npc').character,'');
  assert.equal(initialSessionSelection(world,'missing').character,'');
@@ -88,4 +88,13 @@ test('isolated build includes both renderer documents while management builds on
  assert.ok(entries.stage.endsWith('/frame.html'));assert.ok(entries.world.endsWith('/world-component.html'));
  assert.equal(isolated.config.server.proxy,undefined);
  assert.ok(management.config.build.rollupOptions.input.endsWith('/index.html'));
+});
+
+test('creation requires an explicit choice for multiple openings and never substitutes a missing selection',async()=>{
+ const {initialSessionSelection}=await import('../src/features/sessions/creation.ts');
+ const world={openings:[{id:'one'},{id:'two'}],characters:[{id:'player',player_selectable:true}],defaultPresetId:'preset',defaultApiModelConfigId:'model'};
+ assert.equal(initialSessionSelection(world).opening,'');
+ assert.deepEqual(initialSessionSelection(world,'player','two'),{opening:'two',character:'player',preset:'preset',model:'model'});
+ assert.equal(initialSessionSelection(world,'player','missing').opening,'');
+ assert.equal(initialSessionSelection({...world,openings:[]}).opening,'');
 });

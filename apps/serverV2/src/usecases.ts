@@ -13,6 +13,7 @@ import { createImportWorld } from './usecases/import-world.js';
 import { createInitialize } from './usecases/initialize.js';
 import { createSetState } from './usecases/set-state.js';
 import { createAppendEntry } from './usecases/append-entry.js';
+import { createSessionUsecase } from './usecases/create-session.js';
 
 /** Application flows are composed here; no usecase opens or retains a database connection. */
 export function createUsecases({ services, transaction, events, modelClient = new PiClient() }: {
@@ -20,6 +21,7 @@ export function createUsecases({ services, transaction, events, modelClient = ne
 }) {
   const { worlds, sessions, presets, settings } = services;
   return {
+    createSession: createSessionUsecase({ worlds, sessions, state: services.state, transaction, events }),
     narrative: createNarrativeUsecases({ ...services, events, modelClient }),
     testModel: createTestModel({ models: services.models, credentials: services.credentials, modelClient }),
     listProviders: () => modelClient.listProviders(),

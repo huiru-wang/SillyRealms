@@ -91,8 +91,8 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
 
   const projectRun = (sessionId: string, item: EntryRun) => {
     const current = active.get(sessionId);
-    const user = item.entries.find(entry => entry.role === 'user');
-    const outcome = user ? dependencies.sessions.getNarrativeOutcome(user) : null;
+    const first = item.entries[0];
+    const outcome = first ? dependencies.sessions.getNarrativeOutcome(first) : null;
     const state = outcome ?? (current?.runId === item.runId
       ? { status: current.controller.signal.aborted ? 'stopping' as const : 'running' as const }
       : { status: 'unknown' as const });

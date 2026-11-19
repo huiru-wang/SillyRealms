@@ -64,7 +64,7 @@ export function createApp({ events, services, usecases, canAccessSession, studio
       importWorld: usecases.importWorld, exportWorld: usecases.exportWorld,
     }));
     app.route('/api/v1/sessions', createSessionRoutes({
-      appendEntry: usecases.appendEntry,
+      appendEntry: usecases.appendEntry, createSession: usecases.createSession,
       sessions: services.sessions, worlds: services.worlds, events, canAccessSession, shutdownSignal: shutdown.signal,
     }));
     app.route('/api/v1/state', createStateRoutes({

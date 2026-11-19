@@ -7,6 +7,7 @@ import type { ModelReader } from '../models/service.js';
 import type { PresetReader } from '../presets/service.js';
 import { assertWorldId, exportFilename, WORLD_JSON_LIMIT, WORLD_ZIP_LIMIT, WorldFileStore, type OriginalFormat, type PackageFile, type ImportFileStage, type WorldDownload, type WorldOriginal, type WorldPaths } from './files.js';
 import { cardToWorld, worldToCard } from './parser.js';
+import { openingSchema } from './validation.js';
 import { readComponents } from './assets.js';
 import { buildWorldPackage, readImportPackage } from './archive.js';
 import { WorldRepository, type WorldContentRow, type WorldRow } from './repository.js';
@@ -14,6 +15,7 @@ import {
   worldContentFields, type CreateWorld, type WorldContent, type WorldListOptions, type WorldPatch, type World, type WorldPage, type WorldTag, type WorldManagementPatch,
 } from './types.js';
 
+export type WorldOpening = z.infer<typeof openingSchema>;
 export type { CreateWorld, WorldContent, WorldDescription, WorldListOptions, WorldPage, WorldPatch, World, WorldTag, WorldSummary, WorldDetail, WorldManagementPatch } from './types.js';
 export type { OriginalFormat, PackageFile, WorldDownload, WorldOriginal, WorldPaths } from './files.js';
 
@@ -219,6 +221,15 @@ export class WorldService {
       // Retrying also cleans up a directory whose DB row was already deleted.
       throw new AppError('WORLD_FILES_DELETE_FAILED');
     }
+  }
+
+  requireOpening(worldId: string, openingId: string): WorldOpening {
+    const world = this.require(worldId);
+    const raw = world.openings.find(item => item !== null && typeof item === 'object' && !Array.isArray(item) && item.id === openingId);
+    if (raw === undefined) throw new AppError('INVALID_SESSION_OPENING');
+    const result = openingSchema.safeParse(raw);
+    if (!result.success) throw new AppError('INVALID_WORLD_CARD', '开局结构无效');
+    return result.data;
   }
 
   getState(worldId: string): JsonObject | null {

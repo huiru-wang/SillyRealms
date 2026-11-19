@@ -144,13 +144,13 @@ export class SessionService {
     return { knownUsage, recordedRequestCount, unknownUsageRequestCount };
   }
 
-  setNarrativeOutcome(sessionId: string, userEntryId: string, outcome: NarrativeOutcome): SessionEntry {
-    identifier.parse(sessionId); identifier.parse(userEntryId);
-    return toSessionEntry(this.#repository.setNarrativeOutcome(sessionId, userEntryId, narrativeOutcomeSchema.parse(outcome)));
+  setNarrativeOutcome(sessionId: string, entryId: string, outcome: NarrativeOutcome): SessionEntry {
+    identifier.parse(sessionId); identifier.parse(entryId);
+    return toSessionEntry(this.#repository.setNarrativeOutcome(sessionId, entryId, narrativeOutcomeSchema.parse(outcome)));
   }
 
   getNarrativeOutcome(entry: SessionEntry): NarrativeOutcome | null {
-    if (entry.type !== 'message' || entry.role !== 'user') return null;
+    if (entry.type !== 'message') return null;
     const result = narrativeOutcomeSchema.safeParse(entry.extData.narrative);
     return result.success ? result.data : null;
   }

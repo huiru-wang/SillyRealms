@@ -24,6 +24,7 @@ export const ERRORS = {
   CREDENTIAL_WRITE_FAILED: { message: '凭据保存失败，请重试', status: 503 },
   CREDENTIAL_COMPENSATION_FAILED: { message: '配置保存失败且凭据恢复未完成，请重新保存密钥', status: 500 },
   CREDENTIAL_DELETE_FAILED: { message: '配置已删除，凭据清理失败，请重试删除', status: 503 },
+  INVALID_SESSION_OPENING: { message: '请选择该世界中的开局', status: 422 },
   INVALID_SESSION_CHARACTER: { message: '请选择该世界中可扮演的角色', status: 422 },
   PRESET_NOT_FOUND: { message: '预设不存在', status: 404 },
   MODEL_CONFIG_NOT_FOUND: { message: '模型配置不存在', status: 404 },
