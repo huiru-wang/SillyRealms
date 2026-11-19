@@ -56,3 +56,5 @@
 
 - ServerV2 narrative APIs use `/sessions/:id/narrative` for five-run history, seq catch-up, saved-run details, submission/stop and recorded usage; the session SSE stays independent. Terminal outcomes live only in the user entry's `extData.narrative`, request metrics contain provider instead of status. No runs table, replay or restart recovery.
 - StudioV2's isolated static build now includes both `world-component.html` and `frame.html`; runtime/config publishes the stage origin/entryPath/debug. This exposes the document entry only, not a mounted or fully adapted narrative UI/SDK transport.
+
+- ServerV2 state events use the existing session SSE and `{path,scope,value}` contract. Publish actual effective changes only after commit; global fans out to all sessions of the world, message tracks the current tip's inherited view. Empty event path replaces the whole scope; PATCH inputs still require a nonempty path. State writes and stateful entry appends are orchestrated in usecases, never published by repositories or StateService.

@@ -6,7 +6,7 @@ ServerV2 在现有会话上提供单次模型调用、正文/公开 reasoning/�
 
 StudioV2 仍只接入管理与作者预览，未挂载叙事运行 UI。原 Server/Studio 保持独立。当前不迁移摘要、自动裁剪、模型输出扩展、叙事自动状态更新、行动建议或开局初始化，不提供 Agent/tool loop、重试、重启恢复、执行状态表或事件回放。
 
-状态 HTTP 独立提供三个 scope 的 GET/PATCH/PUT，字段写入不接入本轮叙事的模型输出或结算流程。state.changed 仅保留 `{path,scope,value}` 契约，当前不发布；内部 getViews/evaluateWhen 继续服务于叙事上下文。具体写入与读取语义见 [状态接口](server-v2-http.md#状态接口)。本轮状态接口整理仅修改服务端，StudioV2 与 SDK transport 尚未适配新路径。
+状态 HTTP 独立提供三个 scope 的 GET/PATCH/PUT，字段写入不接入本轮叙事的模型输出或结算流程。state.changed 保持 `{path,scope,value}` 契约，由状态写入及改变有效状态的普通 entry 追加在提交后发布；message 事件表示当前 tip 的有效继承视图。叙事当前仅追加 null 状态，不改变继承视图、不自动发布状态更新；内部 getViews/evaluateWhen 继续服务于叙事上下文。具体写入与读取语义见 [状态接口](server-v2-http.md#状态接口)。本轮状态接口整理仅修改服务端，StudioV2 与 SDK transport 尚未适配新路径。
 
 | 位置 | 职责 |
 | --- | --- |

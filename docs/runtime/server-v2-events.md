@@ -112,13 +112,23 @@ data: {"runId":"r-1","sessionId":"s-1","provider":"deepseek","model":"deepseek-f
 
 成功同样使用 JSON run.completed，不输出裸 [DONE]。看见完整正文或模型 finish，不足以确认保存成功；以 run 终态和 entries/history 读取结果为准。
 
+## 状态事件
+
+`state.changed` 的 data 保持 `{path,scope,value}`。成功提交后仅推送有效状态的实际变化：PATCH 逐字段发布完整新值；PUT 或追加独立消息快照使用 `path: ""` 和完整对象，接收方替换整个 scope，`{}` 清空，null 仍是普通字段值。空路径不能用于 PATCH 请求。
+
+- global 发送到该世界的全部会话；session/message 只发送到所属会话，所有连接均可接收。
+- message 对应当前 tip 的有效继承视图，存储数组/null 转为对象。历史 entry 修改仅在影响当前 tip 时推送；恢复 null 继承发送继承后的完整对象。
+- 缺失路径忽略、同值、失败及回滚不发布；读取和初始化也不发布。PATCH 每项提交后推送，再处理下一项。
+- 普通消息追加若改变有效状态，保存 entry 并推进 tip 后推送完整快照。叙事当前追加 null 状态，不改变继承视图，不生产自动状态更新。
+
+发布由用例编排，StateService 计算变更，接收会话由 SessionService 查询；EventHub 保持独立。事件没有持久化/重放，初次装载及重连应重新读取状态快照。详见 [状态接口](server-v2-http.md#状态接口)。服务端契约已实现，StudioV2/SDK transport 的接入另行完成。
+
 ## 预留事件
 
-预留类型在服务端契约中定义，本期不生成 system、工具结果、状态更新或行动建议：
+预留类型在服务端契约中定义，本期不生成 system、工具结果或行动建议：
 
 - system 编译产物仍使用 run.delta，messages 为单个 `{role:"system",delta:{content}}`，不落库、不推送。
 - 工具结果仍使用 run.delta，messages 为单个 `{role:"tool",delta:{tool_call_id,name,status,content,is_error}}`，由未来的业务执行层产生。当前不执行工具或保存 role=tool entry。
-- state.changed 引用 state 模块公开契约，data 为 `{path,scope,value}`，表示一个状态路径及其完整新值，与 SRStateAPI 的事件结构一致。当前仅保留类型，状态 PUT/PATCH 与叙事均不发布该事件，也不实现 global 广播。事件传输仍由会话 events 基建承载；状态 HTTP 契约见 [状态接口](server-v2-http.md#状态接口)。
 - action_suggestions.changed 使用 sessionId、runId、messageId、items；items 整组替换，空数组表示清空，不追加重复事件。
 
 预留扩展独立于模型 run 生命周期，未来可以在叙事终态后发布。定义类型不等于迁移摘要或扩展执行逻辑。

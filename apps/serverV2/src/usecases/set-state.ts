@@ -1,4 +1,5 @@
 import { AppError, ERRORS } from '../errors.js';
+import type { EventHub } from '../infrastructure/events/event-hub.js';
 import type { TransactionRunner } from '../infrastructure/database/transaction.js';
 import type { SessionService } from '../modules/sessions/service.js';
 import {
@@ -8,9 +9,10 @@ import type { WorldService } from '../modules/worlds/service.js';
 
 type Dependencies = {
   worlds: Pick<WorldService, 'setState'>;
-  sessions: Pick<SessionService, 'setState' | 'setEntryState'>;
-  state: Pick<StateService, 'requireGlobal' | 'requireSession' | 'requireMessage' | 'prepareGlobalPatch' | 'prepareSessionPatch' | 'prepareMessagePatch'>;
+  sessions: Pick<SessionService, 'setState' | 'setEntryState' | 'listIdsByWorld'>;
+  state: Pick<StateService, 'requireGlobal' | 'requireSession' | 'requireMessage' | 'prepareGlobalPatch' | 'prepareSessionPatch' | 'prepareMessagePatch' | 'getCurrentMessage' | 'describeChange'>;
   transaction: TransactionRunner;
+  events: EventHub;
 };
 type GlobalSnapshot = Parameters<WorldService['setState']>[1];
 type SessionSnapshot = Parameters<SessionService['setState']>[1];
@@ -41,34 +43,62 @@ function writeFailure(scope: StateScope, path: string, error: unknown): StateWri
 }
 
 /** State prepares changes; this usecase persists through the owners of the state columns. */
-export function createSetState({ worlds, sessions, state, transaction }: Dependencies) {
-  function patch(scope: StateScope, updates: readonly StateUpdate[], apply: (update: StateUpdate) => void): StateWriteResult[] {
+export function createSetState({ worlds, sessions, state, transaction, events }: Dependencies) {
+  function commit<T>(scope: StateScope, ownerId: string, path: string, write: () => T) {
+    return transaction(() => {
+      const read = () => scope === 'global' ? state.requireGlobal(ownerId)
+        : scope === 'session' ? state.requireSession(ownerId) : state.getCurrentMessage(ownerId, path || undefined);
+      const before = read();
+      const value = write();
+      const event = state.describeChange(scope, before, read(), path);
+      const sessionIds = event === null ? [] : scope === 'global' ? sessions.listIdsByWorld(ownerId) : [ownerId];
+      return { value, event, sessionIds };
+    });
+  }
+
+  function publish(result: Pick<ReturnType<typeof commit>, 'event' | 'sessionIds'>): void {
+    if (result.event === null) return;
+    for (const sessionId of result.sessionIds) events.publish(sessionId, structuredClone(result.event));
+  }
+
+  function replace<T>(scope: StateScope, ownerId: string, write: () => T): T {
+    const result = commit(scope, identifier(ownerId), '', write);
+    publish(result);
+    return result.value;
+  }
+
+  function patch(scope: StateScope, ownerId: string, updates: readonly StateUpdate[], apply: (update: StateUpdate) => void): StateWriteResult[] {
     return updates.map(update => {
+      let result;
       try {
-        // Each read/modify/write is its own synchronous transaction, including successful no-ops.
-        transaction(() => apply(update));
-        return { path: update.path, scope, success: true, errorCode: null, errorMessage: '' };
+        // Each field commits separately. Failed writes never reach the publisher.
+        result = commit(scope, ownerId, update.path, () => apply(update));
       } catch (error) {
         return writeFailure(scope, update.path, error);
       }
+      // Delivery is outside the transaction/error mapping and precedes the next field.
+      // EventHub isolates subscriber failures from committed writes.
+      publish(result);
+      return { path: update.path, scope, success: true, errorCode: null, errorMessage: '' };
     });
   }
 
   return {
     setGlobal(worldId: string, value: GlobalSnapshot): GlobalSnapshot {
-      return worlds.setState(identifier(worldId), value);
+      return replace('global', worldId, () => worlds.setState(worldId, value));
     },
     setSession(sessionId: string, value: SessionSnapshot): SessionSnapshot {
-      return sessions.setState(identifier(sessionId), value);
+      return replace('session', sessionId, () => sessions.setState(sessionId, value));
     },
     /** NULL restores inheritance; this writes only the selected entry's own snapshot. */
     setMessage(sessionId: string, entryId: string, value: MessageSnapshot): MessageSnapshot {
-      return sessions.setEntryState(identifier(sessionId), identifier(entryId), value);
+      identifier(entryId);
+      return replace('message', sessionId, () => sessions.setEntryState(sessionId, entryId, value));
     },
     patchGlobal(worldId: string, updates: readonly StateUpdate[]): StateWriteResult[] {
       identifier(worldId);
       state.requireGlobal(worldId);
-      return patch('global', updates, update => {
+      return patch('global', worldId, updates, update => {
         const result = state.prepareGlobalPatch(worldId, update);
         if (result.changed) worlds.setState(worldId, result.snapshot);
       });
@@ -76,7 +106,7 @@ export function createSetState({ worlds, sessions, state, transaction }: Depende
     patchSession(sessionId: string, updates: readonly StateUpdate[]): StateWriteResult[] {
       identifier(sessionId);
       state.requireSession(sessionId);
-      return patch('session', updates, update => {
+      return patch('session', sessionId, updates, update => {
         const result = state.prepareSessionPatch(sessionId, update);
         if (result.changed) sessions.setState(sessionId, result.snapshot);
       });
@@ -85,7 +115,7 @@ export function createSetState({ worlds, sessions, state, transaction }: Depende
       identifier(sessionId); identifier(entryId);
       state.requireSession(sessionId);
       state.requireMessage(sessionId, entryId);
-      return patch('message', updates, update => {
+      return patch('message', sessionId, updates, update => {
         const result = state.prepareMessagePatch(sessionId, entryId, update);
         if (result.changed) sessions.setEntryState(sessionId, entryId, result.snapshot);
       });

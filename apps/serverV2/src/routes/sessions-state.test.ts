@@ -48,7 +48,7 @@ beforeEach(() => {
   app = new Hono();
   app.onError(errorHandler);
   app.route('/api/v1/sessions', createSessionRoutes({
-    sessions: services.sessions, worlds: services.worlds, events, canAccessSession, shutdownSignal: shutdown.signal,
+    sessions: services.sessions, worlds: services.worlds, appendEntry: usecases.appendEntry, events, canAccessSession, shutdownSignal: shutdown.signal,
   }));
   app.route('/api/v1/state', createStateRoutes({ state: services.state, setState: usecases.setState, sessions: services.sessions, canAccessSession, shutdownSignal: shutdown.signal }));
 });
@@ -138,7 +138,7 @@ describe('session HTTP operations', () => {
     app = new Hono();
     app.onError(errorHandler);
     app.route('/api/v1/sessions', createSessionRoutes({
-      sessions: services.sessions, worlds: services.worlds, events, shutdownSignal: shutdown.signal,
+      sessions: services.sessions, worlds: services.worlds, appendEntry: usecases.appendEntry, events, shutdownSignal: shutdown.signal,
     }));
     const first = await data<Page<SessionSummary>>(await request('GET', '/sessions?worldId=world&limit=2'));
     expect(first.items.map(item => item.id)).toEqual(['c', 'b']);
@@ -356,13 +356,16 @@ describe('field state HTTP operations', () => {
     expect(services.state.requireGlobal('world')).toEqual({ day: 1, weather: 'rain' });
   });
 
-  it('writes global fields without publishing the reserved state event', async () => {
+  it('publishes changed global fields to all sessions of the world', async () => {
     const publish = vi.spyOn(events, 'publish');
     expect(await data(await request('PATCH', '/state/global/world', { updates: [{ path: 'day', value: 2 }] }))).toEqual([
       { path: 'day', scope: 'global', success: true, errorCode: null, errorMessage: '' },
     ]);
     expect((await data<{ item: unknown }>(await request('GET', '/state/global/world'))).item).toEqual({ day: 2, weather: 'rain' });
-    expect(publish).not.toHaveBeenCalled();
+    expect(publish.mock.calls).toEqual([
+      ['blocked', { event: 'state.changed', data: { scope: 'global', path: 'day', value: 2 } }],
+      ['one', { event: 'state.changed', data: { scope: 'global', path: 'day', value: 2 } }],
+    ]);
   });
 
   it('patches inherited message state on the selected entry and leaves ignored paths inherited', async () => {

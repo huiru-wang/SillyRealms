@@ -9,6 +9,7 @@ import type {
   AppendEntryInput, CreateSessionInput, Session, SessionListOptions, SessionService, UpdateEntryInput, UpdateSessionInput,
 } from '../modules/sessions/service.js';
 import type { WorldService } from '../modules/worlds/service.js';
+import type { AppendEntry } from '../usecases/append-entry.js';
 
 export type SessionSummary = Pick<Session, 'id' | 'worldId' | 'presetId' | 'apiModelConfigId' | 'title' | 'updatedAt'>
   & { worldName: string; cover: string | null };
@@ -41,11 +42,12 @@ export type SessionRouteOptions = {
   events: EventHub;
   sessions: SessionService;
   worlds: WorldService;
+  appendEntry: AppendEntry;
   canAccessSession?: SessionAccessCheck;
   shutdownSignal: AbortSignal;
 };
 
-export function createSessionRoutes({ events, sessions, worlds, canAccessSession, shutdownSignal }: SessionRouteOptions) {
+export function createSessionRoutes({ events, sessions, worlds, appendEntry, canAccessSession, shutdownSignal }: SessionRouteOptions) {
   const routes = new Hono();
   const access = (sessionId: string, request: Request) =>
     requireSessionAccess(sessions, sessionId, request, canAccessSession, shutdownSignal);
@@ -122,7 +124,7 @@ export function createSessionRoutes({ events, sessions, worlds, canAccessSession
     await access(id, c.req.raw);
     const input = await readJson<AppendEntryInput>(c);
     if (Object.hasOwn(input, 'metrics')) throw new AppError('INVALID_REQUEST', '模型调用计量仅允许由服务内部写入');
-    return success(c, { item: sessions.appendEntry(id, input) }, 201);
+    return success(c, { item: appendEntry(id, input) }, 201);
   });
 
   routes.get('/:id/entries/:entryId', async c => {

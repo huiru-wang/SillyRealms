@@ -300,18 +300,29 @@ StateService 负责读取、继承、业务校验和候选快照计算。set-sta
 
 ### 事件与调用方接入边界
 
-`state.changed` 只保留事件契约：
+`state.changed` 使用既有事件契约，通过 `/api/v1/sessions/:id/events` 推送：
 
 ```ts
 { event: 'state.changed', data: { path, scope, value } }
 ```
 
-当前 GET/PUT/PATCH 均不发布此事件，不增加 SSE 端点或广播逻辑。会话 SSE 连接继续由 events 基建承载。
+仅在成功提交且有效状态实际变化后发布。PATCH 每项独立提交，提交后发布该项事件，再处理下一项；缺失路径成功忽略、同值、校验失败及回滚均不发事件。PUT 对有效快照做前后比较；GET 和初始化不发事件。
+
+- PATCH：path 为改变的对象点分路径，value 为该路径的完整新值，数组整体替换，null 是有效值而非删除。
+- PUT 与带独立 state 的消息追加：path 为 `""`，value 为该 scope 的完整有效对象快照。接收方必须替换整个 scope，不能合并；`{}` 表示清空。空 path 仅用于事件，PATCH 输入仍禁止空 path。
+- global：通过 SessionService 查询该世界的全部会话 ID，逐会话发布；不受列表分页限制，不影响其他世界。
+- session：只发布到所属会话的所有订阅连接。
+- message：比较当前 tip 的有效继承状态，`[{key,value}]` / null 解码为对象后发布。修改历史 entry 仅在影响当前 tip 时通知；被后继独立快照覆盖的历史修改不通知。PUT null 恢复继承时发送继承后的对象，不发送 null 作为清空标记。
+
+set-state 用例在同步事务内读取、保存、计算变更与收集接收会话，提交成功后经同一个 EventHub 发布。普通 entry 追加通过 append-entry 用例处理 tip 状态变化；追加 null 状态仅继承前驱，不发事件。叙事当前只追加 null 状态，不自动产生状态更新。StateService 只负责继承和变更计算，EventHub 不查询数据库。订阅监听器异常由 EventHub 隔离，不把已提交写入判为失败。
+
+不新增连接、SSE id、事件持久化或回放。断线期间的状态事件不补发；接入方初次装载和重连时读取最新快照。
 
 本轮仅整理服务端，未修改 Studio、StudioV2 或 SDK transport。已有世界组件预览对旧 global 路径的调用也尚未迁移。以下是新服务端契约对后续调用方接入的要求，不代表前端已经完成适配：
 
 - 按需读取各 scope；message GET 的数组/null 需解码成 SDK 读取使用的对象视图，全部状态由三个 GET 的结果组合。
 - 混合 scope 的 batch 按 scope 分组请求对应 PATCH，再按原输入顺序合并结果。
+- 订阅现有会话 SSE 的 state.changed；识别 `path: ""` 整体替换和普通路径替换。message 事件表示当前 tip，不应用到任意历史消息的缓存。
 - success:true 包含成功忽略，不能将每个成功结果都当成已写入并把提交值直接加入本地快照。后续 transport 需以重新读取的服务端状态等权威结果同步缓存，避免缺失路径在客户端出现未保存的值。
 
 ## SSE 与下载例外

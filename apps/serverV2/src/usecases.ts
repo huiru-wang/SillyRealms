@@ -12,6 +12,7 @@ import { createImportPreset } from './usecases/import-preset.js';
 import { createImportWorld } from './usecases/import-world.js';
 import { createInitialize } from './usecases/initialize.js';
 import { createSetState } from './usecases/set-state.js';
+import { createAppendEntry } from './usecases/append-entry.js';
 
 /** Application flows are composed here; no usecase opens or retains a database connection. */
 export function createUsecases({ services, transaction, events, modelClient = new PiClient() }: {
@@ -24,7 +25,8 @@ export function createUsecases({ services, transaction, events, modelClient = ne
     listProviders: () => modelClient.listProviders(),
     modelConfigs: createModelConfigUsecases(services),
     initialize: createInitialize({ presets, settings, transaction }),
-    setState: createSetState({ worlds, sessions, state: services.state, transaction }),
+    setState: createSetState({ worlds, sessions, state: services.state, transaction, events }),
+    appendEntry: createAppendEntry({ sessions, state: services.state, transaction, events }),
     importWorld: createImportWorld({ worlds, settings }),
     exportWorld: createExportWorld({ worlds }),
     importPreset: createImportPreset({ presets }),

@@ -2,7 +2,6 @@ import type { NarrativeStopReason } from '../../modules/sessions/service.js';
 import type {
   ModelDelta, ModelFinishReason, ModelSnapshot,
 } from '../../infrastructure/model/client.js';
-import type { StateEvent } from '../../modules/state/service.js';
 
 export type RunEventFields = {
   runId: string;
@@ -52,7 +51,7 @@ export type NarrativeSettlement = {
   terminal: NarrativeTerminalEvent;
 };
 
-/** Reserved wire shapes only; narrative tools, state updates and suggestions are not produced. */
+/** Reserved wire shapes only; narrative tools and suggestions are not produced. */
 export type ReservedNarrativeEvent =
   | { event: 'run.delta'; data: RunEventFields & {
     messageId: string; messages: [{ role: 'system'; delta: { content: string } }];
@@ -63,5 +62,4 @@ export type ReservedNarrativeEvent =
       delta: { tool_call_id: string; name: string; status: string; content: string; is_error: boolean };
     }];
   } }
-  | StateEvent
   | { event: 'action_suggestions.changed'; data: { sessionId: string; runId: string; messageId: string; items: string[] } };

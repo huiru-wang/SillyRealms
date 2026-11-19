@@ -1,4 +1,5 @@
 import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
+import { isDeepStrictEqual } from 'node:util';
 import { AppError } from '../../errors.js';
 import type { SessionReader } from '../sessions/service.js';
 import type { WorldReader } from '../worlds/service.js';
@@ -6,7 +7,7 @@ import { validateStateJson } from '@sillyrealms/sdk/state-validation';
 import { evaluateWhen, type StateViews } from './when.js';
 import { parseStatePath, prepareStatePatch } from './patch.js';
 import { messageValues, replaceMessageValue } from './snapshot.js';
-import type { PreparedStatePatch, StateUpdate } from './types.js';
+import type { PreparedStatePatch, StateUpdate, StateEvent } from './types.js';
 
 export type { StateViews } from './when.js';
 export type { PreparedStatePatch, StateUpdate, StateWriteResult, StateEvent } from './types.js';
@@ -75,6 +76,30 @@ export class StateService {
   requireMessage(sessionId: string, entryId: string): JsonValue[] | null {
     if (!this.#sessions.getEntry(identifier(sessionId), identifier(entryId))) throw new AppError('ENTRY_NOT_FOUND');
     return this.getMessage(sessionId, entryId);
+  }
+
+  /** The live message scope belongs to the current tip, including inherited state. */
+  getCurrentMessage(sessionId: string, path?: string): JsonObject {
+    const session = this.#sessions.require(identifier(sessionId));
+    const root = path === undefined ? undefined : parseStatePath(path, 'message')[0];
+    const entries = session.tipEntryId === null ? null : this.requireMessage(sessionId, session.tipEntryId);
+    return { ...messageValues(entries, root) };
+  }
+
+  /** Describe an effective change without publishing; empty path replaces the whole scope. */
+  describeChange(scope: StateEvent['data']['scope'], before: JsonObject, after: JsonObject, path = ''): StateEvent | null {
+    const read = (snapshot: JsonObject): JsonValue | undefined => {
+      let value: JsonValue | undefined = snapshot;
+      for (const key of path === '' ? [] : parseStatePath(path, scope)) {
+        if (value === null || typeof value !== 'object' || Array.isArray(value) || !Object.hasOwn(value, key)) return undefined;
+        value = value[key];
+      }
+      return value;
+    };
+    const previous = read(before), next = read(after);
+    if (isDeepStrictEqual(previous, next)) return null;
+    // A missing value cannot be represented as JSON; replacement also communicates deletion.
+    return { event: 'state.changed', data: { scope, path: next === undefined ? '' : path, value: structuredClone(next === undefined ? after : next) } };
   }
 
   prepareGlobalPatch(worldId: string, update: StateUpdate): PreparedStatePatch<JsonObject> {

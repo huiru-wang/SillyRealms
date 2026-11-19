@@ -86,6 +86,10 @@ export class SessionService {
     return this.#repository.countByWorldIds([...new Set(worldIds.map(id => identifier.parse(id)))]);
   }
 
+  listIdsByWorld(worldId: string): string[] {
+    return this.#repository.listIdsByWorld(identifier.parse(worldId));
+  }
+
   update(id: string, input: UpdateSessionInput): Session {
     const patch = updateSessionSchema.parse(input);
     this.require(id);

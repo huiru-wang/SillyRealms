@@ -16,7 +16,7 @@ export type StateWriteResult = {
   { success: false; errorCode: string; errorMessage: string }
 );
 
-/** Reserved contract; state writes do not publish events in this version. */
+/** Effective scope change; path === '' replaces the entire normalized object snapshot. */
 export type StateEvent = {
   event: 'state.changed';
   data: { path: string; scope: StateScope; value: JsonValue };

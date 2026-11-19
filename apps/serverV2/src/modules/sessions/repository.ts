@@ -92,6 +92,10 @@ export class SessionRepository {
     return { items: rows.slice(0, options.limit), hasMore: rows.length > options.limit };
   }
 
+  listIdsByWorld(worldId: string): string[] {
+    return this.#db.prepare('SELECT id FROM sessions WHERE world_id=? ORDER BY id').all(worldId).map(row => String(row.id));
+  }
+
   countByWorldIds(worldIds: readonly string[]): Record<string, number> {
     const result = Object.fromEntries(worldIds.map(id => [id, 0]));
     for (let offset = 0; offset < worldIds.length; offset += 500) {
