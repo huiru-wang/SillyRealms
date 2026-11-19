@@ -10,6 +10,26 @@ async function readText(reader: Reader): Promise<string> {
   return decoder.decode(chunk.value);
 }
 
+async function readFrame(reader: Reader): Promise<string> {
+  const decoder = new TextDecoder();
+  let frame = '';
+  while (!frame.endsWith('\n\n')) {
+    const chunk = await reader.read();
+    expect(chunk.done).toBe(false);
+    expect(chunk.value!.byteLength).toBeLessThanOrEqual(256 * 1024);
+    frame += decoder.decode(chunk.value, { stream: true });
+  }
+  return frame + decoder.decode();
+}
+async function drainClosed(reader: Reader): Promise<number> {
+  let bytes = 0;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) return bytes;
+    bytes += chunk.value.byteLength;
+  }
+}
+
 describe('session SSE', () => {
   const connections: AbortController[] = [];
   function connect(hub: EventHub, sessionId = 'session', shutdown?: AbortSignal) {
@@ -126,28 +146,67 @@ describe('session SSE', () => {
     expect(await readText(second.reader)).toBe('event: new\ndata: {}\n\n');
   });
 
-  it('disconnects a slow consumer without blocking a healthy connection', async () => {
+  it('delivers a large UTF-8 snapshot followed by usage and completion without closing the session', async () => {
+    const hub = new EventHub();
+    const { reader } = connect(hub);
+    await readText(reader);
+    const snapshot = { runId: 'run', messageId: 'assistant', messages: [{
+      role: 'assistant', content: '字'.repeat(100_000), reasoning_content: '推理'.repeat(15_000), tool_calls: [],
+    }] };
+    const usage = { runId: 'run', usage: null };
+    const completed = { runId: 'run', assistantEntryId: 'assistant' };
+    // Queue these synchronously, as narrative settlement does, before the reader catches up.
+    hub.publish('session', { event: 'run.delta', data: snapshot });
+    hub.publish('session', { event: 'run.usage', data: usage });
+    hub.publish('session', { event: 'run.completed', data: completed });
+    expect(await readFrame(reader)).toBe(`event: run.delta\ndata: ${JSON.stringify(snapshot)}\n\n`);
+    expect(await readFrame(reader)).toBe(`event: run.usage\ndata: ${JSON.stringify(usage)}\n\n`);
+    expect(await readFrame(reader)).toBe(`event: run.completed\ndata: ${JSON.stringify(completed)}\n\n`);
+    vi.advanceTimersByTime(15_000);
+    expect(await readText(reader)).toBe(': heartbeat\n\n');
+  });
+
+  it('counts controller bytes in the slow consumer budget and releases its pending frames without blocking a healthy connection', async () => {
     const hub = new EventHub();
     const slow = connect(hub), healthy = connect(hub);
     await readText(slow.reader); await readText(healthy.reader);
-    for (let index = 0; index < 4; index++) {
-      hub.publish('session', { event: 'chunk', data: { index, text: 'x'.repeat(70 * 1024) } });
-      expect(await readText(healthy.reader)).toContain(`"index":${index}`);
+    for (let index = 0; index < 8; index++) {
+      hub.publish('session', { event: 'chunk', data: { index, text: 'x'.repeat(1024 * 1024) } });
+      expect(await readFrame(healthy.reader)).toContain(`"index":${index}`);
     }
-    // Three frames fit in the slow connection; the fourth exceeds its byte budget.
-    for (let index = 0; index < 3; index++) expect(await readText(slow.reader)).toContain(`"index":${index}`);
-    expect((await slow.reader.read()).done).toBe(true);
+    // Eight 1 MiB bodies plus framing exceed the combined 8 MiB unread budget.
+    // Closing discards pending frames; only the bounded controller queue can still drain.
+    expect(await drainClosed(slow.reader)).toBe(256 * 1024);
     hub.publish('session', { event: 'still.connected', data: {} });
     expect(await readText(healthy.reader)).toContain('still.connected');
     expect(vi.getTimerCount()).toBe(1);
   });
 
-  it('bounds oversized single events by UTF-8 bytes', async () => {
+  it('bounds oversized single events by the 8 MiB UTF-8 budget', async () => {
     const hub = new EventHub();
     const { reader } = connect(hub);
     await readText(reader);
-    hub.publish('session', { event: 'large', data: { text: '字'.repeat(100_000) } });
-    expect((await reader.read()).done).toBe(true);
+    const waiting = reader.read();
+    hub.publish('session', { event: 'large', data: { text: '字'.repeat(3 * 1024 * 1024) } });
+    expect(await waiting).toEqual({ done: true, value: undefined });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['request', 'shutdown', 'cancel'])('discards pending frame slices and removes the subscription on %s', async source => {
+    const hub = new EventHub(), shutdown = new AbortController();
+    const originalSubscribe = hub.subscribe.bind(hub), unsubscribe = vi.fn();
+    vi.spyOn(hub, 'subscribe').mockImplementation((sessionId, listener) => {
+      const dispose = originalSubscribe(sessionId, listener);
+      return () => { unsubscribe(); dispose(); };
+    });
+    const { reader, controller } = connect(hub, 'session', shutdown.signal);
+    await readText(reader);
+    hub.publish('session', { event: 'large', data: { text: 'x'.repeat(1024 * 1024) } });
+    if (source === 'cancel') await reader.cancel();
+    else (source === 'request' ? controller : shutdown).abort();
+    expect(await drainClosed(reader)).toBe(source === 'cancel' ? 0 : 256 * 1024);
+    controller.abort(); shutdown.abort();
+    expect(unsubscribe).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   });
 

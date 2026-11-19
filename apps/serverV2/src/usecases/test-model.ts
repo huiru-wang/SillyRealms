@@ -1,27 +1,32 @@
-import { AppError } from '../errors.js';
-import type { PiClient, PiEvent, PiMessage, PiUsage } from '../infrastructure/pi/client.js';
+import { AppError, type ErrorCode } from '../errors.js';
+import type { ModelClient, ModelEvent, ModelMessage, ModelStopReason, ModelUsage } from '../infrastructure/model/client.js';
 import type { CredentialService } from '../modules/credentials/service.js';
 import type { ModelService } from '../modules/models/service.js';
 
 const TEST_TIMEOUT_MS = 30_000;
 const TEST_MAX_TOKENS = 64;
+const modelFailureCodes: Record<ModelStopReason, ErrorCode> = {
+  aborted: 'RUN_STOPPED', provider_error: 'PROVIDER_ERROR',
+  context_window_exceeded: 'PROVIDER_CONTEXT_WINDOW_EXCEEDED',
+  invalid_output: 'MODEL_OUTPUT_INVALID', incomplete_output: 'MODEL_OUTPUT_INCOMPLETE',
+};
 
 export type ModelConnectionResult = {
   providerId: string;
   modelId: string;
   connected: true;
   durationMs: number;
-  usage: PiUsage | null;
+  usage: ModelUsage | null;
 };
 export type TestModel = (modelConfigId: string, signal?: AbortSignal) => Promise<ModelConnectionResult>;
 export type TestModelDependencies = {
   models: Pick<ModelService, 'require'>;
   credentials: Pick<CredentialService, 'get'>;
-  pi: Pick<PiClient, 'resolve' | 'assertMessageOrder' | 'stream'>;
+  modelClient: Pick<ModelClient, 'resolve' | 'assertMessageOrder' | 'stream'>;
 };
 
 /** Tests one saved configuration without creating narrative entries or execution records. */
-export function createTestModel({ models, credentials, pi }: TestModelDependencies): TestModel {
+export function createTestModel({ models, credentials, modelClient }: TestModelDependencies): TestModel {
   return async (modelConfigId, signal) => {
     const startedAt = performance.now();
     const controller = new AbortController();
@@ -36,7 +41,7 @@ export function createTestModel({ models, credentials, pi }: TestModelDependenci
     const aborted = new Promise<typeof cancelled>(resolve => { cancel = () => resolve(cancelled); });
     controller.signal.addEventListener('abort', cancel, { once: true });
     if (controller.signal.aborted) cancel();
-    let iterator: AsyncIterator<PiEvent> | undefined;
+    let iterator: AsyncIterator<ModelEvent> | undefined;
     const throwIfAborted = () => {
       if (controller.signal.aborted) throw new AppError(timedOut ? 'PROVIDER_ERROR' : 'RUN_STOPPED');
     };
@@ -50,30 +55,26 @@ export function createTestModel({ models, credentials, pi }: TestModelDependenci
     try {
       throwIfAborted();
       const config = models.require(modelConfigId);
-      const model = pi.resolve(config.providerId, config.modelId);
+      const model = modelClient.resolve(config.providerId, config.modelId);
       if (!Number.isSafeInteger(model.maxTokens) || model.maxTokens <= 0) {
         throw new AppError('MODEL_CAPABILITY_UNSUPPORTED');
       }
-      const messages: PiMessage[] = [{ role: 'user', content: 'Reply with OK.' }];
-      pi.assertMessageOrder(model, messages);
+      const messages: ModelMessage[] = [{ role: 'user', content: 'Reply with OK.' }];
+      modelClient.assertMessageOrder(model, messages);
       const apiKey = await waitFor(credentials.get(config.credentialRef));
       if (!apiKey?.trim()) throw new AppError('CREDENTIAL_NOT_CONFIGURED');
-      iterator = pi.stream(model, messages, {
+      iterator = modelClient.stream(model, messages, {
         apiKey, signal: controller.signal, maxTokens: Math.min(TEST_MAX_TOKENS, model.maxTokens),
         thinkingEnabled: false,
       })[Symbol.asyncIterator]();
-      let text = '';
       while (true) {
         const next = await waitFor(iterator.next());
         if (next.done) throw new AppError('MODEL_OUTPUT_INCOMPLETE');
         const event = next.value;
-        if (event.type === 'text_delta') {
-          text += event.delta;
-          continue;
-        }
-        if (event.type === 'error') throw new AppError(event.errorCode);
-        if (event.stopReason !== 'stop') throw new AppError('MODEL_OUTPUT_INCOMPLETE');
-        if (event.hasToolCalls || !event.text.trim() || (text && text !== event.text)) {
+        if (event.type === 'request_started' || event.type === 'delta') continue;
+        if (event.type === 'error') throw new AppError(modelFailureCodes[event.stopReason]);
+        if (event.finishReason !== 'stop') throw new AppError('MODEL_OUTPUT_INCOMPLETE');
+        if (event.snapshot.tool_calls.length || !event.snapshot.content.trim()) {
           throw new AppError('MODEL_OUTPUT_INVALID');
         }
         return {

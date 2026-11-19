@@ -1,10 +1,4 @@
-export type PiUsage = {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-};
+import type { ModelUsage } from '../model/client.js';
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' ? value as Record<string, unknown> : undefined;
@@ -24,7 +18,7 @@ export function hasInputUsageReport(event: unknown): boolean {
 }
 
 /** Cached input is part of total input; reasoning is already included in output. */
-export function normalizeUsage(usage: unknown, reported = false): PiUsage | null {
+export function normalizeUsage(usage: unknown, reported = false): ModelUsage | null {
   const value = record(usage);
   if (!value) return null;
   const { input, output, cacheRead, cacheWrite, totalTokens } = value;

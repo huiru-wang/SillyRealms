@@ -39,13 +39,29 @@ describe('Server V2 architecture boundaries', () => {
     expect(await boundaryMessages('infrastructure/pi/client.ts', "import type { Context } from 'hono';")).toContain('reverse');
     expect(await boundaryMessages('infrastructure/pi/client.ts', "import type { DatabaseSync } from 'node:sqlite';")).toContain('lifecycle');
     expect(await boundaryMessages('infrastructure/pi/client.ts', "import { streamSimple } from '@earendil-works/pi-ai'; import { AppError } from '../../errors.js'; import type { ModelUsage } from './usage.js';")).toEqual([]);
-    expect(await boundaryMessages('modules/models/service.ts', "import type { PiClient } from '../../infrastructure/pi/client.js';")).toContain('pi');
+    expect(await boundaryMessages('modules/models/service.ts', "import type { PiClient } from '../../infrastructure/pi/client.js';")).toContain('adapter');
   });
 
   it('keeps EventHub and database infrastructure independent of business usecases', async () => {
     expect(await boundaryMessages('infrastructure/events/event-hub.ts', "import type { SessionReader } from '../../modules/sessions/service.js';")).toContain('infrastructure');
     expect(await boundaryMessages('infrastructure/database/connection.ts', "import { initialize } from '../../usecases/initialize.js';")).toContain('infrastructure');
-    expect(await boundaryMessages('usecases/narrative/execute.ts', "import type { SessionService } from '../../modules/sessions/service.js'; import type { EventHub } from '../../infrastructure/events/event-hub.js'; import type { PiClient } from '../../infrastructure/pi/client.js';")).toEqual([]);
+    expect(await boundaryMessages('usecases/narrative/execute.ts', "import type { SessionService } from '../../modules/sessions/service.js'; import type { EventHub } from '../../infrastructure/events/event-hub.js'; import type { ModelClient } from '../../infrastructure/model/client.js';")).toEqual([]);
+  });
+
+  it('keeps SDK types and concrete implementations behind the model contract', async () => {
+    for (const file of ['usecases/example.ts', 'routes/example.ts', 'infrastructure/model/client.ts', 'usecases/example.test.ts']) {
+      for (const source of [
+        "import type { Model } from '@earendil-works/pi-ai';",
+        "export type { Context } from '@earendil-works/pi-ai';",
+        "const models = import('@earendil-works/pi-ai/providers/all');",
+        "type Message = import('@earendil-works/pi-ai').AssistantMessage;",
+      ]) expect(await boundaryMessages(file, source)).toContain('sdk');
+    }
+    expect(await boundaryMessages('usecases/narrative/execute.ts', "import type { PiClient } from '../../infrastructure/pi/client.js';")).toContain('adapter');
+    expect(await boundaryMessages('infrastructure/model/client.ts', "import type { PiClient } from '../pi/client.js';")).toContain('adapter');
+    expect(await boundaryMessages('usecases.ts', "import { PiClient } from './infrastructure/pi/client.js'; import type { ModelClient } from './infrastructure/model/client.js';")).toEqual([]);
+    expect(await boundaryMessages('infrastructure/pi/client.ts', "import type { ModelClient } from '../model/client.js'; import type { Model } from '@earendil-works/pi-ai';")).toEqual([]);
+    expect(await boundaryMessages('infrastructure/model/client.ts', "import type { EventHub } from '../events/event-hub.js';")).toContain('pi');
   });
 
   it('rejects original Server dependencies even through dynamic or type imports', async () => {

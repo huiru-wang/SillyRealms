@@ -34,7 +34,9 @@ const boundaries = {
       repository: 'Repository and stored row types are private to the owning module.',
       legacy: 'Server V2 cannot import original Server internals; migrate the required implementation.',
       infrastructure: 'Infrastructure cannot depend on business modules, usecases, HTTP or composition.',
-      pi: 'The pi adapter cannot depend on database or events infrastructure, and modules cannot perform model execution.',
+      pi: 'Model infrastructure cannot depend on database or events infrastructure, and modules cannot perform model execution.',
+      sdk: 'Only the pi adapter may import pi SDK types or implementations.',
+      adapter: 'Business and transport code depend on the SDK-neutral model contract; concrete adapters belong in composition.',
       module: 'The only public business module entry is service.ts.',
       readonly: 'Cross-module module dependencies must be named type-only domain types or explicit Readers, never a full Service.',
       wildcard: 'Export explicit public types and capabilities; wildcard exports can leak module internals.',
@@ -58,6 +60,7 @@ const boundaries = {
     const isDatabase = localPath.startsWith('infrastructure/database/');
     const isInfrastructure = localPath.startsWith('infrastructure/');
     const isPi = localPath.startsWith('infrastructure/pi/');
+    const isModel = localPath.startsWith('infrastructure/model/');
     const isServer = localPath === 'server.ts';
     const privateImports = new Set();
 
@@ -67,6 +70,10 @@ const boundaries = {
       const names = explicitTypes ?? node.specifiers?.map(importedName) ?? [];
       if (source === '@sillyrealms/server' || source.startsWith('@sillyrealms/server/')) {
         context.report({ node, messageId: 'legacy' });
+        return;
+      }
+      if (!isPi && (source === '@earendil-works/pi-ai' || source.startsWith('@earendil-works/pi-ai/'))) {
+        context.report({ node, messageId: 'sdk' });
         return;
       }
       if (!isTest && (isModule || isUsecase || isInfrastructure) && (source === 'hono' || source.startsWith('hono/'))) {
@@ -94,13 +101,17 @@ const boundaries = {
       if (repository && node.specifiers) {
         for (const specifier of node.specifiers) privateImports.add(specifier.local.name);
       }
+      if (target.startsWith('infrastructure/pi/') && !isPi && !composition.has(localPath)) {
+        context.report({ node, messageId: 'adapter' });
+        return;
+      }
       if (isTest) return;
       if (isInfrastructure && (targetOwner !== null || target.startsWith('usecases/') || /^(?:routes|http)\//.test(target) || composition.has(target))) {
         context.report({ node, messageId: 'infrastructure' });
         return;
       }
-      if ((isPi && /^infrastructure\/(?:database|events)\//.test(target))
-        || (isModule && target.startsWith('infrastructure/pi/'))) {
+      if (((isPi || isModel) && /^infrastructure\/(?:database|events)\//.test(target))
+        || (isModule && target.startsWith('infrastructure/model/') && (!typesOnly || names.includes('ModelClient')))) {
         context.report({ node, messageId: 'pi' });
         return;
       }

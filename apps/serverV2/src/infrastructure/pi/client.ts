@@ -1,51 +1,34 @@
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
 import type {
-  Api, AssistantMessage, AssistantMessageEvent, Context, Model, ModelInputModality,
-  ModelThinkingLevel, SimpleStreamOptions, StopReason, ThinkingLevelMap,
+  Api, AssistantMessageEvent, Context, Message, Model, SimpleStreamOptions, ToolCall,
 } from '@earendil-works/pi-ai';
 import { AppError, type ErrorCode } from '../../errors.js';
-import { hasInputUsageReport, normalizeUsage, type PiUsage } from './usage.js';
+import type {
+  ModelClient, ModelEvent, ModelFinishReason, ModelInfo, ModelMessage, ModelOptions,
+  ModelStopReason, ModelThinkingLevel, ModelThinkingLevelMap, ProviderInfo,
+} from '../model/client.js';
+import { PiContent } from './stream-content.js';
+import { hasInputUsageReport, normalizeUsage } from './usage.js';
 
-export type { PiUsage } from './usage.js';
-export type PiModel = Model<Api>;
-export type PiMessage = { role: 'system' | 'user' | 'assistant'; content: string; timestamp?: number };
-export type PiOptions = {
-  apiKey: string; signal: AbortSignal; maxTokens: number; temperature?: number; thinkingEnabled?: boolean;
-};
-export type PiModelInfo = {
-  providerId: string; modelId: string; name: string; contextWindow: number; maxTokens: number;
-  api: string; input: ModelInputModality[]; reasoning: boolean;
-  /** Effective supported levels from the installed SDK, including off when supported. */
-  thinkingLevels: ModelThinkingLevel[];
-  /** Provider mappings; null values mark unsupported levels, absent keys use SDK defaults. */
-  thinkingLevelMap: ThinkingLevelMap | null;
-  /** SDK best-effort lifetimes in seconds, not the cacheRetention request preference. */
-  promptCache: { short: number | null; long: number | null } | null;
-  narrativeCompatible: boolean; supportsMidConversationSystemMessages: boolean;
-};
-export type PiProviderInfo = { providerId: string; name: string; models: PiModelInfo[] };
+type SdkModel = Model<Api>;
 const thinkingLevelNames: readonly ModelThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
-export type PiEvent =
-  | { type: 'text_delta'; delta: string }
-  | { type: 'done'; text: string; stopReason: StopReason; hasToolCalls: boolean; usage: PiUsage | null }
-  | { type: 'error'; errorCode: ErrorCode; text: string; usage: PiUsage | null };
 
-/** Narrow SDK seam for finite iterator tests; there is only one production implementation. */
+/** Adapter-local SDK seam for finite iterator tests. Application callers use ModelClient. */
 export type PiSdk = {
   getProviders(): readonly { id: string; name: string }[];
-  getModels(provider?: string): readonly PiModel[];
-  getModel(provider: string, id: string): PiModel | undefined;
-  streamSimple(model: PiModel, context: Context, options: SimpleStreamOptions): AsyncIterable<AssistantMessageEvent>;
+  getModels(provider?: string): readonly SdkModel[];
+  getModel(provider: string, id: string): SdkModel | undefined;
+  streamSimple(model: SdkModel, context: Context, options: SimpleStreamOptions): AsyncIterable<AssistantMessageEvent>;
 };
 
-function supportsMidConversationSystemMessages(model: PiModel): boolean {
+function supportsMidConversationSystemMessages(model: SdkModel): boolean {
   return model.api === 'openai-completions'
     && (model as Model<'openai-completions'>).compat?.supportsMidConvoSystemMessages === true;
 }
 
 /** Pi 1.5.0 omits this catalog flag only on the verified DeepSeek V4.1 Flash endpoint. */
-function adaptModel(model: PiModel): PiModel {
+function adaptModel(model: SdkModel): SdkModel {
   let deepSeekFlash = false;
   try {
     deepSeekFlash = model.api === 'openai-completions' && model.provider === 'deepseek'
@@ -53,6 +36,23 @@ function adaptModel(model: PiModel): PiModel {
       && new URL(model.baseUrl).hostname === 'api.deepseek.com';
   } catch { /* An invalid endpoint cannot receive a compatibility exception. */ }
   return deepSeekFlash ? { ...model, compat: { ...model.compat, supportsMidConvoSystemMessages: true } } : model;
+}
+
+function modelInfo(model: SdkModel): ModelInfo {
+  const ordered = supportsMidConversationSystemMessages(model);
+  const thinkingLevelMap: ModelThinkingLevelMap | null = model.thinkingLevelMap === undefined ? null
+    : Object.fromEntries(thinkingLevelNames.flatMap(level => {
+      const value = model.thinkingLevelMap?.[level];
+      return value === undefined ? [] : [[level, value]];
+    }));
+  return {
+    providerId: model.provider, modelId: model.id, name: model.name,
+    contextWindow: model.contextWindow, maxTokens: model.maxTokens, api: model.api, input: [...model.input],
+    reasoning: model.reasoning, thinkingLevels: [...getSupportedThinkingLevels(model)], thinkingLevelMap,
+    promptCache: model.promptCache === undefined ? null
+      : { short: model.promptCache.short ?? null, long: model.promptCache.long ?? null },
+    narrativeCompatible: ordered, supportsMidConversationSystemMessages: ordered,
+  };
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -86,18 +86,46 @@ export function providerErrorCode(error: unknown, depth = 0): ErrorCode {
   return 'PROVIDER_ERROR';
 }
 
-function textOf(message: AssistantMessage): string {
-  return message.content.filter(part => part.type === 'text').map(part => part.text).join('');
+function modelStopReason(error: unknown): ModelStopReason {
+  switch (providerErrorCode(error)) {
+    case 'RUN_STOPPED': return 'aborted';
+    case 'PROVIDER_CONTEXT_WINDOW_EXCEEDED': return 'context_window_exceeded';
+    case 'MODEL_OUTPUT_INVALID': return 'invalid_output';
+    case 'MODEL_OUTPUT_INCOMPLETE': return 'incomplete_output';
+    default: return 'provider_error';
+  }
 }
 
-function sdkContext(model: PiModel, messages: readonly PiMessage[]): Context {
+function finishReason(reason: string): ModelFinishReason | undefined {
+  if (reason === 'toolUse') return 'tool_calls';
+  return reason === 'stop' || reason === 'length' || reason === 'deferred' ? reason : undefined;
+}
+
+function sdkContext(model: SdkModel, messages: readonly ModelMessage[]): Context {
   return {
-    messages: messages.map(message => {
+    messages: messages.map((message): Message => {
       const timestamp = message.timestamp ?? 0;
+      if (message.role === 'tool') return {
+        role: 'toolResult', toolCallId: message.tool_call_id, toolName: message.name,
+        content: [{ type: 'text', text: message.content }], isError: message.is_error ?? false, timestamp,
+      };
       if (message.role !== 'assistant') return { role: message.role, content: message.content, timestamp };
+      const tools: ToolCall[] = (message.tool_calls ?? []).map(call => {
+        let args: unknown;
+        try { args = JSON.parse(call.function.arguments); } catch { throw new AppError('MODEL_OUTPUT_INVALID'); }
+        if (!args || typeof args !== 'object' || Array.isArray(args) || !call.id || !call.function.name) {
+          throw new AppError('MODEL_OUTPUT_INVALID');
+        }
+        return { type: 'toolCall', id: call.id, name: call.function.name, arguments: args as ToolCall['arguments'] };
+      });
       return {
-        role: 'assistant', content: [{ type: 'text', text: message.content }],
-        api: model.api, provider: model.provider, model: model.id, timestamp, stopReason: 'stop',
+        role: 'assistant',
+        content: [
+          ...(message.reasoning_content ? [{ type: 'thinking' as const, thinking: message.reasoning_content }] : []),
+          ...(message.content ? [{ type: 'text' as const, text: message.content }] : []),
+          ...tools,
+        ],
+        api: model.api, provider: model.provider, model: model.id, timestamp, stopReason: tools.length ? 'toolUse' : 'stop',
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       };
@@ -105,57 +133,49 @@ function sdkContext(model: PiModel, messages: readonly PiMessage[]): Context {
   };
 }
 
-export class PiClient {
+export class PiClient implements ModelClient {
   constructor(private readonly sdk: PiSdk = builtinModels()) {}
 
-  listProviders(): PiProviderInfo[] {
-    return this.sdk.getProviders().map(provider => ({
-      providerId: provider.id, name: provider.name,
-      models: this.sdk.getModels(provider.id).map(original => {
-        const model = adaptModel(original);
-        const ordered = supportsMidConversationSystemMessages(model);
-        const thinkingLevelMap: ThinkingLevelMap | null = model.thinkingLevelMap === undefined ? null
-          : Object.fromEntries(thinkingLevelNames.flatMap(level => {
-            const value = model.thinkingLevelMap?.[level];
-            return value === undefined ? [] : [[level, value]];
-          }));
-        return { providerId: model.provider, modelId: model.id, name: model.name,
-          contextWindow: model.contextWindow, maxTokens: model.maxTokens, api: model.api, input: [...model.input],
-          reasoning: model.reasoning, thinkingLevels: getSupportedThinkingLevels(model), thinkingLevelMap,
-          promptCache: model.promptCache === undefined ? null
-            : { short: model.promptCache.short ?? null, long: model.promptCache.long ?? null },
-          narrativeCompatible: ordered, supportsMidConversationSystemMessages: ordered };
-      }),
-    })).filter(provider => provider.models.length > 0);
-  }
-
-  resolve(providerId: string, modelId: string): PiModel {
+  private sdkModel(providerId: string, modelId: string): SdkModel {
     const model = this.sdk.getModel(providerId, modelId);
     if (!model) throw new AppError('MODEL_NOT_FOUND');
     return adaptModel(model);
   }
 
-  assertMessageOrder(model: PiModel, messages: readonly PiMessage[]): void {
+  listProviders(): ProviderInfo[] {
+    return this.sdk.getProviders().map(provider => ({
+      providerId: provider.id, name: provider.name,
+      models: this.sdk.getModels(provider.id).map(model => modelInfo(adaptModel(model))),
+    })).filter(provider => provider.models.length > 0);
+  }
+
+  resolve(providerId: string, modelId: string): ModelInfo {
+    return modelInfo(this.sdkModel(providerId, modelId));
+  }
+
+  assertMessageOrder(model: ModelInfo, messages: readonly ModelMessage[]): void {
     let conversationStarted = false;
     for (const message of messages) {
       if (message.role !== 'system') conversationStarted = true;
-      else if (conversationStarted && !supportsMidConversationSystemMessages(model)) {
+      else if (conversationStarted && !model.supportsMidConversationSystemMessages) {
         throw new AppError('MODEL_CAPABILITY_UNSUPPORTED');
       }
     }
   }
 
-  /** One SDK request. Cancellation releases the local consumer even if the provider ignores its signal. */
-  async *stream(model: PiModel, messages: readonly PiMessage[], options: PiOptions): AsyncGenerator<PiEvent> {
+  /** One SDK request. Cancellation releases the consumer even if the provider ignores its signal. */
+  async *stream(model: ModelInfo, messages: readonly ModelMessage[], options: ModelOptions): AsyncGenerator<ModelEvent> {
     if (!options.apiKey?.trim()) throw new AppError('CREDENTIAL_NOT_CONFIGURED');
-    this.assertMessageOrder(model, messages);
-    if (!Number.isSafeInteger(options.maxTokens) || options.maxTokens <= 0 || options.maxTokens > model.maxTokens) {
+    const selected = this.sdkModel(model.providerId, model.modelId);
+    this.assertMessageOrder(modelInfo(selected), messages);
+    if (!Number.isSafeInteger(options.maxTokens) || options.maxTokens <= 0 || options.maxTokens > selected.maxTokens) {
       throw new AppError('MODEL_CAPABILITY_UNSUPPORTED');
     }
-
+    const context = sdkContext(selected, messages);
+    const content = new PiContent();
     let reported = false;
-    let providerFailure: ErrorCode | undefined;
-    let partialText = '';
+    let providerFailure: ModelStopReason | undefined;
+    let attempted = false, announced = false;
     let iterator: AsyncIterator<AssistantMessageEvent> | undefined;
     const marker = Symbol('aborted');
     let cancel!: () => void;
@@ -164,45 +184,56 @@ export class PiClient {
     if (options.signal.aborted) cancel();
     try {
       if (options.signal.aborted) throw new AppError('RUN_STOPPED');
-      iterator = this.sdk.streamSimple(model, sdkContext(model, messages), {
+      attempted = true;
+      iterator = this.sdk.streamSimple(selected, context, {
         apiKey: options.apiKey, signal: options.signal, maxTokens: options.maxTokens,
         temperature: options.temperature,
-        reasoning: options.thinkingEnabled && model.reasoning ? 'medium' : undefined,
+        reasoning: options.thinkingEnabled && selected.reasoning ? 'medium' : undefined,
         maxRetries: 0,
         onProviderStreamEvent: raw => {
           reported ||= hasInputUsageReport(raw);
-          const code = providerErrorCode(raw);
-          if (code === 'PROVIDER_CONTEXT_WINDOW_EXCEEDED') providerFailure = code;
+          if (providerErrorCode(raw) === 'PROVIDER_CONTEXT_WINDOW_EXCEEDED') providerFailure = 'context_window_exceeded';
         },
       })[Symbol.asyncIterator]();
+      announced = true;
+      yield { type: 'request_started' };
 
       while (true) {
         if (options.signal.aborted) throw new AppError('RUN_STOPPED');
         const next = await Promise.race([iterator.next(), aborted]);
         if (next === marker || options.signal.aborted) throw new AppError('RUN_STOPPED');
-        if (next.done) return;
-        const event = next.value;
-        if (event.type === 'text_delta') {
-          partialText += event.delta;
-          if (event.delta) yield { type: 'text_delta', delta: event.delta };
-        } else if (event.type === 'done') {
-          yield { type: 'done', text: textOf(event.message), stopReason: event.message.stopReason,
-            hasToolCalls: event.message.content.some(part => part.type === 'toolCall'),
-            usage: normalizeUsage(event.message.usage, reported) };
-          return;
-        } else if (event.type === 'error') {
-          yield { type: 'error', errorCode: event.reason === 'aborted' ? 'RUN_STOPPED'
-            : providerFailure ?? providerErrorCode(event.error),
-            text: textOf(event.error) || partialText, usage: normalizeUsage(event.error.usage, reported) };
+        if (next.done) {
+          yield { type: 'error', snapshot: content.snapshot(), stopReason: 'incomplete_output', usage: null };
           return;
         }
+        const event = next.value;
+        if (event.type === 'done') {
+          const snapshot = content.finish(event.message, false);
+          const reason = finishReason(event.message.stopReason);
+          if (!reason || content.invalidArguments) {
+            yield { type: 'error', snapshot, stopReason: event.message.stopReason === 'aborted' ? 'aborted' : 'invalid_output',
+              usage: normalizeUsage(event.message.usage, reported) };
+          } else {
+            yield { type: 'done', snapshot, finishReason: reason, usage: normalizeUsage(event.message.usage, reported) };
+          }
+          return;
+        }
+        if (event.type === 'error') {
+          yield { type: 'error', snapshot: content.finish(event.error, true),
+            stopReason: event.reason === 'aborted' ? 'aborted' : providerFailure ?? modelStopReason(event.error),
+            usage: normalizeUsage(event.error.usage, reported) };
+          return;
+        }
+        const delta = content.accept(event);
+        if (delta) yield { type: 'delta', delta };
       }
     } catch (error) {
-      yield { type: 'error', errorCode: options.signal.aborted ? 'RUN_STOPPED' : providerErrorCode(error),
-        text: partialText, usage: null };
+      if (attempted && !announced) yield { type: 'request_started' };
+      yield { type: 'error', snapshot: content.snapshot(),
+        stopReason: options.signal.aborted ? 'aborted' : providerFailure ?? modelStopReason(error), usage: null };
     } finally {
       options.signal.removeEventListener('abort', cancel);
-      // Some SDK/provider iterators wait forever in return(); do not delay releasing the run.
+      // An uncooperative return() must not delay releasing the run.
       if (iterator?.return) {
         try { void Promise.resolve(iterator.return()).catch(() => {}); } catch { /* Best-effort cleanup. */ }
       }

@@ -5,33 +5,49 @@ import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from '../../errors.js';
 import { openDatabase } from '../../infrastructure/database/connection.js';
-import { EventHub, type SessionEvent } from '../../infrastructure/events/event-hub.js';
-import type { PiClient, PiEvent, PiModel, PiUsage } from '../../infrastructure/pi/client.js';
+import { EventHub } from '../../infrastructure/events/event-hub.js';
+import type {
+  ModelClient, ModelEvent, ModelInfo, ModelSnapshot, ModelStopReason, ModelUsage,
+} from '../../infrastructure/model/client.js';
 import { createServices, type Services } from '../../services.js';
 import { memoryCredentials } from '../../testing/credentials.js';
 import { narrativePreset } from '../../testing/fixtures.js';
+import type { NarrativeEvent, NarrativeTerminalEvent } from './events.js';
 import { createNarrativeUsecases, type NarrativeUsecases, type SubmitInput } from './index.js';
 
-const model: PiModel = {
-  id: 'story-model', name: 'Story model', provider: 'test-provider', api: 'openai-completions',
-  baseUrl: 'https://example.invalid', reasoning: false, input: ['text'],
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 64000, maxTokens: 8192,
+const model: ModelInfo = {
+  modelId: 'story-model', name: 'Story model', providerId: 'test-provider', api: 'openai-completions',
+  reasoning: false, input: ['text'], contextWindow: 64000, maxTokens: 8192,
+  thinkingLevels: ['off'], thinkingLevelMap: null, promptCache: null,
+  narrativeCompatible: true, supportsMidConversationSystemMessages: false,
 };
-const usage: PiUsage = { inputTokens: 20, outputTokens: 5, totalTokens: 25, cacheReadTokens: 10, cacheWriteTokens: 0 };
-const done = (text = '完整正文', extra: Partial<Extract<PiEvent, { type: 'done' }>> = {}): PiEvent => ({
-  type: 'done', text, stopReason: 'stop', hasToolCalls: false, usage, ...extra,
+const usage: ModelUsage = { inputTokens: 20, outputTokens: 5, totalTokens: 25, cacheReadTokens: 10, cacheWriteTokens: 0 };
+const zeroUsage: ModelUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+const wireUsage = (value: ModelUsage | null) => value === null ? null : ({
+  input_tokens: value.inputTokens, output_tokens: value.outputTokens, total_tokens: value.totalTokens,
+  cache_read_tokens: value.cacheReadTokens, cache_write_tokens: value.cacheWriteTokens,
 });
+const snapshot = (content = '', extra: Partial<ModelSnapshot> = {}): ModelSnapshot => ({
+  role: 'assistant', content, reasoning_content: '', tool_calls: [], ...extra,
+});
+const done = (content = '完整正文', extra: Partial<Extract<ModelEvent, { type: 'done' }>> = {}): ModelEvent => ({
+  type: 'done', snapshot: snapshot(content), finishReason: 'stop', usage, ...extra,
+});
+const failure = (stopReason: ModelStopReason, content = '', extra: Partial<Extract<ModelEvent, { type: 'error' }>> = {}): ModelEvent => ({
+  type: 'error', snapshot: snapshot(content), stopReason, usage, ...extra,
+});
+const text = (content: string): ModelEvent => ({ type: 'delta', delta: { content } });
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
-  return { promise, resolve, reject };
+  const promise = new Promise<T>(yes => { resolve = yes; });
+  return { promise, resolve };
 }
 
 let db: DatabaseSync, services: Services, dataRoot: string;
-let events: EventHub, narrative: NarrativeUsecases, seen: SessionEvent[];
-let stream: ReturnType<typeof vi.fn<PiClient['stream']>>;
-let resolveModel: ReturnType<typeof vi.fn<PiClient['resolve']>>;
+let events: EventHub, narrative: NarrativeUsecases, seen: NarrativeEvent[];
+let stream: ReturnType<typeof vi.fn<ModelClient['stream']>>;
+let resolveModel: ReturnType<typeof vi.fn<ModelClient['resolve']>>;
 
 beforeEach(async () => {
   db = openDatabase(':memory:');
@@ -39,7 +55,7 @@ beforeEach(async () => {
   services = createServices(db, dataRoot, memoryCredentials());
   const credentialRef = services.credentials.referenceFor('model');
   await services.credentials.set(credentialRef, 'private-test-secret');
-  services.models.create({ id: 'model', name: 'Model', providerId: model.provider, modelId: model.id, credentialRef });
+  services.models.create({ id: 'model', name: 'Model', providerId: model.providerId, modelId: model.modelId, credentialRef });
   services.presets.create({ ...narrativePreset(), id: 'preset' });
   services.worlds.create({
     id: 'world', name: 'World', specVersion: '0.1', state: { day: 1 },
@@ -49,20 +65,22 @@ beforeEach(async () => {
   createSession('session');
   events = new EventHub();
   seen = [];
-  events.subscribe('session', event => seen.push(event));
-  stream = vi.fn<PiClient['stream']>(async function* () {
-    yield { type: 'text_delta', delta: '完整' };
-    yield { type: 'text_delta', delta: '正文' };
+  events.subscribe('session', event => seen.push(structuredClone(event) as NarrativeEvent));
+  stream = vi.fn<ModelClient['stream']>(async function* () {
+    yield { type: 'request_started' };
+    yield text('完整');
+    yield text('正文');
     yield done();
   });
-  resolveModel = vi.fn<PiClient['resolve']>(() => model);
+  resolveModel = vi.fn<ModelClient['resolve']>(() => model);
   narrative = createNarrativeUsecases({
-    ...services, events, pi: { resolve: resolveModel, assertMessageOrder: vi.fn(), stream },
+    ...services, events, modelClient: { resolve: resolveModel, assertMessageOrder: vi.fn(), stream },
   });
 });
 
 afterEach(async () => {
   await narrative.shutdown();
+  for (const runId of new Set(seen.map(event => event.data.runId))) assertLifecycle(runId);
   vi.restoreAllMocks();
   db.close();
   rmSync(dataRoot, { recursive: true, force: true });
@@ -75,179 +93,335 @@ function createSession(id: string) {
   });
 }
 function terminal(sessionId = 'session') {
-  return new Promise<SessionEvent>(resolve => {
+  return new Promise<NarrativeTerminalEvent>(resolve => {
     const unsubscribe = events.subscribe(sessionId, event => {
-      if (['run.completed', 'run.failed', 'run.stopped'].includes(event.event)) {
+      if (event.event === 'run.completed' || event.event === 'run.stopped') {
         unsubscribe();
-        resolve(event);
+        resolve(event as NarrativeTerminalEvent);
       }
     });
   });
 }
-function submit(text = '玩家输入', sessionId = 'session') {
+function submit(content = '玩家输入', sessionId = 'session') {
   const finished = terminal(sessionId);
   const accepted = narrative.submit({
-    sessionId, input: { text }, expectedTipEntryId: services.sessions.require(sessionId).tipEntryId,
+    sessionId, input: { text: content }, expectedTipEntryId: services.sessions.require(sessionId).tipEntryId,
   });
   return { accepted, finished };
 }
 function history(sessionId = 'session') { return services.sessions.getHistory(sessionId); }
 function texts(sessionId = 'session') { return history(sessionId).map(entry => (entry.payload.message as { content: string }).content); }
-function script(items: PiEvent[]) {
-  stream.mockImplementation(async function* () { for (const item of items) yield item; });
+function script(items: ModelEvent[]) {
+  stream.mockImplementation(async function* () {
+    yield { type: 'request_started' };
+    for (const item of items) yield item;
+  });
 }
-function assertSingleTerminal(expected: string) {
-  expect(seen.filter(event => ['run.completed', 'run.failed', 'run.stopped'].includes(event.event)).map(event => event.event)).toEqual([expected]);
+function deltas(runId?: string) {
+  return seen.filter((event): event is Extract<NarrativeEvent, { event: 'run.delta' }> =>
+    event.event === 'run.delta' && (runId === undefined || event.data.runId === runId));
+}
+function finalMessage(runId?: string) { return deltas(runId).at(-1)?.data.messages[0]; }
+function runUsage(runId: string) {
+  return seen.find((event): event is Extract<NarrativeEvent, { event: 'run.usage' }> =>
+    event.event === 'run.usage' && event.data.runId === runId)!.data.usage;
+}
+function allKeys(value: unknown): string[] {
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([key, item]) => [key, ...allKeys(item)]);
+}
+function assertLifecycle(runId: string) {
+  const own = seen.filter(event => event.data.runId === runId);
+  expect(own[0]?.event).toBe('run.created');
+  expect(own.filter(event => event.event === 'run.usage')).toHaveLength(1);
+  expect(own.filter(event => event.event === 'run.completed' || event.event === 'run.stopped')).toHaveLength(1);
+  expect(own.at(-2)?.event).toBe('run.usage');
+  expect(['run.completed', 'run.stopped']).toContain(own.at(-1)?.event);
+  for (const event of own) {
+    expect(event.data).toMatchObject({ runId, sessionId: 'session', timestamp: expect.any(Number) });
+    expect(allKeys(event)).not.toContain('error');
+    expect(allKeys(event)).not.toContain('errorCode');
+    expect(allKeys(event)).not.toContain('errorMessage');
+    expect(JSON.parse(JSON.stringify(event))).toEqual(event);
+    if (event.event === 'run.usage') {
+      expect(Object.keys(event.data).sort()).toEqual(['model', 'provider', 'runId', 'sessionId', 'timestamp', 'usage']);
+      if (event.data.usage !== null) expect(Object.keys(event.data.usage).sort()).toEqual([
+        'cache_read_tokens', 'cache_write_tokens', 'input_tokens', 'output_tokens', 'total_tokens',
+      ]);
+    } else if (event.event === 'run.created') {
+      expect(event.data.messages).toHaveLength(1);
+      expect(Object.keys(event.data.messages[0]).sort()).toEqual(['content', 'id', 'role', 'timestamp']);
+    } else if (event.event === 'run.delta') {
+      expect(event.data.messageId).toEqual(expect.any(String));
+      expect(event.data.messages).toHaveLength(1);
+      expect(event.data.messages[0].role).toBe('assistant');
+    } else if (event.event === 'run.stopped') {
+      expect(Object.keys(event.data).sort()).toEqual([
+        'model', 'provider', 'runId', 'savedMessageIds', 'sessionId', 'stop_reason', 'timestamp', 'tipEntryId',
+      ]);
+    }
+  }
+  expect(JSON.stringify(own)).not.toContain('private-test-secret');
 }
 
-describe('narrative admission and independent persistence', () => {
-  it('durably saves the user before any model work, then saves the assistant and publishes its committed tip', async () => {
+describe('unified narrative events and independent persistence', () => {
+  it('saves the user before model work, then publishes one usage total and the committed assistant result', async () => {
+    const observedPersisted: string[] = [];
+    events.subscribe('session', event => {
+      if (event.event === 'run.created') observedPersisted.push(...services.sessions.listRunEntries('session', event.data.runId as string).map(entry => entry.id));
+      if (event.event === 'run.usage') observedPersisted.push(services.sessions.require('session').tipEntryId!);
+    });
     const { accepted, finished } = submit();
     expect(stream).not.toHaveBeenCalled();
     expect(resolveModel).not.toHaveBeenCalled();
     expect(texts()).toEqual(['玩家输入']);
     expect(history()[0]).toMatchObject({ id: accepted.userEntryId, runId: accepted.runId, state: null, extData: {}, metrics: null });
     expect(accepted.capabilities).toEqual({ historyPolicy: 'full', postprocess: false });
-
-    const result = await finished;
-    expect(result).toEqual({ event: 'run.completed', data: {
-      runId: accepted.runId, userEntryId: accepted.userEntryId, assistantEntryId: accepted.assistantEntryId, tipEntryId: accepted.assistantEntryId,
+    expect(await finished).toMatchObject({ event: 'run.completed', data: {
+      runId: accepted.runId, provider: model.providerId, model: model.modelId,
+      savedMessageIds: [accepted.userEntryId, accepted.assistantEntryId], tipEntryId: accepted.assistantEntryId,
     } });
+    expect(observedPersisted).toEqual([accepted.userEntryId, accepted.assistantEntryId]);
+    expect(seen[0]).toMatchObject({ event: 'run.created', data: { messages: [{
+      id: accepted.userEntryId, role: 'user', content: '玩家输入', timestamp: history()[0]!.timestamp,
+    }] } });
     expect(texts()).toEqual(['玩家输入', '完整正文']);
     expect(history()[1]).toMatchObject({
       parentId: accepted.userEntryId, state: null, extData: {},
+      payload: { message: snapshot('完整正文') },
       metrics: { requests: [{ status: 'completed', modelId: 'story-model', usage }] },
     });
     expect(history()[1]!.metrics!.requests[0]!.requestId).not.toBe(accepted.runId);
-    expect(seen.map(event => event.event)).toEqual(['run.started', 'message.delta', 'message.delta', 'run.completed']);
-    expect(seen.filter(event => event.event === 'message.delta').map(event => event.data.offset)).toEqual([0, 2]);
+    expect(seen.map(event => event.event)).toEqual(['run.created', 'run.delta', 'run.delta', 'run.delta', 'run.usage', 'run.completed']);
+    expect(deltas().slice(0, -1).map(event => event.data.messages[0].delta.content)).toEqual(['完整', '正文']);
+    expect(finalMessage()).toEqual({ role: 'assistant', delta: {}, snapshot: snapshot('完整正文'), finish_reason: 'stop' });
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(usage));
+    expect(stream).toHaveBeenCalledOnce();
     expect(stream.mock.calls[0]![1].map(message => message.content)).toEqual(['玩家输入']);
-    expect(JSON.stringify(seen)).not.toContain('private-test-secret');
     expect(services.state.getGlobal('world')).toEqual({ day: 1 });
     expect(services.state.getSession('session')).toEqual({ coins: 2 });
   });
 
+  it('timestamps usage before the terminal result in publication order', async () => {
+    let tick = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => tick++);
+    await submit().finished;
+    const timestamps = seen.map(event => event.data.timestamp);
+    expect(timestamps).toEqual([...timestamps].sort((left, right) => left - right));
+  });
+
+  it('treats the final SDK snapshot as a replacement, including corrections and removed tools', async () => {
+    script([
+      { type: 'delta', delta: { content: '错误草稿', reasoning_content: '初步思考', tool_calls: [{ index: 0, id: 'draft', function: { name: 'draft', arguments: '{' } }] } },
+      done('校正正文', { snapshot: snapshot('校正正文', { reasoning_content: '校正思考' }) }),
+    ]);
+    const { finished } = submit();
+    expect((await finished).event).toBe('run.completed');
+    expect(finalMessage()).toMatchObject({ snapshot: snapshot('校正正文', { reasoning_content: '校正思考' }) });
+    expect(history()[1]!.payload.message).toMatchObject(snapshot('校正正文', { reasoning_content: '校正思考' }));
+    expect(JSON.stringify(history()[1]!.payload)).not.toContain('draft');
+  });
+
   it.each([
-    { name: 'provider error', items: [
-      { type: 'text_delta', delta: '半段' },
-      { type: 'error', errorCode: 'PROVIDER_ERROR', text: '半段', usage },
-    ], body: '半段', code: 'PROVIDER_ERROR' },
-    { name: 'missing done', items: [{ type: 'text_delta', delta: '半段' }], body: '半段', code: 'MODEL_OUTPUT_INCOMPLETE' },
-    { name: 'length limit with final suffix', items: [
-      { type: 'text_delta', delta: '半段' }, done('半段后续', { stopReason: 'length' }),
-    ], body: '半段后续', code: 'MODEL_OUTPUT_INCOMPLETE' },
-    { name: 'error with final suffix', items: [
-      { type: 'text_delta', delta: '半段' },
-      { type: 'error', errorCode: 'PROVIDER_ERROR', text: '半段后续', usage },
-    ], body: '半段后续', code: 'PROVIDER_ERROR' },
-    { name: 'unexpected tool call', items: [
-      { type: 'text_delta', delta: '半段' }, done('半段', { hasToolCalls: true }),
-    ], body: '半段', code: 'MODEL_OUTPUT_INVALID' },
-    { name: 'mismatched normal final', items: [
-      { type: 'text_delta', delta: '已显示正文' }, done('另一段正文'),
-    ], body: '已显示正文', code: 'MODEL_OUTPUT_INVALID' },
-    { name: 'error-only body', items: [
-      { type: 'error', errorCode: 'PROVIDER_CONTEXT_WINDOW_EXCEEDED', text: '终帧部分正文', usage: null },
-    ], body: '终帧部分正文', code: 'PROVIDER_CONTEXT_WINDOW_EXCEEDED' },
-    { name: 'done-only truncated body', items: [done('终帧部分正文', { stopReason: 'length' })],
-      body: '终帧部分正文', code: 'MODEL_OUTPUT_INCOMPLETE' },
-  ])('keeps the user and received body after $name', async ({ items, body, code }) => {
-    script(items as PiEvent[]);
+    { name: 'provider failure', events: [text('半段'), failure('provider_error', '半段后续')], body: '半段后续', reason: 'provider_error', knownUsage: usage },
+    { name: 'missing terminal', events: [text('半段')], body: '半段', reason: 'output_incomplete', knownUsage: null },
+    { name: 'length limit', events: [text('半段'), done('半段后续', { finishReason: 'length' })], body: '半段后续', reason: 'output_incomplete', knownUsage: usage },
+    { name: 'deferred completion', events: [done('待续', { finishReason: 'deferred' })], body: '待续', reason: 'output_incomplete', knownUsage: usage },
+    { name: 'provider abort', events: [failure('aborted', '已收到')], body: '已收到', reason: 'provider_aborted', knownUsage: usage },
+    { name: 'provider context overflow', events: [failure('context_window_exceeded', '部分', { usage: null })], body: '部分', reason: 'provider_context_window_exceeded', knownUsage: null },
+    { name: 'invalid model result', events: [failure('invalid_output', '可保存部分')], body: '可保存部分', reason: 'model_output_invalid', knownUsage: usage },
+    { name: 'incomplete model result', events: [failure('incomplete_output', '可保存部分')], body: '可保存部分', reason: 'output_incomplete', knownUsage: usage },
+  ])('persists partial output after $name and exposes only stop_reason', async ({ events: items, body, reason, knownUsage }) => {
+    script(items);
     const { accepted, finished } = submit();
-    expect(await finished).toMatchObject({ event: 'run.failed', data: {
-      errorCode: code, userEntryId: accepted.userEntryId, assistantEntryId: accepted.assistantEntryId, tipEntryId: accepted.assistantEntryId,
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: {
+      stop_reason: reason, savedMessageIds: [accepted.userEntryId, accepted.assistantEntryId], tipEntryId: accepted.assistantEntryId,
     } });
     expect(texts()).toEqual(['玩家输入', body]);
     expect(history()[1]!.metrics!.requests[0]!.status).toBe('failed');
-    expect(seen.filter(event => event.event === 'message.delta').map(event => event.data.text).join('')).toBe(body);
-    assertSingleTerminal('run.failed');
+    expect(finalMessage()?.snapshot?.content).toBe(body);
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(knownUsage));
   });
 
-  it('saves a done-only successful body and supports continuing from partial failed history', async () => {
-    script([{ type: 'error', errorCode: 'PROVIDER_ERROR', text: '之前的半截故事', usage: null }]);
+  it('keeps public reasoning without making it an empty history turn or a successful visible answer', async () => {
+    script([done('', { snapshot: snapshot('', { reasoning_content: '已公开的思考' }) })]);
+    const first = submit('第一轮');
+    expect(await first.finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'model_output_invalid' } });
+    expect(history()[1]!.payload.message).toMatchObject(snapshot('', { reasoning_content: '已公开的思考' }));
+    script([done('下一轮正文')]);
+    expect((await submit('下一轮').finished).event).toBe('run.completed');
+    expect(stream.mock.calls[1]![1].map(message => [message.role, message.content])).toEqual([['user', '第一轮'], ['user', '下一轮']]);
+  });
+
+  it('streams and saves tool requests, but ends without running a tool or issuing another model request', async () => {
+    const tool = { index: 0, id: 'call-1', type: 'function' as const, function: { name: 'search', arguments: '{"q":"river"}' } };
+    script([
+      { type: 'delta', delta: { tool_calls: [{ index: 0 }] } },
+      { type: 'delta', delta: { tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'search', arguments: '{"q":' } }] } },
+      { type: 'delta', delta: { tool_calls: [{ index: 0, function: { arguments: '"river"}' } }] } },
+      done('', { snapshot: snapshot('', { tool_calls: [tool] }), finishReason: 'tool_calls' }),
+    ]);
+    const { accepted, finished } = submit();
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'tool_execution_unsupported' } });
+    expect(history()[1]!.payload.message).toMatchObject(snapshot('', { tool_calls: [tool] }));
+    expect(finalMessage()).toMatchObject({ finish_reason: 'tool_calls', snapshot: snapshot('', { tool_calls: [tool] }) });
+    expect(stream).toHaveBeenCalledOnce();
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(usage));
+  });
+
+  it('retains an unfinished tool fragment without inventing a successful tool call', async () => {
+    script([{ type: 'delta', delta: { tool_calls: [{ index: 0, function: { arguments: '{' } }] } }]);
+    expect(await submit().finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'output_incomplete' } });
+    expect(history()[1]!.payload.message).toMatchObject(snapshot('', {
+      tool_calls: [{ index: 0, id: '', type: 'function', function: { name: '', arguments: '{' } }],
+    }));
+    expect(finalMessage()).not.toHaveProperty('finish_reason');
+  });
+
+  it('does not let a finished tool request masquerade as a normal completed answer', async () => {
+    script([done('说明', { snapshot: snapshot('说明', { tool_calls: [
+      { index: 0, id: 'call', type: 'function', function: { name: 'search', arguments: '{}' } },
+    ] }) })]);
+    expect(await submit().finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'tool_execution_unsupported' } });
+    expect(finalMessage()?.finish_reason).toBe('stop');
+  });
+
+  it.each([
+    { name: 'empty provider failure', events: [failure('provider_error', '', { usage: null })], reason: 'provider_error', expectedUsage: null },
+    { name: 'empty final answer', events: [done('')], reason: 'model_output_invalid', expectedUsage: usage },
+    { name: 'whitespace only', events: [done('  \n ')], reason: 'model_output_invalid', expectedUsage: usage },
+    { name: 'no terminal or content', events: [], reason: 'output_incomplete', expectedUsage: null },
+    { name: 'authoritative empty replacement', events: [text('被替换的草稿'), done('')], reason: 'model_output_invalid', expectedUsage: usage },
+  ])('does not create an empty assistant after $name', async ({ events: items, reason, expectedUsage }) => {
+    script(items);
+    const { accepted, finished } = submit();
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: {
+      stop_reason: reason, savedMessageIds: [accepted.userEntryId], tipEntryId: accepted.userEntryId,
+    } });
+    expect(texts()).toEqual(['玩家输入']);
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(expectedUsage));
+    expect(history()[0]!.metrics).toBeNull();
+  });
+
+  it('continues from saved partial visible history and supports a body returned only in the final snapshot', async () => {
+    script([failure('provider_error', '之前的半截故事', { usage: null })]);
     await submit('上一轮输入').finished;
     script([done('继续后的完整故事')]);
     const { accepted, finished } = submit('继续');
     expect(await finished).toMatchObject({ event: 'run.completed', data: { tipEntryId: accepted.assistantEntryId } });
-    expect(texts()).toEqual(['上一轮输入', '之前的半截故事', '继续', '继续后的完整故事']);
     expect(stream.mock.calls[1]![1].map(message => [message.role, message.content])).toEqual([
       ['user', '上一轮输入'], ['assistant', '之前的半截故事'], ['user', '继续'],
     ]);
   });
 
-  it('keeps streamed text and hides raw exception details when the iterator throws', async () => {
+  it('hides raw iterator failures and reports unknown usage for an attempted request', async () => {
     stream.mockImplementation(async function* () {
-      yield { type: 'text_delta', delta: '已生成' };
+      yield { type: 'request_started' };
+      yield text('已生成');
       throw new Error('key=private-test-secret, path=/private/model');
     });
-    const result = await submit().finished;
-    expect(result).toMatchObject({ event: 'run.failed', data: { errorCode: 'PROVIDER_ERROR' } });
+    const { accepted, finished } = submit();
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'provider_error' } });
     expect(texts()).toEqual(['玩家输入', '已生成']);
-    expect(JSON.stringify(result)).not.toContain('private-test-secret');
-    expect(JSON.stringify(result)).not.toContain('/private/model');
+    expect(runUsage(accepted.runId)).toBeNull();
+    expect(JSON.stringify(seen)).not.toContain('/private/model');
+  });
+});
+
+describe('pre-request and persistence failures', () => {
+  it.each([
+    ['MODEL_NOT_FOUND', 'model_not_found'],
+    ['MODEL_CAPABILITY_UNSUPPORTED', 'model_capability_unsupported'],
+    ['CONTEXT_BUDGET_EXCEEDED', 'context_budget_exceeded'],
+  ] as const)('persists the user and emits true zero usage for %s before invocation', async (code, reason) => {
+    resolveModel.mockImplementationOnce(() => { throw new AppError(code); });
+    const { accepted, finished } = submit();
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: {
+      stop_reason: reason, savedMessageIds: [accepted.userEntryId], tipEntryId: accepted.userEntryId,
+    } });
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
+    expect(stream).not.toHaveBeenCalled();
+    expect(deltas()).toEqual([]);
   });
 
   it.each([
-    { name: 'provider error without text', events: [{ type: 'error', errorCode: 'PROVIDER_ERROR', text: '', usage: null }] },
-    { name: 'empty normal answer', events: [done('')] },
-    { name: 'whitespace-only answer', events: [done('  \n ')] },
-    { name: 'stream without terminal or text', events: [] },
-  ])('retains just the user after $name', async item => {
-    script(item.events as PiEvent[]);
+    { kind: 'missing', reason: 'credential_not_configured' },
+    { kind: 'unavailable', reason: 'credential_unavailable' },
+  ])('keeps the user when credentials are $kind, without a model request', async ({ kind, reason }) => {
+    const get = vi.spyOn(services.credentials, 'get');
+    if (kind === 'missing') get.mockResolvedValueOnce(null);
+    else get.mockRejectedValueOnce(new AppError('CREDENTIAL_STORE_ERROR', 'private-test-secret'));
     const { accepted, finished } = submit();
-    expect(await finished).toMatchObject({ event: 'run.failed', data: {
-      userEntryId: accepted.userEntryId, assistantEntryId: null, tipEntryId: accepted.userEntryId,
-    } });
-    expect(texts()).toEqual(['玩家输入']);
-    expect(history()[0]!.metrics).toBeNull();
-    assertSingleTerminal('run.failed');
-  });
-
-  it('keeps the user when credentials, model resolution or snapshot capture fail', async () => {
-    vi.spyOn(services.credentials, 'get').mockResolvedValueOnce(null);
-    expect(await submit('无凭据').finished).toMatchObject({ event: 'run.failed', data: { errorCode: 'CREDENTIAL_NOT_CONFIGURED' } });
-    expect(texts()).toEqual(['无凭据']);
-    resolveModel.mockImplementationOnce(() => { throw new AppError('MODEL_NOT_FOUND'); });
-    expect(await submit('无模型').finished).toMatchObject({ event: 'run.failed', data: { errorCode: 'MODEL_NOT_FOUND' } });
-    services.sessions.appendEntry('session', { id: 'summary', runId: 'old', type: 'compaction', role: null, payload: { summary: 'Old' } });
-    expect(await submit('不支持的摘要').finished).toMatchObject({ event: 'run.failed', data: { errorCode: 'NARRATIVE_HISTORY_UNSUPPORTED' } });
-    expect(history().at(-1)!.role).toBe('user');
-    expect((history().at(-1)!.payload.message as { content: string }).content).toBe('不支持的摘要');
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: reason } });
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
     expect(stream).not.toHaveBeenCalled();
   });
 
-  it('rejects invalid input or stale tips before persistence and releases admission after a user write failure', async () => {
+  it('retains saved users on unsupported context and preserves provider/model metadata where known', async () => {
+    services.sessions.appendEntry('session', { id: 'summary', runId: 'old', type: 'compaction', role: null, payload: { summary: 'Old' } });
+    const { accepted, finished } = submit();
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'invalid_context' } });
+    expect(seen[0]).toMatchObject({ event: 'run.created', data: { provider: model.providerId, model: model.modelId } });
+    expect(history().at(-1)?.id).toBe(accepted.userEntryId);
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
+    expect(stream).not.toHaveBeenCalled();
+  });
+
+  it('uses null metadata when the configured model cannot be read', async () => {
+    vi.spyOn(services.models, 'get').mockReturnValue(null);
+    const { accepted, finished } = submit();
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: { provider: null, model: null, stop_reason: 'invalid_context' } });
+    expect(seen[0]).toMatchObject({ event: 'run.created', data: { provider: null, model: null } });
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
+  });
+
+  it('reports zero for local stream validation failure before request_started', async () => {
+    stream.mockImplementation(() => { throw new AppError('MODEL_CAPABILITY_UNSUPPORTED'); });
+    const { accepted, finished } = submit();
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'model_capability_unsupported' } });
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
+  });
+
+  it('rejects invalid input, stale tips and failed user writes without creating accepted-run events', async () => {
     for (const invalid of [
       { sessionId: 'session', input: { text: ' ' }, expectedTipEntryId: null },
       { sessionId: 'session', input: { text: 'Input' } },
       { sessionId: 'session', input: { text: 'Input' }, expectedTipEntryId: null, requestId: 'not-supported' },
       { sessionId: 'session', input: { text: 'Input' }, expectedTipEntryId: 'stale' },
     ]) expect(() => narrative.submit(invalid as SubmitInput)).toThrow();
-    expect(history()).toEqual([]);
     const append = vi.spyOn(services.sessions, 'appendEntry');
     append.mockImplementationOnce(() => { throw new AppError('STORAGE_BUSY'); });
     expect(() => narrative.submit({ sessionId: 'session', input: { text: 'Input' }, expectedTipEntryId: null })).toThrow('STORAGE_BUSY');
     expect(history()).toEqual([]);
+    expect(seen).toEqual([]);
     expect(stream).not.toHaveBeenCalled();
     expect((await submit().finished).event).toBe('run.completed');
   });
 
-  it('does not roll back the user when the real database rejects the assistant insertion', async () => {
-    db.exec("CREATE TRIGGER fail_assistant BEFORE INSERT ON entries WHEN NEW.role='assistant' BEGIN SELECT RAISE(ABORT,'simulated assistant write failure'); END");
-    const { accepted, finished } = submit();
-    expect(await finished).toMatchObject({ event: 'run.failed', data: {
-      errorCode: 'MESSAGE_PERSIST_FAILED', assistantEntryId: null, tipEntryId: accepted.userEntryId,
-    } });
-    expect(texts()).toEqual(['玩家输入']);
-    expect(services.sessions.listRunEntries('session', accepted.runId)).toHaveLength(1);
-    db.exec('DROP TRIGGER fail_assistant');
-    expect((await submit('下一次输入').finished).event).toBe('run.completed');
-  });
+  it.each(['completed', 'provider_error', 'cancelled', 'server_shutdown'] as const)(
+    'gives real assistant persistence failure precedence over %s without rolling back the user', async ending => {
+      db.exec("CREATE TRIGGER fail_assistant BEFORE INSERT ON entries WHEN NEW.role='assistant' BEGIN SELECT RAISE(ABORT,'simulated assistant write failure'); END");
+      if (ending === 'provider_error') script([text('半段'), failure('provider_error', '半段')]);
+      const { accepted, finished } = submit();
+      let stopped = false;
+      events.subscribe('session', event => {
+        if (event.event !== 'run.delta' || stopped) return;
+        stopped = true;
+        if (ending === 'cancelled') narrative.stop('session', accepted.runId);
+        if (ending === 'server_shutdown') void narrative.shutdown();
+      });
+      expect(await finished).toMatchObject({ event: 'run.stopped', data: {
+        stop_reason: 'message_persist_failed', savedMessageIds: [accepted.userEntryId], tipEntryId: accepted.userEntryId,
+      } });
+      expect(texts()).toEqual(['玩家输入']);
+      expect(services.sessions.listRunEntries('session', accepted.runId)).toHaveLength(1);
+    },
+  );
 
-  it('reports a later tip conflict without overwriting an external entry or rolling back the user', async () => {
+  it('reports tip conflicts without overwriting external entries or rolling back the user', async () => {
     let appended = false;
     events.subscribe('session', event => {
-      if (event.event !== 'message.delta' || appended) return;
+      if (event.event !== 'run.delta' || appended) return;
       appended = true;
       services.sessions.appendEntry('session', {
         id: 'external', parentId: services.sessions.require('session').tipEntryId, runId: 'external-run', type: 'message', role: 'assistant',
@@ -255,17 +429,34 @@ describe('narrative admission and independent persistence', () => {
       });
     });
     const { accepted, finished } = submit();
-    expect(await finished).toMatchObject({ event: 'run.failed', data: { errorCode: 'TIP_CONFLICT', assistantEntryId: null, tipEntryId: 'external' } });
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: {
+      stop_reason: 'tip_conflict', savedMessageIds: [accepted.userEntryId], tipEntryId: 'external',
+    } });
     expect(texts()).toEqual(['玩家输入', '外部追加']);
-    expect(history()[0]!.id).toBe(accepted.userEntryId);
+  });
+
+  it('reports actual empty persistence when the session is deleted during generation', async () => {
+    let deleted = false;
+    events.subscribe('session', event => {
+      if (event.event !== 'run.delta' || deleted) return;
+      deleted = services.sessions.delete('session');
+    });
+    const { accepted, finished } = submit();
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: {
+      stop_reason: 'session_deleted', savedMessageIds: [], tipEntryId: null,
+    } });
+    expect(services.sessions.getEntry('session', accepted.userEntryId)).toBeNull();
+    expect(services.sessions.getEntry('session', accepted.assistantEntryId)).toBeNull();
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(usage));
   });
 });
 
-describe('in-memory lifetime and event isolation', () => {
-  it('rejects concurrent submission in one session while allowing another to finish', async () => {
+describe('cancellation, shutdown and observer isolation', () => {
+  it('rejects concurrent runs in one session while allowing another session to finish', async () => {
     createSession('second');
     const held = deferred<void>();
     stream.mockImplementation(async function* (_model, messages) {
+      yield { type: 'request_started' };
       if (messages.at(-1)!.content === '等待') await held.promise;
       yield done('各自正文');
     });
@@ -273,33 +464,83 @@ describe('in-memory lifetime and event isolation', () => {
     expect(() => narrative.submit({
       sessionId: 'session', input: { text: '重复' }, expectedTipEntryId: first.accepted.userEntryId,
     })).toThrow('RUN_ALREADY_ACTIVE');
-    const second = submit('另一个会话', 'second');
-    expect((await second.finished).event).toBe('run.completed');
-    expect(seen.some(event => event.data.runId === second.accepted.runId)).toBe(false);
+    expect((await submit('另一个会话', 'second').finished).event).toBe('run.completed');
     narrative.stop('session', first.accepted.runId);
-    expect((await first.finished).event).toBe('run.stopped');
+    expect(await first.finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
     held.resolve();
-    await Promise.resolve();
-    expect(texts()).toEqual(['等待']);
   });
 
-  it('saves partial text when stop is requested by a delta observer and does not fetch another delta', async () => {
+  it('stops before execution without attempting a model request', async () => {
+    const { accepted, finished } = submit();
+    narrative.stop('session', accepted.runId);
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
+    expect(stream).not.toHaveBeenCalled();
+  });
+
+  it('records an attempted request when synchronous cancellation precedes its queued request_started notification', async () => {
+    let runId = '';
+    stream.mockImplementation(async function* () {
+      // Mirrors an SDK invocation that synchronously triggers shutdown/stop before the async yield is delivered.
+      narrative.stop('session', runId);
+      yield { type: 'request_started' };
+      yield done('late');
+    });
+    const request = submit();
+    runId = request.accepted.runId;
+    expect(await request.finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
+    expect(runUsage(runId)).toBeNull();
+    expect(texts()).toEqual(['玩家输入']);
+  });
+
+  it('cancels an unresponsive first next and ignores its marker if it arrives after settlement', async () => {
+    const held = deferred<void>(), waiting = deferred<void>();
     let resumed = false;
     stream.mockImplementation(async function* () {
-      yield { type: 'text_delta', delta: '已收到的半段' };
+      waiting.resolve();
+      await held.promise;
+      resumed = true;
+      yield { type: 'request_started' };
+      yield done('late');
+    });
+    const request = submit();
+    await waiting.promise;
+    narrative.stop('session', request.accepted.runId);
+    expect(await request.finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
+    expect(runUsage(request.accepted.runId)).toEqual(wireUsage(zeroUsage));
+    const settled = structuredClone(seen);
+    held.resolve();
+    await vi.waitFor(() => expect(resumed).toBe(true));
+    expect(seen).toEqual(settled);
+    expect(texts()).toEqual(['玩家输入']);
+  });
+
+  it('saves partial reasoning and text when a delta observer cancels, without fetching another delta', async () => {
+    let resumed = false;
+    stream.mockImplementation(async function* () {
+      yield { type: 'request_started' };
+      yield { type: 'delta', delta: { content: '半段', reasoning_content: '公开思考' } };
       resumed = true;
       yield done('迟到结果');
     });
     const { accepted, finished } = submit();
+    let stopped = false;
     events.subscribe('session', event => {
-      if (event.event === 'message.delta') narrative.stop('session', accepted.runId);
+      if (event.event === 'run.delta' && !stopped) {
+        stopped = true;
+        narrative.stop('session', accepted.runId);
+      }
     });
-    expect(await finished).toMatchObject({ event: 'run.stopped', data: { assistantEntryId: accepted.assistantEntryId } });
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: {
+      stop_reason: 'cancelled', savedMessageIds: [accepted.userEntryId, accepted.assistantEntryId],
+    } });
     expect(resumed).toBe(false);
-    expect(texts()).toEqual(['玩家输入', '已收到的半段']);
+    expect(history()[1]!.payload.message).toMatchObject(snapshot('半段', { reasoning_content: '公开思考' }));
     expect(history()[1]!.metrics!.requests[0]!.status).toBe('cancelled');
+    expect(finalMessage()).toMatchObject({ snapshot: snapshot('半段', { reasoning_content: '公开思考' }) });
+    expect(finalMessage()).not.toHaveProperty('finish_reason');
+    expect(runUsage(accepted.runId)).toBeNull();
     expect(() => narrative.stop('session', accepted.runId)).toThrow('RUN_NOT_FOUND');
-    assertSingleTerminal('run.stopped');
   });
 
   it('cancels a hung credential lookup without waiting for or using its late secret', async () => {
@@ -309,21 +550,30 @@ describe('in-memory lifetime and event isolation', () => {
     await vi.waitFor(() => expect(get).toHaveBeenCalledOnce());
     expect(() => narrative.stop('session', 'different-run')).toThrow('RUN_NOT_FOUND');
     narrative.stop('session', accepted.runId);
-    expect(await finished).toMatchObject({ event: 'run.stopped', data: { assistantEntryId: null, tipEntryId: accepted.userEntryId } });
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: {
+      stop_reason: 'cancelled', savedMessageIds: [accepted.userEntryId], tipEntryId: accepted.userEntryId,
+    } });
     held.resolve('late-private-secret');
     await Promise.resolve();
     expect(stream).not.toHaveBeenCalled();
-    expect(texts()).toEqual(['玩家输入']);
-    assertSingleTerminal('run.stopped');
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
   });
 
-  it('settles received text before shutdown resolves, without waiting for an uncooperative provider', async () => {
+  it('retains the first cancellation reason if shutdown follows user cancellation', async () => {
+    const { accepted, finished } = submit();
+    narrative.stop('session', accepted.runId);
+    await narrative.shutdown();
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
+  });
+
+  it('settles before shutdown resolves and discards late provider output and usage', async () => {
     const held = deferred<void>(), waiting = deferred<void>();
     stream.mockImplementation(async function* () {
-      yield { type: 'text_delta', delta: '关机前正文' };
+      yield { type: 'request_started' };
+      yield text('关机前正文');
       waiting.resolve();
       await held.promise;
-      yield done('关机前正文迟到输出');
+      yield done('迟到输出', { usage: { ...usage, totalTokens: 999 } });
     });
     const { accepted, finished } = submit();
     await waiting.promise;
@@ -333,38 +583,81 @@ describe('in-memory lifetime and event isolation', () => {
       sessionId: 'session', input: { text: '关闭后的输入' }, expectedTipEntryId: accepted.userEntryId,
     })).toThrow('SERVER_SHUTTING_DOWN');
     await closing;
-    expect(await finished).toMatchObject({ event: 'run.stopped', data: { assistantEntryId: accepted.assistantEntryId } });
+    expect(seen.at(-1)).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'server_shutdown' } });
+    expect(services.sessions.getEntry('session', accepted.assistantEntryId)).not.toBeNull();
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: {
+      stop_reason: 'server_shutdown', savedMessageIds: [accepted.userEntryId, accepted.assistantEntryId],
+    } });
     expect(texts()).toEqual(['玩家输入', '关机前正文']);
+    expect(runUsage(accepted.runId)).toBeNull();
+    const saved = structuredClone(seen);
     const append = vi.spyOn(services.sessions, 'appendEntry');
     held.resolve();
     await Promise.resolve();
     await Promise.resolve();
     expect(append).not.toHaveBeenCalled();
-    assertSingleTerminal('run.stopped');
+    expect(seen).toEqual(saved);
+    expect(finalMessage()).not.toHaveProperty('finish_reason');
   });
 
-  it('finishes without subscribers and isolates a throwing observer from persistence', async () => {
-    const remove = events.subscribe('session', () => { throw new Error('broken observer'); });
-    const request = submit();
-    remove();
-    events.subscribe('session', () => { throw new Error('another broken observer'); });
-    expect((await request.finished).event).toBe('run.completed');
+  it('waits for settlement when shutdown is requested synchronously from run.created', async () => {
+    let closing: Promise<void> | undefined;
+    const created = deferred<void>();
+    events.subscribe('session', event => {
+      if (event.event === 'run.created') {
+        closing = narrative.shutdown();
+        created.resolve();
+      }
+    });
+    const { accepted, finished } = submit();
+    await created.promise;
+    await closing;
+    expect(seen.at(-1)).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'server_shutdown' } });
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
+    expect(texts()).toEqual(['玩家输入']);
+    expect((await finished).event).toBe('run.stopped');
+  });
+
+  it('does not confuse a finished model message with a run cancelled before saving it', async () => {
+    const { accepted, finished } = submit();
+    events.subscribe('session', event => {
+      if (event.event === 'run.delta' && (event as Extract<NarrativeEvent, { event: 'run.delta' }>).data.messages[0].snapshot) {
+        narrative.stop('session', accepted.runId);
+      }
+    });
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
+    expect(finalMessage()?.finish_reason).toBe('stop');
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(usage));
+    expect(history()[1]!.metrics!.requests[0]!.status).toBe('cancelled');
+  });
+
+  it('isolates throwing observers and their mutation of final snapshot data from persistence', async () => {
+    events.subscribe('session', () => { throw new Error('broken observer'); });
+    events.subscribe('session', event => {
+      if (event.event !== 'run.delta') return;
+      const message = (event as Extract<NarrativeEvent, { event: 'run.delta' }>).data.messages[0];
+      if (message.snapshot) message.snapshot.content = 'observer mutation';
+    });
+    expect((await submit().finished).event).toBe('run.completed');
     expect(texts()).toEqual(['玩家输入', '完整正文']);
   });
 
-  it('releases admission before terminal observers submit the next turn', async () => {
-    const next = deferred<SessionEvent>();
-    let firstRunId = '';
+  it('releases admission before usage and terminal observers, and permits immediate next-turn submission', async () => {
+    const next = deferred<NarrativeTerminalEvent>();
+    let firstRunId = '', noActiveAtUsage = false;
     events.subscribe('session', event => {
-      if (event.event !== 'run.completed' || event.data.runId !== firstRunId) return;
-      expect(() => narrative.stop('session', firstRunId)).toThrow('RUN_NOT_FOUND');
-      const following = submit('紧接下一轮');
-      void following.finished.then(next.resolve);
+      if (event.data.runId !== firstRunId) return;
+      if (event.event === 'run.usage') {
+        try { narrative.stop('session', firstRunId); }
+        catch (error) { noActiveAtUsage = error instanceof AppError && error.code === 'RUN_NOT_FOUND'; }
+      }
+      if (event.event === 'run.completed') void submit('紧接下一轮').finished.then(next.resolve);
     });
     const first = submit();
     firstRunId = first.accepted.runId;
     await first.finished;
     expect((await next.promise).event).toBe('run.completed');
+    expect(noActiveAtUsage).toBe(true);
     expect(texts()).toEqual(['玩家输入', '完整正文', '紧接下一轮', '完整正文']);
   });
 });

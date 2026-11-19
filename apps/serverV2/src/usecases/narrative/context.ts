@@ -30,12 +30,15 @@ export type NarrativeSnapshot = {
   materials: NarrativeMaterials;
 };
 
-function narrativeMessage(entry: SessionEntry): NarrativeHistoryMessage {
+function narrativeMessage(entry: SessionEntry): NarrativeHistoryMessage | null {
   if (entry.type === 'compaction') throw new AppError('NARRATIVE_HISTORY_UNSUPPORTED');
   const message = entry.payload.message;
   if (!message || typeof message !== 'object' || Array.isArray(message) || message.role !== entry.role ||
     typeof message.content !== 'string' || typeof message.timestamp !== 'number' ||
     !Number.isFinite(message.timestamp) || message.timestamp < 0) throw new AppError('INVALID_NARRATIVE_HISTORY');
+  // Reasoning/tool-only assistant entries remain durable, but are not empty model turns.
+  // Their non-visible fields never become prompt text or material activation keywords.
+  if (entry.role === 'assistant' && !message.content.trim()) return null;
   return { id: entry.id, role: entry.role, text: message.content, timestamp: message.timestamp };
 }
 
@@ -46,8 +49,8 @@ export function captureNarrativeContext(services: NarrativeContextServices, inpu
   if (session.tipEntryId !== input.userEntryId || accepted?.id !== input.userEntryId ||
     accepted.parentId !== input.previousTipEntryId) throw new AppError('TIP_CONFLICT');
   const user = narrativeMessage(accepted);
-  if (user.role !== 'user' || user.text !== input.inputText) throw new AppError('INVALID_NARRATIVE_HISTORY');
-  const history = chain.slice(0, -1).map(narrativeMessage);
+  if (!user || user.role !== 'user' || user.text !== input.inputText) throw new AppError('INVALID_NARRATIVE_HISTORY');
+  const history = chain.slice(0, -1).map(narrativeMessage).filter((message): message is NarrativeHistoryMessage => message !== null);
   const world = services.worlds.require(session.worldId);
   const preset = services.presets.require(session.presetId);
   const modelConfig = services.models.require(session.apiModelConfigId);

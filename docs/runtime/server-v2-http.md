@@ -193,11 +193,11 @@ SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt
 
 `expectedTipEntryId` 必填；没有历史时为 null，有历史时传最后读取的 tip。输入必须有非空白内容，保存原始文本。请求不接受模型或预设覆盖、requestId、工具列表、prepare 参数。会话存在性、权限、输入、tip 与同会话并发校验失败时，使用 HTTP 错误包络且不追加用户消息；同会话已有运行返回 RUN_ALREADY_ACTIVE/409，tip 过期返回 TIP_CONFLICT/409。
 
-受理时先独立保存用户消息，再准备上下文和模型请求。202 的 data 为 `{runId,userEntryId,assistantEntryId,capabilities:{historyPolicy:"full",postprocess:false}}`。此时 userEntryId 已持久化，assistantEntryId 仅预分配；202 不代表生成成功。之后的配置、历史、预算、凭据或模型错误通过 `run.failed` 事件返回，保留用户消息。
+受理时先独立保存用户消息，再准备上下文和模型请求。202 的 data 为 `{runId,userEntryId,assistantEntryId,capabilities:{historyPolicy:"full",postprocess:false}}`。此时 userEntryId 已持久化，assistantEntryId 仅预分配；202 不代表生成成功。之后的配置、历史、预算、凭据或模型错误通过 `run.stopped` 的 stop_reason 返回，保留用户消息；SSE 不返回 error 对象或 errorCode/errorMessage。
 
-助手正常完成、失败或停止时独立保存已收到的非空白正文，包括半截输出；没有正文就只保留用户消息。助手写入失败不回滚用户，外部追加导致 tip 变化时不覆盖新消息。成功或失败事件中的 assistantEntryId 非 null 才表示助手消息已保存；部分正文成为后续轮次的历史。正文与计量的具体契约见 [叙事执行](server-v2-narrative.md)。
+助手正常完成、失败或停止时独立保存完整或部分公开快照，包含 content、reasoning_content 与 tool_calls；只有公开 reasoning 或工具请求时也保留，完全没有公开内容时只保留用户。SDK 最终快照采用替换语义。助手写入失败不回滚用户，外部追加导致 tip 变化时不覆盖新消息。终态 savedMessageIds 与 tipEntryId 表达实际保存结果；后续编译只采用消息正文，不把 reasoning/工具请求当作提示词正文。内容与计量见 [叙事执行](server-v2-narrative.md)。
 
-`POST /sessions/:id/runs/:runId/stop` 返回 `data:{runId,stopping:true}`。仅匹配该会话当前内存运行；不匹配或已结束返回 RUN_NOT_FOUND/404。返回值表示已请求停止，最终以 `run.stopped` 或保存失败时的 `run.failed` 为准。断开 POST 或 SSE 都不会代替显式 stop。
+`POST /sessions/:id/runs/:runId/stop` 返回 `data:{runId,stopping:true}`。仅匹配该会话当前内存运行；不匹配或已结束返回 RUN_NOT_FOUND/404。返回值表示已请求停止，最终以 `run.stopped` 及其 stop_reason 为准；保存失败优先于普通取消。断开 POST 或 SSE 都不会代替显式 stop。
 
 客户端应先连接 `/sessions/:id/events` 再提交；事件可能早于 POST 响应，按 runId/messageId 关联。断线后重新读取 entries/history 判断已保存内容，不自动重发提交。没有运行状态查询、事件回放、恢复、自动重试或请求去重接口；当前 StudioV2 仍只接入管理和作者预览，未挂载叙事运行 UI。
 
@@ -221,7 +221,7 @@ GET 和 PUT 的成功 data 均为 `{ item: 状态值 }`。PUT 完整替换该 sc
 
 ## SSE 与下载例外
 
-- SSE 成功返回原始 `text/event-stream`，只有 event/data 帧，不套 JSON 包络；连接生命周期见 [会话事件](server-v2-events.md)。
+- SSE 成功返回原始 `text/event-stream`，只有 event/data 帧，data 均为 JSON 对象，不套 HTTP 包络、不输出裸 [DONE]。run.created、run.delta、run.usage 和 run.completed/run.stopped 使用完整运行身份；每个 accepted run 仅发一次总 usage，再发唯一终态。字段与连接生命周期见 [会话事件](server-v2-events.md)。
 - SSE 的 HEAD 只返回响应头，不建立订阅、心跳或事件流。
 - 文件成功返回原始字节流，保留MIME、长度和attachment下载头；HEAD 返回响应头且释放已打开资源。
 - SSE 握手或文件打开之前的失败仍是普通 HTTP JSON 失败包络；传输已经开始后不把流改成 JSON 包络。

@@ -2,6 +2,7 @@ import type { TransactionRunner } from './infrastructure/database/transaction.js
 import type { Services } from './services.js';
 import type { EventHub } from './infrastructure/events/event-hub.js';
 import { PiClient } from './infrastructure/pi/client.js';
+import type { ModelClient } from './infrastructure/model/client.js';
 import { createNarrativeUsecases } from './usecases/narrative/index.js';
 import { createTestModel } from './usecases/test-model.js';
 import { createModelConfigUsecases } from './usecases/model-config.js';
@@ -13,14 +14,14 @@ import { createInitialize } from './usecases/initialize.js';
 import { createSetState } from './usecases/set-state.js';
 
 /** Application flows are composed here; no usecase opens or retains a database connection. */
-export function createUsecases({ services, transaction, events, pi = new PiClient() }: {
-  services: Services; transaction: TransactionRunner; events: EventHub; pi?: PiClient;
+export function createUsecases({ services, transaction, events, modelClient = new PiClient() }: {
+  services: Services; transaction: TransactionRunner; events: EventHub; modelClient?: ModelClient;
 }) {
   const { worlds, sessions, presets, settings } = services;
   return {
-    narrative: createNarrativeUsecases({ ...services, events, pi }),
-    testModel: createTestModel({ models: services.models, credentials: services.credentials, pi }),
-    listProviders: () => pi.listProviders(),
+    narrative: createNarrativeUsecases({ ...services, events, modelClient }),
+    testModel: createTestModel({ models: services.models, credentials: services.credentials, modelClient }),
+    listProviders: () => modelClient.listProviders(),
     modelConfigs: createModelConfigUsecases(services),
     initialize: createInitialize({ presets, settings, transaction }),
     setState: createSetState({ worlds, sessions }),

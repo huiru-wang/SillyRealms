@@ -5,7 +5,8 @@ import type { SessionService } from '../../modules/sessions/service.js';
 import type { StateService } from '../../modules/state/service.js';
 import type { WorldService } from '../../modules/worlds/service.js';
 import type { EventHub } from '../../infrastructure/events/event-hub.js';
-import type { PiClient } from '../../infrastructure/pi/client.js';
+import type { ModelClient } from '../../infrastructure/model/client.js';
+import type { SavedUserMessage } from './events.js';
 import type { NarrativeSnapshot } from './context.js';
 
 export type SubmitInput = {
@@ -29,7 +30,7 @@ export type NarrativeDependencies = {
   models: ModelService;
   state: StateService;
   credentials: Pick<CredentialService, 'get'>;
-  pi: Pick<PiClient, 'resolve' | 'assertMessageOrder' | 'stream'>;
+  modelClient: Pick<ModelClient, 'resolve' | 'assertMessageOrder' | 'stream'>;
   events: EventHub;
 };
 
@@ -40,6 +41,9 @@ export type NarrativeExecution = {
   runId: string;
   userEntryId: string;
   assistantEntryId: string;
+  userMessage: SavedUserMessage;
+  provider: string | null;
+  model: string | null;
   prepared: PreparedNarrative;
   signal: AbortSignal;
 };

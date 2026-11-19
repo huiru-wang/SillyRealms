@@ -162,6 +162,48 @@ describe('linear history and field ownership', () => {
   });
 });
 
+describe('public assistant snapshots', () => {
+  it.each([
+    {
+      name: 'body, reasoning and tool request', content: 'Visible answer', reasoning_content: 'Public reasoning',
+      tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'lookup', arguments: '{"query":"海港"}' } }],
+    },
+    { name: 'reasoning only', content: '', reasoning_content: 'Partial reasoning', tool_calls: [] },
+    {
+      name: 'partial tool request only', content: '', reasoning_content: '',
+      tool_calls: [{ index: 0, id: '', type: 'function', function: { name: '', arguments: '{"query":' } }],
+    },
+  ])('round-trips $name without interpreting tool arguments or changing earlier messages', ({ content, reasoning_content, tool_calls }) => {
+    create();
+    const user = sessions.appendEntry('session', {
+      id: 'user', runId: 'run', type: 'message', role: 'user',
+      payload: { message: { role: 'user', content: 'Existing input', timestamp: 99 } },
+    });
+    const message = { role: 'assistant', content, reasoning_content, tool_calls, timestamp: 100 };
+    const payload = { message: structuredClone(message) };
+    const saved = sessions.appendEntry('session', {
+      id: 'assistant', parentId: 'user', runId: 'run', type: 'message', role: 'assistant',
+      timestamp: 100, payload: { message },
+    });
+    message.content = 'Caller mutation';
+    message.reasoning_content = 'Caller mutation';
+    expect(saved.payload).toEqual(payload);
+    expect(sessions.getEntry('session', 'assistant')!.payload).toEqual(payload);
+    expect(sessions.getHistory('session').map(entry => entry.payload)).toEqual([user.payload, payload]);
+    expect(sessions.require('session').tipEntryId).toBe('assistant');
+  });
+
+  it('reserves standalone tool-result roles without storing entries or moving the tip', () => {
+    create();
+    expect(() => sessions.appendEntry('session', {
+      id: 'tool-result', runId: 'run', type: 'message', role: 'tool',
+      payload: { message: { role: 'tool', tool_call_id: 'call-1', content: 'Result' } },
+    } as unknown as AppendEntryInput)).toThrow();
+    expect(sessions.getHistory('session')).toEqual([]);
+    expect(sessions.require('session').tipEntryId).toBeNull();
+  });
+});
+
 describe('one canonical metrics shape', () => {
   it('distinguishes absent metrics, unknown usage, and real zero consumption', () => {
     create(); append('session', 'assistant');

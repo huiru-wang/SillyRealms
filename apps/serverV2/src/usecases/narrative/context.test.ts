@@ -81,6 +81,65 @@ describe('synchronous narrative snapshot', () => {
     expect(services.sessions.getEntry('session', 'current-user')).not.toBeNull();
   });
 
+  it('uses only visible assistant body for prompt history and material activation', () => {
+    append('prior-user', 'user', 'Previous input');
+    services.sessions.appendEntry('session', {
+      id: 'answer', runId: 'prior', type: 'message', role: 'assistant',
+      payload: { message: {
+        role: 'assistant', content: 'Visible harbor', timestamp: 100,
+        reasoning_content: 'reasoning-secret',
+        tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'lookup', arguments: '{"place":"tool-secret"}' } }],
+      } },
+    });
+    services.worlds.update('world', { lorebook: { entries: [
+      { id: 'visible', content: 'Visible lore', load: { mode: 'on_mention', keywords: ['harbor'] } },
+      { id: 'reasoning', content: 'Reasoning must not activate', load: { mode: 'on_mention', keywords: ['reasoning-secret'] } },
+      { id: 'tool', content: 'Tool arguments must not activate', load: { mode: 'on_mention', keywords: ['tool-secret'] } },
+    ] } });
+    const snapshot = capture(), compiled = compileNarrativeContext(snapshot, model);
+    expect(snapshot.history).toEqual([
+      { id: 'prior-user', role: 'user', text: 'Previous input', timestamp: 100 },
+      { id: 'answer', role: 'assistant', text: 'Visible harbor', timestamp: 100 },
+    ]);
+    expect(compiled.messages).toEqual([
+      { role: 'user', content: 'Previous input', timestamp: 100 },
+      { role: 'assistant', content: 'Visible harbor', timestamp: 100 },
+      { role: 'user', content: 'Current input', timestamp: 0 },
+    ]);
+    expect(snapshot.materials.variables['world.lore']).toEqual({ type: 'text', value: 'Visible lore' });
+    expect(services.sessions.getEntry('session', 'answer')!.payload.message).toMatchObject({
+      reasoning_content: 'reasoning-secret', tool_calls: [{ function: { arguments: '{"place":"tool-secret"}' } }],
+    });
+  });
+
+  it.each([
+    { name: 'reasoning only', content: '', reasoning_content: 'hidden-trigger', tool_calls: [] },
+    {
+      name: 'tool request only', content: '  ', reasoning_content: '',
+      tool_calls: [{ index: 0, id: '', type: 'function', function: { name: '', arguments: '{"query":"hidden-trigger' } }],
+    },
+  ])('keeps a $name entry in storage while omitting an empty model turn and activation text', ({ content, reasoning_content, tool_calls }) => {
+    append('prior-user', 'user', 'Previous input');
+    const message = { role: 'assistant', content, reasoning_content, tool_calls, timestamp: 101 };
+    services.sessions.appendEntry('session', {
+      id: 'partial', runId: 'prior', type: 'message', role: 'assistant', payload: { message },
+    });
+    services.sessions.setEntryState('session', 'partial', [{ key: 'coins', value: 9 }]);
+    services.worlds.update('world', { lorebook: { entries: [
+      { id: 'hidden', content: 'Must stay inactive', load: { mode: 'on_mention', keywords: ['hidden-trigger'] } },
+    ] } });
+    const snapshot = capture(), compiled = compileNarrativeContext(snapshot, model);
+    expect(snapshot.history).toEqual([{ id: 'prior-user', role: 'user', text: 'Previous input', timestamp: 100 }]);
+    expect(compiled.messages).toEqual([
+      { role: 'user', content: 'Previous input', timestamp: 100 },
+      { role: 'user', content: 'Current input', timestamp: 0 },
+    ]);
+    expect(snapshot.materials.variables['world.lore']).toEqual({ type: 'text', value: '' });
+    expect(snapshot.views.message).toEqual({ coins: 9 });
+    expect(services.sessions.getHistory('session').map(entry => entry.id)).toEqual(['prior-user', 'partial', 'current-user']);
+    expect(services.sessions.getEntry('session', 'partial')!.payload).toEqual({ message });
+  });
+
   it('does not fall back to defaults when a bound model reference is missing', () => {
     const snapshot = capture();
     const missing = { ...services, models: { require: () => { throw new Error('MODEL_CONFIG_NOT_FOUND'); } } };

@@ -4,6 +4,7 @@ import { AppError } from '../../errors.js';
 import type { StateService, StateViews } from '../../modules/state/service.js';
 import type { World, WorldCard } from '../../modules/worlds/service.js';
 
+/** Visible body projection only; reasoning and tool requests are not narrative materials. */
 export type NarrativeHistoryMessage = { id: string; role: 'user' | 'assistant'; text: string; timestamp: number };
 export type MaterialSources = {
   world: World;

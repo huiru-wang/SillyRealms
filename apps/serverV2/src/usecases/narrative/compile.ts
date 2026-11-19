@@ -1,11 +1,11 @@
 import { AppError } from '../../errors.js';
-import type { PiMessage, PiModel } from '../../infrastructure/pi/client.js';
+import type { ModelInfo, ModelMessage } from '../../infrastructure/model/client.js';
 import type { NarrativeSnapshot } from './context.js';
 import { systemVariableNames, type SystemVariableName } from './materials.js';
 
 type Segment = { type: 'text'; value: string } | { type: 'variable'; name: SystemVariableName };
 export type CompiledNarrativeContext = {
-  messages: PiMessage[];
+  messages: ModelMessage[];
   maxTokens: number;
   temperature?: number;
   thinkingEnabled: boolean;
@@ -41,7 +41,7 @@ export function parsePromptTemplate(prompt: string): Segment[] {
 }
 
 /** Fixed local text estimate; this is neither measured usage nor automatic calibration. */
-export function estimateInputTokens(messages: readonly PiMessage[]): number {
+export function estimateInputTokens(messages: readonly ModelMessage[]): number {
   let tokens = 64;
   for (const message of messages) {
     let thirds = 0;
@@ -56,9 +56,9 @@ export function estimateInputTokens(messages: readonly PiMessage[]): number {
   return tokens;
 }
 
-/** Pure core compilation. Full history is retained and every postprocess node is excluded. */
-export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick<PiModel, 'contextWindow' | 'maxTokens'>): CompiledNarrativeContext {
-  const config = snapshot.preset.config, messages: PiMessage[] = [];
+/** Pure core compilation. All visible history is retained and every postprocess node is excluded. */
+export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick<ModelInfo, 'contextWindow' | 'maxTokens'>): CompiledNarrativeContext {
+  const config = snapshot.preset.config, messages: ModelMessage[] = [];
   let inputCount = 0, historyCount = 0;
   for (const node of config.nodes) {
     if (!node.enabled || node.kind === 'postprocess') continue;

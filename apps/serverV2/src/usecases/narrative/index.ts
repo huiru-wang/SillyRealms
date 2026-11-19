@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AppError } from '../../errors.js';
 import { captureNarrativeContext } from './context.js';
 import { executeNarrative } from './execute.js';
+import type { SavedUserMessage } from './events.js';
 import type { AcceptedNarrative, NarrativeDependencies, PreparedNarrative, SubmitInput } from './types.js';
 
 export type { AcceptedNarrative, NarrativeDependencies, SubmitInput } from './types.js';
@@ -32,20 +33,26 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
     const runId = randomUUID(), userEntryId = randomUUID(), assistantEntryId = randomUUID();
     const run: ActiveRun = { runId, controller: new AbortController(), completion: Promise.resolve() };
     active.set(sessionId, run);
+    let userMessage: SavedUserMessage;
     try {
       const timestamp = Date.now();
-      dependencies.sessions.appendEntry(sessionId, {
+      const saved = dependencies.sessions.appendEntry(sessionId, {
         id: userEntryId, parentId: expectedTipEntryId, runId, type: 'message', role: 'user', timestamp,
         payload: { message: { role: 'user', content: value.input.text, timestamp } },
         state: null, extData: {}, metrics: null,
       });
+      userMessage = { id: saved.id, role: 'user', content: value.input.text, timestamp: saved.timestamp };
     } catch (error) {
       active.delete(sessionId);
       throw error;
     }
 
     let prepared: PreparedNarrative;
+    let provider: string | null = null, model: string | null = null;
     try {
+      const configured = dependencies.models.get(session.apiModelConfigId);
+      provider = configured?.providerId ?? null;
+      model = configured?.modelId ?? null;
       prepared = { snapshot: captureNarrativeContext(dependencies, {
         sessionId, inputText: value.input.text, userEntryId, previousTipEntryId: expectedTipEntryId,
       }) };
@@ -53,11 +60,12 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
       prepared = { error };
     }
     run.completion = Promise.resolve().then(() => executeNarrative(dependencies, {
-      sessionId, runId, userEntryId, assistantEntryId, prepared, signal: run.controller.signal,
-    })).then(event => {
-      // Release admission before observers receive the terminal result and submit their next turn.
+      sessionId, runId, userEntryId, assistantEntryId, userMessage, provider, model, prepared, signal: run.controller.signal,
+    })).then(settlement => {
+      // Settlement is complete: observers may stop or submit a new turn without finding a stale active run.
       if (active.get(sessionId) === run) active.delete(sessionId);
-      dependencies.events.publish(sessionId, event);
+      dependencies.events.publish(sessionId, settlement.usage);
+      dependencies.events.publish(sessionId, settlement.terminal);
     }).finally(() => {
       if (active.get(sessionId) === run) active.delete(sessionId);
     });
@@ -68,14 +76,14 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
     dependencies.sessions.require(identifier.parse(sessionId));
     const run = active.get(sessionId);
     if (!run || run.runId !== identifier.parse(runId)) throw new AppError('RUN_NOT_FOUND');
-    run.controller.abort();
+    run.controller.abort('cancelled');
     return { runId, stopping: true };
   };
 
   const shutdown = (): Promise<void> => {
     if (closing) return closing;
     shuttingDown = true;
-    for (const run of active.values()) run.controller.abort();
+    for (const run of active.values()) run.controller.abort('server_shutdown');
     closing = Promise.all([...active.values()].map(run => run.completion)).then(() => {});
     return closing;
   };
