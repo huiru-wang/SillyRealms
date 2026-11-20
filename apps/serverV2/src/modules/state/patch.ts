@@ -32,21 +32,26 @@ function definitionFor(state: JsonValue | null, scope: StateScope, root: string)
 /** Prepare one replacement without creating paths or validating other state roots. */
 export function prepareStatePatch(
   snapshot: JsonObject, state: JsonValue | null, scope: StateScope, update: StateUpdate,
+  options: { requireExisting?: boolean } = {},
 ): PreparedStatePatch<JsonObject> {
   const [root, ...nested] = parseStatePath(update.path, scope) as [string, ...string[]];
   const unchanged = { snapshot, changed: false };
-  if (!Object.hasOwn(snapshot, root)) return unchanged;
+  const missing = (): PreparedStatePatch<JsonObject> => {
+    if (options.requireExisting) throw new StateValidationError('STATE_NOT_FOUND', scope, update.path);
+    return unchanged;
+  };
+  if (!Object.hasOwn(snapshot, root)) return missing();
 
   let current: unknown = snapshot[root];
   for (const part of nested) {
     // Runtime paths address object properties; arrays are replaced as complete values.
     if (Array.isArray(current)) throw new StateValidationError('INVALID_STATE_PATH', scope, update.path);
-    if (!isObject(current) || !Object.hasOwn(current, part)) return unchanged;
+    if (!isObject(current) || !Object.hasOwn(current, part)) return missing();
     current = current[part];
   }
 
   const definition = definitionFor(state, scope, root);
-  if (definition === undefined) return unchanged;
+  if (definition === undefined) return missing();
   validateStateDefinition(root, definition, scope);
   validateStateJson(update.value, 0, scope, update.path);
   let replacement: JsonValue;

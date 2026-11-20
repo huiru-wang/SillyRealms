@@ -46,7 +46,9 @@ export const updateSessionSchema = z.object({
   presetId: identifier.optional(), apiModelConfigId: identifier.optional(),
   title: z.string().nullable().optional(),
 }).strict();
-const internalExtData = jsonObject.refine(value => !Object.hasOwn(value, 'narrative'), 'narrative 由服务端维护');
+const internalExtData = jsonObject
+  .refine(value => !Object.hasOwn(value, 'narrative'), 'narrative 由服务端维护')
+  .refine(value => !Object.hasOwn(value, 'output'), 'output 由服务端维护');
 const editableExtData = internalExtData.refine(value => !Object.hasOwn(value, 'summary'), 'summary 由服务端维护');
 const appendFields = {
   id: identifier.optional(), parentId: identifier.nullable().optional(), runId: identifier,

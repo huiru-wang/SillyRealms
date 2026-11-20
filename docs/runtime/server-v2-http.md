@@ -213,7 +213,7 @@ SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt
 
 受理时先独立保存用户消息，再准备上下文和模型请求。202 的 data 为 `{runId,userEntryId,assistantEntryId}`。此时 userEntryId 已持久化，assistantEntryId 仅预分配；202 不代表生成成功。上下文按预设自动裁剪或执行至多一次摘要；一次摘要后仍超限通过 stop_reason=summary_capacity_exceeded 结束，保留已保存用户、摘要与摘要 metrics，摘要失败为 summary_failed。失败/中断摘要不保存记录或计量；成功摘要未知 usage 为 null。之后的配置、历史、预算、凭据或模型错误通过 `run.stopped` 的 stop_reason 返回，保留用户消息；SSE 不返回 error 对象或 errorCode/errorMessage。
 
-助手正常完成、失败或停止时独立保存完整或部分公开快照，包含 content、reasoning_content 与 tool_calls；只有公开 reasoning 或工具请求时也保留，完全没有公开内容时只保留用户。SDK 最终快照采用替换语义。助手写入失败不回滚用户，外部追加导致 tip 变化时不覆盖新消息。终态 savedMessageIds 与 tipEntryId 表达实际保存结果；后续编译只采用消息正文，不把 reasoning/工具请求当作提示词正文。内容与计量见 [叙事执行](server-v2-narrative.md)。
+助手正常完成、失败或停止时独立保存完整或部分公开快照，包含分离能力数据块后的干净 content、公开 reasoning_content 与 tool_calls；只有公开 reasoning 或工具请求时也保留，完全没有公开内容时只保留用户。SDK 最终快照采用替换语义。助手写入失败不回滚用户，外部追加导致 tip 变化时不覆盖新消息。终态 savedMessageIds 与 tipEntryId 表达实际保存结果；后续编译只采用消息正文，不把 reasoning/工具请求当作提示词正文。内容与计量见 [叙事执行](server-v2-narrative.md)。
 
 `POST /sessions/:id/narrative/runs/:runId/stop` 返回 `data:{runId,stopping:true}`。仅匹配该会话当前内存运行；不匹配或已结束返回 RUN_NOT_FOUND/404。返回值表示已请求停止，最终以 `run.stopped` 及其 stop_reason 为准；保存失败优先于普通取消。断开 POST 或 SSE 都不会代替显式 stop。
 
@@ -247,11 +247,45 @@ type NarrativeOutcome =
   | { status: 'stopped'; stopReason: NarrativeStopReason; finishedAt: number };
 ```
 
-finishedAt 为结算 Unix 毫秒；stopReason 与当前 SSE 的原因类型一致，例如 cancelled、provider_error、output_incomplete、message_persist_failed。创建用户时仍为 extData:{}；先保存已有助手内容，再记录用户结束结果，最后发布终态。没有助手输出也会记录结果。写入仅替换 narrative 字段，保留其他扩展；通用 POST/PATCH entry 不能传 narrative，通用 extData 替换会保留服务端已存 narrative。结果写入失败不回滚已有消息，刷新后可能 unknown；不持久化 running 或执行恢复日志，不新增表。
+finishedAt 为结算 Unix 毫秒；stopReason 与当前 SSE 的原因类型一致，例如 cancelled、provider_error、output_incomplete、message_persist_failed。创建用户时仍为 extData:{}；先保存已有助手内容，再记录用户结束结果，最后发布终态。没有助手输出也会记录结果。写入仅替换 narrative 字段，保留其他扩展；通用 POST/PATCH entry 不能传 narrative/output，通用 extData 替换会保留服务端已存 narrative/output；正文编辑不重新执行或回滚能力结果。结果写入失败不回滚已有消息，刷新后可能 unknown；不持久化 running 或执行恢复日志，不新增表。
 
 metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstTextMs?}`，不再写 status。新请求 provider 取实际调用的 providerId；读取旧 metrics 时移除 status，缺少 provider 返回 null，不根据当前模型配置推断。旧 JSON 不做批量重写，新写入严格使用新结构。
 
 `GET /sessions/:id/narrative/usage` 返回 `data:{knownUsage,recordedRequestCount,unknownUsageRequestCount}`。knownUsage 包含 inputTokens/outputTokens/totalTokens/cacheReadTokens/cacheWriteTokens，是已有 metrics 中可信 usage 的合计；unknownUsageRequestCount 统计 usage:null 的已记录请求，不将其视为零。没有助手 entry 等原因导致未记录的请求不在计数中，因此这是已记录用量而非完整账单；不写 session.usage 或增加计量表。
+
+## 叙事后处理结果
+
+正常完成的正文 entry 可在 extData.output 返回：
+
+```ts
+{
+  stateUpdate: {
+    status: 'no_updates' | 'success' | 'partial_success' | 'invalid_updates' | 'invalid_tag' | 'processing_error',
+    updates: Array<{ path: string; value: JsonValue; reason?: string }>,
+    results: Array<{
+      status: 'success' | 'invalid_json' | 'invalid_update' | 'invalid_path' | 'invalid_value' | 'processing_error';
+      path?: string; errorCode?: string; statePath?: string; rulePath?: string;
+    }>,
+    errors?: Array<{ errorCode: string }>
+  },
+  actionSuggestions: {
+    status: 'no_suggestions' | 'success' | 'partial_success' | 'invalid_tag' | 'invalid_json' | 'invalid_suggestions' | 'processing_error',
+    items: string[],
+    results: Array<{ status: 'success' | 'empty_suggestion' | 'invalid_suggestion'; errorCode?: string }>,
+    errors?: Array<{ errorCode: string }>
+  }
+}
+```
+
+结果随现有 entries、轮次列表及单轮详情返回，不新增查询或写入端点，不增加能力开关响应字段。该字段由 SessionService 的受控叙事保存入口写入，普通 POST/PATCH 不能伪造或删除。
+
+每个能力只校验自己的大小写不敏感标签；整对缺失或空标签是 no_updates/no_suggestions，自身标签损坏为 invalid_tag 且不执行该能力。状态 JSONL 行和建议数组条目分别校验，成功数据不受其他无效条目影响；空建议项 empty_suggestion 被过滤，保留其他有效建议，三条仅是提示词目标。
+
+run.completed 表示正文主流程完成，不等同于能力全部成功。能力异常记录在 output，查询方可查看逐项结果；模型取消、错误、length 等未执行后处理时，部分助手不产生 output。旧消息没有 output 不补造结果。
+
+公开正文与模型历史保持干净，不回填历史能力标签，不持久化 blockIndex、line、contextEligible，也不因读取结果重新执行状态更新。条目级 model-only notes 后续独立设计。
+
+建议创建事件为 action_suggestions.created，仅发布本轮已保存的有效非空建议；run.created 驱动清空上一轮建议，首次恢复只认最新 run 的实际完成结果。详见 [会话事件](server-v2-events.md#行动建议创建) 与 [叙事执行](server-v2-narrative.md#叙事后处理与能力结果)。
 
 ## 舞台部署配置
 
@@ -312,7 +346,7 @@ PATCH 成功接受批次时使用标准 HTTP 成功包络，`data` 为 `StateWri
 - 失败项：`success:false`，携带业务 errorCode/errorMessage；状态校验错误可附加 stateScope、statePath、rulePath，指向实际失败的根、字段或规则。
 - 外层 success 表示批次已处理，不代表每项均成功。即使全部项失败，逐项结果仍在 data 数组中返回。
 
-StateService 负责读取、继承、业务校验和候选快照计算。set-state 用例通过绑定的 TransactionRunner 管理每项事务，并调用表属主 World/Session Service 写入。state 不增加表或 Repository，路由不写 SQL、不管理事务。内部 getViews/evaluateWhen 保留给叙事上下文和材料条件使用；本期仍不解析或执行模型状态更新扩展，不增加 Run/State 并发锁或时序保证。
+StateService 负责读取、继承、业务校验和候选快照计算。set-state 用例通过绑定的 TransactionRunner 管理每项事务，并调用表属主 World/Session Service 写入。state 不增加表或 Repository，路由不写 SQL、不管理事务。内部 getViews/evaluateWhen 保留给叙事上下文和材料条件使用；叙事后处理使用纯 prepareMessageUpdates 计算模型 JSONL 候选，仅允许本轮激活的 message 根与已存在路径，缺失路径记录该行 invalid_path；公共 PATCH 仍成功忽略缺失路径。不增加 Run/State 并发锁或时序保证。
 
 ### 事件与调用方接入边界
 
@@ -330,7 +364,7 @@ StateService 负责读取、继承、业务校验和候选快照计算。set-sta
 - session：只发布到所属会话的所有订阅连接。
 - message：比较当前 tip 的有效继承状态，`[{key,value}]` / null 解码为对象后发布。修改历史 entry 仅在影响当前 tip 时通知；被后继独立快照覆盖的历史修改不通知。PUT null 恢复继承时发送继承后的对象，不发送 null 作为清空标记。
 
-set-state 用例在同步事务内读取、保存、计算变更与收集接收会话，提交成功后经同一个 EventHub 发布。普通 entry 追加通过 append-entry 用例处理 tip 状态变化；追加 null 状态仅继承前驱，不发事件。叙事当前只追加 null 状态，不自动产生状态更新。StateService 只负责继承和变更计算，EventHub 不查询数据库。订阅监听器异常由 EventHub 隔离，不把已提交写入判为失败。
+set-state 用例在同步事务内读取、保存、计算变更与收集接收会话，提交成功后经同一个 EventHub 发布。普通 entry 追加通过 append-entry 用例处理 tip 状态变化；追加 null 状态仅继承前驱，不发事件。叙事后处理在收尾事务内预计算状态变化，再保存助手、output 与有效快照，提交并释放执行锁后发布实际变化；无变化继续 null 继承。StateService 只负责继承和变更计算，EventHub 不查询数据库。订阅监听器异常由 EventHub 隔离，不把已提交写入判为失败。
 
 不新增连接、SSE id、事件持久化或回放。断线期间的状态事件不补发；接入方初次装载和重连时读取最新快照。
 

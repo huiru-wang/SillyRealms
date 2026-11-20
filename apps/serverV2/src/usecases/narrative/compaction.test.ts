@@ -42,7 +42,7 @@ beforeEach(async () => {
   hub = new EventHub(); seen = [];
   hub.subscribe('session', event => seen.push(structuredClone(event) as NarrativeEvent));
   stream = vi.fn<ModelClient['stream']>(async function* () { yield { type: 'request_started' }; yield done(); });
-  narrative = createNarrativeUsecases({ ...services, events: hub,
+  narrative = createNarrativeUsecases({ ...services, events: hub, transaction: bindTransaction(db),
     modelClient: { resolve: () => model, assertMessageOrder: vi.fn(), stream },
   });
 });
@@ -94,7 +94,7 @@ describe('summary execution and accounting', () => {
     const summaryInput = JSON.parse(stream.mock.calls[0]![1][1]!.content);
     expect(summaryInput.messages).toHaveLength(3);
     expect(JSON.stringify(summaryInput)).not.toContain('Current input');
-    const generation = stream.mock.calls[1]![1].map(message => message.content);
+    const generation = stream.mock.calls[1]![1].slice(0, -1).map(message => message.content);
     expect(generation).toEqual(['summary', 'Recent 3', 'Recent 4', 'Recent 5', 'Recent 6', 'Recent 7', 'Current input']);
     expect(total()).toMatchObject({ total_tokens: 50 });
     expect(services.sessions.recordedUsage('session')).toMatchObject({ recordedRequestCount: 2, knownUsage: { totalTokens: 50 } });

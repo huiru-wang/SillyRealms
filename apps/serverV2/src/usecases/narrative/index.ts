@@ -65,8 +65,10 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
     })).then(settlement => {
       // Settlement is complete: observers may stop or submit a new turn without finding a stale active run.
       if (active.get(sessionId) === run) active.delete(sessionId);
-      dependencies.events.publish(sessionId, settlement.usage);
-      dependencies.events.publish(sessionId, settlement.terminal);
+      for (const event of [...settlement.notifications, settlement.usage, settlement.terminal]) {
+        try { dependencies.events.publish(sessionId, event); }
+        catch { /* Notification delivery cannot change a committed outcome or skip later events. */ }
+      }
     }).finally(() => {
       if (active.get(sessionId) === run) active.delete(sessionId);
     });

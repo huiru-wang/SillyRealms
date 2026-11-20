@@ -1,3 +1,4 @@
+import { NarrativeStreamSplitter, splitNarrativeContent } from './postprocess/stream-splitter.js';
 import { randomUUID } from 'node:crypto';
 import { AppError } from '../../errors.js';
 import type { ModelClient, ModelDelta, ModelEvent, ModelFinishReason, ModelInfo, ModelMessage, ModelOptions,
@@ -121,6 +122,8 @@ export async function callModel(modelClient: Pick<ModelClient, 'stream'>, select
   messages: readonly ModelMessage[], options: ModelOptions,
   publication?: { events: EventHub; fields: RunEventFields; messageId: string }) {
   const { signal } = options;
+  const splitter = publication ? new NarrativeStreamSplitter() : undefined;
+  let rawContent = '';
   let snapshot: ModelSnapshot = { role: 'assistant', content: '', reasoning_content: '', tool_calls: [] };
   let usage: ModelUsage | null = zeroUsage();
   let attempted = false;
@@ -162,6 +165,12 @@ export async function callModel(modelClient: Pick<ModelClient, 'stream'>, select
       if (event.type === 'request_started') continue;
       if (event.type === 'delta') {
         const delta = copyDelta(event.delta);
+        if (splitter && delta.content !== undefined) {
+          rawContent += delta.content;
+          const visible = splitter.push(delta.content);
+          if (visible) delta.content = visible;
+          else delete delta.content;
+        }
         appendDelta(snapshot, delta);
         if (delta.content) markFirstText();
         if (Object.keys(delta).length) {
@@ -175,6 +184,10 @@ export async function callModel(modelClient: Pick<ModelClient, 'stream'>, select
       }
       receivedTerminal = true;
       snapshot = copySnapshot(event.snapshot);
+      if (splitter) {
+        rawContent = snapshot.content;
+        snapshot.content = splitNarrativeContent(rawContent).content;
+      }
       if (snapshot.content) markFirstText();
       if (attempted) usage = event.usage === null ? null : { ...event.usage };
       if (event.type === 'error') {
@@ -198,6 +211,7 @@ export async function callModel(modelClient: Pick<ModelClient, 'stream'>, select
     }
   }
 
+  if (splitter && !receivedTerminal) snapshot.content += splitter.finish();
   if (signal.aborted) stopReason = cancellationReason(signal);
   const metrics: EntryMetrics | null = attempted && requestId ? {
     requests: [{
@@ -206,5 +220,5 @@ export async function callModel(modelClient: Pick<ModelClient, 'stream'>, select
       ...(firstTextMs === undefined ? {} : { firstTextMs }),
     }],
   } : null;
-  return { snapshot, usage, attempted, metrics, finishReason, stopReason, receivedTerminal, publishedDelta };
+  return { snapshot, rawContent, usage, attempted, metrics, finishReason, stopReason, receivedTerminal, publishedDelta };
 }

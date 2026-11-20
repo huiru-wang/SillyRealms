@@ -1,5 +1,7 @@
 import { AppError } from '../../errors.js';
 import type { ModelFinishReason, ModelSnapshot, ModelUsage } from '../../infrastructure/model/client.js';
+import { processNarrativeOutput } from './postprocess/processor.js';
+import type { StateEvent } from '../../modules/state/service.js';
 import type { EntryMetrics } from '../../modules/sessions/service.js';
 import type { NarrativeEvent, NarrativeSettlement, NarrativeStopReason, RunEventFields } from './events.js';
 import type { NarrativeDependencies, NarrativeExecution } from './types.js';
@@ -25,6 +27,8 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
   let metrics: EntryMetrics | null = null;
   let finishReason: ModelFinishReason | undefined, stopReason: NarrativeStopReason | undefined;
   let parentId = userEntryId;
+  let rawContent = '', activeRoots: string[] = [];
+  let committedState: StateEvent | null = null, committedSuggestions: string[] = [];
   const fields = (): RunEventFields => ({ runId, sessionId, provider, model, timestamp: Date.now() });
   const publish = (event: NarrativeEvent) => events.publish(sessionId, event);
   publish({ event: 'run.created', data: { ...fields(), messages: [{ ...userMessage }] } });
@@ -47,12 +51,13 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
     assertRunning(signal);
     if (!stopReason) {
       const compiled = context.compiled;
+      activeRoots = compiled.activeRoots;
       modelClient.assertMessageOrder(selected, compiled.messages);
       const result = await callModel(modelClient, selected, compiled.messages, {
         apiKey, signal, maxTokens: compiled.maxTokens,
         temperature: compiled.temperature, thinkingEnabled: compiled.thinkingEnabled,
       }, { events, fields: fields(), messageId: assistantEntryId });
-      ({ snapshot, usage, attempted, metrics, finishReason, stopReason, receivedTerminal, publishedDelta } = result);
+      ({ snapshot, rawContent, usage, attempted, metrics, finishReason, stopReason, receivedTerminal, publishedDelta } = result);
     }
   } catch (error) {
     stopReason = signal.aborted ? cancellationReason(signal) : failureReason(error, attempted);
@@ -73,11 +78,26 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
   try {
     if (hasPublicOutput(snapshot)) {
       const timestamp = Date.now();
-      sessions.appendEntry(sessionId, {
-        id: assistantEntryId, parentId, runId, type: 'message', role: 'assistant', timestamp,
+      const input = {
+        id: assistantEntryId, parentId, runId, type: 'message' as const, role: 'assistant' as const, timestamp,
         payload: { message: { ...copySnapshot(snapshot), timestamp } },
         state: null, extData: {}, metrics,
-      });
+      };
+      if (stopReason === undefined) {
+        const committed = dependencies.transaction(() => {
+          if (sessions.require(sessionId).tipEntryId !== parentId) throw new AppError('TIP_CONFLICT');
+          const processed = processNarrativeOutput(rawContent, dependencies.state, {
+            sessionId, parentId, allowedRoots: activeRoots,
+          });
+          sessions.appendNarrativeAssistant(sessionId, { ...input, state: processed.state }, processed.output);
+          return { change: processed.change, suggestions: processed.output.actionSuggestions.items };
+        });
+        committedState = committed.change;
+        committedSuggestions = committed.suggestions;
+      } else {
+        // Interrupted/model-failed output is visible history only; no postprocessing was executed.
+        sessions.appendEntry(sessionId, input);
+      }
     }
   } catch (error) {
     // Persistence failure takes precedence even if the model finished, failed or was cancelled.
@@ -113,6 +133,12 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
     if (stopReason !== 'session_deleted') stopReason = 'message_persist_failed';
   }
 
+  const notifications: NarrativeSettlement['notifications'] = [];
+  if (committedState) notifications.push(committedState);
+  if (stopReason === undefined && committedSuggestions.length) {
+    notifications.push({ event: 'action_suggestions.created',
+      data: { sessionId, runId, messageId: assistantEntryId, items: [...committedSuggestions] } });
+  }
   const total = addUsage(summaryUsage, attempted ? usage : zeroUsage());
   const usageEvent: NarrativeSettlement['usage'] = { event: 'run.usage', data: {
     ...fields(), usage: total === null ? null : {
@@ -122,6 +148,7 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
   } };
   const data = { ...fields(), savedMessageIds, tipEntryId };
   return {
+    notifications,
     usage: usageEvent,
     terminal: stopReason === undefined
       ? { event: 'run.completed', data }

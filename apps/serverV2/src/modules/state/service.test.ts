@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { openDatabase } from '../../infrastructure/database/connection.js';
+import { openDatabase, type JsonValue } from '../../infrastructure/database/connection.js';
 import { createServices, type Services } from '../../services.js';
 import type { SessionService } from '../sessions/service.js';
 import { narrativePreset } from '../../testing/fixtures.js';
@@ -229,4 +229,139 @@ describe('read-only field preparation with state v2 definitions', () => {
     expect(() => state.prepareSessionPatch('missing', { path: 'count', value: 2 })).toThrow('SESSION_NOT_FOUND');
     expect(() => state.prepareMessagePatch('one', 'missing', { path: 'count', value: 2 })).toThrow('ENTRY_NOT_FOUND');
   });
+  describe('model message update candidates', () => {
+    const prepare = (updates: readonly unknown[], allowedRoots: readonly string[] = ['count', 'profile']) =>
+      state.prepareMessageUpdates({ sessionId: 'one', parentId: 'child', allowedRoots, updates });
+
+    it('keeps valid rows before and after failures, preserving inherited roots and metadata without writes', () => {
+      const inherited: JsonValue[] = [
+        { key: 'count', value: 1, authorHint: { visible: true } },
+        { key: 'profile', value: profile.initial },
+        { key: 'untouched', value: { private: true }, extra: 'retain' },
+      ];
+      sessions.setEntryState('one', 'root', inherited);
+      const prepared = prepare([
+        { path: 'count', value: 3, reason: 'Received coins' },
+        { path: 'count', value: 99 },
+        { path: 'profile', value: { coins: 7, unruled: true } },
+        { path: 'profile.coins', value: 7 },
+        { path: 'untouched', value: {} },
+        { path: 'count', value: 5 },
+      ]);
+      expect(prepared.results.map(result => result.status)).toEqual([
+        'success', 'invalid_value', 'invalid_value', 'success', 'invalid_path', 'success',
+      ]);
+      expect(prepared.results[1]).toMatchObject({ path: 'count', errorCode: 'STATE_OUT_OF_RANGE' });
+      expect(prepared.results[2]).toMatchObject({
+        path: 'profile', errorCode: 'STATE_RULE_MISSING', statePath: 'profile.unruled', rulePath: 'profile.unruled',
+      });
+      expect(prepared.results[4]).toMatchObject({ path: 'untouched', errorCode: 'STATE_ROOT_NOT_ACTIVE' });
+      expect(prepared.updates).toEqual([
+        { path: 'count', value: 3, reason: 'Received coins' },
+        { path: 'profile.coins', value: 7 },
+        { path: 'count', value: 5 },
+      ]);
+      expect(prepared).toMatchObject({ changed: true, snapshot: [
+        { key: 'count', value: 5, authorHint: { visible: true } },
+        { key: 'profile', value: { ...profile.initial, coins: 7 } },
+        { key: 'untouched', value: { private: true }, extra: 'retain' },
+      ] });
+      expect(prepared.change).toEqual({ event: 'state.changed', data: { scope: 'message', path: '', value: {
+        count: 5, profile: { ...profile.initial, coins: 7 }, untouched: { private: true },
+      } } });
+      expect(sessions.getEntryState('one', 'root')).toEqual(inherited);
+      expect(sessions.getEntryState('one', 'child')).toBeNull();
+      expect(sessions.require('one').tipEntryId).toBe('child');
+    });
+
+    it('reports final equality after ordered replacements and keeps equal rows successful', () => {
+      const prepared = prepare([{ path: 'count', value: 2 }, { path: 'count', value: 1 }, { path: 'count', value: 1 }]);
+      expect(prepared.changed).toBe(false);
+      expect(prepared.snapshot).toEqual(state.requireMessage('one', 'child'));
+      expect(prepared.results).toEqual([
+        { path: 'count', status: 'success' }, { path: 'count', status: 'success' }, { path: 'count', status: 'success' },
+      ]);
+      expect(prepared.updates).toHaveLength(3);
+    });
+
+    it('rejects missing paths and undeclared roots while public PATCH continues ignoring them', () => {
+      sessions.setEntryState('one', 'root', [
+        { key: 'count', value: 1 }, { key: 'profile', value: profile.initial }, { key: 'unregistered', value: 3 },
+      ]);
+      const paths = ['absent', 'profile.optional.child', 'profile.coins.child', 'unregistered'];
+      const prepared = prepare(paths.map(path => ({ path, value: 8 })), ['absent', 'profile', 'unregistered']);
+      expect(prepared.changed).toBe(false);
+      expect(prepared.updates).toEqual([]);
+      expect(prepared.results).toEqual(paths.map(path => ({
+        path, status: 'invalid_path', errorCode: 'STATE_NOT_FOUND', statePath: path,
+      })));
+      expect(state.prepareMessagePatch('one', 'child', { path: 'profile.optional.child', value: 8 }))
+        .toEqual({ snapshot: null, changed: false });
+    });
+
+    it('isolates malformed updates, unsupported paths and forbidden value keys', () => {
+      const prepared = prepare([
+        [], null, { path: 'count' }, { path: 'count', value: 2, scope: 'global' },
+        { path: 'count', value: 2, reason: {} },
+        { path: 3, value: 2 }, { path: 'profile.items.0.name', value: 'another' },
+        { path: '__proto__.polluted', value: true },
+        { path: 'profile', value: JSON.parse('{"__proto__":{"polluted":true}}') },
+        { path: 'count', value: 4 },
+      ]);
+      expect(prepared.results.map(result => result.status)).toEqual([
+        'invalid_update', 'invalid_update', 'invalid_update', 'invalid_update', 'invalid_update',
+        'invalid_path', 'invalid_path', 'invalid_path', 'invalid_value', 'success',
+      ]);
+      expect(prepared.updates).toEqual([{ path: 'count', value: 4 }]);
+      expect(Object.hasOwn(Object.prototype, 'polluted')).toBe(false);
+    });
+
+    it('rejects arrays by index while allowing complete array replacement and permitted null values', () => {
+      const items = [{ name: 'soup' }];
+      const prepared = prepare([
+        { path: 'profile.items[0]', value: { name: 'bad' } },
+        { path: 'profile.items', value: items },
+        { path: 'profile.nested', value: null },
+        { path: 'profile.nested.value', value: 7 },
+      ]);
+      items[0]!.name = 'changed after processing';
+      expect(prepared.results.map(result => result.status)).toEqual(['invalid_path', 'success', 'success', 'invalid_path']);
+      expect(prepared.snapshot).toEqual([
+        { key: 'count', value: 1 }, { key: 'profile', value: { coins: 1, nested: null, items: [{ name: 'soup' }] } },
+      ]);
+      expect(prepared.updates).toEqual([
+        { path: 'profile.items', value: [{ name: 'soup' }] }, { path: 'profile.nested', value: null },
+      ]);
+    });
+
+    it('catches an individual processing exception without losing earlier or later rows', () => {
+      const broken = { path: 'count', get value(): number { throw new Error('unexpected getter'); } };
+      const prepared = prepare([{ path: 'count', value: 2 }, broken, { path: 'profile.coins', value: 5 }]);
+      expect(prepared.results.map(result => result.status)).toEqual(['success', 'processing_error', 'success']);
+      expect(prepared.results[1]).toMatchObject({ path: 'count', errorCode: 'STATE_UPDATE_PROCESSING_FAILED' });
+      expect(prepared.snapshot).toEqual([
+        { key: 'count', value: 2 }, { key: 'profile', value: { ...profile.initial, coins: 5 } },
+      ]);
+      expect(prepared.updates).toHaveLength(2);
+    });
+
+    it('never creates state and keeps material lookup failures outside per-row validation', () => {
+      expect(prepare([])).toEqual({
+        snapshot: state.requireMessage('one', 'child'), changed: false, change: null, updates: [], results: [],
+      });
+      expect(prepare([{ path: 'count', value: 2 }], []).results[0])
+        .toMatchObject({ status: 'invalid_path', errorCode: 'STATE_ROOT_NOT_ACTIVE' });
+      sessions.setEntryState('one', 'child', []);
+      expect(prepare([{ path: 'count', value: 2 }])).toMatchObject({
+        snapshot: [], changed: false, updates: [], results: [{ status: 'invalid_path', errorCode: 'STATE_NOT_FOUND' }],
+      });
+      expect(() => state.prepareMessageUpdates({
+        sessionId: 'missing', parentId: 'child', allowedRoots: ['count'], updates: [],
+      })).toThrow('SESSION_NOT_FOUND');
+      expect(() => state.prepareMessageUpdates({
+        sessionId: 'one', parentId: 'missing', allowedRoots: ['count'], updates: [],
+      })).toThrow('ENTRY_NOT_FOUND');
+    });
+  });
+
 });

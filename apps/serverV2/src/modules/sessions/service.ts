@@ -6,6 +6,7 @@ import type { ModelReader } from '../models/service.js';
 import type { PresetReader } from '../presets/service.js';
 import type { WorldReader } from '../worlds/service.js';
 import { SessionRepository, type EntryRow, type SessionRow } from './repository.js';
+import { narrativeOutputSchema, type NarrativeOutput } from './output.js';
 import {
   appendEntrySchema, createSessionSchema, entryListSchema, identifier, metricsSchema,
   sessionListSchema, updateEntrySchema, updateSessionSchema, narrativeOutcomeSchema, entryRunListSchema,
@@ -22,6 +23,11 @@ export type {
   NarrativeOutcome, EntryRunListOptions, EntryRunPage,
   NarrativeStopReason, EntryRun,
 } from './types.js';
+
+export type {
+  NarrativeOutput, StateUpdateOutput, ActionSuggestionsOutput,
+  StateUpdateStatus, StateUpdateResult, ActionSuggestionsStatus, ActionSuggestionResult,
+} from './output.js';
 
 type Dependencies = { worlds: WorldReader; presets: PresetReader; models: ModelReader };
 
@@ -108,7 +114,21 @@ export class SessionService {
   }
 
   appendEntry(sessionId: string, input: AppendEntryInput): SessionEntry {
-    const value = appendEntrySchema.parse(input), id = value.id ?? randomUUID();
+    return this.#appendEntry(sessionId, appendEntrySchema.parse(input));
+  }
+
+  /** Only narrative settlement may attach server-owned capability results. */
+  appendNarrativeAssistant(sessionId: string, input: AppendEntryInput, output: NarrativeOutput): SessionEntry {
+    const value = appendEntrySchema.parse(input);
+    if (value.type !== 'message' || value.role !== 'assistant') {
+      throw new AppError('INVALID_REQUEST', '后处理结果只能保存在叙事助手消息');
+    }
+    const result = narrativeOutputSchema.parse(output);
+    return this.#appendEntry(sessionId, { ...value, extData: { ...value.extData, output: result } });
+  }
+
+  #appendEntry(sessionId: string, value: AppendEntryInput): SessionEntry {
+    const id = value.id ?? randomUUID();
     const session = this.require(sessionId);
     if (value.parentId !== undefined && value.parentId !== session.tipEntryId) throw new AppError('TIP_CONFLICT');
     if (session.tipEntryId !== null) this.#readAncestors(sessionId, session.tipEntryId);

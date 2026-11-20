@@ -339,3 +339,104 @@ describe('run pages, outcomes and recorded usage', () => {
     }] } as unknown as EntryMetrics)).toThrow();
   });
 });
+
+describe('server-owned narrative output', () => {
+  const output = (): import('./service.js').NarrativeOutput => ({
+    stateUpdate: {
+      status: 'partial_success',
+      updates: [{ path: 'coins', value: 8, reason: 'Bought food' }],
+      results: [
+        { path: 'coins', status: 'success' },
+        { status: 'invalid_json', errorCode: 'STATE_UPDATE_JSON_INVALID' },
+      ],
+    },
+    actionSuggestions: {
+      status: 'partial_success',
+      items: ['Ask the keeper.', 'Leave.'],
+      results: [{ status: 'success' }, { status: 'empty_suggestion' }, { status: 'success' }],
+    },
+  });
+
+  function save(value = output()) {
+    return sessions.appendNarrativeAssistant('session', {
+      id: 'assistant', runId: 'run', parentId: null, type: 'message', role: 'assistant',
+      payload: { message: { role: 'assistant', content: 'Clean story' } },
+      state: [{ key: 'coins', value: 8 }], extData: { note: 'keep' }, metrics: metrics('output-request'),
+    }, value);
+  }
+
+  it('saves the clean message, partial results, state and metrics together as one entry', () => {
+    create();
+    const value = output();
+    const expected = structuredClone(value);
+    const saved = save(value);
+    value.actionSuggestions.items.length = 0;
+    value.stateUpdate.updates[0]!.value = 999;
+    expect(saved).toMatchObject({
+      seq: 1, payload: { message: { role: 'assistant', content: 'Clean story' } },
+      state: [{ key: 'coins', value: 8 }], extData: { note: 'keep', output: expected },
+      metrics: metrics('output-request'),
+    });
+    expect(sessions.getEntry('session', saved.id)!.extData.output).toEqual(expected);
+    expect(sessions.require('session').tipEntryId).toBe(saved.id);
+    expect(sessions.listEntries('session')).toHaveLength(1);
+  });
+
+  it('protects output during public append and editing, preserving other server-owned metadata', () => {
+    create();
+    const saved = save();
+    sessions.setNarrativeOutcome('session', saved.id, { status: 'completed', finishedAt: 1 });
+    expect(() => append('session', 'forged', { extData: { output: output() } })).toThrow();
+    expect(() => sessions.updateEntry('session', saved.id, { extData: { output: null } })).toThrow();
+    expect(() => sessions.updateEntry('session', saved.id, { extData: { output: output() } })).toThrow();
+    const changed = sessions.updateEntry('session', saved.id, {
+      payload: { message: { role: 'assistant', content: 'Edited story' } },
+      extData: { label: 'changed' },
+    });
+    expect(changed.extData).toEqual({
+      label: 'changed', output: output(), narrative: { status: 'completed', finishedAt: 1 },
+    });
+    expect(changed.state).toEqual(saved.state);
+    expect(changed.metrics).toEqual(saved.metrics);
+    expect(changed.seq).toBe(saved.seq);
+    expect(sessions.listEntries('session')).toHaveLength(1);
+  });
+
+  it('rejects invalid result data before advancing the tip or consuming a sequence', () => {
+    create();
+    const malformed = output();
+    malformed.stateUpdate.updates[0]!.value = Number.NaN;
+    expect(() => save(malformed)).toThrow();
+    expect(() => save({ ...output(), stateUpdate: { ...output().stateUpdate, status: 'fail' } } as never)).toThrow();
+    const misplaced = { ...output(), contextEligible: true };
+    expect(() => save(misplaced as never)).toThrow();
+    expect(sessions.require('session').tipEntryId).toBeNull();
+    expect(sessions.listEntries('session')).toEqual([]);
+    expect(save().seq).toBe(1);
+  });
+
+  it('only accepts assistant message carriers and leaves old messages without fabricated output', () => {
+    create();
+    for (const kind of [
+      { type: 'message' as const, role: 'user' as const },
+      { type: 'compaction' as const, role: null },
+    ]) {
+      expect(() => sessions.appendNarrativeAssistant('session', {
+        id: 'bad', runId: 'run', payload: {}, ...kind,
+      }, output())).toThrow();
+    }
+    const old = append('session', 'old');
+    expect(old.extData).not.toHaveProperty('output');
+    expect(sessions.getHistory('session')[0]!.extData).not.toHaveProperty('output');
+    expect(sessions.updateEntry('session', old.id, { extData: {} }).extData).not.toHaveProperty('output');
+  });
+
+  it('records optional empty results without manufacturing an error or action', () => {
+    create();
+    const empty: import('./service.js').NarrativeOutput = {
+      stateUpdate: { status: 'no_updates', updates: [], results: [] },
+      actionSuggestions: { status: 'no_suggestions', items: [], results: [] },
+    };
+    expect(save(empty).extData.output).toEqual(empty);
+  });
+});

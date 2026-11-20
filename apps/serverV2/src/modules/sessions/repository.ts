@@ -204,7 +204,8 @@ export class SessionRepository {
       if (patch.payload === undefined && patch.extData === undefined) return current;
       const payload = encodeJson(patch.payload ?? current.payload, 'object');
       const ext = encodeJson(patch.extData === undefined ? current.ext_data : { ...patch.extData,
-        ...(current.ext_data.narrative === undefined ? {} : { narrative: current.ext_data.narrative }) }, 'object');
+        ...(current.ext_data.narrative === undefined ? {} : { narrative: current.ext_data.narrative }),
+        ...(current.ext_data.output === undefined ? {} : { output: current.ext_data.output }) }, 'object');
       const now = Date.now();
       this.#db.prepare('UPDATE entries SET payload=?,ext_data=?,updated_at=? WHERE session_id=? AND id=?')
         .run(payload, ext, now, sessionId, entryId);

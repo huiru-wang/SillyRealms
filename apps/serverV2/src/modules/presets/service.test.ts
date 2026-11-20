@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../../infrastructure/database/connection.js';
 import { ModelService } from '../models/service.js';
 import { SettingsService } from '../settings/service.js';
-import { PresetService, type CreatePresetInput } from './service.js';
+import { PresetService, resolvePostprocessPrompts, type CreatePresetInput } from './service.js';
 import { narrativePreset as preset } from '../../testing/fixtures.js';
 
 let db: DatabaseSync;
@@ -196,5 +196,49 @@ describe('model configurations and application defaults', () => {
     expect(presets.delete(presetId)).toBe(true);
     settings.update({ defaultApiModelConfigId: null });
     expect(models.delete(modelId)).toBe(true);
+  });
+});
+
+describe('default postprocess prompt resolution', () => {
+  it('uses JSONL and optional blocks in fresh defaults', () => {
+    const config = presets.ensureDefault().config;
+    const resolved = resolvePostprocessPrompts(config);
+    expect(resolved.worldState).toContain('JSONL');
+    expect(resolved.worldState).toContain('{{state.entries}}');
+    expect(resolved.worldState).toContain('空 state_update 标签或省略');
+    expect(resolved.worldState).not.toContain('最多100项');
+    expect(resolved.actionSuggestions).toContain('优先生成三个');
+    expect(resolved.actionSuggestions).toContain('空标签、空数组或省略标签');
+    expect(resolved.actionSuggestions).not.toContain('必须输出');
+  });
+
+  it('preserves custom prompts regardless of old enabled flags without rewriting the preset', () => {
+    const current = presets.ensureDefault();
+    const config = structuredClone(current.config);
+    for (const node of config.nodes) {
+      if (node.id === 'worldState' || node.id === 'actionSuggestions') {
+        node.enabled = false;
+        node.prompt = '  Custom ' + node.id + ' {{state.entries}}  ';
+      }
+    }
+    const stored = presets.update(current.id, { config }, current.revision)!;
+    const before = structuredClone(stored);
+    expect(resolvePostprocessPrompts(stored.config)).toEqual({
+      worldState: '  Custom worldState {{state.entries}}  ',
+      actionSuggestions: '  Custom actionSuggestions {{state.entries}}  ',
+    });
+    expect(presets.require(stored.id)).toEqual(before);
+    expect(stored).toEqual(before);
+  });
+
+  it('fills missing or blank capability prompts and leaves the provided config untouched', () => {
+    const defaults = presets.ensureDefault().config;
+    const expected = resolvePostprocessPrompts(defaults);
+    const config = structuredClone(defaults);
+    config.nodes = config.nodes.filter(node => node.id !== 'worldState');
+    config.nodes.find(node => node.id === 'actionSuggestions')!.prompt = ' \n\t';
+    const before = structuredClone(config);
+    expect(resolvePostprocessPrompts(config)).toEqual(expected);
+    expect(config).toEqual(before);
   });
 });

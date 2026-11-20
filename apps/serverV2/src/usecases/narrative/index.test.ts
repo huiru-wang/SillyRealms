@@ -5,6 +5,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from '../../errors.js';
 import { openDatabase } from '../../infrastructure/database/connection.js';
+import { bindTransaction } from '../../infrastructure/database/transaction.js';
 import { EventHub } from '../../infrastructure/events/event-hub.js';
 import type {
   ModelClient, ModelEvent, ModelInfo, ModelSnapshot, ModelStopReason, ModelUsage,
@@ -74,7 +75,7 @@ beforeEach(async () => {
   });
   resolveModel = vi.fn<ModelClient['resolve']>(() => model);
   narrative = createNarrativeUsecases({
-    ...services, events, modelClient: { resolve: resolveModel, assertMessageOrder: vi.fn(), stream },
+    ...services, events, transaction: bindTransaction(db), modelClient: { resolve: resolveModel, assertMessageOrder: vi.fn(), stream },
   });
 });
 
@@ -187,7 +188,10 @@ describe('unified narrative events and independent persistence', () => {
     }] } });
     expect(texts()).toEqual(['玩家输入', '完整正文']);
     expect(history()[1]).toMatchObject({
-      parentId: accepted.userEntryId, state: null, extData: {},
+      parentId: accepted.userEntryId, state: null, extData: { output: {
+        stateUpdate: { status: 'no_updates', updates: [], results: [] },
+        actionSuggestions: { status: 'no_suggestions', items: [], results: [] },
+      } },
       payload: { message: snapshot('完整正文') },
       metrics: { requests: [{ provider: model.providerId, modelId: 'story-model', usage }] },
     });
@@ -197,7 +201,7 @@ describe('unified narrative events and independent persistence', () => {
     expect(finalMessage()).toEqual({ role: 'assistant', delta: {}, snapshot: snapshot('完整正文'), finish_reason: 'stop' });
     expect(runUsage(accepted.runId)).toEqual(wireUsage(usage));
     expect(stream).toHaveBeenCalledOnce();
-    expect(stream.mock.calls[0]![1].map(message => message.content)).toEqual(['玩家输入']);
+    expect(stream.mock.calls[0]![1].slice(0, -1).map(message => message.content)).toEqual(['玩家输入']);
     expect(services.state.getGlobal('world')).toEqual({ day: 1 });
     expect(services.state.getSession('session')).toEqual({ coins: 2 });
   });
@@ -251,7 +255,7 @@ describe('unified narrative events and independent persistence', () => {
     expect(history()[1]!.payload.message).toMatchObject(snapshot('', { reasoning_content: '已公开的思考' }));
     script([done('下一轮正文')]);
     expect((await submit('下一轮').finished).event).toBe('run.completed');
-    expect(stream.mock.calls[1]![1].map(message => [message.role, message.content])).toEqual([['user', '第一轮'], ['user', '下一轮']]);
+    expect(stream.mock.calls[1]![1].slice(0, -1).map(message => [message.role, message.content])).toEqual([['user', '第一轮'], ['user', '下一轮']]);
   });
 
   it('streams and saves tool requests, but ends without running a tool or issuing another model request', async () => {
@@ -310,7 +314,7 @@ describe('unified narrative events and independent persistence', () => {
     script([done('继续后的完整故事')]);
     const { accepted, finished } = submit('继续');
     expect(await finished).toMatchObject({ event: 'run.completed', data: { tipEntryId: accepted.assistantEntryId } });
-    expect(stream.mock.calls[1]![1].map(message => [message.role, message.content])).toEqual([
+    expect(stream.mock.calls[1]![1].slice(0, -1).map(message => [message.role, message.content])).toEqual([
       ['user', '上一轮输入'], ['assistant', '之前的半截故事'], ['user', '继续'],
     ]);
   });
@@ -458,7 +462,7 @@ describe('cancellation, shutdown and observer isolation', () => {
     const held = deferred<void>();
     stream.mockImplementation(async function* (_model, messages) {
       yield { type: 'request_started' };
-      if (messages.at(-1)!.content === '等待') await held.promise;
+      if (messages.filter(message => message.role === 'user').at(-1)?.content === '等待') await held.promise;
       yield done('各自正文');
     });
     const first = submit('等待');
@@ -594,10 +598,12 @@ describe('cancellation, shutdown and observer isolation', () => {
     expect(runUsage(accepted.runId)).toBeNull();
     const saved = structuredClone(seen);
     const append = vi.spyOn(services.sessions, 'appendEntry');
+    const appendAssistant = vi.spyOn(services.sessions, 'appendNarrativeAssistant');
     held.resolve();
     await Promise.resolve();
     await Promise.resolve();
     expect(append).not.toHaveBeenCalled();
+    expect(appendAssistant).not.toHaveBeenCalled();
     expect(seen).toEqual(saved);
     expect(finalMessage()).not.toHaveProperty('finish_reason');
   });
@@ -677,7 +683,7 @@ describe('queryable narrative results', () => {
     expect(history()[1]!.metrics!.requests[0]).toMatchObject({ provider: model.providerId, modelId: model.modelId });
     expect(history()[1]!.metrics!.requests[0]).not.toHaveProperty('status');
     expect(narrative.usage('session')).toEqual({ knownUsage: usage, recordedRequestCount: 1, unknownUsageRequestCount: 0 });
-    const reloaded = createNarrativeUsecases({ ...services, events, modelClient: { resolve: resolveModel, assertMessageOrder: vi.fn(), stream } });
+    const reloaded = createNarrativeUsecases({ ...services, events, transaction: bindTransaction(db), modelClient: { resolve: resolveModel, assertMessageOrder: vi.fn(), stream } });
     expect(reloaded.get('session', accepted.runId).status).toBe('completed');
     expect(() => reloaded.get('session', 'missing')).toThrow('RUN_NOT_FOUND');
   });

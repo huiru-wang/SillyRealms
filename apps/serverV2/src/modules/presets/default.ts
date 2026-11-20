@@ -1,4 +1,5 @@
 import type { PresetValue } from './types.js';
+import { defaultPostprocessPrompts } from './postprocess.js';
 
 export const DEFAULT_PRESET_ID = 'sr-default-preset';
 
@@ -64,7 +65,7 @@ const value: PresetValue = {
         "kind": "postprocess",
         "role": "system",
         "enabled": true,
-        "prompt": "<世界状态>\n本轮任务：完成正文后，输出一个state_update块；没有变化也输出空数组。\n\n状态和更新规则：\n{{state.entries}}\n\n更新与输出协议：\n只记录本轮已经发生且可确认的变化，不重复结算，不提前执行计划或建议。只更新本轮激活的状态及已有规则覆盖的字段。优先使用叶子路径；value为该路径的完整新值，不是增量或合并补丁。替换对象或数组须遵守对应规则并保留仍需存在的内容。路径父对象必须存在，不使用数组索引或规则模板[]，null不表示删除。每项包含path、value，可选reason，最多100项。正文后输出且仅输出一个<state_update>合法JSON数组</state_update>；无变化输出<state_update>[]</state_update>。JSON不加代码围栏、注释或外层容器。若本轮还有行动建议任务，随后输出其数据块；最后一个数据块后立即结束。\n</世界状态>"
+        "prompt": defaultPostprocessPrompts.worldState
       },
       {
         "id": "actionSuggestions",
@@ -72,7 +73,7 @@ const value: PresetValue = {
         "kind": "postprocess",
         "role": "system",
         "enabled": true,
-        "prompt": "<行动建议>\n行动建议是提供给玩家选择的下一步行动，不代表已经执行。\n根据本轮正文结束后的情境，按以下顺序生成三个建议：\n1. 缓慢：停留在当前场景，通过观察、交流或细节互动展开故事。\n2. 中速：采取具体行动，推进眼前事件或当前目标。\n3. 快速：主动推动关键事件，尝试让局面进入新的阶段。\n\n生成要求：\n- 建议具体、简短，符合当前情境，三个方向有明显区别。\n- 只描述玩家可以尝试的行动，不预先保证结果。\n- 每条不超过50个字符，不附加速度标签或解释。\n\n输出要求：\n- 每轮回复必须输出且仅输出一个 <action_suggestions> 块，内容为三个字符串的 JSON 数组，依次对应缓慢、中速、快速推进。\n- 完整回复的固定顺序：同时存在 <世界状态> 指令时，叙事正文 → state_update → action_suggestions；不存在 <世界状态> 指令时，叙事正文 → action_suggestions。\n- 所有要求的数据块输出完整后，回复才算完成。不得只输出正文，不得省略数据块。\n- 实际数据块不使用外层标签或 Markdown 代码围栏；最后一个数据块结束后立即结束回复，不再追加正文。\n- 正文要展示保留标签时使用 HTML 实体。\n\n输出格式（按当前情境重新生成内容）：\n<action_suggestions>\n[\"向店员打听最近的见闻。\", \"询问药水价格，为旅程准备补给。\", \"提议立即出发，前往失踪者最后出现的地点。\"]\n</action_suggestions>\n</行动建议>"
+        "prompt": defaultPostprocessPrompts.actionSuggestions
       }
     ],
     "contextStrategy": {

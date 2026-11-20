@@ -46,17 +46,17 @@ run.created 中用户消息的 timestamp 是其保存时的消息时间。messag
 
 | event | 特有 data 字段 | 含义 |
 | --- | --- | --- |
-| run.created | messages: [{id,role:"user",content,timestamp}] | 已受理且用户消息已保存；不保证模型调用已开始 |
+| run.created | messages: [{id,role:"user",content,timestamp}] | 已受理且用户消息已保存；客户端清空上一轮建议，不保证模型调用已开始 |
 | run.summarizing | 无额外字段 | 摘要输入校验通过，准备发起摘要调用 |
 | run.summarized | entryId | 完整摘要及其 metrics 已保存，entryId 为 compaction ID |
 | run.delta | messageId、messages（固定一个元素） | 同一条助手消息的正文、公开 reasoning 或工具调用增量，以及最终公开快照 |
 | run.usage | usage | 本轮总用量快照，每个已受理 run 仅发布一次，不带 messageId/requestId |
-| run.completed | savedMessageIds、tipEntryId | 本轮成功并完成持久化结算 |
+| run.completed | savedMessageIds、tipEntryId | 正文主流程成功并完成持久化结算；不代表每个能力均成功 |
 | run.stopped | savedMessageIds、tipEntryId、stop_reason | 取消或失败已经结算；只使用原因码，不含 error、errorCode 或 errorMessage |
 
 普通请求校验或用户写入失败不创建 run.created。用户保存后的准备、生成、停止和保存错误都通过同一轮的 run.stopped 收敛，不再发布 run.started、message.delta 或 run.failed。
 
-摘要事件共用 runId/sessionId/provider/model/timestamp；不发布 run.phase、generating，不含 data.phase。摘要内部流不发 run.delta。顺序为 run.created → 可选 run.summarizing → run.summarized → 正文 run.delta → run.usage → 唯一终态。摘要失败或取消没有 summarized；成功摘要落库后预算仍超限，summarized 后直接 usage → stopped(summary_capacity_exceeded)，没有正文调用。
+摘要事件共用 runId/sessionId/provider/model/timestamp；不发布 run.phase、generating，不含 data.phase。摘要内部流不发 run.delta。正常顺序为 run.created → 可选摘要事件 → 干净正文 run.delta/最终 snapshot → 持久化及释放执行锁 → state.changed（有变化）→ action_suggestions.created（有有效建议）→ run.usage → 唯一终态。摘要失败或取消没有 summarized；成功摘要落库后预算仍超限，summarized 后直接 usage → stopped(summary_capacity_exceeded)，没有正文调用。
 
 ### 增量与定稿
 
@@ -90,11 +90,11 @@ run.delta 的 messages 固定一个元素，role 为 assistant。delta 使用本
 }
 ```
 
-content 和 reasoning_content 分别追加；工具参数按本条消息中的 index 追加。index 是消息内工具序号，不是并行执行保证，也不是 SDK 混合内容数组的 contentIndex。id、工具名称等标识字段采用赋值，允许在参数增量之前或之后到达；tool result 使用 tool_call_id 关联。arguments 是字符串，增量中可以是不完整 JSON，不能直接执行。
+content 先隐藏能力块再追加，reasoning_content 继续独立追加；工具参数按本条消息中的 index 追加。index 是消息内工具序号，不是并行执行保证，也不是 SDK 混合内容数组的 contentIndex。id、工具名称等标识字段采用赋值，允许在参数增量之前或之后到达；tool result 使用 tool_call_id 关联。arguments 是字符串，增量中可以是不完整 JSON，不能直接执行。
 
-snapshot 是该消息完整公开内容，采用替换语义；空 delta 不清空已有内容，snapshot 不能重复追加。SDK 最终正文、reasoning 和工具参数可能修正增量，因此必须以最终公开快照为准。没有增量时也可直接用快照显示最终消息。
+snapshot 使用最终模型结果重新分离后的干净 content，是该消息完整公开内容，采用替换语义；空 delta 不清空已有内容，snapshot 不能重复追加。SDK 最终正文、reasoning 和工具参数可能修正增量，因此必须以最终公开快照为准。没有增量时也可直接用快照显示最终消息。
 
-finish_reason 描述一次模型输出结束，不代表数据库保存成功或整轮业务成功。正常 stop 且存在正文、没有工具请求并保存成功时才发布 run.completed。length/deferred 归为输出不完整；本期没有工具执行能力，收到工具请求后保留公开内容并以 tool_execution_unsupported 结束。失败或取消也会冻结并发送当前公开快照，不伪造 finish_reason=stop。
+finish_reason 描述一次模型输出结束，不代表数据库保存成功或整轮业务成功。正常 stop 且存在干净正文、没有工具请求并保存成功时发布 run.completed；后处理的 invalid_tag、invalid_json、partial_success 等只记录在助手 output，不改变该终态。length/deferred 归为输出不完整；本期没有工具执行能力，收到工具请求后保留公开内容并以 tool_execution_unsupported 结束。失败或取消也会冻结并发送当前公开快照，不伪造 finish_reason=stop。
 
 公开 reasoning 不包含 SDK thinkingSignature、textSignature、工具签名、redacted 数据或原始 provider 错误。工具执行、模型继续调用和私有签名回放尚未实现。
 
@@ -114,7 +114,7 @@ usage 为以下对象或 null：
 }
 ```
 
-输入总量包含缓存读写，缓存字段是细分；total_tokens=input_tokens+output_tokens，reasoning 已包含在输出时不重复相加。计量是快照，不能将累计值重复相加。
+隐藏能力数据块属于模型实际输出，usage 不按可见正文重算；输入总量包含缓存读写，缓存字段是细分；total_tokens=input_tokens+output_tokens，reasoning 已包含在输出时不重复相加。计量是快照，不能将累计值重复相加。
 
 没有开始 SDK 调用尝试时，总量为真实全零；已经开始调用但没有可信统计时为 null。内部 request_started 仅表明调用尝试，不承诺网络已经发送字节。停止不等待迟到 usage，也不在终态后补发。本轮总量汇总成功保存的摘要调用和正文调用；参与统计的任一次 usage 未知则总量为 null。失败/中断摘要不保存记录也不计量，只有失败摘要且无正文调用时总量为零；不作为供应商精确账单。
 
@@ -143,19 +143,40 @@ data: {"runId":"r-1","sessionId":"s-1","provider":"deepseek","model":"deepseek-f
 - global 发送到该世界的全部会话；session/message 只发送到所属会话，所有连接均可接收。
 - message 对应当前 tip 的有效继承视图，存储数组/null 转为对象。历史 entry 修改仅在影响当前 tip 时推送；恢复 null 继承发送继承后的完整对象。
 - 缺失路径忽略、同值、失败及回滚不发布；读取和初始化也不发布。PATCH 每项提交后推送，再处理下一项。
-- 普通消息追加若改变有效状态，保存 entry 并推进 tip 后推送完整快照。叙事当前追加 null 状态，不改变继承视图，不生产自动状态更新。
+- 普通消息追加若改变有效状态，保存 entry 并推进 tip 后推送完整快照。叙事后处理先计算候选及变更，提交助手/状态并释放执行锁后推送完整 message 快照；partial_success 中有效行造成的真实变化同样发布，无变化继续 null 继承且不发事件。
 
 发布由用例编排，StateService 计算变更，接收会话由 SessionService 查询；EventHub 保持独立。事件没有持久化/重放，初次装载及重连应重新读取状态快照。详见 [状态接口](server-v2-http.md#状态接口)。服务端契约已实现，StudioV2/SDK transport 的接入另行完成。
 
+## 行动建议创建
+
+本轮有效非空建议已保存，且正文主流程完成时发布：
+
+```ts
+{
+  event: 'action_suggestions.created',
+  data: {
+    sessionId: string,
+    runId: string,
+    messageId: string,
+    items: string[]
+  }
+}
+```
+
+messageId 是承载 output 的助手 entry ID；items 是本轮完整有效集合，客户端整组替换。partial_success 仍可携带有效建议，不能仅因状态能力失败或某条建议为空就丢弃其他有效建议。
+
+标签缺失、空标签、空数组、无有效建议、模型未正常结束或主流程未完成时不发布 created。新 run 的 run.created 已负责清空旧建议，不发送 messageId=null/items=[] 的 created 清空事件，也不增加 cleared。
+
+state.changed 与 action_suggestions.created 独立发布；每条能力通知异常局部处理，继续其余通知及 run.usage/终态，不回滚已提交数据或重新执行能力。能力结果通过已有单轮详情和 entry.extData.output 读取，事件不重复传输全部诊断。首次加载/重连只恢复最新已完成 run 的有效结果，不回找更早建议冒充当前建议。
+
 ## 预留事件
 
-预留类型在服务端契约中定义，本期不生成 system、工具结果或行动建议：
+预留类型在服务端契约中定义，本期不生成 system 或工具结果：
 
 - system 编译产物仍使用 run.delta，messages 为单个 `{role:"system",delta:{content}}`，不落库、不推送。
 - 工具结果仍使用 run.delta，messages 为单个 `{role:"tool",delta:{tool_call_id,name,status,content,is_error}}`，由未来的业务执行层产生。当前不执行工具或保存 role=tool entry。
-- action_suggestions.changed 使用 sessionId、runId、messageId、items；items 整组替换，空数组表示清空，不追加重复事件。
 
-预留扩展独立于模型 run 生命周期，未来可以在叙事终态后发布。定义类型不等于迁移扩展执行逻辑。
+预留类型不代表已经实现工具执行。当前叙事能力通知在唯一终态前发布，终态后不再补发本轮能力结果。
 
 ## 连接生命周期
 
@@ -175,4 +196,4 @@ data: {"runId":"r-1","sessionId":"s-1","provider":"deepseek","model":"deepseek-f
 
 事件传输仍为 `/api/v1/sessions/:id/events`，没有 narrative/events、SSE id 或回放。轮次查询位于 narrative/runs：客户端重连后按已有 seq 补查新增 entries，并刷新原来运行中的那一轮的详情；退出后重新进入则读取最新 5 轮。未落库的断线分片无需补齐，现有最终 snapshot 保持替换语义。
 
-每个 run 首条 entry 的 extData.narrative 保存 `{status,finishedAt,stopReason?}`，正常完成为 completed，其他结算为 stopped，stopReason 与本事件契约相同；写入失败不回滚已存消息。metrics.requests 改为 provider/modelId/requestId/usage/时间信息，不再存 status。公开事件结构没有因此改变。
+每个 run 首条 entry 的 extData.narrative 保存 `{status,finishedAt,stopReason?}`，正常完成为 completed，其他结算为 stopped，stopReason 与本事件契约相同；写入失败不回滚已存消息。metrics.requests 改为 provider/modelId/requestId/usage/时间信息，不再存 status。助手 extData.output 单独保存后处理结果；终态仅代表正文主流程结果，能力诊断通过既有详情读取。

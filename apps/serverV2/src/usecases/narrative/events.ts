@@ -1,3 +1,4 @@
+import type { StateEvent } from '../../modules/state/service.js';
 import type { NarrativeStopReason } from '../../modules/sessions/service.js';
 import type {
   ModelDelta, ModelFinishReason, ModelSnapshot,
@@ -48,12 +49,17 @@ export type NarrativeEvent =
   | { event: 'run.stopped'; data: SavedRun & { stop_reason: NarrativeStopReason } };
 
 export type NarrativeTerminalEvent = Extract<NarrativeEvent, { event: 'run.completed' | 'run.stopped' }>;
+export type ActionSuggestionsCreated = {
+  event: 'action_suggestions.created';
+  data: { sessionId: string; runId: string; messageId: string; items: string[] };
+};
 export type NarrativeSettlement = {
+  notifications: (StateEvent | ActionSuggestionsCreated)[];
   usage: Extract<NarrativeEvent, { event: 'run.usage' }>;
   terminal: NarrativeTerminalEvent;
 };
 
-/** Reserved wire shapes only; narrative tools and suggestions are not produced. */
+/** Reserved wire shapes only; narrative tools are not produced. */
 export type ReservedNarrativeEvent =
   | { event: 'run.delta'; data: RunEventFields & {
     messageId: string; messages: [{ role: 'system'; delta: { content: string } }];
@@ -63,5 +69,4 @@ export type ReservedNarrativeEvent =
       role: 'tool';
       delta: { tool_call_id: string; name: string; status: string; content: string; is_error: boolean };
     }];
-  } }
-  | { event: 'action_suggestions.changed'; data: { sessionId: string; runId: string; messageId: string; items: string[] } };
+  } };

@@ -1,3 +1,4 @@
+import type { TransactionRunner } from '../../infrastructure/database/transaction.js';
 import type { CredentialService } from '../../modules/credentials/service.js';
 import type { ModelService } from '../../modules/models/service.js';
 import type { PresetService } from '../../modules/presets/service.js';
@@ -31,6 +32,7 @@ export type NarrativeDependencies = {
   credentials: Pick<CredentialService, 'get'>;
   modelClient: Pick<ModelClient, 'resolve' | 'assertMessageOrder' | 'stream'>;
   events: EventHub;
+  transaction: TransactionRunner;
 };
 
 export type PreparedNarrative = { snapshot: NarrativeSnapshot } | { error: unknown };

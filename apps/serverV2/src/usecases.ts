@@ -22,7 +22,7 @@ export function createUsecases({ services, transaction, events, modelClient = ne
   const { worlds, sessions, presets, settings } = services;
   return {
     createSession: createSessionUsecase({ worlds, sessions, state: services.state, transaction, events }),
-    narrative: createNarrativeUsecases({ ...services, events, modelClient }),
+    narrative: createNarrativeUsecases({ ...services, events, modelClient, transaction }),
     testModel: createTestModel({ models: services.models, credentials: services.credentials, modelClient }),
     listProviders: () => modelClient.listProviders(),
     modelConfigs: createModelConfigUsecases(services),

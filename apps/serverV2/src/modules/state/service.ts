@@ -8,10 +8,14 @@ import { evaluateWhen, type StateViews } from './when.js';
 import { parseStatePath, prepareStatePatch } from './patch.js';
 import { messageValues, replaceMessageValue } from './snapshot.js';
 import { prepareInitialSnapshots } from './initial.js';
-import type { PreparedStatePatch, StateUpdate, StateEvent } from './types.js';
+import { prepareMessageUpdates } from './message-updates.js';
+import type { PreparedStatePatch, StateUpdate, StateEvent, PreparedMessageUpdates } from './types.js';
 
 export type { StateViews } from './when.js';
-export type { PreparedStatePatch, StateUpdate, StateWriteResult, StateEvent } from './types.js';
+export type {
+  PreparedStatePatch, StateUpdate, StateWriteResult, StateEvent,
+  AcceptedMessageUpdate, MessageUpdateResult, PreparedMessageUpdates,
+} from './types.js';
 export type { StateDefinition, StateDiagnostic, StateSchema, StateScope, StateValidationCode } from '@sillyrealms/sdk/state-validation';
 export { StateValidationError } from '@sillyrealms/sdk/state-validation';
 
@@ -129,6 +133,20 @@ export class StateService {
     // Ignored or equal writes must not materialize an inherited snapshot.
     if (!prepared.changed) return { snapshot: entry.state, changed: false };
     return { snapshot: replaceMessageValue(inherited!, root, prepared.snapshot[root]!), changed: true };
+  }
+
+  /** Model-only message updates are computed per row; callers own admission, transactions and events. */
+  prepareMessageUpdates(input: {
+    sessionId: string; parentId: string; allowedRoots: readonly string[]; updates: readonly unknown[];
+  }): PreparedMessageUpdates {
+    const session = this.#sessions.require(identifier(input.sessionId));
+    const inherited = this.requireMessage(session.id, identifier(input.parentId));
+    const world = this.#worlds.require(session.worldId);
+    const prepared = prepareMessageUpdates(inherited, world.stateDefinition, input.allowedRoots, input.updates);
+    const change = prepared.changed
+      ? this.describeChange('message', messageValues(inherited), messageValues(prepared.snapshot))
+      : null;
+    return { ...prepared, change };
   }
 
   /** Read an independent view at the supplied predecessor; never initialize opening state. */

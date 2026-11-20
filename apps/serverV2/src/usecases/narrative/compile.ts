@@ -1,3 +1,5 @@
+import { resolvePostprocessPrompts } from '../../modules/presets/service.js';
+import { postprocessProtocol } from './postprocess/prompts.js';
 import { contextBudget } from './context-policy.js';
 import { AppError } from '../../errors.js';
 import type { ModelInfo, ModelMessage } from '../../infrastructure/model/client.js';
@@ -12,6 +14,7 @@ export type CompiledNarrativeContext = {
   thinkingEnabled: boolean;
   estimatedInputTokens: number;
   inputBudget: number;
+  activeRoots: string[];
 };
 const variables = new Set<string>(systemVariableNames);
 
@@ -90,10 +93,30 @@ export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick
   }
   if (inputCount !== 1 || historyCount !== 1) throw new AppError('INVALID_NARRATIVE_TEMPLATE');
   if (config.contextStrategy.strategy === 'rolling_summary' && summaryCount !== 1) throw new AppError('INVALID_NARRATIVE_TEMPLATE');
+  const prompts = resolvePostprocessPrompts(config);
+  const defaults = resolvePostprocessPrompts({ ...config, nodes: [] });
+  const render = (prompt: string): string => parsePromptTemplate(prompt).map(segment => {
+    if (segment.type === 'text') return segment.value;
+    const variable = snapshot.materials.variables[segment.name];
+    // Postprocessing instructions cannot duplicate the current input or historical message sequence.
+    if (segment.name === 'input.text' || segment.name === 'history.messages' || segment.name === 'history.summary' || variable.type !== 'text') {
+      throw new AppError('INVALID_NARRATIVE_TEMPLATE');
+    }
+    return variable.value;
+  }).join('');
+  const renderCapability = (name: keyof typeof prompts): string => {
+    try { return render(prompts[name]); }
+    catch { return render(defaults[name]); }
+  };
+  const hasState = snapshot.materials.activeRoots.length > 0;
+  messages.push({ role: 'system', timestamp: 0, content: [
+    ...(hasState ? [renderCapability('worldState')] : []),
+    renderCapability('actionSuggestions'), postprocessProtocol(hasState),
+  ].join('\n\n') });
   const { maxTokens, inputBudget } = contextBudget(config, model);
   const estimatedInputTokens = estimateInputTokens(messages);
   return {
-    messages, maxTokens, inputBudget, estimatedInputTokens,
+    messages, maxTokens, inputBudget, estimatedInputTokens, activeRoots: [...snapshot.materials.activeRoots],
     ...(config.modelParameters.temperature === undefined ? {} : { temperature: config.modelParameters.temperature }),
     thinkingEnabled: config.modelParameters.thinkingEnabled,
   };
