@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-select=no">
+    <style>
+        :root {
+            --paper-main: #f4ecda;
+            --paper-dark: #ded0b4;
+            --cinnabar-red: #8f2323;
+            --cinnabar-bright: #bc2d2d;
+            --cinnabar-glow: rgba(188, 45, 45, 0.45);
+            --ghost-teal: #1a4a40;
+            --ghost-cyan: #52f2bc;
+            --ghost-glow: rgba(82, 242, 188, 0.35);
+            --ink-black: #1a1614;
+            --ink-gray: #5c5249;
+            --gold-leaf: #cca152;
+            --font-kaiti: "LXGW WenKai", "Kaiti SC", "STKaiti", "KaiTi", "Source Han Serif SC", "Noto Serif CJK SC", serif;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: clamp(4px, 1.5vw, 10px) 0;
+            background: transparent;
+            font-family: var(--font-kaiti);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            overflow-x: hidden;
+        }
+
+        /* ─── 漆黑神社案台 ─── */
+        .altar-container {
+            position: relative;
+            width: 100%;
+            max-width: min(560px, 96vw);
+            background:
+                radial-gradient(circle at 50% -10%, rgba(82, 242, 188, 0.16) 0%, transparent 60%),
+                radial-gradient(circle at 50% 110%, rgba(143, 35, 35, 0.18) 0%, transparent 55%),
+                linear-gradient(180deg, #18171b 0%, #0d0c0f 50%, #060608 100%);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            border-top: 1.5px solid rgba(204, 161, 82, 0.35);
+            border-radius: 10px;
+            padding: clamp(10px, 2.5vw, 16px);
+            box-shadow: 0 20px 45px rgba(0, 0, 0, 0.92), inset 0 0 35px rgba(0, 0, 0, 0.95);
+            overflow: hidden;
+        }
+
+        /* ─── 和纸古卷主手札 ─── */
+        .scroll-body {
+            position: relative;
+            background:
+                radial-gradient(circle at 15% 15%, rgba(160, 110, 50, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 85% 85%, rgba(130, 30, 30, 0.05) 0%, transparent 50%),
+                linear-gradient(180deg, var(--paper-main) 0%, var(--paper-dark) 100%);
+            border: 1px solid #bba885;
+            border-radius: 4px;
+            padding: clamp(18px, 4.5vw, 28px) clamp(14px, 4vw, 24px) clamp(16px, 3.5vw, 22px) clamp(14px, 4vw, 24px);
+            box-shadow:
+                inset 0 0 30px rgba(150, 110, 60, 0.22),
+                inset 0 0 8px rgba(0, 0, 0, 0.08),
+                0 8px 24px rgba(0, 0, 0, 0.65);
+            color: var(--ink-black);
+        }
+
+        /* 水引朱绳 */
+        .mizuhiki-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 5px;
+            background: linear-gradient(90deg, #591313 0%, #8f2323 50%, #591313 100%);
+            border-top-left-radius: 3px;
+            border-top-right-radius: 3px;
+        }
+
+        .mizuhiki-cord {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            margin-top: -6px;
+            margin-bottom: 12px;
+        }
+
+        .cord-line {
+            height: 1px;
+            width: 45px;
+            background: linear-gradient(90deg, transparent, var(--cinnabar-red), transparent);
+        }
+
+        .knot-emblem {
+            font-size: 11px;
+            color: var(--cinnabar-red);
+            letter-spacing: 2px;
+            background: var(--paper-main);
+            padding: 0 6px;
+        }
+
+        /* 卷首题签 */
+        .title-banner {
+            text-align: center;
+            padding-bottom: clamp(10px, 2.5vw, 14px);
+            margin-bottom: clamp(12px, 3vw, 16px);
+            border-bottom: 1px dashed rgba(143, 35, 35, 0.35);
+        }
+
+        .school-label {
+            font-size: clamp(11.5px, 2.6vw, 13px);
+            color: var(--cinnabar-red);
+            font-weight: bold;
+            letter-spacing: clamp(3px, 1vw, 5px);
+            margin-bottom: 4px;
+        }
+
+        .main-heading {
+            margin: 2px 0 0 0;
+            font-size: clamp(22px, 5.5vw, 27px);
+            font-weight: 900;
+            letter-spacing: clamp(4px, 1.2vw, 8px);
+            color: #171210;
+            text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8), 0 2px 6px rgba(0, 0, 0, 0.06);
+        }
+
+        .sub-heading {
+            margin-top: 5px;
+            font-size: clamp(12px, 2.6vw, 13.5px);
+            color: var(--ink-gray);
+            letter-spacing: 3px;
+            font-style: italic;
+        }
+
+        /* 序言文段 */
+        .lore-passage {
+            font-size: clamp(14px, 3.6vw, 15.5px);
+            line-height: clamp(25px, 5.8vw, 29px);
+            text-align: justify;
+            color: #211915;
+            margin-bottom: clamp(16px, 4vw, 22px);
+        }
+
+        .lore-passage p {
+            margin: 0 0 8px 0;
+            text-indent: 2em;
+        }
+
+        /* 命理符札网格 */
+        .talismans-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: clamp(10px, 2.5vw, 16px);
+            margin-top: 10px;
+        }
+
+        .talisman-plaque {
+            position: relative;
+            cursor: pointer;
+            border-radius: 4px;
+            padding: clamp(14px, 3vw, 18px) clamp(12px, 2.5vw, 14px);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: clamp(155px, 36vw, 175px);
+            transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.07);
+            overflow: hidden;
+        }
+
+        .plaque-prologue {
+            background: radial-gradient(circle at 90% 10%, rgba(188, 45, 45, 0.08) 0%, transparent 60%), linear-gradient(180deg, #fffdf8 0%, #fbf3e4 100%);
+            border: 1.5px solid #d4b595;
+            border-top: 4px solid var(--cinnabar-red);
+        }
+
+        .plaque-prologue:hover {
+            background: #ffffff;
+            border-color: var(--cinnabar-bright);
+            box-shadow: 0 8px 22px var(--cinnabar-glow), 0 2px 6px rgba(0, 0, 0, 0.1);
+            transform: translateY(-3px);
+        }
+
+        .plaque-prologue:active {
+            transform: translateY(0) scale(0.98);
+        }
+
+        .plaque-night {
+            background: radial-gradient(circle at 90% 10%, rgba(82, 242, 188, 0.12) 0%, transparent 60%), linear-gradient(180deg, #f2faf7 0%, #e1f0ec 100%);
+            border: 1.5px solid #a6cdc4;
+            border-top: 4px solid var(--ghost-teal);
+        }
+
+        .plaque-night:hover {
+            background: #ffffff;
+            border-color: #216859;
+            box-shadow: 0 8px 22px var(--ghost-glow), 0 2px 6px rgba(0, 0, 0, 0.1);
+            transform: translateY(-3px);
+        }
+
+        .plaque-night:active {
+            transform: translateY(0) scale(0.98);
+        }
+
+        .plaque-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 6px;
+        }
+
+        .plaque-tag {
+            font-size: 10.5px;
+            font-weight: bold;
+            letter-spacing: 1.5px;
+            padding: 1px 6px;
+            border-radius: 2px;
+        }
+
+        .tag-red {
+            color: var(--cinnabar-red);
+            border: 1px solid rgba(143, 35, 35, 0.4);
+            background: rgba(143, 35, 35, 0.05);
+        }
+
+        .tag-teal {
+            color: var(--ghost-teal);
+            border: 1px solid rgba(26, 74, 64, 0.4);
+            background: rgba(26, 74, 64, 0.06);
+        }
+
+        .plaque-date {
+            font-size: 11px;
+            color: #887a6d;
+            font-family: sans-serif;
+        }
+
+        .plaque-title {
+            font-size: clamp(15px, 3.8vw, 17.5px);
+            font-weight: bold;
+            letter-spacing: 1.5px;
+            margin: 2px 0 6px 0;
+        }
+
+        .plaque-desc {
+            font-size: clamp(11.5px, 2.7vw, 12.5px);
+            color: var(--ink-gray);
+            line-height: 1.45;
+            flex: 1;
+        }
+
+        .plaque-seal-act {
+            margin-top: 12px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 6px;
+            padding: clamp(7px, 1.8vw, 9px) 0;
+            border-radius: 3px;
+            font-size: clamp(12.5px, 2.9vw, 14px);
+            font-weight: bold;
+            letter-spacing: 2px;
+            transition: all 0.2s ease;
+        }
+
+        .seal-act-red {
+            background: linear-gradient(180deg, #942525 0%, #751a1a 100%);
+            color: #fffaf0;
+            box-shadow: 0 2px 6px rgba(117, 26, 26, 0.35);
+        }
+
+        .plaque-prologue:hover .seal-act-red {
+            background: linear-gradient(180deg, #b02c2c 0%, #8c2020 100%);
+            box-shadow: 0 3px 10px rgba(176, 44, 44, 0.5);
+        }
+
+        .seal-act-teal {
+            background: linear-gradient(180deg, #184c42 0%, #0e3029 100%);
+            color: #f0faf6;
+            box-shadow: 0 2px 6px rgba(14, 48, 41, 0.35);
+        }
+
+        .plaque-night:hover .seal-act-teal {
+            background: linear-gradient(180deg, #226b5d 0%, #13453b 100%);
+            box-shadow: 0 3px 10px rgba(34, 107, 93, 0.5);
+        }
+
+        .talisman-plaque.busy {
+            pointer-events: none;
+            opacity: 0.6;
+            filter: grayscale(0.5);
+        }
+
+        /* ─── 卷尾印章与手绘幽灵彩蛋 ─── */
+        .scroll-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            margin-top: clamp(16px, 4vw, 24px);
+            padding-top: 12px;
+            border-top: 1px dashed rgba(143, 35, 35, 0.25);
+        }
+
+        .footer-note {
+            font-size: clamp(11px, 2.5vw, 12px);
+            color: #7d6e61;
+            letter-spacing: 1.5px;
+        }
+
+        /* 印章+幽灵组合容器 */
+        .stamp-ghost-wrapper {
+            position: relative;
+            display: inline-block;
+            margin-right: 4px;
+            margin-bottom: 2px;
+        }
+
+        /* 露馅汤圆幽灵 (纯SVG + 悬浮动画) */
+        .tangyuan-ghost {
+            position: absolute;
+            top: -24px;
+            left: -14px;
+            width: 38px;
+            height: 38px;
+            z-index: 10;
+            pointer-events: none;
+            animation: ghostFloat 3.5s ease-in-out infinite alternate;
+            filter: drop-shadow(0 2px 4px rgba(143, 35, 35, 0.25));
+        }
+
+        @keyframes ghostFloat {
+            0% {
+                transform: translateY(0) rotate(-6deg) scale(0.98);
+            }
+
+            50% {
+                transform: translateY(-3px) rotate(2deg) scale(1.03);
+            }
+
+            100% {
+                transform: translateY(-5px) rotate(-2deg) scale(1);
+            }
+        }
+
+        .vermilion-stamp {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 52px;
+            height: 52px;
+            border: 2px solid var(--cinnabar-red);
+            color: var(--cinnabar-red);
+            font-size: 11px;
+            font-weight: 900;
+            line-height: 1.15;
+            transform: rotate(-5deg);
+            border-radius: 2px;
+            opacity: 0.88;
+            background: rgba(143, 35, 35, 0.04);
+            box-shadow: 0 0 6px rgba(143, 35, 35, 0.15);
+            position: relative;
+            z-index: 5;
+        }
+
+        /* 移动端折叠 */
+        @media (max-width: 440px) {
+            .talismans-grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+
+            .talisman-plaque {
+                min-height: auto;
+                padding: 14px 14px;
+            }
+
+            .main-heading {
+                letter-spacing: 3px;
+            }
+
+            .scroll-footer {
+                flex-direction: column;
+                align-items: center;
+                gap: 14px;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="altar-container">
+        <div class="scroll-body">
+
+            <!-- 水引朱绳装帧 -->
+            <div class="mizuhiki-bar"></div>
+            <div class="mizuhiki-cord">
+                <div class="cord-line"></div>
+                <div class="knot-emblem">❖ 百物语 · 卷首 ❖</div>
+                <div class="cord-line"></div>
+            </div>
+
+            <!-- 卷首题签 -->
+            <div class="title-banner">
+                <div class="school-label">宁琦二中 · 怪谈社与白物语</div>
+                <div class="main-heading">『 百 物 语 · 卷 首 届 』</div>
+                <div class="sub-heading">未竟之业 ❖ 待汝启封</div>
+            </div>
+
+            <!-- 导言 -->
+            <div class="lore-passage">
+                <p>世间原本无所谓怪谈。唯有借由言灵的编织与叙述，无形的混沌方才具象成形。</p>
+                <p>这是一本尚未记录因果的空白手札。当青行灯的光芒照透虚妄，属于你的篇章即在此写下。</p>
+            </div>
+
+            <!-- 双生命理符札 -->
+            <div class="talismans-grid">
+
+                <!-- 符札 1：初遇结缘 -->
+                <div class="talisman-plaque plaque-prologue" id="card-prologue">
+                    <div>
+                        <div class="plaque-header">
+                            <span class="plaque-tag tag-red">结缘之赤符</span>
+                            <span class="plaque-date">10.02</span>
+                        </div>
+                        <div class="plaque-title" style="color:var(--cinnabar-red);">拾月贰日 · 入部</div>
+                        <div class="plaque-desc">秋阳下的喧嚣与阴影交界处，接下那张画着滑稽幽灵的传单，开启属于你和她的初遇。</div>
+                    </div>
+                    <div class="plaque-seal-act seal-act-red" id="btn-prologue-label">
+                        <span>❖</span> 启封初遇
+                    </div>
+                </div>
+
+                <!-- 符札 2：逢魔夜话 -->
+                <div class="talisman-plaque plaque-night" id="card-night">
+                    <div>
+                        <div class="plaque-header">
+                            <span class="plaque-tag tag-teal">照夜之青符</span>
+                            <span class="plaque-date">10.04</span>
+                        </div>
+                        <div class="plaque-title" style="color:var(--ghost-teal);">逢魔之刻 · 夜话</div>
+                        <div class="plaque-desc">暮色深沉的旧活动室，青行灯已准备就绪。作为她的伙伴，直接开始怪谈调查。</div>
+                    </div>
+                    <div class="plaque-seal-act seal-act-teal" id="btn-night-label">
+                        <span>❖</span> 点灯入座
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- 卷尾印章与露馅汤圆幽灵彩蛋 -->
+            <div class="scroll-footer">
+                <div class="footer-note">※ 触碰符札，即刻立下言灵契约</div>
+
+                <div class="stamp-ghost-wrapper">
+                    <!-- 绮罗香手绘：露馅汤圆幽灵 -->
+                    <svg class="tangyuan-ghost" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <!-- 幽灵本体（微透和纸白 + 朱砂描边） -->
+                        <path d="M12 26C12 14 38 14 38 26C38 35 34.5 40 31 38C27.5 36 26 40 24 38C22 36 20.5 40 17
+                            38C13.5 40 12 35 12 26Z" fill="rgba(255, 253, 248, 0.95)" stroke="#8f2323"
+                            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                        <!-- 呆萌豆豆眼 -->
+                        <circle cx="21" cy="24" r="1.6" fill="#8f2323" />
+                        <circle cx="29" cy="24" r="1.6" fill="#8f2323" />
+                        <!-- 害羞红晕 -->
+                        <ellipse cx="17.5" cy="27" rx="1.8" ry="0.9" fill="rgba(188, 45, 45, 0.35)" />
+                        <ellipse cx="32.5" cy="27" rx="1.8" ry="0.9" fill="rgba(188, 45, 45, 0.35)" />
+                        <!-- 露馅的小汗珠/小尾巴 -->
+                        <path d="M24 29Q25 31 26 29" stroke="#8f2323" stroke-width="1.2" stroke-linecap="round" />
+                    </svg>
+
+                    <!-- 社团朱印本体 -->
+                    <div class="vermilion-stamp">
+                        <span>怪谈</span>
+                        <span>社印</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // 1. 触发词定义
+        var PAYLOAD_PROLOGUE = decodeURIComponent('%5B%E6%80%AA%E8%B0%88%E7%A4%BE%C2%B7%E4%BB%AA%E5%BC%8F%E5%BC%80%E5%90%AF%EF%BC%9A%E5%90%AF%E5%B0%81%E5%88%9D%E9%81%87%5D');
+        var PAYLOAD_NIGHT = decodeURIComponent('%5B%E6%80%AA%E8%B0%88%E7%A4%BE%C2%B7%E4%BB%AA%E5%BC%8F%E5%BC%80%E5%90%AF%EF%BC%9A%E9%80%A2%E9%AD%94%E7%85%A7%E5%A4%9C%5D');
+
+        // 2. 动态高度自适应
+        var resizeTimer = null;
+        function reportCoverHeight() {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(function () {
+                var h = document.body.scrollHeight;
+                if (window.parent) {
+                    window.parent.postMessage({ type: 'iframe-resize', height: h, source: 'kaidan-cover-v5' }, '*');
+                    window.parent.postMessage({ type: 'resizeIframe', height: h }, '*');
+                }
+                try {
+                    if (window.frameElement) window.frameElement.style.height = h + 'px';
+                } catch (e) { }
+            }, 50);
+        }
+        if (window.ResizeObserver) new ResizeObserver(reportCoverHeight).observe(document.body);
+        window.addEventListener('load', reportCoverHeight);
+
+        // 3. MVU 直写引擎
+        async function directCommitMvu(mutations) {
+            try {
+                var Mvu = window.Mvu || (window.parent && window.parent.Mvu) || (window.top && window.top.Mvu);
+                if (!Mvu) return;
+                var mvuData = Mvu.getMvuData({ type: 'message', message_id: -1 });
+                if (!mvuData) return;
+
+                var _set = (window._ && window._.set) || (window.parent && window.parent._ && window.parent._.set) || function (obj, path, val) {
+                    var parts = path.split('.');
+                    var curr = obj;
+                    for (var i = 0; i < parts.length - 1; i++) {
+                        if (!curr[parts[i]]) curr[parts[i]] = {};
+                        curr = curr[parts[i]];
+                    }
+                    curr[parts[parts.length - 1]] = val;
+                };
+
+                for (var path in mutations) {
+                    _set(mvuData, path, mutations[path]);
+                }
+
+                await Mvu.replaceMvuData(mvuData, { type: 'message', message_id: -1 });
+
+                var $ = window.$ || (window.parent && window.parent.$) || (window.top && window.top.$);
+                if (Mvu.events && $) {
+                    var payload = { stat_data: mvuData.stat_data || mvuData };
+                    $(document).trigger({ type: Mvu.events.VARIABLE_UPDATE_ENDED, detail: payload });
+                    if (window.parent) $(window.parent.document).trigger({ type: Mvu.events.VARIABLE_UPDATE_ENDED, detail: payload });
+                }
+            } catch (e) {
+                console.error('[MVU Direct Commit Error]', e);
+            }
+        }
+
+        // 4. 工作流驱动
+        async function triggerWorkflow(cardElement, labelElement, textToSend, mvuMutations) {
+            if (cardElement.getAttribute('data-active') === '1') return;
+            cardElement.setAttribute('data-active', '1');
+            cardElement.classList.add('busy');
+            var prevLabel = labelElement.innerHTML;
+            labelElement.innerHTML = '<span>❖</span> 启封中…';
+
+            if (mvuMutations) {
+                await directCommitMvu(mvuMutations);
+            }
+
+            var mainDoc = document;
+            if (window.parent && window.parent.document) mainDoc = window.parent.document;
+            else if (window.top && window.top.document) mainDoc = window.top.document;
+
+            var inputArea = mainDoc.getElementById('send_textarea');
+            var submitBtn = mainDoc.getElementById('send_but');
+
+            if (inputArea && submitBtn) {
+                var descriptor = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
+                var nativeSetter = descriptor ? descriptor.set : null;
+                if (nativeSetter) nativeSetter.call(inputArea, textToSend);
+                else inputArea.value = textToSend;
+
+                inputArea.dispatchEvent(new Event('input', { bubbles: true }));
+                inputArea.dispatchEvent(new Event('change', { bubbles: true }));
+                inputArea.focus();
+                setTimeout(function () {
+                    submitBtn.click();
+                }, 200);
+            } else {
+                console.warn('[怪谈社] 无法获取酒馆输入框或发送按键');
+                setTimeout(function () {
+                    cardElement.removeAttribute('data-active');
+                    cardElement.classList.remove('busy');
+                    labelElement.innerHTML = prevLabel;
+                }, 1000);
+            }
+        }
+
+        // 5. 事件绑定
+        var cardPrologue = document.getElementById('card-prologue');
+        var labelPrologue = document.getElementById('btn-prologue-label');
+        cardPrologue.addEventListener('click', function () {
+            triggerWorkflow(this, labelPrologue, PAYLOAD_PROLOGUE, {
+                'stat_data.游戏状态.当前阶段': '日常',
+                'stat_data.游戏状态.当前怪谈标题': '无',
+                'stat_data.游戏状态.新手引导已完成': false,
+                'stat_data.角色状态.白川绮罗香.好感度': 0,
+                'stat_data.角色状态.白川绮罗香.好感度等级': 0,
+                'stat_data.日历.当前日期': '10月2日',
+                'stat_data.玩家状态.灵力': 5
+            });
+        });
+
+        var cardNight = document.getElementById('card-night');
+        var labelNight = document.getElementById('btn-night-label');
+        cardNight.addEventListener('click', function () {
+            triggerWorkflow(this, labelNight, PAYLOAD_NIGHT, {
+                'stat_data.游戏状态.当前阶段': '导入',
+                'stat_data.游戏状态.当前怪谈标题': '（未知怪谈）',
+                'stat_data.游戏状态.新手引导已完成': true,
+                'stat_data.角色状态.白川绮罗香.好感度': 20,
+                'stat_data.日历.当前日期': '10月4日',
+                'stat_data.环境状态.当前地点': '怪谈社活动室',
+                'stat_data.玩家状态.灵力': 5,
+                'stat_data.白物语注册表': {}
+            });
+        });
+    </script>
+
+</body>

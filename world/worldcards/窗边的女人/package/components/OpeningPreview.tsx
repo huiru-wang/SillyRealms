@@ -1,0 +1,2 @@
+import React from 'react';
+export default function OpeningPreview(){return <section style={{padding:'24px',fontFamily:'PingFang SC,sans-serif',lineHeight:1.9}}><p style={{fontSize:12,letterSpacing:'.12em',opacity:.7}}>宁温河馨 · 私人角色本</p><h2 style={{fontFamily:'Songti SC,serif',fontWeight:500}}>登录之后，再打开你的往事。</h2><p>此处只作无剧透预览。完整私人故事、羁绊、秘密与目标，会在开始会话后交给你。</p><p>请核对页面上的开局名称，与上方选中的扮演角色一致。一般与困难各有独立开局；其他五个人由 AI 演绎。</p><p>第一幕从公共聊天室和宁河城地图开始。你可以只介绍愿意公开的部分。</p></section>;}

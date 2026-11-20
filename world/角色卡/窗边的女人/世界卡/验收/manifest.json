@@ -1,0 +1,82 @@
+{
+  "worlds": {
+    "qiuge": "355e4a4b-441f-4c8c-ba2e-1783c9c06d03",
+    "gentleman": "d958b8d3-a81d-4a36-b561-a8fb194e3db9",
+    "wuchang": "3c1d899e-db23-43d2-9361-0d9fd3c990c2",
+    "prometheus": "6cdc94f5-3e70-424e-937a-8bb36c3929e8",
+    "mengqiuxue": "c97b7fe3-f474-4c8a-9043-e59c1f136e3a",
+    "blackmass": "e7e4ba07-2425-413f-a3dd-ee7a8d0ce629"
+  },
+  "sessions": {
+    "qiuge-forum-standard": "d20a66d7-b75b-4f3d-8b30-ae4384ea2391",
+    "qiuge-forum-hard": "7688aedc-5174-4e53-ade9-c0c80557f035",
+    "gentleman-forum-standard": "402b3f2f-7ffc-4d1a-8cff-7e8c491d5df7",
+    "gentleman-forum-hard": "c4dfa9c6-dfea-4752-bfa6-66f4a3f4ea00",
+    "wuchang-forum-standard": "130b3f24-f9e5-484a-ac3c-c614c254d7a6",
+    "wuchang-forum-hard": "6a51410e-cadd-42f6-9a8c-8a4f7cbeabdb",
+    "prometheus-forum-standard": "f0a4f1cd-0662-437d-b8d9-a7106d2561dc",
+    "prometheus-forum-hard": "febe0cc6-14a6-4fce-803a-5f73f91f24e5",
+    "mengqiuxue-forum-standard": "021e9a57-7500-4424-8bf9-84d07d715dd9",
+    "mengqiuxue-forum-hard": "9a767049-003d-4ed9-9e77-b442c1e18d41",
+    "blackmass-forum-standard": "082746bc-4e15-453c-8b30-aec587da6b77",
+    "blackmass-forum-hard": "e2046b8f-3677-46fe-a36c-758cc1ec6290"
+  },
+  "checks": [
+    {
+      "file": "窗边的女人-囚鸽.json",
+      "bytes": 859273,
+      "parseCard": true,
+      "moduleGraph": true,
+      "importExport": true,
+      "openings": 2,
+      "initialStates": true
+    },
+    {
+      "file": "窗边的女人-斯文男人.json",
+      "bytes": 859491,
+      "parseCard": true,
+      "moduleGraph": true,
+      "importExport": true,
+      "openings": 2,
+      "initialStates": true
+    },
+    {
+      "file": "窗边的女人-无常.json",
+      "bytes": 859084,
+      "parseCard": true,
+      "moduleGraph": true,
+      "importExport": true,
+      "openings": 2,
+      "initialStates": true
+    },
+    {
+      "file": "窗边的女人-普罗米修斯.json",
+      "bytes": 859242,
+      "parseCard": true,
+      "moduleGraph": true,
+      "importExport": true,
+      "openings": 2,
+      "initialStates": true
+    },
+    {
+      "file": "窗边的女人-梦秋雪.json",
+      "bytes": 859638,
+      "parseCard": true,
+      "moduleGraph": true,
+      "importExport": true,
+      "openings": 2,
+      "initialStates": true
+    },
+    {
+      "file": "窗边的女人-黑弥撒.json",
+      "bytes": 859137,
+      "parseCard": true,
+      "moduleGraph": true,
+      "importExport": true,
+      "openings": 2,
+      "initialStates": true
+    }
+  ],
+  "payloadChecks": [],
+  "port": 61609
+}

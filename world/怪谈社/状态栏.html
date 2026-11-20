@@ -1,0 +1,1738 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        /* --- 全局与和风调色盘 --- */
+        :root {
+            --c-border-vermilion: #8f2626;
+            --c-ghost-cyan: #78ffc6;
+            --c-ink-paper: #d8cbb8;
+            --c-gold-leaf: #dfa668;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: "Kaiti", "SimSun", "MS Mincho", serif;
+            background: transparent;
+            color: var(--c-ink-paper);
+            overflow: hidden;
+            user-select: none;
+        }
+
+        .lantern-wrapper {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            position: relative;
+            padding: 4px 0 10px 0;
+        }
+
+        /* --- 外壳神龛：和风漆器黑匣 --- */
+        .lantern-shell {
+            position: relative;
+            width: 100%;
+            max-width: 300px;
+            padding: 14px 14px 16px 14px;
+            border-radius: 12px;
+            background: radial-gradient(circle at 50% 10%, #1a191f 0%, #0d0d10 60%, #050507 100%);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-top: 1px solid rgba(223, 166, 104, 0.25);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.06),
+                inset 0 0 25px rgba(0, 0, 0, 0.9),
+                0 14px 30px rgba(0, 0, 0, 0.85);
+            box-sizing: border-box;
+            transition: all 0.5s ease;
+        }
+
+        .lantern-shell.haunted-glow::after {
+            content: "";
+            position: absolute;
+            inset: 2px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(180, 30, 30, 0.25);
+            animation: shellBreath 4s ease-in-out infinite;
+            pointer-events: none;
+        }
+
+        @keyframes shellBreath {
+
+            0%,
+            100% {
+                opacity: 0.3;
+            }
+
+            50% {
+                opacity: 0.8;
+            }
+        }
+
+        .lantern-shell.historical-snapshot {
+            filter: sepia(0.4) grayscale(0.3) contrast(1.1);
+        }
+
+        .sealed-watermark {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            font-size: 11px;
+            font-weight: bold;
+            color: rgba(143, 38, 38, 0.7);
+            border: 1.5px solid rgba(143, 38, 38, 0.6);
+            border-radius: 2px;
+            padding: 1px 5px;
+            transform: rotate(12deg);
+            pointer-events: none;
+            opacity: 0;
+            z-index: 20;
+            letter-spacing: 2px;
+        }
+
+        .lantern-shell.historical-snapshot .sealed-watermark {
+            opacity: 1;
+        }
+
+        /* --- 顶部：神篱环境条 --- */
+        .env-info-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            margin-bottom: 12px;
+            padding: 5px 10px;
+            background: linear-gradient(90deg, rgba(143, 38, 38, 0.2) 0%, rgba(20, 20, 24, 0.6) 70%, transparent 100%);
+            border-left: 2px solid var(--c-border-vermilion);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            border-radius: 2px;
+            box-sizing: border-box;
+        }
+
+        .env-location {
+            font-size: 12px;
+            color: #dcd3c5;
+            letter-spacing: 1.5px;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+        }
+
+        .env-location svg {
+            width: 13px;
+            height: 13px;
+            fill: #b83636;
+            filter: drop-shadow(0 0 3px rgba(184, 54, 54, 0.6));
+        }
+
+        .env-presence {
+            display: flex;
+            gap: 8px;
+        }
+
+        .katashiro {
+            width: 15px;
+            height: 17px;
+            color: #777;
+            transition: all 0.4s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .katashiro svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        .katashiro.kiraga.active {
+            color: var(--c-ghost-cyan);
+            filter: drop-shadow(0 0 5px rgba(120, 255, 198, 0.7));
+        }
+
+        .katashiro.sae.active {
+            color: #ffb74d;
+            filter: drop-shadow(0 0 5px rgba(255, 183, 77, 0.7));
+        }
+
+        .katashiro.absent {
+            opacity: 0.2;
+            filter: grayscale(1);
+            transform: scale(0.85);
+        }
+
+        /* --- 圆柱长提灯实体 --- */
+        .lantern-stage {
+            position: relative;
+            margin: 4px auto 10px auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+
+        .lantern-stage.interactive {
+            cursor: pointer;
+        }
+
+        .lantern-stage.interactive:hover {
+            transform: translateY(-1px) scale(1.015);
+        }
+
+        @keyframes rejectShake {
+
+            0%,
+            100% {
+                transform: translateX(0);
+            }
+
+            25% {
+                transform: translateX(-3px);
+            }
+
+            75% {
+                transform: translateX(3px);
+            }
+        }
+
+        .lantern-stage.shake {
+            animation: rejectShake 0.3s ease;
+        }
+
+        .lantern-hanger {
+            width: 38px;
+            height: 11px;
+            border: 2px solid #3d352e;
+            border-bottom: none;
+            border-radius: 8px 8px 0 0;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            margin-bottom: -1px;
+            z-index: 6;
+        }
+
+        .lantern-cap {
+            width: 102px;
+            height: 8px;
+            background: linear-gradient(to bottom, #2c2520, #13100e);
+            border: 1px solid #423830;
+            border-radius: 3px 3px 1px 1px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.85);
+            z-index: 6;
+        }
+
+        .lantern-base {
+            width: 98px;
+            height: 8px;
+            background: linear-gradient(to bottom, #181513, #0b0908);
+            border: 1px solid #382f28;
+            border-radius: 1px 1px 4px 4px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.9);
+            z-index: 6;
+        }
+
+        .lantern {
+            position: relative;
+            width: 94px;
+            height: 148px;
+            border-radius: 4px;
+            background:
+                linear-gradient(90deg,
+                    rgba(0, 0, 0, 0.85) 0%,
+                    rgba(25, 22, 20, 0.3) 18%,
+                    rgba(50, 42, 36, 0.1) 50%,
+                    rgba(25, 22, 20, 0.3) 82%,
+                    rgba(0, 0, 0, 0.85) 100%),
+                repeating-linear-gradient(0deg,
+                    transparent,
+                    transparent 13px,
+                    rgba(20, 16, 14, 0.7) 14px,
+                    rgba(55, 45, 38, 0.45) 15px),
+                repeating-linear-gradient(90deg,
+                    transparent,
+                    transparent 24px,
+                    rgba(35, 28, 24, 0.25) 25px),
+                radial-gradient(ellipse at 50% 50%, #1e1a17 0%, #110e0d 65%, #080707 100%);
+            border-left: 1.5px solid #2b221d;
+            border-right: 1.5px solid #2b221d;
+            box-shadow: inset 0 0 16px rgba(0, 0, 0, 0.95), 0 8px 24px rgba(0, 0, 0, 0.9);
+            transition: all 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+            z-index: 5;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .lantern-stand {
+            position: absolute;
+            bottom: 24px;
+            width: 14px;
+            height: 3px;
+            background: #332822;
+            border-radius: 1px;
+            z-index: 6;
+            opacity: 0.7;
+        }
+
+        .lantern-wick {
+            position: absolute;
+            bottom: 27px;
+            width: 2px;
+            height: 16px;
+            background: linear-gradient(to top, #3a2e26, #110d0a);
+            border-radius: 1px;
+            z-index: 6;
+            opacity: 0.6;
+            transition: all 0.5s ease;
+        }
+
+        .lantern-wick::after {
+            content: "";
+            position: absolute;
+            top: -3px;
+            left: -1.5px;
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: #5a2015;
+            opacity: 0.6;
+            filter: blur(0.5px);
+            transition: all 0.4s ease;
+        }
+
+        .lantern-glow {
+            position: absolute;
+            inset: 4px;
+            border-radius: 4px;
+            background: radial-gradient(ellipse at 50% 60%, rgba(120, 255, 198, 0.2) 0%, transparent 75%);
+            filter: blur(8px);
+            opacity: 0;
+            transition: opacity 0.8s ease;
+            will-change: opacity, transform;
+        }
+
+        .lantern.interactive::after {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0.95);
+            font-weight: bold;
+            letter-spacing: 4px;
+            padding-left: 4px;
+            pointer-events: none;
+            opacity: 0;
+            transition: all 0.35s ease;
+            z-index: 10;
+            font-family: "Kaiti", "SimSun", serif;
+        }
+
+        .lantern.interactive.member-ready::after {
+            content: "点亮";
+            font-size: 15px;
+            color: rgba(240, 255, 250, 0.95);
+            text-shadow: 0 0 6px #000, 0 0 12px rgba(120, 255, 198, 0.8);
+        }
+
+        .lantern-stage.interactive:hover .lantern.member-ready {
+            border-left-color: rgba(120, 255, 198, 0.4);
+            border-right-color: rgba(120, 255, 198, 0.4);
+            box-shadow: inset 0 0 16px rgba(120, 255, 198, 0.08), 0 0 20px rgba(120, 255, 198, 0.15);
+        }
+
+        .lantern-stage.interactive:hover .lantern.member-ready .lantern-glow {
+            opacity: 0.35;
+        }
+
+        .lantern-stage.interactive:hover .lantern.member-ready .lantern-wick::after {
+            background: #ff7043;
+            box-shadow: 0 0 6px #ff7043;
+            opacity: 1;
+        }
+
+        .lantern.interactive.tutorial-sealed::after {
+            content: "封";
+            font-size: 18px;
+            color: #e57373;
+            text-shadow: 0 0 6px #000, 0 0 12px rgba(229, 115, 115, 0.8);
+        }
+
+        .lantern-stage.interactive:hover .lantern.tutorial-sealed {
+            border-left-color: rgba(180, 40, 40, 0.4);
+            border-right-color: rgba(180, 40, 40, 0.4);
+            box-shadow: inset 0 0 16px rgba(180, 40, 40, 0.1), 0 0 16px rgba(143, 38, 38, 0.25);
+        }
+
+        .lantern-stage.interactive:hover .lantern.tutorial-sealed .lantern-glow {
+            opacity: 0.25;
+            background: radial-gradient(ellipse at 50% 60%, rgba(180, 40, 40, 0.35) 0%, transparent 75%);
+        }
+
+        .lantern-stage.interactive:hover .lantern::after {
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1.05);
+        }
+
+        @keyframes flameLit {
+
+            0%,
+            100% {
+                opacity: 0.85;
+                transform: scale(1) translateZ(0);
+                filter: blur(7px);
+            }
+
+            50% {
+                opacity: 1;
+                transform: scale(1.04) translateZ(0);
+                filter: blur(5px);
+            }
+        }
+
+        .lantern.flame-lit .lantern-glow {
+            opacity: 1;
+            background: radial-gradient(ellipse at 50% 65%, #f0fff9 10%, rgba(120, 255, 198, 0.65) 45%, rgba(20, 60, 48, 0.25) 80%, transparent 100%);
+            animation: flameLit 3s infinite ease-in-out;
+        }
+
+        .lantern.flame-lit {
+            background:
+                linear-gradient(90deg, rgba(0, 0, 0, 0.6) 0%, transparent 20%, transparent 80%, rgba(0, 0, 0, 0.6) 100%),
+                radial-gradient(ellipse at 50% 60%, #0d2621 0%, #081512 60%, #030505 100%);
+            border-left-color: rgba(120, 255, 198, 0.5);
+            border-right-color: rgba(120, 255, 198, 0.5);
+            box-shadow: 0 0 25px rgba(120, 255, 198, 0.3), inset 0 0 20px rgba(120, 255, 198, 0.2);
+        }
+
+        /* 点灯或怪谈对抗时，彻底隐去死板的灯芯支架 */
+        .lantern.flame-lit .lantern-wick,
+        .lantern.flame-lit .lantern-stand,
+        .lantern.flame-haunted .lantern-wick,
+        .lantern.flame-haunted .lantern-stand {
+            opacity: 0 !important;
+        }
+
+        .lantern.flame-lit::after {
+            display: none !important;
+        }
+
+        /* 怪谈压力光 */
+        .lantern.flame-haunted.mp-5 {
+            border-left-color: #64ffda;
+            border-right-color: #64ffda;
+            box-shadow: 0 0 20px rgba(100, 255, 218, 0.3);
+        }
+
+        .lantern.flame-haunted.mp-5 .lantern-glow {
+            opacity: 1;
+            background: radial-gradient(ellipse at 50% 65%, #e0fbf4 10%, rgba(100, 255, 218, 0.55) 50%, transparent 85%);
+            animation: flameLit 2.5s infinite;
+        }
+
+        .lantern.flame-haunted.mp-4 {
+            border-left-color: #ffd54f;
+            border-right-color: #ffd54f;
+            box-shadow: 0 0 20px rgba(255, 213, 79, 0.25);
+        }
+
+        .lantern.flame-haunted.mp-4 .lantern-glow {
+            opacity: 0.9;
+            background: radial-gradient(ellipse at 50% 65%, #fff9c4 10%, rgba(255, 202, 40, 0.55) 50%, transparent 85%);
+            animation: flameLit 2s infinite;
+        }
+
+        .lantern.flame-haunted.mp-3 {
+            border-left-color: #ff8a65;
+            border-right-color: #ff8a65;
+            box-shadow: 0 0 20px rgba(255, 112, 67, 0.3);
+        }
+
+        .lantern.flame-haunted.mp-3 .lantern-glow {
+            opacity: 0.9;
+            background: radial-gradient(ellipse at 50% 65%, #ffebee 10%, rgba(255, 87, 34, 0.65) 50%, transparent 85%);
+            animation: flameLit 1.6s infinite;
+        }
+
+        .lantern.flame-haunted.mp-2 {
+            border-left-color: #e53935;
+            border-right-color: #e53935;
+            box-shadow: 0 0 25px rgba(229, 57, 53, 0.4);
+        }
+
+        .lantern.flame-haunted.mp-2 .lantern-glow {
+            opacity: 0.95;
+            background: radial-gradient(ellipse at 50% 65%, #ffcdd2 10%, rgba(211, 47, 47, 0.75) 60%, transparent 85%);
+            animation: flameLit 1.2s infinite;
+        }
+
+        .lantern.flame-haunted.mp-critical {
+            border-left-color: #b71c1c;
+            border-right-color: #b71c1c;
+            box-shadow: 0 0 35px rgba(183, 28, 28, 0.7);
+        }
+
+        .lantern.flame-haunted.mp-critical .lantern-glow {
+            opacity: 1;
+            background: radial-gradient(ellipse at 50% 65%, #1a0000 0%, #b71c1c 45%, transparent 80%);
+            animation: flameLit 0.7s infinite alternate;
+        }
+
+        /* --- 阶段文字 --- */
+        .phase-text {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            font-size: 13.5px;
+            letter-spacing: 2.5px;
+            margin: 4px 0 3px 0;
+            color: #e2d7c7;
+            font-weight: bold;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+        }
+
+        .phase-text::before,
+        .phase-text::after {
+            content: "❖";
+            font-size: 9px;
+            color: var(--c-border-vermilion);
+            opacity: 0.8;
+        }
+
+        .title-text {
+            text-align: center;
+            font-size: 12.5px;
+            color: #bcaaa4;
+            margin-bottom: 6px;
+            font-family: "Kaiti", serif;
+            letter-spacing: 1px;
+            min-height: 1.2em;
+        }
+
+        .phase-collapse {
+            display: none !important;
+        }
+
+        /* --- 灵力点 --- */
+        .spirit-bar-container {
+            position: relative;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 6px 0 10px 0;
+            padding-top: 8px;
+            border-top: 1px dashed rgba(143, 38, 38, 0.3);
+        }
+
+        .spirit-bar {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 4px;
+        }
+
+        .hitodama {
+            width: 9px;
+            height: 9px;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            border: 1px solid #333;
+            background: #161616;
+            box-shadow: inset 0 0 3px #000;
+            transition: all 0.5s ease;
+        }
+
+        .hitodama.active {
+            background: #4db6ac;
+            border-color: #80cbc4;
+            box-shadow: 0 0 8px rgba(100, 255, 218, 0.7), 0 0 3px #fff;
+            animation: hitodamaFloat 3s infinite ease-in-out;
+        }
+
+        @keyframes hitodamaFloat {
+
+            0%,
+            100% {
+                transform: rotate(-45deg) scale(1);
+            }
+
+            50% {
+                transform: rotate(-45deg) scale(1.15);
+            }
+        }
+
+        .mp-label {
+            font-size: 10.5px;
+            color: #887d75;
+            letter-spacing: 2px;
+        }
+
+        /* --- 和风阴阳法具按键 --- */
+        .vent-dock {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            width: 100%;
+            margin-top: 6px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .vent-btn {
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 40% 30%, #262322 0%, #151312 80%);
+            border: 1px solid rgba(223, 166, 104, 0.2);
+            box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1), 0 4px 8px rgba(0, 0, 0, 0.7);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+            position: relative;
+        }
+
+        .vent-btn::before {
+            content: "";
+            position: absolute;
+            inset: 2px;
+            border-radius: 50%;
+            border: 1px dashed rgba(255, 255, 255, 0.06);
+            pointer-events: none;
+        }
+
+        .vent-btn:hover {
+            transform: translateY(-2px);
+            border-color: rgba(223, 166, 104, 0.6);
+            box-shadow: 0 0 10px rgba(223, 166, 104, 0.25), 0 5px 12px rgba(0, 0, 0, 0.8);
+        }
+
+        .vent-btn.active {
+            background: radial-gradient(circle at 40% 30%, #4a1515 0%, #200808 90%);
+            border-color: #ff5252;
+            box-shadow: 0 0 12px rgba(244, 67, 54, 0.4), inset 0 0 6px rgba(255, 82, 82, 0.3);
+        }
+
+        .vent-icon {
+            width: 16px;
+            height: 16px;
+            fill: none;
+            stroke: #998f86;
+            stroke-width: 1.8;
+            transition: stroke 0.3s;
+        }
+
+        .vent-btn:hover .vent-icon {
+            stroke: #dcd3c5;
+        }
+
+        .vent-btn.active .vent-icon {
+            stroke: #ff8a80;
+        }
+
+        /* --- 抽屉折叠系统 --- */
+        .drawer {
+            width: 100%;
+            margin-top: 10px;
+            background: rgba(10, 10, 12, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 6px;
+            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.9);
+            display: grid;
+            grid-template-rows: 0fr;
+            overflow: hidden;
+            opacity: 0;
+            transition: grid-template-rows 0.4s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.35s ease;
+        }
+
+        .drawer.open {
+            grid-template-rows: 1fr;
+            opacity: 1;
+            margin-bottom: 2px;
+        }
+
+        .drawer-content {
+            min-height: 0;
+            padding: 0 10px;
+            font-size: 12px;
+        }
+
+        /* --- 🎴 抽屉一：结缘丝弦 --- */
+        .bond-block {
+            padding: 3px 2px;
+        }
+
+        .bond-block:first-child {
+            margin-bottom: 8px;
+        }
+
+        .bond-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            font-size: 12.5px;
+        }
+
+        .bond-title {
+            display: inline-block;
+            font-size: 10px;
+            padding: 1px 5px;
+            margin-left: 4px;
+            color: var(--c-gold-leaf);
+            border: 1px solid rgba(223, 166, 104, 0.4);
+            border-radius: 2px;
+        }
+
+        @keyframes seal-stamp {
+            0% {
+                transform: scale(2.2) rotate(-15deg);
+                opacity: 0;
+                color: #ff5252;
+                border-color: #ff5252;
+            }
+
+            100% {
+                transform: scale(1) rotate(0deg);
+                opacity: 1;
+            }
+        }
+
+        .bond-title.rankup {
+            animation: seal-stamp 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+        }
+
+        .resonance-string-track {
+            position: relative;
+            width: 100%;
+            height: 2.5px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 2px;
+            margin: 6px 0 2px 0;
+            overflow: hidden;
+        }
+
+        .resonance-string-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #6e1d1d, #c62828 70%, var(--c-gold-leaf) 100%);
+            border-radius: 2px;
+            box-shadow: 0 0 4px rgba(223, 166, 104, 0.35);
+            transition: width 0.8s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+
+        .bond-sub-hint {
+            display: none;
+            font-size: 10.5px;
+            color: #b05c5c;
+            font-family: "Kaiti", serif;
+            font-style: italic;
+            letter-spacing: 0.5px;
+            margin-top: 4px;
+            line-height: 1.35;
+        }
+
+        /* --- 📜 抽屉二：百物语封印录 & 奇物展柜 --- */
+        .archive-stats {
+            padding: 8px 4px 6px 4px;
+            text-align: center;
+            border-bottom: 1px dashed rgba(143, 38, 38, 0.2);
+        }
+
+        .archive-title {
+            font-size: 13.5px;
+            font-weight: bold;
+            color: var(--c-gold-leaf);
+            letter-spacing: 2px;
+        }
+
+        .archive-sub {
+            font-size: 10px;
+            color: #777;
+            margin-top: 2px;
+            letter-spacing: 1px;
+        }
+
+        /* 自然雅致的空白扉页态：彻底告别文件上传框 */
+        .archive-empty-leaf {
+            padding: 24px 10px;
+            text-align: center;
+        }
+
+        .empty-leaf-text {
+            font-size: 11.5px;
+            color: #73695f;
+            font-family: "Kaiti", serif;
+            letter-spacing: 2px;
+            opacity: 0.85;
+        }
+
+        .empty-leaf-text::before,
+        .empty-leaf-text::after {
+            content: "—";
+            color: rgba(143, 38, 38, 0.5);
+            margin: 0 8px;
+            font-family: sans-serif;
+        }
+
+        /* 怪谈卷宗条目 */
+        .archive-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 155px;
+            overflow-y: auto;
+            padding: 8px 2px 4px 2px;
+        }
+
+        .seal-dossier {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 7px 10px;
+            background: #141314;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            border-left: 2.5px solid #8f2626;
+            border-radius: 2px;
+            color: #d8cbb8;
+            cursor: pointer;
+            transition: all 0.25s ease;
+        }
+
+        .seal-dossier:hover {
+            background: #201313;
+            border-left-color: #ff5252;
+            transform: translateX(2px);
+        }
+
+        .seal-dossier.active-dossier {
+            background: #241414;
+            border-color: rgba(143, 38, 38, 0.4);
+            border-left-color: #ff5252;
+            box-shadow: inset 0 0 10px rgba(143, 38, 38, 0.25);
+        }
+
+        .seal-stamp {
+            color: rgba(143, 38, 38, 0.8);
+            border: 1.5px solid rgba(143, 38, 38, 0.6);
+            padding: 1px 4px;
+            font-size: 10px;
+            transform: rotate(-10deg);
+            transition: all 0.2s;
+        }
+
+        .seal-dossier.active-dossier .seal-stamp {
+            color: #ff5252;
+            border-color: #ff5252;
+            box-shadow: 0 0 5px rgba(255, 82, 82, 0.5);
+        }
+
+        /* 纪念品奇物标本盒 */
+        .souvenir-detail {
+            margin: 8px 2px 4px 2px;
+            padding: 10px 12px;
+            background: radial-gradient(ellipse at 50% 0%, rgba(139, 90, 43, 0.12), transparent 75%), #14100d;
+            border: 1px solid #4a2a1a;
+            border-top: 2px solid #8b5a2b;
+            border-radius: 3px;
+            display: none;
+            text-align: left;
+            position: relative;
+            box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.9), 0 4px 8px rgba(0, 0, 0, 0.6);
+            animation: fadeIn 0.3s ease;
+        }
+
+        .souvenir-detail::before {
+            content: "";
+            position: absolute;
+            inset: 2px;
+            border: 1px solid rgba(139, 90, 43, 0.15);
+            pointer-events: none;
+        }
+
+        .sv-title {
+            color: #f0d9a8;
+            font-size: 12.5px;
+            font-weight: bold;
+            margin-bottom: 6px;
+            border-bottom: 1px dashed rgba(139, 90, 43, 0.4);
+            padding-bottom: 4px;
+            letter-spacing: 1.5px;
+        }
+
+        .sv-title::before {
+            content: "❖";
+            color: var(--c-border-vermilion);
+            margin-right: 5px;
+            font-size: 9px;
+        }
+
+        .sv-desc {
+            color: #c4b39f;
+            font-size: 11px;
+            line-height: 1.6;
+            font-family: "Kaiti", "SimSun", serif;
+            font-style: italic;
+        }
+
+        .sv-location {
+            margin-top: 6px;
+            padding-top: 4px;
+            border-top: 1px dashed rgba(139, 90, 43, 0.2);
+            font-size: 10px;
+            color: rgba(200, 176, 144, 0.5);
+            text-align: right;
+            letter-spacing: 1px;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-4px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* --- 🍂 抽屉三：岁时日历短册 --- */
+        .cal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
+            padding: 10px 4px 6px 4px;
+            margin-bottom: 12px;
+        }
+
+        .cal-date-main {
+            font-size: 16px;
+            font-weight: bold;
+            color: #f5eedf;
+            letter-spacing: 1.5px;
+        }
+
+        .cal-season {
+            font-size: 11px;
+            padding: 1px 6px;
+            border-radius: 3px;
+            border: 1px solid;
+            font-weight: bold;
+        }
+
+        .cal-event-box {
+            position: relative;
+            margin: 6px 2px 10px 2px;
+            padding: 14px 12px 12px 14px;
+            background:
+                radial-gradient(ellipse at 50% 0%, rgba(223, 166, 104, 0.07), transparent 70%),
+                linear-gradient(180deg, #1d1916 0%, #120f0d 100%);
+            border: 1px solid rgba(216, 203, 184, 0.12);
+            border-bottom: 2px solid rgba(0, 0, 0, 0.85);
+            border-radius: 2px;
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.7), inset 0 0 14px rgba(0, 0, 0, 0.8);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .cal-event-box::before {
+            content: "";
+            position: absolute;
+            inset: 3px;
+            border: 1px solid rgba(255, 255, 255, 0.035);
+            border-left: 2.5px solid var(--season-color, #8f2626);
+            pointer-events: none;
+        }
+
+        .cal-event-box:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.85);
+        }
+
+        .cal-tape {
+            position: absolute;
+            top: -7px;
+            left: 50%;
+            transform: translateX(-50%) rotate(-2.5deg);
+            width: 54px;
+            height: 14px;
+            background: rgba(168, 68, 68, 0.42);
+            border-left: 1.5px dashed rgba(0, 0, 0, 0.35);
+            border-right: 1.5px dashed rgba(0, 0, 0, 0.35);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.45);
+            backdrop-filter: blur(1px);
+            z-index: 5;
+            pointer-events: none;
+        }
+
+        .cal-event-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10.5px;
+            color: #888;
+            position: relative;
+            z-index: 2;
+        }
+
+        .cal-event-name {
+            font-size: 13.5px;
+            color: #f0e6d6;
+            text-align: center;
+            font-weight: bold;
+            letter-spacing: 1px;
+            position: relative;
+            z-index: 2;
+        }
+
+        .cal-event-name::before {
+            content: "「";
+            color: var(--season-color, #888);
+            margin-right: 2px;
+        }
+
+        .cal-event-name::after {
+            content: "」";
+            color: var(--season-color, #888);
+            margin-left: 2px;
+        }
+
+        .cal-holiday-preview {
+            font-size: 11px;
+            color: #a49787;
+            text-align: center;
+            margin: 6px 0;
+            padding-top: 6px;
+            border-top: 1px dashed rgba(255, 255, 255, 0.08);
+        }
+
+        .cal-haiku {
+            font-size: 11px;
+            color: #7a7065;
+            text-align: center;
+            padding: 4px 0 10px 0;
+            line-height: 1.7;
+            letter-spacing: 2px;
+        }
+
+        /* 经典和风弹窗 */
+        .confirm-modal {
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(2px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+            border-radius: 12px;
+        }
+
+        .confirm-modal.show {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .modal-content {
+            background: #161518;
+            border: 1px solid #8f2626;
+            padding: 16px;
+            width: 80%;
+            border-radius: 6px;
+            text-align: center;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.9);
+        }
+
+        .btn-modal {
+            border: none;
+            padding: 6px 14px;
+            border-radius: 3px;
+            font-family: inherit;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .btn-cancel {
+            background: #2a2a2a;
+            color: #aaa;
+        }
+
+        .btn-confirm {
+            background: #8f2626;
+            color: #f4e9d5;
+            margin-left: 10px;
+            box-shadow: 0 0 8px rgba(143, 38, 38, 0.6);
+        }
+
+        /* 关键词变动抽屉 */
+        .keyword-drawer {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            max-height: 0;
+            overflow: hidden;
+            opacity: 0;
+            transition: all 0.5s ease;
+        }
+
+        .keyword-drawer.open {
+            max-height: 160px;
+            opacity: 1;
+            padding: 8px 4px;
+            overflow-y: auto;
+        }
+
+        .log-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 4px 0;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
+        }
+
+        .word-old {
+            font-size: 12px;
+            color: #777;
+            position: relative;
+            margin-right: 6px;
+        }
+
+        .word-old::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 1.5px;
+            background: #8f2626;
+        }
+
+        .word-new {
+            font-size: 12.5px;
+            font-weight: bold;
+            color: var(--c-ghost-cyan);
+            border-left: 2px solid var(--c-ghost-cyan);
+            padding-left: 4px;
+        }
+    </style>
+
+    <script type="module">
+        const KIRAGA_TITLES = ['疏离', '熟悉', '信赖', '共鸣'];
+        const SAE_TITLES = ['观望', '守候', '贴近', '相伴'];
+        let lastKiragaLevel = -1;
+        let lastSaeLevel = -1;
+
+        const SCHOOL_CALENDAR = [
+            { date: "10月2日", id: 1002, event: "社团招新周" }, { date: "10月8日", id: 1008, event: "全校大扫除" },
+            { date: "10月15日", id: 1015, event: "期中考试前夕" }, { date: "10月20日", id: 1020, event: "修学旅行开始" },
+            { date: "10月24日", id: 1024, event: "修学旅行结束" }, { date: "10月29日", id: 1029, event: "绮罗香的生日" },
+            { date: "10月31日", id: 1031, event: "万圣节" },
+            { date: "11月2日", id: 1102, event: "学院祭·第一日" }, { date: "11月3日", id: 1103, event: "学院祭·后夜祭" },
+            { date: "11月11日", id: 1111, event: "光棍节" }, { date: "11月25日", id: 1125, event: "模拟志愿调查" },
+            { date: "12月10日", id: 1210, event: "期末考试周" }, { date: "12月24日", id: 1224, event: "平安夜" },
+            { date: "12月31日", id: 1231, event: "除夕·跨年参拜" }, { date: "1月1日", id: 101, event: "元旦" },
+            { date: "1月4日", id: 104, event: "社团新年参拜" }, { date: "1月8日", id: 108, event: "开学典礼" },
+            { date: "1月20日", id: 120, event: "大寒流" }, { date: "2月3日", id: 203, event: "节分" },
+            { date: "2月14日", id: 214, event: "情人节" },
+            { date: "2月20日", id: 220, event: "沙绘老师的生日" },
+            { date: "2月25日", id: 225, event: "校内马拉松大会" },
+            { date: "3月1日", id: 301, event: "毕业典礼" }, { date: "3月14日", id: 314, event: "白色情人节" },
+            { date: "3月25日", id: 325, event: "春假开始" }, { date: "4月6日", id: 406, event: "新学期分班" },
+            { date: "4月15日", id: 415, event: "社团巡礼" }, { date: "4月25日", id: 425, event: "全校体检" },
+            { date: "5月1日", id: 501, event: "黄金周开始" },
+            { date: "5月5日", id: 505, event: "黄金周结束" }, { date: "5月20日", id: 520, event: "五月病高发期" },
+            { date: "6月1日", id: 601, event: "夏装切换日" }, { date: "6月6日", id: 606, event: "梅雨季开始" },
+            { date: "6月14日", id: 614, event: "期中考试周" }, { date: "6月21日", id: 621, event: "夏至" },
+            { date: "7月7日", id: 707, event: "七夕" }, { date: "7月15日", id: 715, event: "泳池开启日" },
+            { date: "7月25日", id: 725, event: "暑假开始" }, { date: "8月8日", id: 808, event: "夏日花火大会" },
+            { date: "8月13日", id: 813, event: "盂兰盆节" }, { date: "8月20日", id: 820, event: "暑期林间学校" },
+            { date: "8月26日", id: 826, event: "社团合宿解散日" }, { date: "8月31日", id: 831, event: "暑假最后一天" },
+            { date: "9月1日", id: 901, event: "开学典礼" }, { date: "9月15日", id: 915, event: "体育祭" },
+            { date: "9月29日", id: 929, event: "赏月会" }
+        ];
+
+        const getSortWeight = (id) => {
+            const m = Math.floor(id / 100); const d = id % 100;
+            return (m >= 10 ? m - 10 : m + 2) * 100 + d;
+        };
+
+        function toKanjiNumber(n) {
+            n = Math.min(100, Math.max(0, Math.floor(n)));
+            const d = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+            if (n <= 9) return d[n];
+            if (n === 100) return '百';
+            const tens = Math.floor(n / 10); const ones = n % 10;
+            return (tens === 1 ? '十' : d[tens] + '十') + (ones ? d[ones] : '');
+        }
+
+        async function getSnapshotData() {
+            let isHistorical = false;
+            try {
+                const msgId = typeof getCurrentMessageId === 'function' ? getCurrentMessageId() : -1;
+                if (msgId !== -1 && typeof getChatMessages === 'function') {
+                    const msgs = await getChatMessages(msgId, 1);
+                    const chatArray = window.chat || (window.parent && window.parent.chat) || (window.top && window.top.chat) || [];
+                    isHistorical = (msgId < (chatArray.length > 0 ? chatArray.length - 1 : -1));
+                    if (msgs && msgs[0] && msgs[0].data) return { data: JSON.parse(JSON.stringify(msgs[0].data)), isHistorical };
+                }
+                const Mvu = window.Mvu || (window.parent && window.parent.Mvu) || (window.top && window.top.Mvu);
+                if (Mvu) return { data: JSON.parse(JSON.stringify(Mvu.getMvuData({ type: 'message', message_id: -1 }) || {})), isHistorical: false };
+            } catch (e) { console.warn("[Lantern] Snapshot error", e); }
+            return { data: {}, isHistorical };
+        }
+
+        let resizeTimer = null;
+        function reportHeight() {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => {
+                const wrapper = document.querySelector('.lantern-wrapper');
+                const h = wrapper ? wrapper.offsetHeight + 10 : document.body.scrollHeight;
+                if (window.parent) {
+                    window.parent.postMessage({ type: 'iframe-resize', height: h, source: 'lantern-ui' }, '*');
+                    window.parent.postMessage({ type: 'resizeIframe', height: h }, '*');
+                }
+                try { if (window.frameElement) window.frameElement.style.height = h + 'px'; } catch (e) { }
+            }, 50);
+        }
+        window.__lanternRO = new ResizeObserver(() => reportHeight());
+        window.__lanternRO.observe(document.body);
+
+        async function updateMvuVar(path, value) {
+            try {
+                const Mvu = window.Mvu || (window.parent && window.parent.Mvu) || (window.top && window.top.Mvu);
+                if (!Mvu) return;
+                const mvuData = Mvu.getMvuData({ type: 'message', message_id: -1 });
+                if (!mvuData) return;
+                if (typeof _ !== 'undefined' && _.set) _.set(mvuData, path, value);
+                await Mvu.replaceMvuData(mvuData, { type: 'message', message_id: -1 });
+                if (Mvu.events && typeof $ !== 'undefined') {
+                    $(document).trigger({ type: Mvu.events.VARIABLE_UPDATE_ENDED, detail: { stat_data: mvuData.stat_data || mvuData } });
+                }
+            } catch (e) { console.error("[Lantern Update]", e); }
+        }
+
+        let isTutorialCompleted = false;
+
+        function applyPhase($shell, $stage, $lantern, phase, isTutorialDone, currentMP, isHistorical) {
+            $lantern.removeClass('flame-lit flame-haunted mp-5 mp-4 mp-3 mp-2 mp-critical interactive member-ready tutorial-sealed');
+            $stage.removeClass('interactive');
+            $shell.removeClass('haunted-glow');
+            isTutorialCompleted = !!isTutorialDone;
+
+            if (!isHistorical && (phase === '日常' || phase === '结算')) {
+                $stage.addClass('interactive');
+                $lantern.addClass('interactive');
+                if (isTutorialDone) {
+                    $lantern.addClass('member-ready').attr('title', '点击点亮青行灯 (推进剧情)');
+                } else {
+                    $lantern.addClass('tutorial-sealed').attr('title', '青行灯尚未注灵（封印中）');
+                }
+            } else {
+                $lantern.attr('title', '');
+            }
+
+            if (phase === '导入') $lantern.addClass('flame-lit');
+            if (phase === '怪谈') {
+                $lantern.addClass('flame-haunted'); $shell.addClass('haunted-glow');
+                if (currentMP >= 5) $lantern.addClass('mp-5');
+                else if (currentMP === 4) $lantern.addClass('mp-4');
+                else if (currentMP === 3) $lantern.addClass('mp-3');
+                else if (currentMP === 2) $lantern.addClass('mp-2');
+                else $lantern.addClass('mp-critical');
+            }
+            reportHeight();
+        }
+
+        function handleLanternClick() {
+            if (!isTutorialCompleted) {
+                $('#lantern-stage').removeClass('shake');
+                void document.getElementById('lantern-stage').offsetWidth;
+                $('#lantern-stage').addClass('shake');
+
+                $('#modal-desc-text').html('青行灯静默无声。<br>你尚未通过入部试炼，无法唤醒幽火。<br><span style="color:#888; font-size:11.5px;">（请先与长椅上的绮罗香完成对话）</span>');
+                $('#btn-modal-cancel').text('明白').show();
+                $('#btn-modal-confirm').hide();
+                $('#confirm-modal').addClass('show');
+                reportHeight();
+                return;
+            }
+
+            $('#modal-desc-text').html('即将跳过当前时间<br>并开始下一次社团怪谈活动。<br><span style="color:#a62626; font-size:12px;">（将自动推进剧情）</span>');
+            $('#btn-modal-cancel').text('犹豫').show();
+            $('#btn-modal-confirm').text('点亮').show();
+            $('#confirm-modal').addClass('show');
+            reportHeight();
+        }
+
+        function hideConfirm() { $('#confirm-modal').removeClass('show'); reportHeight(); }
+
+        async function executeNextStory() {
+            hideConfirm();
+            await updateMvuVar('stat_data.游戏状态.当前阶段', '导入');
+            await updateMvuVar('stat_data.游戏状态.当前怪谈标题', '（未知怪谈）');
+            await updateMvuVar('stat_data.白物语注册表', {});
+            $('#phase-text').text('青行灯被点亮');
+            $('#lantern-stage').removeClass('interactive');
+            $('#lantern-core').removeClass('interactive member-ready tutorial-sealed').addClass('flame-lit');
+
+            const findEl = (id) => {
+                let el = document.getElementById(id);
+                if (!el && window.parent && window.parent.document) el = window.parent.document.getElementById(id);
+                return el;
+            };
+            const textarea = findEl('send_textarea');
+            const sendBtn = findEl('send_but');
+            const text = "很快，下一次社团活动的时间到了。";
+            if (textarea && sendBtn) {
+                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+                if (nativeSetter) nativeSetter.call(textarea, text); else textarea.value = text;
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                textarea.dispatchEvent(new Event('change', { bubbles: true }));
+                textarea.focus();
+                setTimeout(() => sendBtn.click(), 250);
+            }
+        }
+
+        function populateStatus(data, isHistorical) {
+            if (typeof $ === 'undefined' || typeof _ === 'undefined') return;
+            const all = data || {};
+
+            const phase = _.get(all, 'stat_data.游戏状态.当前阶段', '日常');
+            const title = _.get(all, 'stat_data.游戏状态.当前怪谈标题', '无');
+            const isTutorialDone = _.get(all, 'stat_data.游戏状态.新手引导已完成', false);
+            const isSaeRevealed = _.get(all, 'stat_data.游戏状态.沙绘已登场', false);
+            const currentMP = _.get(all, 'stat_data.玩家状态.灵力', 5);
+
+            const env = _.get(all, 'stat_data.环境状态', {});
+            const location = env.当前地点 || '怪谈社活动室';
+            const isKiragaPresent = _.get(env, '在场角色.白川绮罗香', true);
+            const isSaePresent = _.get(env, '在场角色.绪川沙绘', false);
+
+            $('#env-location-text').text(location);
+            $('#kata-kiraga').toggleClass('active', isKiragaPresent).toggleClass('absent', !isKiragaPresent);
+
+            if (isSaePresent) {
+                $('#kata-sae').addClass('active').removeClass('absent').show();
+            } else {
+                $('#kata-sae').removeClass('active').addClass('absent');
+                if (!isSaeRevealed) $('#kata-sae').hide(); else $('#kata-sae').show();
+            }
+
+            $('#lantern-shell').toggleClass('historical-snapshot', isHistorical);
+
+            const isPeace = (phase === '日常' || phase === '结算');
+            $('#spirit-bar-container').toggleClass('phase-collapse', isPeace);
+
+            let phaseDisplay = '';
+            if (phase === '日常') {
+                phaseDisplay = isTutorialDone ? '仪式尚未开始' : '入部届前';
+            } else if (phase === '导入') {
+                phaseDisplay = '青行灯被点亮';
+            } else if (phase === '怪谈') {
+                phaseDisplay = '怪谈正在回应';
+            } else {
+                phaseDisplay = '记录即将封存';
+            }
+            $('#phase-text').text(phaseDisplay);
+
+            const shouldShowTitle = title && title !== '无' && title.trim() !== '';
+            if (shouldShowTitle) $('#title-text').text(`《${title}》`).removeClass('phase-collapse');
+            else $('#title-text').text('').addClass('phase-collapse');
+
+            applyPhase($('#lantern-shell'), $('#lantern-stage'), $('#lantern-core'), phase, isTutorialDone, currentMP, isHistorical);
+
+            // 灵力点
+            const $mpContainer = $('#spirit-bar');
+            $mpContainer.empty();
+            for (let i = 0; i < 5; i++) {
+                $mpContainer.append(`<div class="hitodama ${i < currentMP ? 'active' : ''}"></div>`);
+            }
+            $('#mp-label').text(currentMP <= 0 ? "灵力耗尽" : "言灵力");
+
+            // ================= 🎴 抽屉一渲染 =================
+            const pendingEvents = _.get(all, 'stat_data.系统状态.待处理事件', {});
+
+            // 1. 白川绮罗香
+            const favor = _.get(all, 'stat_data.角色状态.白川绮罗香.好感度', 0);
+            const kiragaLevel = Math.min(3, Math.max(0, _.get(all, 'stat_data.角色状态.白川绮罗香.好感度等级', 0)));
+            const kCap = [20, 50, 80, 100][kiragaLevel] || 100;
+            let kRankUp = (!isHistorical && lastKiragaLevel >= 0 && kiragaLevel > lastKiragaLevel);
+            if (!isHistorical) lastKiragaLevel = kiragaLevel;
+
+            $('#res-fill-kiraga').css('width', Math.min((favor / kCap) * 100, 100) + '%');
+            $('#kiraga-name-display').html(`白川 绮罗香 <span class="bond-title ${kRankUp ? 'rankup' : ''}">${KIRAGA_TITLES[kiragaLevel]}</span>`);
+            $('#kiraga-num-display').text(`${favor} / ${kCap}`);
+
+            const kBottleneck = pendingEvents['系统_好感瓶颈'];
+            if (kBottleneck) {
+                $('#kiraga-sub-hint').text(`“${kBottleneck}”`).show();
+            } else {
+                $('#kiraga-sub-hint').text('').hide();
+            }
+
+            // 2. 绪川沙绘
+            const saeFavor = _.get(all, 'stat_data.角色状态.绪川沙绘.好感度', 0);
+            const saeLevel = Math.min(3, Math.max(0, _.get(all, 'stat_data.角色状态.绪川沙绘.好感度等级', 0)));
+            const sCap = [30, 60, 90, 100][saeLevel] || 100;
+            if (!isSaeRevealed) {
+                $('#sae-name-display').html(`<span style="color:#666;">??? (指导老师)</span>`);
+                $('#sae-num-display').text(`? / ?`);
+                $('#res-fill-sae').css('width', '0%');
+                $('#sae-sub-hint').text('').hide();
+                if (!isHistorical) lastSaeLevel = -1;
+            } else {
+                let sRankUp = (!isHistorical && lastSaeLevel >= 0 && saeLevel > lastSaeLevel);
+                if (!isHistorical) lastSaeLevel = saeLevel;
+
+                $('#res-fill-sae').css('width', Math.min((saeFavor / sCap) * 100, 100) + '%');
+                $('#sae-name-display').html(`绪川 沙绘 <span class="bond-title ${sRankUp ? 'rankup' : ''}">${SAE_TITLES[saeLevel]}</span>`);
+                $('#sae-num-display').text(`${saeFavor} / ${sCap}`);
+
+                const sBottleneck = pendingEvents['系统_沙绘瓶颈'];
+                if (sBottleneck) {
+                    $('#sae-sub-hint').text(`“${sBottleneck}”`).show();
+                } else {
+                    $('#sae-sub-hint').text('').hide();
+                }
+            }
+
+            // ================= 📜 抽屉二渲染 =================
+            const archives = _.get(all, 'stat_data.档案库.已完成怪谈', {});
+            const solvedCount = Object.keys(archives).length;
+
+            // 1. 典雅标题：0篇时叫“等待启封”，有怪谈后才称“第X夜”
+            if (solvedCount === 0) {
+                $('#archive-stats').html(
+                    '<div class="archive-title">物語：等待启封</div>' +
+                    '<div class="archive-sub">百物语 · 卷首空白</div>'
+                );
+            } else {
+                $('#archive-stats').html(
+                    `<div class="archive-title">物語 · 第${toKanjiNumber(solvedCount)}夜 <span style="font-size:10px; font-family:monospace; opacity:0.6; font-weight:normal;">[ ${solvedCount}/100 ]</span></div>` +
+                    `<div class="archive-sub">已封存 ${solvedCount} 柱怪谈</div>`
+                );
+            }
+
+            // 2. 列表渲染或清爽空白扉页
+            let newArchiveHtml = '';
+            if (solvedCount === 0) {
+                newArchiveHtml =
+                    '<div class="archive-empty-leaf">' +
+                    '<div class="empty-leaf-text">纸页尚白，待青灯照夜</div>' +
+                    '</div>';
+                $('#souvenir-detail').hide();
+            } else {
+                Object.entries(archives).forEach(([t, rec]) => {
+                    const sName = encodeURIComponent(rec.纪念品名称 || "");
+                    const sDesc = encodeURIComponent(rec.纪念品描述 || "");
+                    newArchiveHtml += `<div class="seal-dossier" data-title="${t}" data-sname="${sName}" data-sdesc="${sDesc}"><span style="letter-spacing:1px; z-index:1;">${t}</span><span class="seal-stamp">封</span></div>`;
+                });
+            }
+
+            if ($('#archive-scroll').html() !== newArchiveHtml) {
+                $('#archive-scroll').html(newArchiveHtml);
+
+                // 3. 奇物展柜点击联动
+                $('.seal-dossier').off('click').on('click', function () {
+                    const wasActive = $(this).hasClass('active-dossier');
+                    $('.seal-dossier').removeClass('active-dossier');
+                    $('#souvenir-detail').hide();
+
+                    if (!wasActive) {
+                        $(this).addClass('active-dossier');
+                        const name = decodeURIComponent($(this).attr('data-sname') || "");
+                        const desc = decodeURIComponent($(this).attr('data-sdesc') || "");
+
+                        if (name) {
+                            $('#sv-title').text('纪念品：' + name);
+                            $('#sv-desc').text(desc || "此物留于活动室中，气息已归于平静。");
+                        } else {
+                            $('#sv-title').text('无残留之物');
+                            $('#sv-desc').text('异化消散，未在现世留下痕迹。');
+                        }
+                        $('#souvenir-detail').show();
+                    }
+                    reportHeight();
+                });
+            }
+
+            // ================= 🍂 抽屉三渲染 =================
+            const dateStr = _.get(all, 'stat_data.日历.当前日期', '10月2日');
+            const mMatch = dateStr.match(/(d+)s*月s*(d+)/);
+            let month = 10, day = 2;
+            if (mMatch) { month = parseInt(mMatch[1]); day = parseInt(mMatch[2]); }
+            const year = (month >= 4 && month <= 12) ? 2024 : 2025;
+            const currentDateObj = new Date(year, month - 1, day);
+            const weekDays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+            const currentWeekDay = weekDays[currentDateObj.getDay()];
+
+            function getDayStatus(y, m, d) {
+                const wd = new Date(y, m - 1, d).getDay(); const md = m * 100 + d;
+                if (md >= 725 && md <= 831) return { rest: true, type: "暑假" };
+                if (md >= 1225 || md <= 107) return { rest: true, type: "寒假" };
+                if (md >= 325 && md <= 405) return { rest: true, type: "春假" };
+                if (md >= 429 && md <= 505) return { rest: true, type: "黄金周" };
+                if ([101, 211, 223, 320, 811, 1103, 1123].includes(md)) return { rest: true, type: "法定假日" };
+                if (wd === 0 || wd === 6) return { rest: true, type: "周末" };
+                return { rest: false, type: "平日" };
+            }
+            const todayStatus = getDayStatus(year, month, day);
+
+            let seasonConfig;
+            if (month >= 3 && month <= 5) {
+                seasonConfig = { text: "春季", color: "#f48fb1", haiku: "春寒入夜半<br>笔尖轻颤字未干<br>花落掩旧坛" };
+            } else if (month >= 6 && month <= 8) {
+                seasonConfig = { text: "夏季", color: "#4dd0e1", haiku: "骤雨暗回廊<br>青灯摇曳影惊墙<br>蝉泣送斜阳" };
+            } else if (month >= 9 && month <= 11) {
+                seasonConfig = { text: "秋季", color: "#dfa668", haiku: "秋风翻旧卷<br>谁人低语在耳畔<br>回头却不见" };
+            } else {
+                seasonConfig = { text: "冬季", color: "#81d4fa", haiku: "雪夜掩重门<br>炉火微温伴孤魂<br>闲话了无痕" };
+            }
+
+            $('#cal-haiku-display').html(seasonConfig.haiku);
+            $('#cal-season-display').text(seasonConfig.text).css({ 'color': seasonConfig.color, 'border-color': seasonConfig.color + '50' });
+            $('#cal-date-display').text(dateStr + " " + currentWeekDay);
+
+            const currentWeight = getSortWeight(month * 100 + day);
+            let nextEvent = SCHOOL_CALENDAR.find(e => getSortWeight(e.id) >= currentWeight) || SCHOOL_CALENDAR[0];
+            const $eventBox = $('#cal-event-box');
+            if (nextEvent.id === (month * 100 + day)) {
+                $eventBox.css('--season-color', '#ffca28');
+                $('#cal-event-badge').html(`<span style="color:#ffca28;">◆ 今日事件</span>`);
+            } else {
+                $eventBox.css('--season-color', seasonConfig.color);
+                const tarMonth = Math.floor(nextEvent.id / 100); const tarDay = nextEvent.id % 100;
+                const targetYear = (tarMonth < 4 && year === 2024) ? 2025 : (tarMonth >= 4 && year === 2025) ? 2024 : year;
+                let dayDiff = Math.ceil((new Date(targetYear, tarMonth - 1, tarDay) - currentDateObj) / (1000 * 60 * 60 * 24));
+                if (dayDiff < 0) dayDiff += 365;
+                $('#cal-event-badge').html(`距今 <span style="color:${seasonConfig.color};">${dayDiff > 60 ? "未来日程" : `${dayDiff} 天后`}</span>`);
+            }
+            $('#cal-next-event').text(nextEvent.event);
+
+            let nextHolidayStr = "";
+            if (todayStatus.rest) {
+                nextHolidayStr = `>>> 今日休息（${todayStatus.type}） <<<`;
+            } else {
+                for (let d = 1; d <= 7; d++) {
+                    let tDate = new Date(year, month - 1, day + d);
+                    let chk = getDayStatus(tDate.getFullYear(), tDate.getMonth() + 1, tDate.getDate());
+                    if (chk.rest) {
+                        nextHolidayStr = d === 1 ? `预告：明日休息（${chk.type}）` : `距下个休息日还有 ${d} 天`;
+                        break;
+                    }
+                }
+            }
+            $('#cal-holiday-preview').text(nextHolidayStr || "近期暂无假日");
+
+            // 关键词言灵日志
+            const $kw = $('#drawer-keywords');
+            const registry = _.get(all, 'stat_data.白物语注册表', {});
+            const entries = Object.entries(registry);
+            if (entries.length > 0 || phase === '怪谈') {
+                $kw.addClass('open');
+                $kw.empty();
+                if (entries.length === 0) {
+                    $kw.append('<div style="text-align:center; color:#555; font-size:11px;">等待言灵改写...</div>');
+                } else {
+                    entries.forEach(([oldW, d]) => {
+                        $kw.append(`<div class="log-row"><span class="word-old">${oldW}</span><span style="color:#8f2626; margin:0 6px;">➜</span><span class="word-new">${d.改写后文本 || "???"}</span></div>`);
+                    });
+                }
+            } else {
+                $kw.removeClass('open').empty();
+            }
+
+            reportHeight();
+        }
+
+        function toggleDrawer(id, btnId) {
+            const $target = $(id); const isOpen = $target.hasClass('open');
+            $('.drawer').removeClass('open'); $('.vent-btn').removeClass('active');
+            if (!isOpen) { $target.addClass('open'); $(btnId).addClass('active'); }
+            reportHeight();
+        }
+
+        async function init() {
+            if (typeof $ === 'undefined' && window.parent && window.parent.$) window.$ = window.parent.$;
+            if (typeof _ === 'undefined' && window.parent && window.parent._) window._ = window.parent._;
+            const snapshotInfo = await getSnapshotData();
+
+            $('#btn-resonance').off('click').on('click', () => toggleDrawer('#drawer-resonance', '#btn-resonance'));
+            $('#btn-seal').off('click').on('click', () => toggleDrawer('#drawer-seal', '#btn-seal'));
+            $('#btn-calendar').off('click').on('click', () => toggleDrawer('#drawer-calendar', '#btn-calendar'));
+
+            if (!snapshotInfo.isHistorical) {
+                $('#lantern-stage').off('click').on('click', function (e) {
+                    e.stopPropagation();
+                    handleLanternClick();
+                });
+                $('#btn-modal-cancel').off('click').on('click', hideConfirm);
+                $('#btn-modal-confirm').off('click').on('click', executeNextStory);
+            }
+
+            populateStatus(snapshotInfo.data, snapshotInfo.isHistorical);
+            reportHeight();
+        }
+
+        $(init);
+    </script>
+</head>
+
+<body>
+    <div class="lantern-wrapper">
+        <div class="confirm-modal" id="confirm-modal">
+            <div class="modal-content">
+                <div id="modal-desc-text" style="font-size:13.5px; line-height:1.6; margin-bottom:14px;
+                    color:#ccc;"></div>
+                <div style="display:flex; justify-content:center; gap:12px;">
+                    <button class="btn-modal btn-cancel" id="btn-modal-cancel">明白</button>
+                    <button class="btn-modal btn-confirm" id="btn-modal-confirm">点亮</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="lantern-shell" id="lantern-shell">
+            <div class="sealed-watermark">已封存</div>
+
+            <div class="env-info-container">
+                <div class="env-location">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M12 2C11.5 2 11 2.19 10.59 2.59L2.59 10.59C1.8 11.37 1.8 12.63 2.59 13.41L10.59
+                            21.41C11.37 22.2 12.63 22.2 13.41 21.41L21.41 13.41C22.2 12.63 22.2 11.37 21.41 10.59L13.41
+                            2.59C13 2.19 12.5 2 12 2M12 4L19 11L12 18L5 11L12 4M12 8A3 3 0 0,0 9 11A3 3 0 0,0 12 14A3 3
+                            0 0,0 15 11A3 3 0 0,0 12 8Z" />
+                    </svg>
+                    <span id="env-location-text">怪谈社活动室</span>
+                </div>
+                <div class="env-presence">
+                    <div class="katashiro kiraga" id="kata-kiraga" title="白川绮罗香">
+                        <svg viewBox="0 0 24 24">
+                            <path fill="currentColor" d="M12 2C10.9 2 10 2.9 10 4C10 5.1 10.9 6 12 6C13.1 6 14 5.1 14
+                                4C14 2.9 13.1 2 12 2ZM7 8C5.9 8 5 8.9 5 10V15H7V22H10V15H14V22H17V15H19V10C19 8.9 18.1 8
+                                17 8H7Z" />
+                        </svg>
+                    </div>
+                    <div class="katashiro sae" id="kata-sae" title="绪川沙绘" style="display:none;">
+                        <svg viewBox="0 0 24 24">
+                            <path fill="currentColor" d="M12 2C10.9 2 10 2.9 10 4C10 5.1 10.9 6 12 6C13.1 6 14 5.1 14
+                                4C14 2.9 13.1 2 12 2ZM7 8C5.9 8 5 8.9 5 10V15H7V22H10V15H14V22H17V15H19V10C19 8.9 18.1 8
+                                17 8H7Z" />
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <div class="lantern-stage" id="lantern-stage">
+                <div class="lantern-hanger"></div>
+                <div class="lantern-cap"></div>
+                <div id="lantern-core" class="lantern">
+                    <div class="lantern-stand"></div>
+                    <div class="lantern-wick"></div>
+                    <div class="lantern-glow"></div>
+                </div>
+                <div class="lantern-base"></div>
+            </div>
+
+            <div class="phase-text" id="phase-text">招新入部中</div>
+            <div class="title-text phase-collapse" id="title-text"></div>
+
+            <div class="spirit-bar-container phase-collapse" id="spirit-bar-container">
+                <div class="spirit-bar" id="spirit-bar"></div>
+                <div class="mp-label" id="mp-label">言灵力</div>
+            </div>
+
+            <div class="vent-dock">
+                <div class="vent-btn" id="btn-resonance" title="同调羁绊">
+                    <svg class="vent-icon" viewBox="0 0 24 24">
+                        <path d="M12 2a10 10 0 0 0-7.07 17.07A10 10 0 0 0 12 22a10 10 0 0 0 7.07-2.93A10 10 0 0 0 12
+                            2zm0 4a3 3 0 1 1 0 6 3 3 0 0 1 0-6zm0 14a8 8 0 0 1-5.66-2.34A7.94 7.94 0 0 1 4
+                            12c0-2.21.9-4.21 2.34-5.66A7.94 7.94 0 0 1 12 4v2a6 6 0 0 0 0 12v2z" />
+                    </svg>
+                </div>
+                <div class="vent-btn" id="btn-seal" title="已封存百物语">
+                    <svg class="vent-icon" viewBox="0 0 24 24">
+                        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2
+                            10H7v-2h10v2zm0-4H7V7h10v2z" />
+                    </svg>
+                </div>
+                <div class="vent-btn" id="btn-calendar" title="岁时日历">
+                    <svg class="vent-icon" viewBox="0 0 24 24">
+                        <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9
+                            2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z" />
+                    </svg>
+                </div>
+            </div>
+
+            <!-- 🎴 抽屉一：同调羁绊 -->
+            <div class="drawer" id="drawer-resonance">
+                <div class="drawer-content" style="padding: 10px 6px 8px 6px;">
+                    <div class="bond-block">
+                        <div class="bond-header-row">
+                            <span id="kiraga-name-display" style="color:#f0e6d6;"></span>
+                            <span id="kiraga-num-display" style="font-family:monospace; opacity:0.75;"></span>
+                        </div>
+                        <div class="resonance-string-track">
+                            <div class="resonance-string-fill" id="res-fill-kiraga"></div>
+                        </div>
+                        <div class="bond-sub-hint" id="kiraga-sub-hint"></div>
+                    </div>
+                    <div class="bond-block">
+                        <div class="bond-header-row">
+                            <span id="sae-name-display" style="color:#d7ccc8;"></span>
+                            <span id="sae-num-display" style="font-family:monospace; opacity:0.75;"></span>
+                        </div>
+                        <div class="resonance-string-track">
+                            <div class="resonance-string-fill" id="res-fill-sae"></div>
+                        </div>
+                        <div class="bond-sub-hint" id="sae-sub-hint"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 📜 抽屉二：封印怪谈录 & 奇物展柜 -->
+            <div class="drawer" id="drawer-seal">
+                <div class="drawer-content" style="padding: 4px 6px 8px 6px;">
+                    <div class="archive-stats" id="archive-stats"></div>
+                    <div class="archive-list" id="archive-scroll"></div>
+                    <div class="souvenir-detail" id="souvenir-detail">
+                        <div class="sv-title" id="sv-title"></div>
+                        <div class="sv-desc" id="sv-desc"></div>
+                        <div class="sv-location">摆放在活动室……</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 🍂 抽屉三：岁时日历 -->
+            <div class="drawer" id="drawer-calendar">
+                <div class="drawer-content">
+                    <div class="cal-header">
+                        <div class="cal-date-main" id="cal-date-display">10月2日 周三</div>
+                        <div class="cal-season" id="cal-season-display">秋季</div>
+                    </div>
+                    <div class="cal-event-box" id="cal-event-box">
+                        <div class="cal-tape"></div>
+                        <div class="cal-event-header">
+                            <span>下次事件</span>
+                            <div id="cal-event-badge">计算中...</div>
+                        </div>
+                        <div class="cal-event-name" id="cal-next-event">--</div>
+                    </div>
+                    <div class="cal-holiday-preview" id="cal-holiday-preview">计算中...</div>
+                    <div class="cal-haiku" id="cal-haiku-display"></div>
+                </div>
+            </div>
+
+            <div id="drawer-keywords" class="keyword-drawer"></div>
+
+        </div>
+    </div>
+</body>
