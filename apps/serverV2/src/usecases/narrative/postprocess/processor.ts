@@ -38,7 +38,7 @@ export function processNarrativeOutput(text: string, state: Pick<StateService, '
   let suggestions: ActionSuggestionsOutput;
   try { suggestions = processActionSuggestions(extract('action_suggestions')); }
   catch {
-    suggestions = { status: 'processing_error', items: [], results: [],
+    suggestions = { status: 'processing_error', items: [],
       errors: [{ errorCode: 'OUTPUT_PROCESSING_FAILED' }] };
   }
   report('action_suggestions.result', { phase: 'prepared', ...suggestions });

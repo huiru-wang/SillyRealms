@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
+import type { RuntimeCache, RunWritePermit } from '../../infrastructure/cache/index.js';
 import { AppError } from '../../errors.js';
 import type { ModelReader } from '../models/service.js';
 import type { PresetReader } from '../presets/service.js';
 import type { WorldReader } from '../worlds/service.js';
 import { SessionRepository, type EntryRow, type SessionRow } from './repository.js';
 import { narrativeOutputSchema, type NarrativeOutput } from './output.js';
+import { readStoredNarrativeOutput } from './stored-output.js';
 import {
   appendEntrySchema, createSessionSchema, entryListSchema, identifier, metricsSchema,
   sessionListSchema, updateEntrySchema, updateSessionSchema, narrativeOutcomeSchema, entryRunListSchema,
@@ -26,10 +28,10 @@ export type {
 
 export type {
   NarrativeOutput, StateUpdateOutput, ActionSuggestionsOutput,
-  StateUpdateStatus, StateUpdateResult, ActionSuggestionsStatus, ActionSuggestionResult,
+  StateUpdateStatus, StateUpdateItem, ActionSuggestionsStatus,
 } from './output.js';
 
-type Dependencies = { worlds: WorldReader; presets: PresetReader; models: ModelReader };
+type Dependencies = { worlds: WorldReader; presets: PresetReader; models: ModelReader; cache: RuntimeCache };
 
 function toSession(row: SessionRow): Session {
   return {
@@ -46,7 +48,8 @@ function toSessionEntry(row: EntryRow): SessionEntry {
   return {
     ...kind,
     id: row.id, sessionId: row.session_id, parentId: row.parent_id, runId: row.run_id, seq: row.seq,
-    timestamp: row.timestamp, payload: row.payload, state: row.state, extData: row.ext_data,
+    timestamp: row.timestamp, payload: row.payload, state: row.state,
+    extData: row.ext_data.output === undefined ? row.ext_data : { ...row.ext_data, output: readStoredNarrativeOutput(row.ext_data.output) },
     metrics: row.metrics_json === null ? null : metricsSchema.parse(row.metrics_json),
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
@@ -69,6 +72,7 @@ export class SessionService {
 
   create(input: CreateSessionInput): Session {
     const value = createSessionSchema.parse(input);
+    if (value.id !== undefined) this.#dependencies.cache.assertSessionWrite(value.id);
     const world = this.#dependencies.worlds.require(value.worldId);
     if (!world.characters.some(character => character && typeof character === 'object' && !Array.isArray(character)
       && character.id === value.userCharacterId && character.player_selectable === true)) {
@@ -97,6 +101,7 @@ export class SessionService {
   }
 
   update(id: string, input: UpdateSessionInput): Session {
+    this.#dependencies.cache.assertSessionWrite(identifier.parse(id));
     const patch = updateSessionSchema.parse(input);
     this.require(id);
     if (patch.presetId !== undefined) this.#dependencies.presets.require(patch.presetId);
@@ -105,6 +110,7 @@ export class SessionService {
   }
 
   delete(id: string): boolean {
+    this.#dependencies.cache.assertSessionWrite(identifier.parse(id));
     return this.#repository.delete(identifier.parse(id));
   }
 
@@ -113,12 +119,14 @@ export class SessionService {
     return entry ? toSessionEntry(entry) : null;
   }
 
-  appendEntry(sessionId: string, input: AppendEntryInput): SessionEntry {
+  appendEntry(sessionId: string, input: AppendEntryInput, permit?: RunWritePermit): SessionEntry {
+    this.#dependencies.cache.assertSessionWrite(identifier.parse(sessionId), permit);
     return this.#appendEntry(sessionId, appendEntrySchema.parse(input));
   }
 
   /** Only narrative settlement may attach server-owned capability results. */
-  appendNarrativeAssistant(sessionId: string, input: AppendEntryInput, output: NarrativeOutput): SessionEntry {
+  appendNarrativeAssistant(sessionId: string, input: AppendEntryInput, output: NarrativeOutput, permit?: RunWritePermit): SessionEntry {
+    this.#dependencies.cache.assertSessionWrite(identifier.parse(sessionId), permit);
     const value = appendEntrySchema.parse(input);
     if (value.type !== 'message' || value.role !== 'assistant') {
       throw new AppError('INVALID_REQUEST', '后处理结果只能保存在叙事助手消息');
@@ -153,7 +161,7 @@ export class SessionService {
   }
 
   recordedUsage(sessionId: string) {
-    this.require(sessionId);
+    const session = this.require(sessionId);
     const knownUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
     let recordedRequestCount = 0, unknownUsageRequestCount = 0;
     for (const metrics of this.#repository.listMetrics(sessionId)) for (const request of metrics.requests) {
@@ -161,11 +169,35 @@ export class SessionService {
       if (request.usage === null) { unknownUsageRequestCount++; continue; }
       for (const key of Object.keys(knownUsage) as Array<keyof typeof knownUsage>) knownUsage[key] += request.usage[key];
     }
-    return { knownUsage, recordedRequestCount, unknownUsageRequestCount };
+    let latestContext: {
+      inputTokens: number | null; contextWindowTokens: number | null; modelId: string; stale: boolean;
+      contextComposition?: { systemBytes: number; summaryBytes: number; historyBytes: number };
+    } | null = null;
+    const latest = this.#repository.latestNarrativeMetrics(sessionId);
+    if (latest) {
+      const request = latest.metrics.requests.at(-1)!;
+      const snapshot = latest.metrics.context?.requestId === request.requestId ? latest.metrics.context : undefined;
+      const selected = this.#dependencies.models.get(session.apiModelConfigId);
+      let stale = !selected || selected.modelId !== request.modelId ||
+        (request.provider !== null && selected.providerId !== request.provider) ||
+        (snapshot !== undefined && snapshot.apiModelConfigId !== session.apiModelConfigId);
+      try {
+        stale ||= session.tipEntryId === null ||
+          !this.#readAncestors(sessionId, session.tipEntryId).some(entry => entry.id === latest.entryId);
+      } catch { stale = true; }
+      latestContext = {
+        inputTokens: request.usage?.inputTokens ?? null,
+        contextWindowTokens: snapshot?.contextWindowTokens ?? null,
+        modelId: request.modelId, stale,
+        ...(snapshot ? { contextComposition: snapshot.contextComposition } : {}),
+      };
+    }
+    return { knownUsage, recordedRequestCount, unknownUsageRequestCount, latestContext };
   }
 
-  setNarrativeOutcome(sessionId: string, entryId: string, outcome: NarrativeOutcome): SessionEntry {
+  setNarrativeOutcome(sessionId: string, entryId: string, outcome: NarrativeOutcome, permit?: RunWritePermit): SessionEntry {
     identifier.parse(sessionId); identifier.parse(entryId);
+    this.#dependencies.cache.assertSessionWrite(sessionId, permit);
     return toSessionEntry(this.#repository.setNarrativeOutcome(sessionId, entryId, narrativeOutcomeSchema.parse(outcome)));
   }
 
@@ -182,6 +214,7 @@ export class SessionService {
 
   updateEntry(sessionId: string, entryId: string, input: UpdateEntryInput): SessionEntry {
     identifier.parse(sessionId); identifier.parse(entryId);
+    this.#dependencies.cache.assertSessionWrite(sessionId);
     const patch = updateEntrySchema.parse(input);
     if (this.#requireEntry(sessionId, entryId).type === 'compaction' && (patch.payload !== undefined || patch.extData !== undefined)) {
       throw new AppError('INVALID_REQUEST', '摘要内容及覆盖范围仅允许由服务内部维护');
@@ -191,6 +224,7 @@ export class SessionService {
 
   /** NULL means no record; usage:null means a real request without reported usage. */
   setMetrics(sessionId: string, entryId: string, value: EntryMetrics | null): SessionEntry {
+    this.#dependencies.cache.assertSessionWrite(identifier.parse(sessionId));
     const metrics = value === null ? null : metricsSchema.parse(value);
     const current = this.#requireEntry(sessionId, entryId);
     this.#assertMetricsRole(current.role, metrics);
@@ -202,6 +236,7 @@ export class SessionService {
   }
 
   setState(sessionId: string, value: JsonObject): JsonObject {
+    this.#dependencies.cache.assertStateWrite(identifier.parse(sessionId));
     return this.#repository.setState(identifier.parse(sessionId), value);
   }
 
@@ -211,6 +246,7 @@ export class SessionService {
   }
 
   setEntryState(sessionId: string, entryId: string, value: JsonValue[] | null): JsonValue[] | null {
+    this.#dependencies.cache.assertStateWrite(identifier.parse(sessionId));
     return this.#repository.setEntryState(identifier.parse(sessionId), identifier.parse(entryId), value);
   }
 

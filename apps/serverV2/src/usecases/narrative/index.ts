@@ -37,6 +37,7 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
 
     const runId = randomUUID(), userEntryId = randomUUID(), assistantEntryId = randomUUID();
     const log = createRunLogger({ runId, sessionId }, dependencies.logSink);
+    const writePermit = dependencies.cache.acquireRun({ sessionId, worldId: session.worldId, runId });
     const run: ActiveRun = { runId, controller: new AbortController(), completion: Promise.resolve(), log };
     active.set(sessionId, run);
     let userMessage: SavedUserMessage;
@@ -46,10 +47,11 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
         id: userEntryId, parentId: expectedTipEntryId, runId, type: 'message', role: 'user', timestamp,
         payload: { message: { role: 'user', content: value.input.text, timestamp } },
         state: null, extData: {}, metrics: null,
-      });
+      }, writePermit);
       userMessage = { id: saved.id, role: 'user', content: value.input.text, timestamp: saved.timestamp };
     } catch (error) {
       active.delete(sessionId);
+      dependencies.cache.releaseRun(writePermit);
       throw error;
     }
 
@@ -88,10 +90,11 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
       messages: [{ ...userMessage }] }, userMessage.timestamp);
     // Queue run.created first, then synchronously capture through the sole context entry below.
     run.completion = Promise.resolve().then(() => executeNarrative(dependencies, {
-      sessionId, runId, userEntryId, assistantEntryId, userMessage, provider, model, prepared, getApiKey, signal: run.controller.signal, log,
+      sessionId, runId, userEntryId, assistantEntryId, userMessage, provider, model, prepared, getApiKey, signal: run.controller.signal, log, writePermit,
     })).then(settlement => {
       // Settlement is complete: observers may stop or submit a new turn without finding a stale active run.
       if (active.get(sessionId) === run) active.delete(sessionId);
+      dependencies.cache.releaseRun(writePermit);
       for (const event of [...settlement.notifications, settlement.usage, settlement.terminal]) {
         log(event.event, event.data, 'timestamp' in event.data ? event.data.timestamp : undefined);
         try { dependencies.events.publish(sessionId, event); }
@@ -99,12 +102,13 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
       }
     }).finally(() => {
       if (active.get(sessionId) === run) active.delete(sessionId);
+      dependencies.cache.releaseRun(writePermit);
     });
     const prepared: Promise<PreparedContext> = prepareContext({
       sessions: dependencies.sessions, worlds: dependencies.worlds, presets: dependencies.presets,
       models: dependencies.models, state: dependencies.state, modelClient: dependencies.modelClient, summarize,
     }, {
-      kind: 'narrative', sessionId, runId, userEntryId, inputText: value.input.text,
+      kind: 'narrative', sessionId, runId, userEntryId, inputText: value.input.text, writePermit,
       previousTipEntryId: expectedTipEntryId, signal: run.controller.signal,
       onProgress(progress) {
         const fields = { sessionId, runId, provider, model, timestamp: Date.now() };

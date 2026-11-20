@@ -136,7 +136,7 @@ data: {"runId":"r-1","sessionId":"s-1","provider":"deepseek","model":"deepseek-f
 
 ```
 
-成功同样使用 JSON run.completed，不输出裸 [DONE]。看见完整正文或模型 finish，不足以确认保存成功；以 run 终态和 entries/history 读取结果为准。
+成功同样使用 JSON run.completed，不输出裸 [DONE]。看见完整正文或模型 finish，不足以确认保存成功；以 run 终态和 entries 或 narrative/runs 读取结果为准。
 
 ## 状态事件
 

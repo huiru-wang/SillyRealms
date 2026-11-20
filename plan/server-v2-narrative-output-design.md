@@ -52,7 +52,7 @@
 
 ## 4. 各能力的结果状态
 
-状态与建议独立定义结果类型，不共享强制二态枚举。整体 status 描述能力结果，results 按输入顺序保存逐项诊断，errors 保存能力级诊断。
+状态与建议独立定义结果类型，不共享强制二态枚举。整体 status 描述能力结果，stateUpdate.updates 按输入行序保存成功/失败记录及其 status，actionSuggestions.items 只保存有效建议；两类 output 都不保存 results。errors 保存能力级诊断。
 
 ### 4.1 stateUpdate
 
@@ -65,7 +65,7 @@
 | 自身标签损坏 | invalid_tag |
 | 状态材料读取或能力计算异常 | processing_error |
 
-每条更新使用 `success / invalid_json / invalid_update / invalid_path / invalid_value / processing_error`。可附既有状态错误码、statePath/rulePath；不持久化 blockIndex、line 或 index。
+每条 updates 记录使用 `success / invalid_json / invalid_update / invalid_path / invalid_value / processing_error`。成功项必须保留 path/value，可含 reason；失败项保留可用的 path/value/reason 和既有状态错误码、statePath/rulePath，不能虚构缺失字段。不再单独保存 results，也不持久化 blockIndex、line 或 index。
 
 **invalid_tag 不执行该能力；partial_success 只用于标签完整后的逐行处理。** 任一行失败不回滚前后成功行。
 
@@ -81,7 +81,7 @@
 | JSON 不是数组或所有条目无效 | invalid_suggestions |
 | 能力处理器内部异常 | processing_error |
 
-单条建议使用 `success / empty_suggestion / invalid_suggestion`。空字符串或 trim 后为空记 empty_suggestion，跳过该项并保留其他有效建议；非字符串、长度等规则错误记 invalid_suggestion。
+空字符串或 trim 后为空、非字符串、长度或重复规则不通过的项直接过滤，保留其他有效建议。只保存能力整体 status、有效 items 和可选能力级 errors，不保存逐项 results。
 
 提示词要求优先生成三个建议，服务端不因有效项不足三个拒绝整组。每条 trim 后不超过 50 个 Unicode 码点，去除重复建议。`[]` 是正常无建议；`[""," "]` 是无效条目组成的数组。
 
@@ -93,7 +93,7 @@
 
 StateService.prepareMessageUpdates 复用现有规则和快照处理，只返回候选、成功更新、逐项结果和变化信息，不写库、不发事件。自然语言 reason/rules 不当作可执行条件。
 
-各能力有独立异常边界，状态内部再逐行隔离。状态定义或基础读取失败只影响状态能力，建议继续；建议错误不影响有效状态。每行规范化在接受候选前完成，updates 记录须与实际候选一致。
+各能力有独立异常边界，状态内部再逐行隔离。状态定义或基础读取失败只影响状态能力，建议继续；建议错误不影响有效状态。每行规范化在接受候选前完成，stateUpdate.updates 中 status=success 的记录须与实际候选一致；失败记录只作诊断。
 
 正常模型 stop、干净正文有效且主流程保存成功时，即使所有能力失败仍 completed。模型错误、length、取消、工具请求、正文无效、tip 冲突、正文/终态持久化错误仍使用主流程原语义。模型未正常完成时不执行能力，保存的部分助手不生成 output，不另造“未处理”状态。
 
@@ -117,24 +117,20 @@ extData: {
   output: {
     stateUpdate: {
       status: 'partial_success',
-      updates: [{ path: 'coins', value: 8 }],
-      results: [
-        { path: 'coins', status: 'success' },
+      updates: [
+        { path: 'coins', value: 8, reason: '购买食物', status: 'success' },
         { status: 'invalid_json', errorCode: 'STATE_UPDATE_JSON_INVALID' }
       ]
     },
     actionSuggestions: {
       status: 'partial_success',
-      items: ['继续询问店主。', '离开酒馆。'],
-      results: [
-        { status: 'success' },
-        { status: 'empty_suggestion' },
-        { status: 'success' }
-      ]
+      items: ['继续询问店主。', '离开酒馆。']
     }
   }
 }
 ```
+
+新写入严格使用上述结构。旧已保存 output 只在 SessionService 读取投影中归一化：按旧 results 的成功行顺序配对旧 updates，保留重复 path 及各自 value/reason，失败行不能变为成功；缺少可信成功载荷时记录 processing_error。旧建议仅移除 results。此读取适配不迁移或重写数据库，无 output 的旧 entry 不补造结果。
 
 同步收尾事务校验实际 tip/parent，准备状态候选及变更信息，原子保存助手正文、output、state、metrics 并推进 seq/tip。实际变化保存完整 message 快照；无变化继续 null 继承。状态变更在追加前计算，不能在追加后读取“已经变化”的前驱并漏报事件。
 
@@ -154,7 +150,7 @@ extData: {
 
 输出后处理只保存干净正文与结构化 output，不承担历史重建、拼接或重复执行。聊天、关键词激活和摘要继续使用干净正文。
 
-条目级 model-only notes 已转入独立[上下文方案](server-v2-context-design.md)建设，由输入侧选择和组装。stateUpdate.updates、actionSuggestions.items 是两个内部来源，读取已接受/有效结果，不依赖本模块解析器。旁注只进入本轮实际模型请求和输入估算，不改写历史，不新增 contextEligible、notes 表或持久化 schema。正文编辑保留当时处理结果的原有契约不变。
+条目级 model-only notes 已转入独立[上下文方案](server-v2-context-design.md)建设，由输入侧选择和组装。stateUpdate.updates、actionSuggestions.items 是两个内部来源：状态只读取 status=success 行的 path/value/reason，建议只读取有效 items；行状态和诊断不进入旁注，不依赖本模块解析器。旁注只进入本轮实际模型请求和输入估算，不改写历史，不新增 contextEligible、notes 表或持久化 schema。正文编辑保留当时处理结果的原有契约不变。
 
 ## 9. 实现职责与验收
 
@@ -173,10 +169,10 @@ extData: {
 - 大小写、跨分片、最终快照修正及能力文本不泄露。
 - 各能力只看自身标签：缺失、空、损坏、交错与其他能力独立；坏标签不恢复数据。
 - JSONL 坏行、路径/值失败与内部异常不影响成功行；同值、重复路径与状态继承。
-- 空建议过滤、保留有效项、各自状态和结果顺序。
+- 空建议过滤、保留有效 items 和能力整体状态；状态更新只保存一份带 status 的有序 updates。
 - 能力异常不改正常 run 终态，取消/模型失败不执行能力。
 - 助手保存失败无未提交事件，预计算变更、锁释放、通知与终态顺序。
-- output 禁止伪造/删除、正文编辑保留结果、旧 entry 无 output 正常读取。
+- output 禁止伪造/删除，新写拒绝旧 results；正文编辑保留结果，旧 output 只读归一化保留重复路径和 reason，旧 entry 无 output 正常读取。
 - 输出侧无历史回填、重复执行、额外调用、配额或表变更；输入侧旁注由独立上下文方案验收。
 - 自定义后处理提示词引用 history.summary 时被拒绝，正常上下文保持摘要单次注入。
 

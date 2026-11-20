@@ -112,9 +112,11 @@ model-notes 用 entryId 关联独立旁注和原始正文。通用来源支持 u
 
 在本轮捕获的历史中先取最近两条有可见正文的 assistant，再逐条读取其 output；没有 output 不向更早条目补足。两个来源异常分别跳过，不能相互影响。
 
-- state-update：只使用已接受的 updates，包含 partial_success 中的成功项。
+- state-update：只使用 updates 中 status=success 的行，仅回填 path/value/reason，包含 partial_success 中的成功项；行状态与失败诊断不进入模型。
 - action-suggestions：只使用有效 items，包含 partial_success 的有效项。
 - 不加入逐项错误、损坏原文或失败标签，不从当前快照倒推历史更新。
+
+旧格式 output 先由 SessionService 读取投影归一化为同一结构，context 不自行兼容旧 results，也不迁移数据库。
 
 状态旁注明确是当时已应用的记录；行动建议是尚未执行的选项；当前状态以本轮状态快照为准。JSON 内容中的保留标签转义，避免混淆本轮输出边界。
 

@@ -320,6 +320,89 @@ describe('run pages, outcomes and recorded usage', () => {
     expect(sessions.getNarrativeOutcome(assistant)).toBeNull();
   });
 
+  it('reads the latest saved main-request snapshot without using compaction or rebuilding missing metadata', () => {
+    create();
+    expect(sessions.recordedUsage('session').latestContext).toBeNull();
+    const known = { inputTokens: 120, outputTokens: 20, totalTokens: 140, cacheReadTokens: 30, cacheWriteTokens: 0 };
+    const main: EntryMetrics = {
+      requests: [{ requestId: 'main', modelId: 'actual-model', provider: 'provider', usage: known }],
+      context: {
+        requestId: 'main', apiModelConfigId: 'model', contextWindowTokens: 64000,
+        contextComposition: { systemBytes: 300, summaryBytes: 50, historyBytes: 200 },
+      },
+    };
+    append('session', 'answer', { metrics: main });
+    sessions.appendEntry('session', {
+      id: 'summary', runId: 'next', type: 'compaction', role: null, payload: { summary: 'Saved summary' },
+      metrics: metrics('summary', { ...known, inputTokens: 500, totalTokens: 520 }),
+    });
+    expect(sessions.getEntry('session', 'answer')!.metrics).toEqual(main);
+    expect(sessions.recordedUsage('session')).toMatchObject({
+      recordedRequestCount: 2, unknownUsageRequestCount: 0,
+      latestContext: {
+        inputTokens: 120, contextWindowTokens: 64000, modelId: 'actual-model', stale: false,
+        contextComposition: main.context!.contextComposition,
+      },
+    });
+    append('session', 'next-answer', { metrics: {
+      requests: [{ requestId: 'unknown', modelId: 'actual-model', provider: 'provider', usage: null }],
+    } });
+    expect(sessions.recordedUsage('session').latestContext).toEqual({
+      inputTokens: null, contextWindowTokens: null, modelId: 'actual-model', stale: false,
+    });
+  });
+
+  it('marks a saved snapshot stale when its owner is off-chain or the selected configuration/model changes', () => {
+    create();
+    append('session', 'opening');
+    append('session', 'answer', { metrics: {
+      requests: [{ requestId: 'main', modelId: 'actual-model', provider: 'provider', usage: null }],
+      context: {
+        requestId: 'main', apiModelConfigId: 'model', contextWindowTokens: 64000,
+        contextComposition: { systemBytes: 300, summaryBytes: 0, historyBytes: 200 },
+      },
+    } });
+    append('session', 'later-input', { role: 'user', runId: 'later' });
+    sessions.update('session', { title: 'Rename' });
+    expect(sessions.recordedUsage('session').latestContext).toMatchObject({ inputTokens: null, stale: false });
+    services.models.update('model', { modelId: 'different-model' });
+    expect(sessions.recordedUsage('session').latestContext!.stale).toBe(true);
+    services.models.update('model', { modelId: 'actual-model', providerId: 'other-provider' });
+    expect(sessions.recordedUsage('session').latestContext!.stale).toBe(true);
+    services.models.update('model', { providerId: 'provider' });
+    services.models.create({ id: 'same-model-elsewhere', name: 'Other', providerId: 'provider', modelId: 'actual-model', credentialRef: 'other-ref' });
+    sessions.update('session', { apiModelConfigId: 'same-model-elsewhere' });
+    expect(sessions.recordedUsage('session').latestContext!.stale).toBe(true);
+    sessions.update('session', { apiModelConfigId: 'model' });
+    expect(sessions.recordedUsage('session').latestContext!.stale).toBe(false);
+    // Exercise the read-side stale marker for a disconnected persisted record, without adding rollback support.
+    db.prepare('UPDATE sessions SET tip_entry_id=? WHERE id=?').run('opening', 'session');
+    expect(sessions.recordedUsage('session').latestContext!.stale).toBe(true);
+  });
+
+  it('validates snapshot ownership and keeps the actual latest request unknown instead of borrowing an older snapshot', () => {
+    create();
+    const main: EntryMetrics = {
+      requests: [{ requestId: 'main', modelId: 'actual-model', provider: 'provider', usage: null }],
+      context: {
+        requestId: 'main', apiModelConfigId: 'model', contextWindowTokens: 64000,
+        contextComposition: { systemBytes: 300, summaryBytes: 0, historyBytes: 200 },
+      },
+    };
+    append('session', 'answer', { metrics: main });
+    expect(() => sessions.setMetrics('session', 'answer', { ...main, context: { ...main.context!, requestId: 'not-recorded' } })).toThrow();
+    expect(() => sessions.setMetrics('session', 'answer', { ...main, context: { ...main.context!, contextWindowTokens: 0 } })).toThrow();
+    expect(() => sessions.setMetrics('session', 'answer', { ...main, context: {
+      ...main.context!, contextComposition: { systemBytes: -1, summaryBytes: 0, historyBytes: 0 },
+    } })).toThrow();
+    sessions.setMetrics('session', 'answer', {
+      ...main, requests: [...main.requests, { requestId: 'later', modelId: 'actual-model', provider: 'provider', usage: null }],
+    });
+    expect(sessions.recordedUsage('session').latestContext).toEqual({
+      inputTokens: null, contextWindowTokens: null, modelId: 'actual-model', stale: false,
+    });
+  });
+
   it('normalizes legacy request status without guessing the provider and only totals recorded usage', () => {
     create();
     const known = { inputTokens: 10, outputTokens: 4, totalTokens: 14, cacheReadTokens: 3, cacheWriteTokens: 0 };
@@ -332,6 +415,7 @@ describe('run pages, outcomes and recorded usage', () => {
     expect(request).toEqual({ requestId: 'old', modelId: 'old-model', provider: null, usage: known });
     expect(sessions.recordedUsage('session')).toEqual({
       knownUsage: known, recordedRequestCount: 2, unknownUsageRequestCount: 1,
+      latestContext: { inputTokens: null, contextWindowTokens: null, modelId: 'actual-model-snapshot', stale: true },
     });
     expect(sessions.getEntry('session', 'new')!.metrics!.requests[0]!.provider).toBe('test-provider');
     expect(() => sessions.setMetrics('session', 'new', { requests: [{
@@ -344,16 +428,14 @@ describe('server-owned narrative output', () => {
   const output = (): import('./service.js').NarrativeOutput => ({
     stateUpdate: {
       status: 'partial_success',
-      updates: [{ path: 'coins', value: 8, reason: 'Bought food' }],
-      results: [
-        { path: 'coins', status: 'success' },
+      updates: [
+        { path: 'coins', value: 8, reason: 'Bought food', status: 'success' },
         { status: 'invalid_json', errorCode: 'STATE_UPDATE_JSON_INVALID' },
       ],
     },
     actionSuggestions: {
       status: 'partial_success',
       items: ['Ask the keeper.', 'Leave.'],
-      results: [{ status: 'success' }, { status: 'empty_suggestion' }, { status: 'success' }],
     },
   });
 
@@ -415,6 +497,73 @@ describe('server-owned narrative output', () => {
     expect(save().seq).toBe(1);
   });
 
+  it('rejects removed duplicate result lists and success rows without values', () => {
+    create();
+    const value = output();
+    expect(() => save({ ...value, actionSuggestions: { ...value.actionSuggestions, results: [] } } as never)).toThrow();
+    expect(() => save({ ...value, stateUpdate: { ...value.stateUpdate, results: [] } } as never)).toThrow();
+    expect(() => save({ ...value, stateUpdate: { status: 'success', updates: [{ status: 'success', path: 'coins' }] } } as never)).toThrow();
+    expect(save().extData.output).toEqual(value);
+  });
+
+  it('projects legacy output by result order, preserving repeated paths and reasons without rewriting storage', () => {
+    create();
+    append('session', 'legacy');
+    const legacy = {
+      note: 'keep',
+      output: {
+        stateUpdate: {
+          status: 'partial_success',
+          updates: [{ path: 'coins', value: 8, reason: 'Bought food' }, { path: 'coins', value: 9, reason: 'Refund' }],
+          results: [
+            { status: 'invalid_json', errorCode: 'STATE_UPDATE_JSON_INVALID' },
+            { status: 'success', path: 'coins' },
+            { status: 'invalid_value', path: 'coins', errorCode: 'STATE_VALUE_INVALID', statePath: 'coins', rulePath: 'min' },
+            { status: 'success', path: 'coins' },
+          ],
+        },
+        actionSuggestions: {
+          status: 'partial_success', items: ['Ask the keeper.'],
+          results: [{ status: 'success' }, { status: 'empty_suggestion', errorCode: 'ACTION_SUGGESTION_EMPTY' }],
+        },
+      },
+    };
+    const encoded = JSON.stringify(legacy);
+    db.prepare('UPDATE entries SET ext_data=? WHERE id=?').run(encoded, 'legacy');
+    const expected = {
+      note: 'keep', output: {
+        stateUpdate: { status: 'partial_success', updates: [
+          { status: 'invalid_json', errorCode: 'STATE_UPDATE_JSON_INVALID' },
+          { status: 'success', path: 'coins', value: 8, reason: 'Bought food' },
+          { status: 'invalid_value', path: 'coins', errorCode: 'STATE_VALUE_INVALID', statePath: 'coins', rulePath: 'min' },
+          { status: 'success', path: 'coins', value: 9, reason: 'Refund' },
+        ] },
+        actionSuggestions: { status: 'partial_success', items: ['Ask the keeper.'] },
+      },
+    };
+    for (const entry of [
+      sessions.getEntry('session', 'legacy'), sessions.listEntries('session')[0],
+      sessions.getHistory('session')[0], sessions.listRunEntries('session', 'run')[0],
+      sessions.listEntryRuns('session').items[0]!.entries[0],
+    ]) expect(entry!.extData).toEqual(expected);
+    expect(db.prepare('SELECT ext_data FROM entries WHERE id=?').get('legacy')!.ext_data).toBe(encoded);
+    expect(sessions.updateEntry('session', 'legacy', { payload: { text: 'Edited' } }).extData).toEqual(expected);
+    expect(db.prepare('SELECT ext_data FROM entries WHERE id=?').get('legacy')!.ext_data).toBe(encoded);
+  });
+
+  it('does not turn incomplete legacy state receipts into success or disturb action output', () => {
+    create();
+    append('session', 'legacy');
+    db.prepare('UPDATE entries SET ext_data=? WHERE id=?').run(JSON.stringify({ output: {
+      stateUpdate: { status: 'success', updates: [], results: [{ status: 'success', path: 'coins' }] },
+      actionSuggestions: { status: 'success', items: ['Continue.'], results: [{ status: 'success' }] },
+    } }), 'legacy');
+    expect(sessions.getEntry('session', 'legacy')!.extData.output).toEqual({
+      stateUpdate: { status: 'invalid_updates', updates: [{ status: 'processing_error', errorCode: 'STATE_UPDATE_STORED_RESULT_INVALID' }] },
+      actionSuggestions: { status: 'success', items: ['Continue.'] },
+    });
+  });
+
   it('only accepts assistant message carriers and leaves old messages without fabricated output', () => {
     create();
     for (const kind of [
@@ -434,8 +583,8 @@ describe('server-owned narrative output', () => {
   it('records optional empty results without manufacturing an error or action', () => {
     create();
     const empty: import('./service.js').NarrativeOutput = {
-      stateUpdate: { status: 'no_updates', updates: [], results: [] },
-      actionSuggestions: { status: 'no_suggestions', items: [], results: [] },
+      stateUpdate: { status: 'no_updates', updates: [] },
+      actionSuggestions: { status: 'no_suggestions', items: [] },
     };
     expect(save(empty).extData.output).toEqual(empty);
   });

@@ -24,6 +24,15 @@ export const metricsSchema = z.object({
     durationMs: duration.optional(),
     firstTextMs: duration.optional(),
   }).strict()),
+  // Main-request compilation metadata only; missing historical snapshots stay unknown.
+  context: z.object({
+    requestId: identifier,
+    apiModelConfigId: identifier,
+    contextWindowTokens: tokenCount.positive(),
+    contextComposition: z.object({
+      systemBytes: tokenCount, summaryBytes: tokenCount, historyBytes: tokenCount,
+    }).strict(),
+  }).strict().optional(),
 }).strict().superRefine((value, ctx) => {
   const seen = new Set<string>();
   value.requests.forEach((request, index) => {
@@ -35,6 +44,9 @@ export const metricsSchema = z.object({
       ctx.addIssue({ code: 'custom', path: ['requests', index, 'firstTextMs'], message: 'First text cannot arrive after request completion' });
     }
   });
+  if (value.context && !seen.has(value.context.requestId)) {
+    ctx.addIssue({ code: 'custom', path: ['context', 'requestId'], message: 'Context must reference a recorded request' });
+  }
 });
 
 export const createSessionSchema = z.object({

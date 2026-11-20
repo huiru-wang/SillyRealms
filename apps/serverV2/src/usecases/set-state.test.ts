@@ -27,7 +27,7 @@ beforeEach(() => {
     id, worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player',
     state: { reputation: 0, coins: 1 },
   });
-  setState = createSetState({ worlds: services.worlds, sessions: services.sessions, state: services.state, transaction: bindTransaction(db), events });
+  setState = createSetState({ worlds: services.worlds, sessions: services.sessions, state: services.state, cache: services.cache, transaction: bindTransaction(db), events });
 });
 afterEach(() => { vi.restoreAllMocks(); db.close(); rmSync(dataRoot, { recursive: true, force: true }); });
 
@@ -148,7 +148,7 @@ describe('independent state field writes', () => {
     const order: string[] = [], observedCoins: unknown[] = [];
     const transaction = bindTransaction(db);
     setState = createSetState({
-      worlds: services.worlds, sessions: services.sessions, state: services.state, events,
+      worlds: services.worlds, sessions: services.sessions, state: services.state, cache: services.cache, events,
       transaction: work => { const result = transaction(work); order.push('commit'); return result; },
     });
     const other = vi.fn();
@@ -356,7 +356,7 @@ describe('effective state events', () => {
     expect(services.state.requireGlobal('world')).toEqual({ day: 1, weather: 'rain' });
     const transaction = bindTransaction(db);
     const failing = createSetState({
-      worlds: services.worlds, sessions: services.sessions, state: services.state, events,
+      worlds: services.worlds, sessions: services.sessions, state: services.state, cache: services.cache, events,
       transaction: work => transaction(() => { work(); throw new Error('commit failed'); }),
     });
     expect(() => failing.setSession('one', { coins: 4 })).toThrow('commit failed');

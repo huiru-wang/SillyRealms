@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { JsonObject } from '../../infrastructure/database/connection.js';
+import type { RuntimeCache } from '../../infrastructure/cache/index.js';
 import { AppError } from '../../errors.js';
 import type { ModelReader } from '../models/service.js';
 import type { PresetReader } from '../presets/service.js';
@@ -29,7 +30,7 @@ export type WorldImportInput = { format: OriginalFormat; bytes: Uint8Array };
 export type PreparedWorldImport = Readonly<{ id: string; content: CreateWorld }>;
 export type { WorldCard } from './validation.js';
 
-type WorldDependencies = { presets: PresetReader; models: ModelReader };
+type WorldDependencies = { presets: PresetReader; models: ModelReader; cache: RuntimeCache };
 const nullableTextFields = ['cover', 'stageComponent', 'defaultPresetId', 'defaultApiModelConfigId'] as const;
 
 function nonblank(value: unknown, field: string): string {
@@ -240,6 +241,7 @@ export class WorldService {
   /** Snapshot persistence only; state definitions and update rules belong to StateService. */
   setState(worldId: string, value: JsonObject): JsonObject {
     assertWorldId(worldId);
+    this.#dependencies.cache.assertGlobalStateWrite(worldId);
     const state = this.#repository.setState(worldId, value);
     if (state === null) throw new AppError('WORLD_NOT_FOUND');
     return state;

@@ -19,7 +19,7 @@ function addUsage(left: ModelUsage | null, right: ModelUsage | null): ModelUsage
 /** User-first execution, optional single summary, then narrative and one settlement. */
 export async function executeNarrative(dependencies: NarrativeDependencies, execution: NarrativeExecution): Promise<NarrativeSettlement> {
   const { sessions, modelClient, events } = dependencies;
-  const { sessionId, runId, userEntryId, assistantEntryId, userMessage, provider, model, prepared, getApiKey, signal, log } = execution;
+  const { sessionId, runId, userEntryId, assistantEntryId, userMessage, provider, model, prepared, getApiKey, signal, log, writePermit } = execution;
   let snapshot: ModelSnapshot = { role: 'assistant', content: '', reasoning_content: '', tool_calls: [] };
   let usage: ModelUsage | null = zeroUsage(), summaryUsage: ModelUsage | null = zeroUsage();
   let attempted = false, receivedTerminal = false, publishedDelta = false;
@@ -59,6 +59,9 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
         },
       }, { events, fields: fields(), messageId: assistantEntryId });
       ({ snapshot, rawContent, usage, attempted, metrics, finishReason, stopReason, receivedTerminal, publishedDelta } = result);
+      if (metrics && metrics.requests.length) {
+        metrics = { ...metrics, context: { ...compiled.context, requestId: metrics.requests.at(-1)!.requestId } };
+      }
     }
   } catch (error) {
     stopReason = signal.aborted ? cancellationReason(signal) : failureReason(error, attempted);
@@ -91,7 +94,7 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
           const processed = processNarrativeOutput(rawContent, dependencies.state, {
             sessionId, parentId, allowedRoots: activeRoots,
           }, (event, data) => log(event, { messageId: assistantEntryId, ...data }));
-          sessions.appendNarrativeAssistant(sessionId, { ...input, state: processed.state }, processed.output);
+          sessions.appendNarrativeAssistant(sessionId, { ...input, state: processed.state }, processed.output, writePermit);
           return { change: processed.change, suggestions: processed.output.actionSuggestions.items };
         });
         committedState = committed.change;
@@ -100,7 +103,7 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
           stateChanged: committedState !== null, suggestionCount: committedSuggestions.length });
       } else {
         // Interrupted/model-failed output is visible history only; no postprocessing was executed.
-        sessions.appendEntry(sessionId, input);
+        sessions.appendEntry(sessionId, input, writePermit);
       }
     }
   } catch (error) {
@@ -132,7 +135,7 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
   try {
     sessions.setNarrativeOutcome(sessionId, userEntryId, stopReason === undefined
       ? { status: 'completed', finishedAt: Date.now() }
-      : { status: 'stopped', stopReason, finishedAt: Date.now() });
+      : { status: 'stopped', stopReason, finishedAt: Date.now() }, writePermit);
   } catch {
     // Keep saved messages; a missing outcome remains unknown after restart.
     if (stopReason !== 'session_deleted') stopReason = 'message_persist_failed';

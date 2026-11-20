@@ -192,7 +192,6 @@ describe('session HTTP operations', () => {
     expect(Object.keys(root.item).some(key => key.includes('_'))).toBe(false);
     await failure(await request('POST', '/sessions/one/entries', { ...entryInput('branch'), parentId: 'root' }), 'TIP_CONFLICT', 409);
     expect(services.sessions.get('one')!.tipEntryId).toBe('child');
-    expect((await data<{ items: SessionEntry[] }>(await request('GET', '/sessions/one/history'))).items.map(item => item.id)).toEqual(['root', 'child']);
     expect((await data<{ items: SessionEntry[] }>(await request('GET', '/sessions/one/entries?afterSeq=1&limit=1'))).items.map(item => item.id)).toEqual(['child']);
     expect((await data<{ item: SessionEntry }>(await request('PATCH', '/sessions/one/entries/child', { payload: { text: 'Edited' } }))).item.payload).toEqual({ text: 'Edited' });
     expect((await data<{ item: SessionEntry }>(await request('GET', '/sessions/one/entries/child'))).item.parentId).toBe('root');
@@ -225,7 +224,6 @@ describe('session HTTP operations', () => {
       ['POST', '/sessions/blocked/entries', entryInput('leak')],
       ['GET', '/sessions/blocked/entries/secret'],
       ['PATCH', '/sessions/blocked/entries/secret', { payload: { text: 'Overwritten' } }],
-      ['GET', '/sessions/blocked/history'],
       ['GET', '/sessions/blocked/events'],
       ['GET', '/state/session/blocked'],
       ['PUT', '/state/session/blocked', { state: { leaked: true } }],

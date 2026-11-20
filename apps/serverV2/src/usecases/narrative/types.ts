@@ -1,3 +1,4 @@
+import type { RuntimeCache, RunWritePermit } from '../../infrastructure/cache/index.js';
 import type { RunLogger, RunLogSink } from '../../infrastructure/logging/run-logger.js';
 import type { TransactionRunner } from '../../infrastructure/database/transaction.js';
 import type { CredentialService } from '../../modules/credentials/service.js';
@@ -25,6 +26,7 @@ export type AcceptedNarrative = {
 };
 
 export type NarrativeDependencies = {
+  cache: RuntimeCache;
   sessions: SessionService;
   worlds: WorldService;
   presets: PresetService;
@@ -39,6 +41,7 @@ export type NarrativeDependencies = {
 };
 
 export type NarrativeExecution = {
+  writePermit: RunWritePermit;
   sessionId: string;
   runId: string;
   userEntryId: string;

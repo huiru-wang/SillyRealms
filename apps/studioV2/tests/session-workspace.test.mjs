@@ -108,3 +108,16 @@ test('closing an active composition only disposes transports and pending reads, 
  await nextTurn();assert.equal(workspace.getSnapshot(),snapshot);
  assert.equal(calls.some(call=>call.path.endsWith('/stop')),false);
 });
+
+test('changing the model refreshes usage while other session settings keep the current request snapshot',async t=>{
+ const {workspace}=setup();t.after(()=>workspace.dispose());await workspace.start();
+ const initial=workspace.getSnapshot(),revisions=[];
+ const unsubscribe=workspace.subscribe(()=>revisions.push(workspace.getSnapshot().usageRevision));t.after(unsubscribe);
+ workspace.updateSession({...initial.session,title:'Renamed session',presetId:'another-preset'});
+ assert.equal(workspace.getSnapshot().usageRevision,initial.usageRevision);
+ workspace.updateSession({...workspace.getSnapshot().session,apiModelConfigId:'another-model'});
+ assert.equal(workspace.getSnapshot().session.apiModelConfigId,'another-model');
+ assert.equal(workspace.getSnapshot().usageRevision,initial.usageRevision+1);
+ workspace.updateSession({...workspace.getSnapshot().session,title:'Another title'});
+ assert.deepEqual(revisions,[initial.usageRevision,initial.usageRevision+1,initial.usageRevision+1]);
+});

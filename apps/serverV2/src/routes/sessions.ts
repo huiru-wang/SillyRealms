@@ -144,12 +144,6 @@ export function createSessionRoutes({ events, sessions, worlds, appendEntry, cre
     return success(c, { item: sessions.updateEntry(id, c.req.param('entryId'), await readJson<UpdateEntryInput>(c)) });
   });
 
-  routes.get('/:id/history', async c => {
-    const id = c.req.param('id');
-    await access(id, c.req.raw);
-    return success(c, { items: sessions.getHistory(id) });
-  });
-
   routes.get('/:id/events', async c => {
     const id = c.req.param('id');
     await access(id, c.req.raw);

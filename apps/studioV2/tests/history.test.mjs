@@ -64,3 +64,21 @@ test('broken forward pagination terminates and disposing rejects late reads with
  const loading=other.loadRecent();other.dispose();waiting.resolve(page([run('r',[1])]));
  await assert.rejects(loading,{name:'AbortError'});assert.equal(other.getSnapshot().entries.length,0);
 });
+
+test('history passes compact capability diagnostics to stage messages without duplicating results',()=>{
+ const history=createHistoryController({sessionId:'s',request:async()=>page([])}),stored=run('r',[1,2]);
+ const output={stateUpdate:{status:'partial_success',updates:[
+  {status:'success',path:'coins',value:8,reason:'Bought food'},
+  {status:'invalid_json',errorCode:'STATE_UPDATE_JSON_INVALID'},
+  {status:'invalid_value',path:'energy',value:-1,errorCode:'STATE_VALUE_INVALID'}
+ ]},actionSuggestions:{status:'partial_success',items:['Ask the keeper.']}};
+ stored.entries[1].extData.output=structuredClone(output);
+ history.ingestRun(stored);
+ const message=history.getSnapshot().messages[1],projected=projectRun(stored).messages[1];
+ assert.deepEqual(message.output,output);assert.deepEqual(projected.output,output);
+ assert.equal('results' in message.output.stateUpdate,false);
+ assert.equal('results' in message.output.actionSuggestions,false);
+ stored.entries[1].extData.output.stateUpdate.updates[0].value=99;
+ assert.equal(message.output.stateUpdate.updates[0].value,8);
+ assert.equal(projected.output.stateUpdate.updates[0].value,8);
+});

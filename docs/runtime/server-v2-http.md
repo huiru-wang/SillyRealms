@@ -164,7 +164,6 @@ PATCH 仅接受 name、tags、defaultPresetId、defaultApiModelConfigId 的非�
 | GET / PATCH / DELETE | /sessions/:id | 会话读取 / 修改 / 删除 |
 | GET / POST | /sessions/:id/entries | 消息/摘要列表 / 追加普通消息 |
 | GET / PATCH | /sessions/:id/entries/:entryId | 单条读取 / 普通消息正文或 extData 更新 |
-| GET | /sessions/:id/history | 当前完整线性历史 |
 | POST | /sessions/:id/narrative/runs | 保存用户消息并受理一次叙事生成 |
 | POST | /sessions/:id/narrative/runs/:runId/stop | 显式停止当前匹配的叙事生成 |
 | GET | /sessions/:id/narrative/runs | 每页最多 5 轮的完整历史或 afterSeq 补查 |
@@ -176,7 +175,20 @@ PATCH 仅接受 name、tags、defaultPresetId、defaultApiModelConfigId 的非�
 
 会话详情 GET 返回 `data.item: SessionView`，包含 worldId、presetId、apiModelConfigId、userCharacterId、tipEntryId、title 等驼峰字段。PATCH 仅支持 title/presetId/apiModelConfigId，世界与玩家身份创建后不再修改。StudioV2 会话页通过独立 features 使用本节的历史、叙事与 SSE 接口。
 
-摘要仅由叙事流程生成：POST entries 禁止 type=compaction；PATCH entries 禁止修改 compaction 的 payload/extData，也禁止向普通消息写入 summary 元数据。成功摘要通过 entries/history/runs 读取，payload.summary 为文本，extData.summary 为 {coveredThroughEntryId,sourceHash}，指标保存在该 entry.metrics；state=null 继承。savedMessageIds 不包含摘要，tipEntryId 可以指向摘要。
+摘要仅由叙事流程生成：POST entries 禁止 type=compaction；PATCH entries 禁止修改 compaction 的 payload/extData，也禁止向普通消息写入 summary 元数据。成功摘要通过 entries 或 narrative/runs 读取，payload.summary 为文本，extData.summary 为 {coveredThroughEntryId,sourceHash}，指标保存在该 entry.metrics；state=null 继承。savedMessageIds 不包含摘要，tipEntryId 可以指向摘要。
+
+### 运行期间写入锁
+
+本地单进程使用 `infrastructure/cache/RuntimeCache`，与所有 Session/World Service 和叙事用例共享。锁在保存本轮 user 前取得，覆盖上下文、摘要、主模型、后处理及结束结果保存。失败、取消和正常关闭均释放；结算完成先解锁，再发布能力通知、usage 与终态。内部持有者令牌按对象身份校验，不接受客户端提供，旧 run 的 finally 不会释放下一轮锁。
+
+| 被拦截的写入 | HTTP | errorCode |
+|---|---|---|
+| 当前会话 PATCH/DELETE、entries POST/PATCH，以及服务内部的无持有者计量/结果写入 | 409 | `SESSION_WRITE_LOCKED` |
+| 当前会话 session/message 状态 PUT/PATCH，包括空更新、同值和原本会忽略的缺失路径 | 409 | `STATE_WRITE_LOCKED` |
+| 该世界任意会话运行期间，global 状态 PUT/PATCH | 409 | `STATE_WRITE_LOCKED` |
+| 同会话再次提交 run | 409 | `RUN_ALREADY_ACTIVE` |
+
+错误继续使用标准 `{success,errorCode,errorMessage,data}` 包络。读取、事件连接和显式 stop 可以正常使用；其他会话的独立状态及其他世界不受影响。新建不同 ID 的会话不受阻断，因为不修改已有会话或 global 快照。`GET /sessions/:id/history` 已删除，不保留别名；内部 `getHistory` 仍用于上下文构建。
 
 ### 创建可用会话
 
@@ -213,11 +225,11 @@ SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt
 
 受理时先独立保存用户消息，再准备上下文和模型请求。202 的 data 为 `{runId,userEntryId,assistantEntryId}`。此时 userEntryId 已持久化，assistantEntryId 仅预分配；202 不代表生成成功。上下文按预设自动裁剪或执行至多一次摘要；一次摘要后仍超限通过 stop_reason=summary_capacity_exceeded 结束，保留已保存用户、摘要与摘要 metrics，摘要失败为 summary_failed。失败/中断摘要不保存记录或计量；成功摘要未知 usage 为 null。之后的配置、历史、预算、凭据或模型错误通过 `run.stopped` 的 stop_reason 返回，保留用户消息；SSE 不返回 error 对象或 errorCode/errorMessage。
 
-助手正常完成、失败或停止时独立保存完整或部分公开快照，包含分离能力数据块后的干净 content、公开 reasoning_content 与 tool_calls；只有公开 reasoning 或工具请求时也保留，完全没有公开内容时只保留用户。SDK 最终快照采用替换语义。助手写入失败不回滚用户，外部追加导致 tip 变化时不覆盖新消息。终态 savedMessageIds 与 tipEntryId 表达实际保存结果；后续模型历史以可见正文为底稿，由独立 context 为选中的保留条目追加只读模型旁注；不把 reasoning/工具请求当作提示词正文。内容与计量见 [叙事执行](server-v2-narrative.md)。
+助手正常完成、失败或停止时独立保存完整或部分公开快照，包含分离能力数据块后的干净 content、公开 reasoning_content 与 tool_calls；只有公开 reasoning 或工具请求时也保留，完全没有公开内容时只保留用户。SDK 最终快照采用替换语义。助手写入失败不回滚用户；运行期间外部追加由写锁拦截，持久化仍保留 tip 一致性校验。终态 savedMessageIds 与 tipEntryId 表达实际保存结果；后续模型历史以可见正文为底稿，由独立 context 为选中的保留条目追加只读模型旁注；不把 reasoning/工具请求当作提示词正文。内容与计量见 [叙事执行](server-v2-narrative.md)。
 
 `POST /sessions/:id/narrative/runs/:runId/stop` 返回 `data:{runId,stopping:true}`。仅匹配该会话当前内存运行；不匹配或已结束返回 RUN_NOT_FOUND/404。返回值表示已请求停止，最终以 `run.stopped` 及其 stop_reason 为准；保存失败优先于普通取消。断开 POST 或 SSE 都不会代替显式 stop。
 
-客户端应先连接 `/sessions/:id/events` 再提交；事件可能早于 POST 响应，按 runId/messageId 关联。断线后重新读取 entries/history 判断已保存内容，不自动重发提交。没有事件回放、重启续跑、自动重试或请求去重接口；StudioV2 按这些约束接入会话运行，详见 [StudioV2 运行接入](studio-v2-runtime.md)。
+客户端应先连接 `/sessions/:id/events` 再提交；事件可能早于 POST 响应，按 runId/messageId 关联。断线后重新读取 entries 或 narrative/runs 判断已保存内容，不自动重发提交。没有事件回放、重启续跑、自动重试或请求去重接口；StudioV2 按这些约束接入会话运行，详见 [StudioV2 运行接入](studio-v2-runtime.md)。
 
 ## 叙事查询与用量
 
@@ -251,7 +263,34 @@ finishedAt 为结算 Unix 毫秒；stopReason 与当前 SSE 的原因类型一�
 
 metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstTextMs?}`，不再写 status。新请求 provider 取实际调用的 providerId；读取旧 metrics 时移除 status，缺少 provider 返回 null，不根据当前模型配置推断。旧 JSON 不做批量重写，新写入严格使用新结构。
 
-`GET /sessions/:id/narrative/usage` 返回 `data:{knownUsage,recordedRequestCount,unknownUsageRequestCount}`。knownUsage 包含 inputTokens/outputTokens/totalTokens/cacheReadTokens/cacheWriteTokens，是已有 metrics 中可信 usage 的合计；unknownUsageRequestCount 统计 usage:null 的已记录请求，不将其视为零。没有助手 entry 等原因导致未记录的请求不在计数中，因此这是已记录用量而非完整账单；不写 session.usage 或增加计量表。
+`GET /sessions/:id/narrative/usage` 返回 `data:{knownUsage,recordedRequestCount,unknownUsageRequestCount,latestContext}`。knownUsage 包含 inputTokens/outputTokens/totalTokens/cacheReadTokens/cacheWriteTokens，是已有 metrics 中可信 usage 的合计；unknownUsageRequestCount 统计 usage:null 的已记录请求，不将其视为零。没有助手 entry 等原因导致未记录的请求不在计数中，因此这是已记录用量而非完整账单；不写 session.usage 或增加计量表。
+
+主叙事调用在实际请求发生后将最终编译快照附加到助手 `metrics.context`：
+
+```ts
+{
+  requestId: string; // 对应同一 metrics.requests 内的实际调用
+  apiModelConfigId: string;
+  contextWindowTokens: number;
+  contextComposition: { systemBytes: number; summaryBytes: number; historyBytes: number };
+}
+```
+
+`latestContext` 为 `null` 或：
+
+```ts
+{
+  inputTokens: number | null;
+  contextWindowTokens: number | null;
+  modelId: string;
+  stale: boolean;
+  contextComposition?: { systemBytes: number; summaryBytes: number; historyBytes: number };
+}
+```
+
+它只选最新已保存的主叙事 assistant 请求，排除 compaction；输入量取该请求真实 usage，未知时为 null，不拿上一轮已知用量替代。旧记录没有快照时窗口为 null、组成省略，不猜测历史模型窗口。切换配置、当前配置的供应商/模型改变或快照条目不在当前父链时 stale=true；正常追加下一轮或改标题不使旧快照自动过期。没有实际请求或没有保存助手时不产生新快照。
+
+组成来自最终发给模型的 UTF-8 文本：系统模板/材料/后处理说明归 system，摘要归 summary，历史正文/模型旁注/本次 input.text 归 history。沿用 V1 每消息 16 B 的约定开销，普通拼装消息归 system、历史消息归 history。只统计实际发出的内容；这是字节占比，不是逐类计费 Token。上下文窗口占比使用实际 inputTokens/contextWindowTokens，累计 Token 包含已记录摘要及主叙事请求，缓存读写作为输入细分不重复相加。
 
 ## 叙事后处理结果
 
@@ -261,17 +300,19 @@ metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstT
 {
   stateUpdate: {
     status: 'no_updates' | 'success' | 'partial_success' | 'invalid_updates' | 'invalid_tag' | 'processing_error',
-    updates: Array<{ path: string; value: JsonValue; reason?: string }>,
-    results: Array<{
-      status: 'success' | 'invalid_json' | 'invalid_update' | 'invalid_path' | 'invalid_value' | 'processing_error';
-      path?: string; errorCode?: string; statePath?: string; rulePath?: string;
-    }>,
+    updates: Array<
+      { status: 'success'; path: string; value: JsonValue; reason?: string }
+      | {
+        status: 'invalid_json' | 'invalid_update' | 'invalid_path' | 'invalid_value' | 'processing_error';
+        path?: string; value?: JsonValue; reason?: string;
+        errorCode?: string; statePath?: string; rulePath?: string;
+      }
+    >,
     errors?: Array<{ errorCode: string }>
   },
   actionSuggestions: {
     status: 'no_suggestions' | 'success' | 'partial_success' | 'invalid_tag' | 'invalid_json' | 'invalid_suggestions' | 'processing_error',
     items: string[],
-    results: Array<{ status: 'success' | 'empty_suggestion' | 'invalid_suggestion'; errorCode?: string }>,
     errors?: Array<{ errorCode: string }>
   }
 }
@@ -279,11 +320,13 @@ metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstT
 
 结果随现有 entries、轮次列表及单轮详情返回，不新增查询或写入端点，不增加能力开关响应字段。该字段由 SessionService 的受控叙事保存入口写入，普通 POST/PATCH 不能伪造或删除。
 
-每个能力只校验自己的大小写不敏感标签；整对缺失或空标签是 no_updates/no_suggestions，自身标签损坏为 invalid_tag 且不执行该能力。状态 JSONL 行和建议数组条目分别校验，成功数据不受其他无效条目影响；空建议项 empty_suggestion 被过滤，保留其他有效建议，三条仅是提示词目标。
+每个能力只校验自己的大小写不敏感标签；整对缺失或空标签是 no_updates/no_suggestions，自身标签损坏为 invalid_tag 且不执行该能力。stateUpdate.updates 按输入行序保存全部成功/失败记录，成功项必须有 path/value，失败项仅保留可用的输入字段与诊断。建议数组逐项校验，空白、类型、长度或重复项被过滤，保留有效 items，并以能力 status 表达全部成功、部分成功或无有效建议；三条仅是提示词目标。两类结果均不含 results，errors 仅承载能力级诊断。
 
-run.completed 表示正文主流程完成，不等同于能力全部成功。能力异常记录在 output，查询方可查看逐项结果；模型取消、错误、length 等未执行后处理时，部分助手不产生 output。旧消息没有 output 不补造结果。
+run.completed 表示正文主流程完成，不等同于能力全部成功。能力异常记录在 output，查询方可查看能力状态与状态更新行诊断；模型取消、错误、length 等未执行后处理时，部分助手不产生 output。旧消息没有 output 不补造结果。
 
-公开与持久化正文保持干净。context 在本轮历史中先选最近两条有可见正文的 assistant，再从已保存 output 构建条目级 model-only notes；没有 output 不回找旧条目，最终未保留的消息不注入旁注。旁注只进入主模型输入与实际输入估算，不进入摘要、关键词激活或 HTTP 返回字段，不回写正文或重执行状态更新。正文编辑保留当时结果，旁注不表示已按编辑正文重算。不持久化 blockIndex、line、contextEligible 或 notes，不新增接口和表。
+新写入严格校验上述结构。旧已保存 output 仅在 SessionService 读取投影时归一化：按旧 results 顺序将成功行与旧 updates 配对，保留重复 path 及各自 value/reason，失败行保留失败；缺少可信成功载荷时以 processing_error 记录，不能虚构已应用更新。旧行动建议只移除 results。读取及正文编辑不为此重写原存储，不新增数据库迁移。
+
+公开与持久化正文保持干净。context 在本轮历史中先选最近两条有可见正文的 assistant，再从已保存 output 构建条目级 model-only notes；状态只取 updates 中 status=success 的 path/value/reason，建议只取有效 items，状态行诊断不进入模型。没有 output 不回找旧条目，最终未保留的消息不注入旁注。旁注只进入主模型输入与实际输入估算，不进入摘要、关键词激活或 HTTP 返回字段，不回写正文或重执行状态更新。正文编辑保留当时结果，旁注不表示已按编辑正文重算。不持久化 blockIndex、line、contextEligible 或 notes，不新增接口和表。
 
 建议创建事件为 action_suggestions.created，仅发布本轮已保存的有效非空建议；run.created 驱动清空上一轮建议，首次恢复只认最新 run 的实际完成结果。详见 [会话事件](server-v2-events.md#行动建议创建) 与 [叙事执行](server-v2-narrative.md#叙事后处理与能力结果)。
 

@@ -64,6 +64,34 @@ function compactHistory(snapshot: NarrativeSnapshot, selectedModel: typeof model
   }, selectedModel, createCandidateEvaluator(snapshot, selectedModel, state), summarize, signal);
 }
 
+describe('compiled context composition', () => {
+  it('counts emitted UTF-8 text by source, including framing, without counting skipped nodes', () => {
+    append('prior', 'assistant', '历史🙂');
+    const snapshot = capture('输入');
+    snapshot.materials.variables['history.summary'] = { type: 'text', value: '摘要' };
+    snapshot.materials.variables['persona.prompt'] = { type: 'text', value: '角色' };
+    snapshot.preset.config.nodes.find(node => node.id === 'main')!.prompt = '规则{{persona.prompt}}';
+    snapshot.preset.config.nodes.find(node => node.id === 'userInput')!.prompt = '问题：{{input.text}}';
+    snapshot.preset.config.nodes.find(node => node.id === 'personaInfo')!.prompt = ' \n ';
+    Object.assign(snapshot.preset.config.nodes.find(node => node.id === 'worldInfo')!, {
+      enabled: false, prompt: 'This node is disabled.',
+    });
+    const compiled = compileNarrativeContext(snapshot, model);
+    expect(compiled.messages.slice(0, -1).map(message => message.content)).toEqual(['规则角色', '摘要', '历史🙂', '问题：输入']);
+    const bytes = (value: string) => Buffer.byteLength(value, 'utf8');
+    expect(compiled.context).toEqual({
+      apiModelConfigId: 'model', contextWindowTokens: model.contextWindow,
+      contextComposition: {
+        systemBytes: bytes('规则角色问题：') + bytes(compiled.messages.at(-1)!.content) + 4 * 16,
+        summaryBytes: bytes('摘要'),
+        historyBytes: bytes('历史🙂输入') + 16,
+      },
+    });
+    expect(Object.values(compiled.context.contextComposition).reduce((total, count) => total + count, 0))
+      .toBe(compiled.messages.reduce((total, message) => total + bytes(message.content) + 16, 0));
+  });
+});
+
 describe('synchronous narrative snapshot', () => {
   it('supports an empty pre-submit tip without repeating the saved input or applying an opening', () => {
     const snapshot = capture();
@@ -411,8 +439,8 @@ describe('model-only notes in context candidates', () => {
       id: 'answer', runId: 'past', type: 'message', role: 'assistant',
       payload: { message: { role: 'assistant', content: 'A quiet room.', timestamp: 100 } },
     }, {
-      stateUpdate: { status: 'success', updates: [{ path: 'coins', value: 8 }], results: [{ status: 'success', path: 'coins' }] },
-      actionSuggestions: { status: 'success', items: ['note-only-keyword'], results: [{ status: 'success' }] },
+      stateUpdate: { status: 'success', updates: [{ status: 'success', path: 'coins', value: 8 }] },
+      actionSuggestions: { status: 'success', items: ['note-only-keyword'] },
     });
     services.worlds.update('world', { lorebook: { entries: [
       { id: 'note-trigger', content: 'Must stay inactive', load: { mode: 'on_mention', keywords: ['note-only-keyword'] } },
@@ -429,6 +457,9 @@ describe('model-only notes in context candidates', () => {
     const clean = compileNarrativeContext({ ...snapshot, modelNotes: new Map() }, model);
     expect(compiled.estimatedInputTokens).toBeGreaterThan(clean.estimatedInputTokens);
     expect(compiled.estimatedInputTokens).toBe(estimateInputTokens(compiled.messages));
+    const renderedHistory = compiled.messages.find(message => message.role === 'assistant')!.content;
+    expect(compiled.context.contextComposition.historyBytes - clean.context.contextComposition.historyBytes)
+      .toBe(Buffer.byteLength(renderedHistory, 'utf8') - Buffer.byteLength('A quiet room.', 'utf8'));
   });
 
   it('includes note text when choosing a sliding-window boundary and never transfers a removed note to another entry', () => {

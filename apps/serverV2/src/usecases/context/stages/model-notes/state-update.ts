@@ -8,14 +8,15 @@ export const stateUpdateNotes: ModelNoteSource = {
     if (entry.type !== 'message' || entry.role !== 'assistant') return undefined;
     const output = record(record(entry.extData.output)?.stateUpdate);
     if (!output || (output.status !== 'success' && output.status !== 'partial_success') || !Array.isArray(output.updates)) return undefined;
-    const updates: StateUpdateOutput['updates'] = [];
+    type AcceptedUpdate = Omit<Extract<StateUpdateOutput['updates'][number], { status: 'success' }>, 'status'>;
+    const updates: AcceptedUpdate[] = [];
     for (const item of output.updates) {
       const update = record(item);
-      if (!update || typeof update.path !== 'string' || !update.path.trim() ||
+      if (!update || update.status !== 'success' || typeof update.path !== 'string' || !update.path.trim() ||
         !Object.hasOwn(update, 'value') || update.value === undefined ||
         (update.reason !== undefined && typeof update.reason !== 'string')) continue;
       updates.push({
-        path: update.path, value: update.value as StateUpdateOutput['updates'][number]['value'],
+        path: update.path, value: update.value as AcceptedUpdate['value'],
         ...(typeof update.reason === 'string' ? { reason: update.reason } : {}),
       });
     }

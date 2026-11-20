@@ -22,7 +22,7 @@
 
 - [x] 通用旁注按 entryId 独立关联，可支持 user 来源，原正文保持不变。
 - [x] 叙事先选择最近两条可见 assistant，没有 output 不回找更早条目。
-- [x] 状态读取已接受 updates，建议读取有效 items，各来源独立失败；保留 partial_success 有效内容。
+- [x] 状态只读取 updates 中 status=success 行的 path/value/reason，建议读取有效 items，行状态与诊断不注入模型；各来源独立失败，保留 partial_success 有效内容，旧格式兼容由 SessionService 读取投影完成。
 - [x] 最终保留消息才渲染旁注，预算包含，摘要/关键词排除，重复候选不重复拼接。
 - [x] 明确历史记录与未执行建议的区别，保留标签转义，编辑正文不宣称已重算。
 

@@ -6,10 +6,11 @@
 
 ## 1. 结果契约与保存保护
 
-- [x] sessions 定义各能力自己的整体/逐项状态，公开 NarrativeOutput、StateUpdateOutput、ActionSuggestionsOutput。
-- [x] 删除 blockIndex、line、contextEligible；results 保留输入顺序与可解析的 path。
+- [x] sessions 定义各能力自己的整体状态及状态更新行状态，公开 NarrativeOutput、StateUpdateOutput、StateUpdateItem、ActionSuggestionsOutput。
+- [x] 删除 blockIndex、line、contextEligible；stateUpdate 仅保留按输入行序排列的 updates，每项带 status 和可用的输入/诊断字段；actionSuggestions 仅保留整体 status、有效 items 和可选 errors，两类结果均无 results。
 - [x] appendNarrativeAssistant 受控保存 output；公共 append/edit 禁止伪造/删除，其他扩展编辑保留 output。
 - [x] 缺失/空标签使用 no_updates/no_suggestions；模型中断不执行能力，部分助手不生成 output。
+- [x] 新写严格校验精简结构；旧 output 在读取投影时归一化，按旧 results 成功行顺序配对 updates，保留重复路径及 reason，失败不提升为成功，原数据库不回写。
 
 验收：旧 entry 可读、结果与正文/state/metrics 同条保存、编辑不重做或回滚，无新增表/版本。
 
@@ -27,13 +28,13 @@
 - [x] 每行独立 JSON 解析、对象/路径/值/rules 校验和结果规范化。
 - [x] StateService 纯候选计算，仅 message scope、本轮激活根、已存在路径；公共 PATCH 语义不变。
 - [x] 单行失败恢复该行前副本，成功行按序保留，重复路径顺序覆盖。
-- [x] 返回成功更新、逐行结果、完整候选与变化信息，保留其他根和附加元数据。
+- [x] StateService 内部返回成功更新、逐行计算结果、完整候选与变化信息；postprocess 将逐行结果与输入/成功载荷合为唯一 output.updates，保留其他根和附加元数据。
 
 验收：invalid_json/invalid_update/invalid_path/invalid_value/processing_error 可定位；成功行不回滚，同值成功不发变化事件。
 
 ## 4. 建议、提示词与异常边界
 
-- [x] 建议保留数组；单条空白记 empty_suggestion，其他无效项记 invalid_suggestion，保留有效条目。
+- [x] 建议保留数组；空白和其他无效项被过滤，保留有效 items，以能力整体 status 表达全部成功、部分成功或无有效建议，不保存逐项结果。
 - [x] 三条为提示词目标，服务端不因过滤后不足三条拒绝整组；每条长度及去重规则保留。
 - [x] PresetService 提供默认补足，忽略旧 enabled，不改已有预设 revision。
 - [x] compile 加入默认能力与最终固定协议，明确覆盖旧数组/强制标签/固定条数指令，并明确状态更新不设固定条数上限。
@@ -53,7 +54,7 @@
 ## 6. 上下文与计量
 
 - [x] 输出侧保持干净正文，不承担历史回填或重复执行状态更新。
-- [x] 条目级 model-only notes 由独立[上下文方案](server-v2-context-design.md)实施，状态更新和建议仅提供已保存的结果来源；输出处理不依赖其内部阶段。
+- [x] 条目级 model-only notes 由独立[上下文方案](server-v2-context-design.md)实施，状态更新和建议仅提供已保存的结果来源；状态只回填 status=success 行的 path/value/reason，建议只回填有效 items，诊断不注入模型；输出处理不依赖其内部阶段。
 - [x] 按模型实际输出处理与返回 usage 记录；不增加能力 token、条数或全尾部配额。
 - [x] 既有输入预算/压缩与 max_output_tokens 继续复用，实际新增提示词纳入原请求估算。
 - [x] 编译拒绝后处理提示词引用 input.text、history.messages、history.summary，避免重复注入；回归用例覆盖摘要单次注入。

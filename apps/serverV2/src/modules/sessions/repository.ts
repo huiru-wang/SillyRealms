@@ -187,6 +187,14 @@ export class SessionRepository {
       .all(sessionId).map(row => readStoredMetrics(JSON.parse(String(row.metrics_json))));
   }
 
+  latestNarrativeMetrics(sessionId: string): { entryId: string; metrics: EntryMetrics } | null {
+    const row = this.#db.prepare(
+      "SELECT id,metrics_json FROM entries WHERE session_id=? AND type='message' AND role='assistant' " +
+      "AND metrics_json IS NOT NULL AND json_array_length(metrics_json,'$.requests')>0 ORDER BY seq DESC LIMIT 1",
+    ).get(sessionId);
+    return row ? { entryId: String(row.id), metrics: readStoredMetrics(JSON.parse(String(row.metrics_json))) } : null;
+  }
+
   setNarrativeOutcome(sessionId: string, entryId: string, outcome: NarrativeOutcome): EntryRow {
     return transaction(this.#db, () => {
       const current = this.#requireEntry(sessionId, entryId);

@@ -1,3 +1,4 @@
+import type { RunWritePermit } from '../../infrastructure/cache/index.js';
 import type { ErrorCode } from '../../errors.js';
 import type { ModelClient, ModelInfo, ModelMessage } from '../../infrastructure/model/client.js';
 import type { ModelConfig } from '../../modules/models/service.js';
@@ -10,6 +11,8 @@ export type { ContextDiagnostics, ContextMaterialDiagnostic, ContextNodeDiagnost
 
 export type ContextProgress = { type: 'summary_started' } | { type: 'summary_saved'; entryId: string };
 export type PrepareContextInput = {
+  /** Internal run ownership, used only when saving a generated summary. */
+  writePermit?: RunWritePermit;
   kind: 'narrative';
   sessionId: string;
   runId: string;

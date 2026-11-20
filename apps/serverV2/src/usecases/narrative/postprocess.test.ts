@@ -113,12 +113,11 @@ describe('narrative postprocessing integration', () => {
     expect((await finished).event).toBe('run.completed');
     expect(current()).toEqual({ coins: 8, energy: 7, secret: 99 });
     expect(output(accepted)).toMatchObject({
-      stateUpdate: { status: 'partial_success', results: [
-        { status: 'success', path: 'coins' }, { status: 'invalid_json' },
-        { status: 'invalid_path', path: 'missing' }, { status: 'success', path: 'energy' },
+      stateUpdate: { status: 'partial_success', updates: [
+        { status: 'success', path: 'coins', value: 8 }, { status: 'invalid_json' },
+        { status: 'invalid_path', path: 'missing', value: 1 }, { status: 'success', path: 'energy', value: 7 },
       ] },
-      actionSuggestions: { status: 'partial_success', items: ['继续询问。', '离开酒馆。'],
-        results: [{ status: 'success' }, { status: 'empty_suggestion' }, { status: 'success' }] },
+      actionSuggestions: { status: 'partial_success', items: ['继续询问。', '离开酒馆。'] },
     });
     expect(saved(accepted).payload.message).toMatchObject({ content: body });
     expect(saved(accepted).state).toContainEqual({ key: 'coins', value: 8, label: 'Currency' });
@@ -135,15 +134,46 @@ describe('narrative postprocessing integration', () => {
       sessionId: 'session', runId: accepted.runId, messageId: accepted.assistantEntryId, items: ['继续询问。', '离开酒馆。'],
     });
     expect(saved(accepted).metrics?.requests[0]?.usage).toEqual(usage);
-    expect(JSON.stringify(output(accepted))).not.toMatch(/blockIndex|contextEligible|"line":/);
+    expect(JSON.stringify(output(accepted))).not.toMatch(/blockIndex|contextEligible|"line":|"results":/);
     expect(stream).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['__proto__', '{"__proto__":{"polluted":true}}'],
+    ['constructor', '{"constructor":{"prototype":{"polluted":true}}}'],
+    ['prototype', '{"prototype":{"polluted":true}}'],
+    ['nested unsafe keys', '{"nested":[{"constructor":{"prototype":{"polluted":true}}},{"__proto__":{"polluted":true}}]}'],
+  ])('isolates %s in a rejected value through output persistence and completion', async (_name, value) => {
+    const rejected = '{"path":"energy","value":' + value + ',"reason":"Rejected payload"}';
+    const rows = '{"path":"coins","value":8}\n' + rejected + '\n{"path":"coins","value":9}';
+    script(body + stateBlock(rows) + actions());
+    const { accepted, finished } = submit();
+    expect(await finished).toMatchObject({ event: 'run.completed' });
+    expect(current()).toEqual({ coins: 9, energy: 5, secret: 99 });
+    expect(output(accepted)).toMatchObject({
+      stateUpdate: { status: 'partial_success', updates: [
+        { status: 'success', path: 'coins', value: 8 },
+        { status: 'invalid_value', path: 'energy', reason: 'Rejected payload', errorCode: 'INVALID_STATE_KEY' },
+        { status: 'success', path: 'coins', value: 9 },
+      ] },
+      actionSuggestions: { status: 'success', items: ['继续询问。', '去集市。', '离开酒馆。'] },
+    });
+    const rejectedOutput = output(accepted).stateUpdate.updates[1]!;
+    if (value.includes('"__proto__"')) expect(rejectedOutput).not.toHaveProperty('value');
+    else expect(rejectedOutput.value).toEqual(JSON.parse(value));
+    expect(saved(accepted).payload.message).toMatchObject({ content: body });
+    expect(seen.slice(-4).map(event => event.event)).toEqual([
+      'state.changed', 'action_suggestions.created', 'run.usage', 'run.completed',
+    ]);
+    expect(capabilityLog('state_update.raw')).toMatchObject({ blocks: ['\n' + rows + '\n'] });
+    expect(Object.hasOwn(Object.prototype, 'polluted')).toBe(false);
   });
 
   it('rejects all data in an unclosed state block while independently using the intact suggestion block', async () => {
     script(body + '<state_update>\n{"path":"coins","value":1}\n' + actions());
     const { accepted, finished } = submit();
     expect((await finished).event).toBe('run.completed');
-    expect(output(accepted).stateUpdate).toMatchObject({ status: 'invalid_tag', updates: [], results: [] });
+    expect(output(accepted).stateUpdate).toMatchObject({ status: 'invalid_tag', updates: [] });
     expect(output(accepted).actionSuggestions.status).toBe('success');
     expect(current().coins).toBe(10);
     expect(seen.some(event => event.event === 'state.changed')).toBe(false);
@@ -169,8 +199,8 @@ describe('narrative postprocessing integration', () => {
     const { accepted, finished } = submit();
     expect((await finished).event).toBe('run.completed');
     expect(output(accepted)).toEqual({
-      stateUpdate: { status: 'no_updates', updates: [], results: [] },
-      actionSuggestions: { status: 'no_suggestions', items: [], results: [] },
+      stateUpdate: { status: 'no_updates', updates: [] },
+      actionSuggestions: { status: 'no_suggestions', items: [] },
     });
     expect(saved(accepted).state).toBeNull();
     expect(seen.some(event => event.event === 'state.changed' || event.event === 'action_suggestions.created')).toBe(false);
@@ -311,7 +341,7 @@ describe('narrative postprocessing integration', () => {
     script(body + stateBlock(rows));
     const { accepted, finished } = submit();
     expect((await finished).event).toBe('run.completed');
-    expect(output(accepted).stateUpdate.results).toHaveLength(105);
+    expect(output(accepted).stateUpdate.updates).toHaveLength(105);
     expect(output(accepted).stateUpdate.status).toBe('success');
     expect(current().coins).toBe(104);
   });
@@ -335,7 +365,7 @@ describe('postprocess diagnostics', () => {
     expect(current().coins).toBe(10);
   });
 
-  it('preserves raw JSONL and reports every row and suggestion result before recording persistence', async () => {
+  it('preserves raw JSONL and records compact state rows and suggestion outcome before persistence', async () => {
     const rawUpdates = '\n{"path":"coins","value":8}\n{"broken":\n{"path":"energy","value":7}\n';
     script(body + '<STATE_UPDATE>' + rawUpdates + '</STATE_UPDATE>' + actions(['继续询问。', '', 17]));
     expect((await submit().finished).event).toBe('run.completed');
@@ -343,13 +373,15 @@ describe('postprocess diagnostics', () => {
       source: 'block_contents', blocks: [rawUpdates] });
     expect(capabilityLog('state_update.result')).toMatchObject({
       phase: 'prepared', status: 'partial_success',
-      results: [{ status: 'success' }, { status: 'invalid_json' }, { status: 'success' }],
+      updates: [{ status: 'success' }, { status: 'invalid_json' }, { status: 'success' }],
     });
     expect(capabilityLog('action_suggestions.raw')).toMatchObject({ blocks: ['["继续询问。","",17]'] });
     expect(capabilityLog('action_suggestions.result')).toMatchObject({
       phase: 'prepared', status: 'partial_success',
-      results: [{ status: 'success' }, { status: 'empty_suggestion' }, { status: 'invalid_suggestion' }],
+      items: ['继续询问。'],
     });
+    expect(capabilityLog('action_suggestions.result')).not.toHaveProperty('results');
+    expect(capabilityLog('state_update.result')).not.toHaveProperty('results');
     expect(capabilityLog('postprocess.completed')).toMatchObject({ persisted: true, stateChanged: true });
   });
 

@@ -46,7 +46,7 @@ export async function prepareContext(dependencies: ContextDependencies, input: P
           parentId: input.userEntryId, runId: input.runId, type: 'compaction', role: null,
           payload: { summary: draft.text }, state: null, metrics: draft.metrics,
           extData: { summary: { coveredThroughEntryId: draft.coveredThroughEntryId, sourceHash: draft.sourceHash } },
-        });
+        }, input.writePermit);
       } catch (error) {
         if (error instanceof AppError && (error.code === 'TIP_CONFLICT' || error.code === 'SESSION_NOT_FOUND')) throw error;
         throw new AppError('MESSAGE_PERSIST_FAILED');

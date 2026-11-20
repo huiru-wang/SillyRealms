@@ -151,7 +151,11 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
     getSnapshot:()=>snapshot,
     subscribe:(listener:()=>void)=>{listeners.add(listener);return()=>{listeners.delete(listener);};},
     subscribeEvents:(listener:(event:SessionEvent)=>void)=>{eventListeners.add(listener);return()=>{eventListeners.delete(listener);};},
-    updateSession(value:Session){if(disposed||value.id!==sessionId)return;session={...value,tipEntryId:tip};publish();},
+    updateSession(value:Session){
+      if(disposed||value.id!==sessionId)return;
+      if(session&&session.apiModelConfigId!==value.apiModelConfigId)usageRevision++;
+      session={...value,tipEntryId:tip};publish();
+    },
     clearNotice(){notice=null;narrative.clearError();publish();},
     dispose(){if(disposed)return;disposed=true;abort.abort();channel.dispose();narrative.dispose();history.dispose();suggestions.dispose();state?.dispose();for(const unsubscribe of subscriptions)unsubscribe();listeners.clear();eventListeners.clear();},
   };

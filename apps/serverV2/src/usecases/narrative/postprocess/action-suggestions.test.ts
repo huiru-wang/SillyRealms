@@ -7,20 +7,19 @@ const block = (value: unknown) => '<action_suggestions>' + JSON.stringify(value)
 
 describe('independent action suggestions', () => {
   it.each(['正文', '<action_suggestions> \n </action_suggestions>', block([])])('accepts absent or empty output: %s', text => {
-    expect(process(text)).toEqual({ status: 'no_suggestions', items: [], results: [] });
+    expect(process(text)).toEqual({ status: 'no_suggestions', items: [] });
   });
 
   it('keeps nonempty suggestions around an empty entry without enforcing a final count of three', () => {
     expect(process(block([' 继续询问。 ', '', '离开酒馆。']))).toEqual({
       status: 'partial_success', items: ['继续询问。', '离开酒馆。'],
-      results: [{ status: 'success' }, { status: 'empty_suggestion' }, { status: 'success' }],
     });
     expect(process(block(['仅一个有效选项。']))).toMatchObject({ status: 'success', items: ['仅一个有效选项。'] });
   });
 
   it('distinguishes an empty array from arrays containing only empty or invalid suggestions', () => {
     expect(process(block(['', '  ']))).toMatchObject({
-      status: 'invalid_suggestions', items: [], results: [{ status: 'empty_suggestion' }, { status: 'empty_suggestion' }],
+      status: 'invalid_suggestions', items: [],
     });
     expect(process(block({ items: [] }))).toMatchObject({ status: 'invalid_suggestions', items: [] });
     expect(process('<action_suggestions>["x",]</action_suggestions>')).toMatchObject({ status: 'invalid_json', items: [] });
@@ -31,13 +30,12 @@ describe('independent action suggestions', () => {
     const result = process(block([50, fifty, '😀'.repeat(51), '继续。', '继续。']));
     expect(result.status).toBe('partial_success');
     expect(result.items).toEqual([fifty, '继续。']);
-    expect(result.results.map(item => item.status))
-      .toEqual(['invalid_suggestion', 'success', 'invalid_suggestion', 'success', 'invalid_suggestion']);
+    expect(result).not.toHaveProperty('results');
   });
 
   it('rejects its own damaged tags while ignoring damaged state tags', () => {
     expect(process(block(['有效。']) + '<action_suggestions>["也有效但未闭合。"]'))
-      .toMatchObject({ status: 'invalid_tag', items: [], results: [] });
+      .toMatchObject({ status: 'invalid_tag', items: [] });
     expect(process('<state_update>\n{"path":"coins","value":\n' + block(['有效。'])))
       .toMatchObject({ status: 'success', items: ['有效。'] });
   });

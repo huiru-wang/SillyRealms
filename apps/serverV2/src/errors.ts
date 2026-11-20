@@ -32,6 +32,8 @@ export const ERRORS = {
   WORLD_NOT_FOUND: { message: '世界不存在', status: 404 },
   SESSION_NOT_FOUND: { message: '会话不存在', status: 404 },
   ENTRY_NOT_FOUND: { message: '消息不存在', status: 404 },
+  SESSION_WRITE_LOCKED: { message: '会话正在运行，暂不允许修改', status: 409 },
+  STATE_WRITE_LOCKED: { message: '关联会话正在运行，暂不允许修改状态', status: 409 },
   RUN_ALREADY_ACTIVE: { message: '该会话已有正在执行的生成', status: 409 },
   RUN_NOT_FOUND: { message: '该会话的运行不存在或已经结束', status: 404 },
   RUN_STOPPED: { message: '生成已停止', status: 409 },

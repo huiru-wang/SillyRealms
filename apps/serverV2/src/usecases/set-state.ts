@@ -1,3 +1,4 @@
+import type { RuntimeCache } from '../infrastructure/cache/index.js';
 import { AppError, ERRORS } from '../errors.js';
 import type { EventHub } from '../infrastructure/events/event-hub.js';
 import type { TransactionRunner } from '../infrastructure/database/transaction.js';
@@ -8,6 +9,7 @@ import {
 import type { WorldService } from '../modules/worlds/service.js';
 
 type Dependencies = {
+  cache: RuntimeCache;
   worlds: Pick<WorldService, 'setState'>;
   sessions: Pick<SessionService, 'setState' | 'setEntryState' | 'listIdsByWorld'>;
   state: Pick<StateService, 'requireGlobal' | 'requireSession' | 'requireMessage' | 'prepareGlobalPatch' | 'prepareSessionPatch' | 'prepareMessagePatch' | 'getCurrentMessage' | 'describeChange'>;
@@ -43,9 +45,15 @@ function writeFailure(scope: StateScope, path: string, error: unknown): StateWri
 }
 
 /** State prepares changes; this usecase persists through the owners of the state columns. */
-export function createSetState({ worlds, sessions, state, transaction, events }: Dependencies) {
+export function createSetState({ worlds, sessions, state, transaction, events, cache }: Dependencies) {
+  function assertWrite(scope: StateScope, ownerId: string): void {
+    if (scope === 'global') cache.assertGlobalStateWrite(ownerId);
+    else cache.assertStateWrite(ownerId);
+  }
+
   function commit<T>(scope: StateScope, ownerId: string, path: string, write: () => T) {
     return transaction(() => {
+      assertWrite(scope, ownerId);
       const read = () => scope === 'global' ? state.requireGlobal(ownerId)
         : scope === 'session' ? state.requireSession(ownerId) : state.getCurrentMessage(ownerId, path || undefined);
       const before = read();
@@ -68,12 +76,14 @@ export function createSetState({ worlds, sessions, state, transaction, events }:
   }
 
   function patch(scope: StateScope, ownerId: string, updates: readonly StateUpdate[], apply: (update: StateUpdate) => void): StateWriteResult[] {
+    assertWrite(scope, ownerId);
     return updates.map(update => {
       let result;
       try {
         // Each field commits separately. Failed writes never reach the publisher.
         result = commit(scope, ownerId, update.path, () => apply(update));
       } catch (error) {
+        if (error instanceof AppError && error.code === 'STATE_WRITE_LOCKED') throw error;
         return writeFailure(scope, update.path, error);
       }
       // Delivery is outside the transaction/error mapping and precedes the next field.
@@ -97,6 +107,7 @@ export function createSetState({ worlds, sessions, state, transaction, events }:
     },
     patchGlobal(worldId: string, updates: readonly StateUpdate[]): StateWriteResult[] {
       identifier(worldId);
+      assertWrite('global', worldId);
       state.requireGlobal(worldId);
       return patch('global', worldId, updates, update => {
         const result = state.prepareGlobalPatch(worldId, update);
@@ -105,6 +116,7 @@ export function createSetState({ worlds, sessions, state, transaction, events }:
     },
     patchSession(sessionId: string, updates: readonly StateUpdate[]): StateWriteResult[] {
       identifier(sessionId);
+      assertWrite('session', sessionId);
       state.requireSession(sessionId);
       return patch('session', sessionId, updates, update => {
         const result = state.prepareSessionPatch(sessionId, update);
@@ -113,6 +125,7 @@ export function createSetState({ worlds, sessions, state, transaction, events }:
     },
     patchMessage(sessionId: string, entryId: string, updates: readonly StateUpdate[]): StateWriteResult[] {
       identifier(sessionId); identifier(entryId);
+      assertWrite('message', sessionId);
       state.requireSession(sessionId);
       state.requireMessage(sessionId, entryId);
       return patch('message', sessionId, updates, update => {

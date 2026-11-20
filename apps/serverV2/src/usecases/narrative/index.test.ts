@@ -192,8 +192,8 @@ describe('unified narrative events and independent persistence', () => {
     expect(texts()).toEqual(['玩家输入', '完整正文']);
     expect(history()[1]).toMatchObject({
       parentId: accepted.userEntryId, state: null, extData: { output: {
-        stateUpdate: { status: 'no_updates', updates: [], results: [] },
-        actionSuggestions: { status: 'no_suggestions', items: [], results: [] },
+        stateUpdate: { status: 'no_updates', updates: [] },
+        actionSuggestions: { status: 'no_suggestions', items: [] },
       } },
       payload: { message: snapshot('完整正文') },
       metrics: { requests: [{ provider: model.providerId, modelId: 'story-model', usage }] },
@@ -426,36 +426,39 @@ describe('pre-request and persistence failures', () => {
     },
   );
 
-  it('reports tip conflicts without overwriting external entries or rolling back the user', async () => {
-    let appended = false;
+  it('blocks external appends during generation and keeps the run tip intact', async () => {
+    let blocked: unknown;
     events.subscribe('session', event => {
-      if (event.event !== 'run.delta' || appended) return;
-      appended = true;
-      services.sessions.appendEntry('session', {
-        id: 'external', parentId: services.sessions.require('session').tipEntryId, runId: 'external-run', type: 'message', role: 'assistant',
-        payload: { message: { role: 'assistant', content: '外部追加', timestamp: 1 } },
-      });
+      if (event.event !== 'run.delta' || blocked) return;
+      try {
+        services.sessions.appendEntry('session', {
+          id: 'external', parentId: services.sessions.require('session').tipEntryId, runId: 'external-run', type: 'message', role: 'assistant',
+          payload: { message: { role: 'assistant', content: '外部追加', timestamp: 1 } },
+        });
+      } catch (error) { blocked = error; }
     });
     const { accepted, finished } = submit();
-    expect(await finished).toMatchObject({ event: 'run.stopped', data: {
-      stop_reason: 'tip_conflict', savedMessageIds: [accepted.userEntryId], tipEntryId: 'external',
+    expect(await finished).toMatchObject({ event: 'run.completed', data: {
+      savedMessageIds: [accepted.userEntryId, accepted.assistantEntryId], tipEntryId: accepted.assistantEntryId,
     } });
-    expect(texts()).toEqual(['玩家输入', '外部追加']);
+    expect(blocked).toMatchObject({ code: 'SESSION_WRITE_LOCKED' });
+    expect(texts()).toEqual(['玩家输入', '完整正文']);
+    expect(services.sessions.getEntry('session', 'external')).toBeNull();
   });
 
-  it('reports actual empty persistence when the session is deleted during generation', async () => {
-    let deleted = false;
+  it('blocks deletion during generation and permits it after settlement', async () => {
+    let blocked: unknown;
     events.subscribe('session', event => {
-      if (event.event !== 'run.delta' || deleted) return;
-      deleted = services.sessions.delete('session');
+      if (event.event !== 'run.delta' || blocked) return;
+      try { services.sessions.delete('session'); } catch (error) { blocked = error; }
     });
     const { accepted, finished } = submit();
-    expect(await finished).toMatchObject({ event: 'run.stopped', data: {
-      stop_reason: 'session_deleted', savedMessageIds: [], tipEntryId: null,
+    expect(await finished).toMatchObject({ event: 'run.completed', data: {
+      savedMessageIds: [accepted.userEntryId, accepted.assistantEntryId], tipEntryId: accepted.assistantEntryId,
     } });
-    expect(services.sessions.getEntry('session', accepted.userEntryId)).toBeNull();
-    expect(services.sessions.getEntry('session', accepted.assistantEntryId)).toBeNull();
+    expect(blocked).toMatchObject({ code: 'SESSION_WRITE_LOCKED' });
     expect(runUsage(accepted.runId)).toEqual(wireUsage(usage));
+    expect(services.sessions.delete('session')).toBe(true);
   });
 });
 
@@ -685,7 +688,13 @@ describe('queryable narrative results', () => {
     expect(history()[0]!.extData.narrative).toMatchObject({ status: 'completed' });
     expect(history()[1]!.metrics!.requests[0]).toMatchObject({ provider: model.providerId, modelId: model.modelId });
     expect(history()[1]!.metrics!.requests[0]).not.toHaveProperty('status');
-    expect(narrative.usage('session')).toEqual({ knownUsage: usage, recordedRequestCount: 1, unknownUsageRequestCount: 0 });
+    const context = history()[1]!.metrics!.context!;
+    expect(context).toMatchObject({ requestId: history()[1]!.metrics!.requests[0]!.requestId,
+      apiModelConfigId: 'model', contextWindowTokens: model.contextWindow });
+    expect(context.contextComposition.historyBytes).toBeGreaterThan(0);
+    expect(narrative.usage('session')).toEqual({ knownUsage: usage, recordedRequestCount: 1, unknownUsageRequestCount: 0,
+      latestContext: { inputTokens: usage.inputTokens, contextWindowTokens: model.contextWindow, modelId: model.modelId,
+        stale: false, contextComposition: context.contextComposition } });
     const reloaded = createNarrativeUsecases({ ...services, events, transaction: bindTransaction(db), modelClient: { resolve: resolveModel, assertMessageOrder: vi.fn(), stream } });
     expect(reloaded.get('session', accepted.runId).status).toBe('completed');
     expect(() => reloaded.get('session', 'missing')).toThrow('RUN_NOT_FOUND');

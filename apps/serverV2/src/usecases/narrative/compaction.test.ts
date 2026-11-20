@@ -246,9 +246,9 @@ describe('summary execution and accounting', () => {
   it('keeps the user if summary persistence fails and releases the lock', async () => {
     seed();
     const original = services.sessions.appendEntry.bind(services.sessions);
-    const write = vi.spyOn(services.sessions, 'appendEntry').mockImplementation((id, input) => {
+    const write = vi.spyOn(services.sessions, 'appendEntry').mockImplementation((id, input, permit) => {
       if (input.type === 'compaction') throw new Error('disk');
-      return original(id, input);
+      return original(id, input, permit);
     });
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ data: { stop_reason: 'message_persist_failed', savedMessageIds: [accepted.userEntryId] } });

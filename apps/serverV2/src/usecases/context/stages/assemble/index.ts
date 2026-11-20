@@ -10,6 +10,12 @@ import { systemVariableNames } from '../materials/index.js';
 import { renderModelNotes } from '../model-notes/index.js';
 import { postprocessProtocol } from './protocol.js';
 
+export type ContextComposition = { systemBytes: number; summaryBytes: number; historyBytes: number };
+const emptyComposition = (): ContextComposition => ({ systemBytes: 0, summaryBytes: 0, historyBytes: 0 });
+const byteLength = (value: string) => Buffer.byteLength(value, 'utf8');
+// Keep composition comparable across runs; this framing is a convention, not billed tokens.
+const messageOverhead = 16;
+
 export type CompiledNarrativeContext = {
   messages: ModelMessage[];
   maxTokens: number;
@@ -18,13 +24,18 @@ export type CompiledNarrativeContext = {
   estimatedInputTokens: number;
   inputBudget: number;
   activeRoots: string[];
+  context: {
+    apiModelConfigId: string;
+    contextWindowTokens: number;
+    contextComposition: ContextComposition;
+  };
   diagnostics: ContextDiagnostics;
 };
 
 /** Pure compilation of the selected history; budget enforcement belongs to context preparation. */
 export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick<ModelInfo, 'contextWindow' | 'maxTokens'>): CompiledNarrativeContext {
   const config = snapshot.preset.config, messages: ModelMessage[] = [];
-  const nodes: ContextNodeDiagnostic[] = [];
+  const nodes: ContextNodeDiagnostic[] = [], composition = emptyComposition();
   let inputCount = 0, historyCount = 0, summaryCount = 0;
   for (const node of config.nodes) {
     if (node.kind === 'postprocess') continue;
@@ -36,13 +47,23 @@ export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick
     if (!node.enabled) continue;
     const startIndex = messages.length;
     const modelNoteEntryIds: string[] = [];
-    let pending = '';
+    let pending = '', pendingComposition = emptyComposition();
+    const append = (value: string, category: keyof ContextComposition) => {
+      pending += value;
+      pendingComposition[category] += byteLength(value);
+    };
     const flush = () => {
-      if (pending.trim()) messages.push({ role: node.role === 'auto' ? 'system' : node.role, content: pending, timestamp: 0 });
+      if (pending.trim()) {
+        messages.push({ role: node.role === 'auto' ? 'system' : node.role, content: pending, timestamp: 0 });
+        composition.systemBytes += pendingComposition.systemBytes + messageOverhead;
+        composition.summaryBytes += pendingComposition.summaryBytes;
+        composition.historyBytes += pendingComposition.historyBytes;
+      }
       pending = '';
+      pendingComposition = emptyComposition();
     };
     for (const segment of parsePromptTemplate(node.prompt, systemVariableNames)) {
-      if (segment.type === 'text') { pending += segment.value; continue; }
+      if (segment.type === 'text') { append(segment.value, 'systemBytes'); continue; }
       if (segment.name === 'history.summary') summaryCount++;
       if (segment.name === 'input.text') {
         inputCount++;
@@ -53,13 +74,18 @@ export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick
         if (node.id !== 'chatHistory') throw new AppError('INVALID_NARRATIVE_TEMPLATE');
       }
       const variable = snapshot.materials.variables[segment.name];
-      if (variable.type === 'text') pending += variable.value;
+      if (variable.type === 'text') {
+        append(variable.value, segment.name === 'history.summary' ? 'summaryBytes'
+          : segment.name === 'input.text' ? 'historyBytes' : 'systemBytes');
+      }
       else {
         flush();
         for (const item of variable.value) {
           const notes = snapshot.modelNotes.get(item.id);
           if (notes?.length) modelNoteEntryIds.push(item.id);
-          messages.push({ role: item.role, content: renderModelNotes(item.text, notes), timestamp: item.timestamp });
+          const content = renderModelNotes(item.text, notes);
+          messages.push({ role: item.role, content, timestamp: item.timestamp });
+          composition.historyBytes += byteLength(content) + messageOverhead;
         }
       }
     }
@@ -100,13 +126,19 @@ export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick
   const actionPrompt = renderCapability('actionSuggestions', '行动建议', true);
   nodes.push({ id: 'postprocessProtocol', name: '能力输出协议', kind: 'protocol', role: 'system', enabled: true,
     included: true, reason: 'included', source: 'platform', messageIndexes: [capabilityIndex] });
-  messages.push({ role: 'system', timestamp: 0, content: [
+  const capabilityContent = [
     ...(hasState ? [statePrompt] : []), actionPrompt, postprocessProtocol(hasState),
-  ].join('\n\n') });
+  ].join('\n\n');
+  messages.push({ role: 'system', timestamp: 0, content: capabilityContent });
+  composition.systemBytes += byteLength(capabilityContent) + messageOverhead;
   const { maxTokens, inputBudget } = contextBudget(config, model);
   const estimatedInputTokens = estimateInputTokens(messages);
   return {
     messages, maxTokens, inputBudget, estimatedInputTokens, activeRoots: [...snapshot.materials.activeRoots],
+    context: {
+      apiModelConfigId: snapshot.session.apiModelConfigId, contextWindowTokens: model.contextWindow,
+      contextComposition: composition,
+    },
     diagnostics: {
       nodes, characters: snapshot.materials.selection.characters, lore: snapshot.materials.selection.lore,
       activeRoots: [...snapshot.materials.activeRoots], messageCount: messages.length, estimatedInputTokens, inputBudget,
