@@ -1,11 +1,10 @@
 import { narrativeForActivation } from '@sillyrealms/roleplay';
 import { validateStateSchema } from '@sillyrealms/sdk/state-validation';
-import { AppError } from '../../errors.js';
-import type { StateService, StateViews } from '../../modules/state/service.js';
-import type { World, WorldCard } from '../../modules/worlds/service.js';
+import { AppError } from '../../../../errors.js';
+import type { StateService, StateViews } from '../../../../modules/state/service.js';
+import type { World, WorldCard } from '../../../../modules/worlds/service.js';
+import type { NarrativeHistoryMessage } from '../history/index.js';
 
-/** Visible body projection only; reasoning and tool requests are not narrative materials. */
-export type NarrativeHistoryMessage = { id: string; role: 'user' | 'assistant'; text: string; timestamp: number };
 export type MaterialSources = {
   world: World;
   views: StateViews;

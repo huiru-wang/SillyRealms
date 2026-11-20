@@ -2,10 +2,13 @@ import type { EntryRun, EntryRunListOptions } from '../../modules/sessions/servi
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { AppError } from '../../errors.js';
-import { captureNarrativeContext } from './context.js';
+import { prepareContext } from '../context/index.js';
+import type { PreparedContext, SummaryModelRequest } from '../context/index.js';
+import { collectModel } from '../../infrastructure/model/collect.js';
+import { assertRunning, whileRunning } from './model-call.js';
 import { executeNarrative } from './execute.js';
 import type { SavedUserMessage } from './events.js';
-import type { AcceptedNarrative, NarrativeDependencies, PreparedNarrative, SubmitInput } from './types.js';
+import type { AcceptedNarrative, NarrativeDependencies, SubmitInput } from './types.js';
 
 export type { AcceptedNarrative, NarrativeDependencies, SubmitInput } from './types.js';
 
@@ -48,20 +51,35 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
       throw error;
     }
 
-    let prepared: PreparedNarrative;
     let provider: string | null = null, model: string | null = null;
     try {
       const configured = dependencies.models.get(session.apiModelConfigId);
       provider = configured?.providerId ?? null;
       model = configured?.modelId ?? null;
-      prepared = { snapshot: captureNarrativeContext(dependencies, {
-        sessionId, inputText: value.input.text, userEntryId, previousTipEntryId: expectedTipEntryId,
-      }) };
-    } catch (error) {
-      prepared = { error };
-    }
+    } catch { /* The context entry reports the captured domain failure during settlement. */ }
+    let apiKeyPromise: Promise<string> | undefined;
+    const getApiKey = (credentialRef: SummaryModelRequest['credentialRef']): Promise<string> => apiKeyPromise ??= (async () => {
+      assertRunning(run.controller.signal);
+      const key = await whileRunning(dependencies.credentials.get(credentialRef), run.controller.signal);
+      assertRunning(run.controller.signal);
+      if (!key?.trim()) throw new AppError('CREDENTIAL_NOT_CONFIGURED');
+      return key;
+    })();
+    const summarize = async (request: SummaryModelRequest) => {
+      const apiKey = await getApiKey(request.credentialRef);
+      assertRunning(request.signal);
+      request.onStarted();
+      const result = await collectModel(dependencies.modelClient, request.model, request.messages, {
+        apiKey, signal: request.signal, maxTokens: request.maxTokens,
+        temperature: request.temperature, thinkingEnabled: request.thinkingEnabled,
+      });
+      if (result.failed || result.stopReason || !result.attempted || result.finishReason !== 'stop' ||
+        !result.snapshot.content.trim() || result.snapshot.tool_calls.length) return { ok: false as const };
+      return { ok: true as const, text: result.snapshot.content, metrics: result.metrics };
+    };
+    // Queue run.created first, then synchronously capture through the sole context entry below.
     run.completion = Promise.resolve().then(() => executeNarrative(dependencies, {
-      sessionId, runId, userEntryId, assistantEntryId, userMessage, provider, model, prepared, signal: run.controller.signal,
+      sessionId, runId, userEntryId, assistantEntryId, userMessage, provider, model, prepared, getApiKey, signal: run.controller.signal,
     })).then(settlement => {
       // Settlement is complete: observers may stop or submit a new turn without finding a stale active run.
       if (active.get(sessionId) === run) active.delete(sessionId);
@@ -71,6 +89,18 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
       }
     }).finally(() => {
       if (active.get(sessionId) === run) active.delete(sessionId);
+    });
+    const prepared: Promise<PreparedContext> = prepareContext({
+      sessions: dependencies.sessions, worlds: dependencies.worlds, presets: dependencies.presets,
+      models: dependencies.models, state: dependencies.state, modelClient: dependencies.modelClient, summarize,
+    }, {
+      kind: 'narrative', sessionId, runId, userEntryId, inputText: value.input.text,
+      previousTipEntryId: expectedTipEntryId, signal: run.controller.signal,
+      onProgress(progress) {
+        const fields = { sessionId, runId, provider, model, timestamp: Date.now() };
+        if (progress.type === 'summary_started') dependencies.events.publish(sessionId, { event: 'run.summarizing', data: fields });
+        else dependencies.events.publish(sessionId, { event: 'run.summarized', data: { ...fields, entryId: progress.entryId } });
+      },
     });
     return { runId, userEntryId, assistantEntryId };
   };

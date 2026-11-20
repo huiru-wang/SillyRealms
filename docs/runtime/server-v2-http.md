@@ -213,7 +213,7 @@ SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt
 
 受理时先独立保存用户消息，再准备上下文和模型请求。202 的 data 为 `{runId,userEntryId,assistantEntryId}`。此时 userEntryId 已持久化，assistantEntryId 仅预分配；202 不代表生成成功。上下文按预设自动裁剪或执行至多一次摘要；一次摘要后仍超限通过 stop_reason=summary_capacity_exceeded 结束，保留已保存用户、摘要与摘要 metrics，摘要失败为 summary_failed。失败/中断摘要不保存记录或计量；成功摘要未知 usage 为 null。之后的配置、历史、预算、凭据或模型错误通过 `run.stopped` 的 stop_reason 返回，保留用户消息；SSE 不返回 error 对象或 errorCode/errorMessage。
 
-助手正常完成、失败或停止时独立保存完整或部分公开快照，包含分离能力数据块后的干净 content、公开 reasoning_content 与 tool_calls；只有公开 reasoning 或工具请求时也保留，完全没有公开内容时只保留用户。SDK 最终快照采用替换语义。助手写入失败不回滚用户，外部追加导致 tip 变化时不覆盖新消息。终态 savedMessageIds 与 tipEntryId 表达实际保存结果；后续编译只采用消息正文，不把 reasoning/工具请求当作提示词正文。内容与计量见 [叙事执行](server-v2-narrative.md)。
+助手正常完成、失败或停止时独立保存完整或部分公开快照，包含分离能力数据块后的干净 content、公开 reasoning_content 与 tool_calls；只有公开 reasoning 或工具请求时也保留，完全没有公开内容时只保留用户。SDK 最终快照采用替换语义。助手写入失败不回滚用户，外部追加导致 tip 变化时不覆盖新消息。终态 savedMessageIds 与 tipEntryId 表达实际保存结果；后续模型历史以可见正文为底稿，由独立 context 为选中的保留条目追加只读模型旁注；不把 reasoning/工具请求当作提示词正文。内容与计量见 [叙事执行](server-v2-narrative.md)。
 
 `POST /sessions/:id/narrative/runs/:runId/stop` 返回 `data:{runId,stopping:true}`。仅匹配该会话当前内存运行；不匹配或已结束返回 RUN_NOT_FOUND/404。返回值表示已请求停止，最终以 `run.stopped` 及其 stop_reason 为准；保存失败优先于普通取消。断开 POST 或 SSE 都不会代替显式 stop。
 
@@ -283,7 +283,7 @@ metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstT
 
 run.completed 表示正文主流程完成，不等同于能力全部成功。能力异常记录在 output，查询方可查看逐项结果；模型取消、错误、length 等未执行后处理时，部分助手不产生 output。旧消息没有 output 不补造结果。
 
-公开正文与模型历史保持干净，不回填历史能力标签，不持久化 blockIndex、line、contextEligible，也不因读取结果重新执行状态更新。条目级 model-only notes 后续独立设计。
+公开与持久化正文保持干净。context 在本轮历史中先选最近两条有可见正文的 assistant，再从已保存 output 构建条目级 model-only notes；没有 output 不回找旧条目，最终未保留的消息不注入旁注。旁注只进入主模型输入与实际输入估算，不进入摘要、关键词激活或 HTTP 返回字段，不回写正文或重执行状态更新。正文编辑保留当时结果，旁注不表示已按编辑正文重算。不持久化 blockIndex、line、contextEligible 或 notes，不新增接口和表。
 
 建议创建事件为 action_suggestions.created，仅发布本轮已保存的有效非空建议；run.created 驱动清空上一轮建议，首次恢复只认最新 run 的实际完成结果。详见 [会话事件](server-v2-events.md#行动建议创建) 与 [叙事执行](server-v2-narrative.md#叙事后处理与能力结果)。
 
@@ -390,4 +390,4 @@ set-state 用例在同步事务内读取、保存、计算变更与收集接收�
 
 ## 验证
 
-函数验证使用内存或临时 SQLite、临时文件和最小 CredentialStore 替身，不访问真实凭据。配合 `typecheck`、`lint` 检查接口和边界。state 路由通过进程内请求验证，不启动真实服务或执行浏览器链路测试，不验证尚未适配的前端。架构lint覆盖modules属主、模块唯一出口、Reader依赖、usecases边界、跨层存储访问和SQL属主；类型检查验证Reader不可调用写方法及事务不能接受异步回调。
+函数验证使用内存或临时 SQLite、临时文件和最小 CredentialStore 替身，不访问真实凭据。配合 `typecheck`、`lint` 检查接口和边界。state 路由通过进程内请求验证，不启动真实服务或执行浏览器链路测试，不验证尚未适配的前端。架构lint覆盖modules属主、模块唯一出口、Reader依赖、usecases边界、context唯一公开出口及无叙事/EventHub反向依赖、跨层存储访问和SQL属主；类型检查验证Reader不可调用写方法及事务不能接受异步回调。

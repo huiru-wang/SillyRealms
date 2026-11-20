@@ -1,9 +1,9 @@
 import { parseRoleplay } from '@sillyrealms/roleplay';
-import { AppError } from '../../errors.js';
-import type { ModelInfo, ModelMessage } from '../../infrastructure/model/client.js';
-import type { NarrativeHistoryMessage } from './materials.js';
-import { estimateInputTokens } from './compile.js';
-import { summaryBudget } from './context-policy.js';
+import { AppError } from '../../../../errors.js';
+import type { ModelInfo, ModelMessage } from '../../../../infrastructure/model/client.js';
+import type { NarrativeHistoryMessage } from '../history/index.js';
+import { estimateInputTokens } from '../../lib/estimate.js';
+import { summaryBudget } from '../../lib/budget.js';
 
 /** Instructions are player controls, not story facts. Preserve their line boundaries only. */
 export function summaryNarrative(text: string, role: 'user' | 'assistant'): string {

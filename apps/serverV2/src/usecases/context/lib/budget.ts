@@ -1,8 +1,8 @@
-import { AppError } from '../../errors.js';
-import type { ModelInfo } from '../../infrastructure/model/client.js';
-import type { Preset } from '../../modules/presets/service.js';
+import { AppError } from '../../../errors.js';
+import type { ModelInfo } from '../../../infrastructure/model/client.js';
+import type { Preset } from '../../../modules/presets/service.js';
 
-export function contextBudget(config: Preset['config'], model: Pick<ModelInfo, 'contextWindow' | 'maxTokens'>) {
+export function contextBudget(config: Pick<Preset['config'], 'contextStrategy'>, model: Pick<ModelInfo, 'contextWindow' | 'maxTokens'>) {
   const { maxOutputTokens: maxTokens, maxContextTokens } = config.contextStrategy;
   if (![maxTokens, maxContextTokens, model.maxTokens, model.contextWindow].every(value => Number.isSafeInteger(value) && value > 0)
     || maxTokens > model.maxTokens) throw new AppError('INVALID_MODEL_BUDGET');

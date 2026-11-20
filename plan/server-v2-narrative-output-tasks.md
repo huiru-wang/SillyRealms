@@ -52,17 +52,17 @@
 
 ## 6. 上下文与计量
 
-- [x] 历史、关键词与摘要继续使用干净正文，不回填能力标签或重复执行状态更新。
-- [x] model-only notes 后续独立设计；当前不构建旁注 schema、重建模块或失效标记。
+- [x] 输出侧保持干净正文，不承担历史回填或重复执行状态更新。
+- [x] 条目级 model-only notes 由独立[上下文方案](server-v2-context-design.md)实施，状态更新和建议仅提供已保存的结果来源；输出处理不依赖其内部阶段。
 - [x] 按模型实际输出处理与返回 usage 记录；不增加能力 token、条数或全尾部配额。
 - [x] 既有输入预算/压缩与 max_output_tokens 继续复用，实际新增提示词纳入原请求估算。
-- [x] 编译拒绝后处理提示词引用 input.text、history.messages、history.summary，避免重复注入；新增 context 回归用例覆盖摘要单次注入。
+- [x] 编译拒绝后处理提示词引用 input.text、history.messages、history.summary，避免重复注入；回归用例覆盖摘要单次注入。
 
-验收：无历史重建、无旁注预建、无新增模型调用，隐藏输出用量不被扣减。
+验收：无输出侧历史重建、无重复状态执行，隐藏输出用量不被扣减；模型旁注的输入行为由上下文任务独立验收。
 
 ## 7. 验证与文档
 
-- [x] 已运行 `pnpm --filter @sillyrealms/server-v2 exec vitest run src/modules src/usecases src/infrastructure src/http src/testing`，37 个测试文件、434 项测试全部通过。
+- [x] 输出后处理交付时运行 `pnpm --filter @sillyrealms/server-v2 exec vitest run src/modules src/usecases src/infrastructure src/http src/testing`，37 个测试文件、434 项测试全部通过；后续上下文迁移的新增验证见其独立任务清单。
 - [x] typecheck、lint 均通过，exit 0。
 - [x] 函数验证使用流替身与内存/临时库；未启动真实服务、HTTP/浏览器链路或真实模型/Keychain。
 - [x] 已同步 server-v2-narrative/events/http 与根/serverV2 AGENTS，清理过期禁止扩展、预留建议、旧事件名、二态和坏标签恢复要求。

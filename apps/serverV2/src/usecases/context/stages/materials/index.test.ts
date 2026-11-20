@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { StateService } from '../../modules/state/service.js';
-import { selectNarrativeMaterials, type MaterialSources } from './materials.js';
+import { StateService } from '../../../../modules/state/service.js';
+import { selectNarrativeMaterials, type MaterialSources } from './index.js';
 
 const conditions = { evaluateWhen: StateService.prototype.evaluateWhen };
 function sources(): MaterialSources {

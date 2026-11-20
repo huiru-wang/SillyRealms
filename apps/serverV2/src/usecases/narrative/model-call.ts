@@ -1,29 +1,14 @@
 import { NarrativeStreamSplitter, splitNarrativeContent } from './postprocess/stream-splitter.js';
-import { randomUUID } from 'node:crypto';
 import { AppError } from '../../errors.js';
-import type { ModelClient, ModelDelta, ModelEvent, ModelFinishReason, ModelInfo, ModelMessage, ModelOptions,
-  ModelSnapshot, ModelStopReason, ModelUsage } from '../../infrastructure/model/client.js';
+import { collectModel } from '../../infrastructure/model/collect.js';
+import type { ModelClient, ModelInfo, ModelMessage, ModelOptions, ModelSnapshot, ModelStopReason } from '../../infrastructure/model/client.js';
 import type { EventHub } from '../../infrastructure/events/event-hub.js';
-import type { EntryMetrics } from '../../modules/sessions/service.js';
 import type { NarrativeStopReason, RunEventFields } from './events.js';
 
-export const zeroUsage = (): ModelUsage => ({
-  inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
-});
+export { copySnapshot, zeroUsage, raceAbort as whileRunning } from '../../infrastructure/model/collect.js';
 
 export function assertRunning(signal: AbortSignal): void {
   if (signal.aborted) throw new AppError('RUN_STOPPED');
-}
-
-/** A slow credential store or iterator cannot hold local cancellation or shutdown open. */
-export function whileRunning<T>(work: PromiseLike<T>, signal: AbortSignal): Promise<T> {
-  let abort!: () => void;
-  const cancelled = new Promise<never>((_resolve, reject) => {
-    abort = () => reject(new AppError('RUN_STOPPED'));
-    signal.addEventListener('abort', abort, { once: true });
-    if (signal.aborted) abort();
-  });
-  return Promise.race([Promise.resolve(work), cancelled]).finally(() => signal.removeEventListener('abort', abort));
 }
 
 export function cancellationReason(signal: AbortSignal): NarrativeStopReason {
@@ -69,156 +54,44 @@ function modelFailureReason(reason: ModelStopReason): NarrativeStopReason {
   }
 }
 
-/** Copy only the application-owned public fields; never share a provider's mutable objects. */
-export function copySnapshot(snapshot: ModelSnapshot): ModelSnapshot {
-  return {
-    role: 'assistant', content: snapshot.content, reasoning_content: snapshot.reasoning_content,
-    tool_calls: snapshot.tool_calls.map(tool => ({
-      index: tool.index, id: tool.id, type: 'function',
-      function: { name: tool.function.name, arguments: tool.function.arguments },
-    })),
-  };
-}
-
-function copyDelta(delta: ModelDelta): Omit<ModelDelta, 'role'> {
-  return {
-    ...(delta.content === undefined ? {} : { content: delta.content }),
-    ...(delta.reasoning_content === undefined ? {} : { reasoning_content: delta.reasoning_content }),
-    ...(delta.tool_calls === undefined ? {} : { tool_calls: delta.tool_calls.map(tool => ({
-      index: tool.index,
-      ...(tool.id === undefined ? {} : { id: tool.id }),
-      ...(tool.type === undefined ? {} : { type: tool.type }),
-      ...(tool.function === undefined ? {} : { function: {
-        ...(tool.function.name === undefined ? {} : { name: tool.function.name }),
-        ...(tool.function.arguments === undefined ? {} : { arguments: tool.function.arguments }),
-      } }),
-    })) }),
-  };
-}
-
-function appendDelta(snapshot: ModelSnapshot, delta: ModelDelta): void {
-  snapshot.content += delta.content ?? '';
-  snapshot.reasoning_content += delta.reasoning_content ?? '';
-  for (const fragment of delta.tool_calls ?? []) {
-    let tool = snapshot.tool_calls.find(item => item.index === fragment.index);
-    if (!tool) {
-      tool = { index: fragment.index, id: '', type: 'function', function: { name: '', arguments: '' } };
-      snapshot.tool_calls.push(tool);
-      snapshot.tool_calls.sort((left, right) => left.index - right.index);
-    }
-    // Identity and function name are replacements; arguments are streamed string fragments.
-    if (fragment.id !== undefined) tool.id = fragment.id;
-    if (fragment.function?.name !== undefined) tool.function.name = fragment.function.name;
-    tool.function.arguments += fragment.function?.arguments ?? '';
-  }
-}
-
 export function hasPublicOutput(snapshot: ModelSnapshot): boolean {
   return Boolean(snapshot.content.trim() || snapshot.reasoning_content.trim() || snapshot.tool_calls.length);
 }
 
-/** Shared cancellable invocation; only narrative calls opt into EventHub text publication. */
+/** Narrative owns visible-output splitting, SSE publication and run failure semantics. */
 export async function callModel(modelClient: Pick<ModelClient, 'stream'>, selected: ModelInfo,
   messages: readonly ModelMessage[], options: ModelOptions,
-  publication?: { events: EventHub; fields: RunEventFields; messageId: string }) {
-  const { signal } = options;
-  const splitter = publication ? new NarrativeStreamSplitter() : undefined;
+  publication: { events: EventHub; fields: RunEventFields; messageId: string }) {
+  const splitter = new NarrativeStreamSplitter();
   let rawContent = '';
-  let snapshot: ModelSnapshot = { role: 'assistant', content: '', reasoning_content: '', tool_calls: [] };
-  let usage: ModelUsage | null = zeroUsage();
-  let attempted = false;
-  let requestId: string | undefined;
-  let startedAt: number | undefined;
-  let firstTextMs: number | undefined;
-  let finishReason: ModelFinishReason | undefined;
+  const result = await collectModel(modelClient, selected, messages, options, {
+    transformDelta(delta) {
+      if (delta.content !== undefined) {
+        rawContent += delta.content;
+        const visible = splitter.push(delta.content);
+        if (visible) delta.content = visible;
+        else delete delta.content;
+      }
+      return delta;
+    },
+    transformSnapshot(snapshot) {
+      rawContent = snapshot.content;
+      return { ...snapshot, content: splitNarrativeContent(rawContent).content };
+    },
+    flush: () => splitter.finish(),
+    onDelta(delta) {
+      publication.events.publish(publication.fields.sessionId, { event: 'run.delta', data: {
+        ...publication.fields, timestamp: Date.now(), messageId: publication.messageId,
+        messages: [{ role: 'assistant', delta }],
+      } });
+    },
+  });
   let stopReason: NarrativeStopReason | undefined;
-  let receivedTerminal = false, publishedDelta = false, observingAttempt = true;
-  let iterator: AsyncIterator<ModelEvent> | undefined;
-
-  const markFirstText = () => {
-    if (firstTextMs === undefined && startedAt !== undefined) firstTextMs = performance.now() - startedAt;
-  };
-
-  try {
-    assertRunning(signal);
-    const invocationStartedAt = performance.now();
-    iterator = modelClient.stream(selected, messages, options)[Symbol.asyncIterator]();
-    while (true) {
-      assertRunning(signal);
-      const pending = Promise.resolve(iterator.next()).then(next => {
-        // An async generator queues this marker even if the SDK synchronously triggered abort.
-        // Observe only the invocation fact independently of the cancellation race, never its output.
-        if (observingAttempt && !next.done && next.value.type === 'request_started') {
-          if (attempted) throw new AppError('MODEL_OUTPUT_INVALID');
-          attempted = true;
-          requestId = randomUUID();
-          startedAt = invocationStartedAt;
-          usage = null;
-        }
-        return next;
-      });
-      const next = await whileRunning(pending, signal);
-      // Cancellation freezes public content and usage before any late provider result is read.
-      assertRunning(signal);
-      if (next.done) break;
-      const event = next.value;
-      if (event.type === 'request_started') continue;
-      if (event.type === 'delta') {
-        const delta = copyDelta(event.delta);
-        if (splitter && delta.content !== undefined) {
-          rawContent += delta.content;
-          const visible = splitter.push(delta.content);
-          if (visible) delta.content = visible;
-          else delete delta.content;
-        }
-        appendDelta(snapshot, delta);
-        if (delta.content) markFirstText();
-        if (Object.keys(delta).length) {
-          publishedDelta = true;
-          if (publication) publication.events.publish(publication.fields.sessionId, { event: 'run.delta', data: {
-            ...publication.fields, timestamp: Date.now(), messageId: publication.messageId,
-            messages: [{ role: 'assistant', delta: copyDelta(delta) }],
-          } });
-        }
-        continue;
-      }
-      receivedTerminal = true;
-      snapshot = copySnapshot(event.snapshot);
-      if (splitter) {
-        rawContent = snapshot.content;
-        snapshot.content = splitNarrativeContent(rawContent).content;
-      }
-      if (snapshot.content) markFirstText();
-      if (attempted) usage = event.usage === null ? null : { ...event.usage };
-      if (event.type === 'error') {
-        stopReason = modelFailureReason(event.stopReason);
-      } else {
-        finishReason = event.finishReason;
-        if (snapshot.tool_calls.length || finishReason === 'tool_calls') stopReason = 'tool_execution_unsupported';
-        else if (finishReason !== 'stop') stopReason = 'output_incomplete';
-        else if (!snapshot.content.trim()) stopReason = 'model_output_invalid';
-      }
-      break;
-    }
-    if (!receivedTerminal) stopReason = 'output_incomplete';
-  } catch (error) {
-    stopReason = signal.aborted ? cancellationReason(signal) : failureReason(error, attempted);
-  } finally {
-    observingAttempt = false;
-    // A provider may ignore abort or never resolve return(); neither delays local settlement.
-    if (iterator?.return) {
-      try { void Promise.resolve(iterator.return()).catch(() => {}); } catch { /* Best-effort cleanup. */ }
-    }
-  }
-
-  if (splitter && !receivedTerminal) snapshot.content += splitter.finish();
-  if (signal.aborted) stopReason = cancellationReason(signal);
-  const metrics: EntryMetrics | null = attempted && requestId ? {
-    requests: [{
-      requestId, provider: selected.providerId, modelId: selected.modelId, usage,
-      durationMs: performance.now() - startedAt!,
-      ...(firstTextMs === undefined ? {} : { firstTextMs }),
-    }],
-  } : null;
-  return { snapshot, rawContent, usage, attempted, metrics, finishReason, stopReason, receivedTerminal, publishedDelta };
+  if (options.signal.aborted) stopReason = cancellationReason(options.signal);
+  else if (result.failed) stopReason = failureReason(result.error, result.attempted);
+  else if (result.stopReason) stopReason = modelFailureReason(result.stopReason);
+  else if (result.snapshot.tool_calls.length || result.finishReason === 'tool_calls') stopReason = 'tool_execution_unsupported';
+  else if (result.finishReason !== 'stop') stopReason = 'output_incomplete';
+  else if (!result.snapshot.content.trim()) stopReason = 'model_output_invalid';
+  return { ...result, rawContent, stopReason, publishedDelta: result.receivedDelta };
 }

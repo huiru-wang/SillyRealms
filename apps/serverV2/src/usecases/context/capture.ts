@@ -1,11 +1,12 @@
-import { narrativeMessage, projectHistory } from './history.js';
+import { narrativeMessage, projectHistory, type NarrativeHistoryMessage } from './stages/history/index.js';
 import { AppError } from '../../errors.js';
 import type { ModelConfig, ModelService } from '../../modules/models/service.js';
 import type { Preset, PresetService } from '../../modules/presets/service.js';
 import type { Session, SessionEntry, SessionService } from '../../modules/sessions/service.js';
 import type { StateService, StateViews } from '../../modules/state/service.js';
 import type { World, WorldService } from '../../modules/worlds/service.js';
-import { selectNarrativeMaterials, type NarrativeHistoryMessage, type NarrativeMaterials } from './materials.js';
+import { selectNarrativeMaterials, type NarrativeMaterials } from './stages/materials/index.js';
+import { buildNarrativeNotes, type ModelNotes } from './stages/model-notes/index.js';
 
 export type NarrativeContextServices = {
   sessions: Pick<SessionService, 'require' | 'getHistory'>;
@@ -30,6 +31,7 @@ export type NarrativeSnapshot = {
   views: StateViews;
   inputText: string;
   materials: NarrativeMaterials;
+  modelNotes: ModelNotes;
 };
 
 /** Called synchronously after persisting the user, before credential/model awaits. */
@@ -53,5 +55,5 @@ export function captureNarrativeContext(services: NarrativeContextServices, inpu
     world: captured.world, views: captured.views, history: captured.history,
     playerId: captured.session.userCharacterId, inputText: captured.inputText,
   }, services.state);
-  return { ...captured, materials };
+  return { ...captured, materials, modelNotes: buildNarrativeNotes(captured.historyEntries) };
 }

@@ -269,14 +269,36 @@ describe('narrative postprocessing integration', () => {
     expect(current().coins).toBe(8);
   });
 
-  it('keeps historical assistant messages clean without model-only notes or replaying updates', async () => {
+  it('adds historical notes only to the next model request without changing stored prose or replaying updates', async () => {
+    const prepareUpdates = vi.spyOn(services.state, 'prepareMessageUpdates');
     const first = submit(); await first.finished;
+    const firstSaved = structuredClone(saved(first.accepted));
+    seen = [];
     script(body);
     const second = submit(); await second.finished;
     const history = stream.mock.calls[1]![1].filter(message => message.role === 'assistant');
-    expect(history.map(message => message.content)).toEqual(['Opening', body]);
-    expect(JSON.stringify(history)).not.toMatch(/state_update|action_suggestions/);
-    expect(output(second.accepted).stateUpdate.status).toBe('no_updates');
+    expect(history).toHaveLength(2);
+    expect(history[0]!.content).toBe('Opening');
+    expect(history[1]!.content.startsWith(body + '\n\n<model_notes>')).toBe(true);
+    expect(history[1]!.content).toContain('{"path":"coins","value":8,"reason":"购买热汤"}');
+    expect(history[1]!.content).toContain('["继续询问。","去集市。","离开酒馆。"]');
+    expect(history[1]!.content).toContain('当时已接受并应用');
+    expect(history[1]!.content).toContain('尚未执行');
+    expect(saved(first.accepted)).toEqual(firstSaved);
+    const storedMessages = services.sessions.getHistory('session')
+      .filter(entry => entry.type === 'message' && entry.role === 'assistant').map(entry => entry.payload.message);
+    expect(storedMessages).toEqual([
+      expect.objectContaining({ content: 'Opening' }),
+      expect.objectContaining({ content: body }),
+      expect.objectContaining({ content: body }),
+    ]);
+    expect(JSON.stringify(storedMessages)).not.toMatch(/model_notes|state_update|action_suggestions/);
+    expect(JSON.stringify(visible())).not.toMatch(/model_notes|state_update|action_suggestions/);
+    expect(output(second.accepted)).toMatchObject({
+      stateUpdate: { status: 'no_updates' }, actionSuggestions: { status: 'no_suggestions' },
+    });
+    expect(prepareUpdates).toHaveBeenCalledOnce();
+    expect(seen.some(event => event.event === 'state.changed' || event.event === 'action_suggestions.created')).toBe(false);
     expect(current().coins).toBe(8);
   });
 

@@ -8,7 +8,7 @@ import type { WorldService } from '../../modules/worlds/service.js';
 import type { EventHub } from '../../infrastructure/events/event-hub.js';
 import type { ModelClient } from '../../infrastructure/model/client.js';
 import type { SavedUserMessage } from './events.js';
-import type { NarrativeSnapshot } from './context.js';
+import type { PreparedContext, SummaryModelRequest } from '../context/index.js';
 
 export type SubmitInput = {
   sessionId: string;
@@ -35,8 +35,6 @@ export type NarrativeDependencies = {
   transaction: TransactionRunner;
 };
 
-export type PreparedNarrative = { snapshot: NarrativeSnapshot } | { error: unknown };
-
 export type NarrativeExecution = {
   sessionId: string;
   runId: string;
@@ -45,6 +43,7 @@ export type NarrativeExecution = {
   userMessage: SavedUserMessage;
   provider: string | null;
   model: string | null;
-  prepared: PreparedNarrative;
+  prepared: Promise<PreparedContext>;
+  getApiKey: (credentialRef: SummaryModelRequest['credentialRef']) => Promise<string>;
   signal: AbortSignal;
 };

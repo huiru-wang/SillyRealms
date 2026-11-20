@@ -150,18 +150,19 @@ extData: {
 
 既有 entries、轮次列表与单轮详情返回 output；不新增能力查询端点或表。首屏/重连只认最新 run 的实际结果，不回找旧建议冒充当前建议。
 
-## 8. 历史与未来模型旁注
+## 8. 输入上下文与模型旁注边界
 
-本期不新增输出块历史重建、拼接模块或 contextEligible。聊天、关键词激活、摘要及主模型历史继续使用干净正文，读取历史不会重新执行能力。
+输出后处理只保存干净正文与结构化 output，不承担历史重建、拼接或重复执行。聊天、关键词激活和摘要继续使用干净正文。
 
-条目级 model-only notes 后续独立设计，可附着 user、assistant 等条目，由输入上下文构建统一组织和注入。状态更新、行动建议未来只是其中的内部来源。本期不冻结 notes schema、编辑失效策略或预建框架。
+条目级 model-only notes 已转入独立[上下文方案](server-v2-context-design.md)建设，由输入侧选择和组装。stateUpdate.updates、actionSuggestions.items 是两个内部来源，读取已接受/有效结果，不依赖本模块解析器。旁注只进入本轮实际模型请求和输入估算，不改写历史，不新增 contextEligible、notes 表或持久化 schema。正文编辑保留当时处理结果的原有契约不变。
 
 ## 9. 实现职责与验收
 
 | 模块 | 职责 |
 | --- | --- |
 | narrative/postprocess | 流式分离、各能力独立正则提取、内容校验和异常隔离 |
-| narrative/compile、model-call、execute | 指令编译、干净输出、收尾事务及通知编排 |
+| context/stages/assemble | 本轮能力提示词和最终模型消息编译 |
+| narrative/model-call、execute | 干净输出、收尾事务及通知编排 |
 | modules/state | message 候选计算与通用状态规则 |
 | modules/sessions | 输出结果类型、受控保存与编辑保护 |
 | modules/presets | 默认提示词及公开解析 |
@@ -176,10 +177,10 @@ extData: {
 - 能力异常不改正常 run 终态，取消/模型失败不执行能力。
 - 助手保存失败无未提交事件，预计算变更、锁释放、通知与终态顺序。
 - output 禁止伪造/删除、正文编辑保留结果、旧 entry 无 output 正常读取。
-- 无历史回填、旁注提前实现、额外调用、配额或表变更。
+- 输出侧无历史回填、重复执行、额外调用、配额或表变更；输入侧旁注由独立上下文方案验收。
 - 自定义后处理提示词引用 history.summary 时被拒绝，正常上下文保持摘要单次注入。
 
-2026-11-20 验证结果：
+2026-11-20 输出后处理交付时的验证结果：
 
 | 核验 | 结果 |
 | --- | --- |

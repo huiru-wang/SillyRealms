@@ -52,13 +52,16 @@
 
 ## 上下文整理
 
-- narrative 的 history/context-policy/prepare-context/summary 分担纯历史边界与预算、策略编排和摘要输入。编译器返回候选估算而不直接拒绝超限；每个候选重新激活材料。共用 model-call 处理可取消读取、快照与指标，正文先做流式能力块分离再经 EventHub 发 delta，摘要不发布聊天内容。不增加 RunStore、通用策略框架或任务表。
-- 输入硬预算 min(preset.maxContextTokens, model.contextWindow-maxOutputTokens-1024)，软目标 60%。sliding_window 只裁剪模型输入中的完整 run；rolling_summary 保护最近 5 个历史 run，当前用户始终保留，每轮最多一次摘要。history.summary 恰好注入一次，history.messages 仅为保留原文；默认 postprocess 提示词经 PresetService 解析并纳入编译，固定协议说明覆盖旧数组/强制标签/固定条数要求。postprocess 提示词禁止引用 input.text、history.messages 或 history.summary，编译拒绝此类引用，防止重复注入。
-- 只在摘要正常完成、非空且无工具请求后追加 compaction，state=null，与 user/assistant 同 run；payload.summary 存完整文本，extData.summary 存 coveredThroughEntryId/sourceHash，metrics 存本次请求。摘要失败/取消无记录、无计量；成功但缺失用量时 requests[].usage=null。正文 metrics 仍在 assistant，user.metrics=null。
-- 成功保存后发布 run.summarized，再复核上下文；仍超限 summary_capacity_exceeded 结束并保留用户、摘要和用量，不重试或继续裁剪。run.summarizing/run.summarized 共用身份字段且无 phase，不新增 generating。终态 savedMessageIds 只列 message，tip 可指向 compaction。
-- active Map 是会话执行锁，覆盖首次 await 前占位至摘要/正文/结束保存完成；取消与异常释放，终态通知前释放。编辑、删除和其他写入口接入锁后续处理，当前仍使用已有 parent/tip 校验。
-- sourceHash 只验证已覆盖原文的 id/seq/runId/role/content，后续读取发现编辑或旧摘要元数据缺失则回退完整原文；不对异步期间的历史编辑添加版本、恢复或冲突机制。HTTP 禁止创建 compaction；通用编辑禁止修改其 payload/extData 和普通消息 summary 元数据。
-
+- 上下文独立于 narrative，外部只经 usecases/context/index.ts 使用 prepareContext 和显式公开类型。用户保存后、首次异步等待前同步捕获本轮世界、预设、模型配置、历史和原 tip 状态；prepareContext 完成准备并返回最终请求、激活状态根、后续 parentEntryId、已保存摘要回执及准备失败信息。外层 narrative 保留用户保存、会话运行锁、主模型、后处理和最终结算。
+- context/narrative.ts 组合阶段并经公开 SessionService 保存成功摘要；stages/compact 完成纯计划、旧摘要复用、必要摘要调用和最终候选复核，不写库、不认识 EventHub/SSE 或 run 终态。摘要通过窄端口调用；上下文进度 summary_started/summary_saved 由外层映射到 run.summarizing/run.summarized。PreparedContext 使用 ok/request 或 ok/failure.code，均携带 parentEntryId 及可选摘要回执；凭据字节只在本轮 narrative 闭包内复用，不进入返回值。模型流收集、取消和原始调用指标归 infrastructure/model/collect.ts，不能依赖业务模块或叙事输出分离。
+- 每个压缩候选重新投影干净历史、激活材料、选择保留条目的旁注、组装实际模型消息并估算。不得假定估算随裁剪单调下降，不沿用初始候选的 activeRoots，不在估算后偷偷追加旁注。candidate.ts 组合场景候选评估，assemble 产出可直接调用模型的消息；lib 仅放模板、估算、预算计算。
+- 输入硬预算 min(preset.maxContextTokens, model.contextWindow-maxOutputTokens-1024)，软目标 60%。sliding_window 只裁剪完整 run；rolling_summary 保护最近 5 个历史 run，当前用户始终保留，每轮最多一次摘要。history.summary 恰好注入一次，history.messages 保持原角色。默认后处理提示词通过 PresetService 解析；固定协议覆盖旧数组/强制标签/固定条数要求，禁止引用 input.text、history.messages 或 history.summary。
+- model-notes 为按 entryId 关联的本次内存旁注，不修改正文或数据库。通用来源可服务 user/assistant；叙事内置来源先取最近两条有可见正文的 assistant，再读取已保存 output，没有 output 不向更早条目补足。状态只取已接受 updates，建议只取有效 items，partial_success 的有效项保留，各来源失败独立跳过。旁注说明已应用状态记录或未执行行动选项，JSON 中保留标签转义；当前状态以本轮快照为准。
+- 材料关键词和摘要只使用干净正文及适用摘要，旁注不参与激活和摘要；最终 assemble 才渲染到保留消息并计入输入预算。裁剪/摘要覆盖的条目旁注随之移除，不重复拼接，不重执行状态更新，不新增 notes 表、持久化 schema 或 contextEligible。正文编辑保留原 output，旁注表示当时的处理记录，不宣称已按新正文重算。
+- 仅摘要正常 stop、非空且无工具请求时产生摘要草稿；context 编排器独立追加 compaction，state=null，与 user/assistant 同 run，保存完整文本、覆盖边界、sourceHash 和 metrics。最终候选超限或编译失败不能丢失成功摘要草稿；保存成功后回传父 entry 和计量回执，即使准备最终失败也保留摘要。失败/取消摘要不保存、不计量；成功摘要未知 usage 为 null。
+- run.summarized 只在实际保存成功后发布；失败、取消或保存失败不能伪造完成通知。仍超限 summary_capacity_exceeded 结束并保留用户、摘要和用量，不重试或继续裁剪。上下文不决定 run 终态；savedMessageIds 只列 message，tip 可指向 compaction。active Map 继续覆盖用户保存到最终结算，取消与异常释放，终态前释放。
+- saved-summary 校验覆盖完整 run 边界及原文 id/seq/runId/role/content 的 sourceHash，排除动态旁注、state、metrics。后续历史编辑或旧元数据无效时回退原文，不新增异步编辑锁/版本恢复。HTTP 禁止创建 compaction 或伪造 summary 元数据。
+- ESLint 强制 context 唯一出口、公开类型出口及生产代码无其他 usecase/EventHub 反向依赖；内部阶段测试位于 context。不得为迁移放宽现有模块、SDK、SQL 或数据库属主规则。
 ## 叙事后处理
 
 - 处理目录为 usecases/narrative/postprocess，持久化仍使用 extData.output。共享正则辅助逻辑按能力名独立检查自身标签，大小写不敏感；完整缺失或空标签为 no_updates/no_suggestions。自身起止标签缺失、损坏或配对错误为 invalid_tag，整个该能力不执行，不从其他能力标签截断或恢复内容。
@@ -68,4 +71,4 @@
 - 仅正常 stop、无工具请求且干净正文有效时执行能力；模型中断/失败只保存部分公开内容，不生成 output。能力独立兜底，状态内部逐行隔离，能力失败不改变正常 completed。公开 delta/最终 snapshot/持久化正文都隐藏能力块，最终快照重新分离，reasoning/tool_calls 不作为能力输入。
 - 用例经同步 TransactionRunner 校验实际 tip，准备状态候选和变化信息，再原子追加助手正文/output/state/metrics。变化必须在追加前计算，避免读取更新后的视图漏发事件。SessionService.appendNarrativeAssistant 是 output 受控保存入口，普通 append/update 禁止伪造或删除，编辑其他扩展保留结果，正文编辑不重执行或回滚。
 - 提交和锁释放后、唯一终态前，独立发布实际 state.changed 与非空有效 action_suggestions.created，再发布一次总 usage/终态。run.created 驱动清理旧建议，无空 created 或 cleared。每条能力通知异常不能跳过后续通知或终态。助手保存失败无未提交通知；用户终态保存失败保留已提交状态并通知，但不发布可点击建议。
-- 聊天、关键词、摘要及当前模型历史保持干净正文，不重建/拼回能力标签或重放历史状态。条目级 model-only notes 后续独立建设，可附着 user/assistant 等条目；本期不引入 contextEligible、旁注 schema 或预建框架。结果通过现有 entries/runs 查询读取，不新增表或接口。
+- 聊天、持久化正文、关键词及摘要保持干净；主模型历史可由 context 的 model-notes 附加独立旁注。postprocess 不承担历史重建，不重放状态或引用 context 内部阶段。结果继续通过现有 entries/runs 查询读取，不新增表或接口。

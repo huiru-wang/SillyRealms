@@ -5,8 +5,7 @@ import type { StateEvent } from '../../modules/state/service.js';
 import type { EntryMetrics } from '../../modules/sessions/service.js';
 import type { NarrativeEvent, NarrativeSettlement, NarrativeStopReason, RunEventFields } from './events.js';
 import type { NarrativeDependencies, NarrativeExecution } from './types.js';
-import { assertRunning, callModel, cancellationReason, copySnapshot, failureReason, hasPublicOutput, whileRunning, zeroUsage } from './model-call.js';
-import { planContext, prepareContext } from './prepare-context.js';
+import { assertRunning, callModel, cancellationReason, copySnapshot, failureReason, hasPublicOutput, zeroUsage } from './model-call.js';
 
 function addUsage(left: ModelUsage | null, right: ModelUsage | null): ModelUsage | null {
   if (left === null || right === null) return null;
@@ -19,8 +18,8 @@ function addUsage(left: ModelUsage | null, right: ModelUsage | null): ModelUsage
 
 /** User-first execution, optional single summary, then narrative and one settlement. */
 export async function executeNarrative(dependencies: NarrativeDependencies, execution: NarrativeExecution): Promise<NarrativeSettlement> {
-  const { sessions, credentials, modelClient, events } = dependencies;
-  const { sessionId, runId, userEntryId, assistantEntryId, userMessage, provider, model, prepared, signal } = execution;
+  const { sessions, modelClient, events } = dependencies;
+  const { sessionId, runId, userEntryId, assistantEntryId, userMessage, provider, model, prepared, getApiKey, signal } = execution;
   let snapshot: ModelSnapshot = { role: 'assistant', content: '', reasoning_content: '', tool_calls: [] };
   let usage: ModelUsage | null = zeroUsage(), summaryUsage: ModelUsage | null = zeroUsage();
   let attempted = false, receivedTerminal = false, publishedDelta = false;
@@ -34,25 +33,19 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
   publish({ event: 'run.created', data: { ...fields(), messages: [{ ...userMessage }] } });
   try {
     assertRunning(signal);
-    if ('error' in prepared) throw prepared.error;
-    const captured = prepared.snapshot;
-    const selected = modelClient.resolve(captured.modelConfig.providerId, captured.modelConfig.modelId);
-    const plan = planContext(captured, selected, dependencies.state);
-    modelClient.assertMessageOrder(selected, plan.summary ? plan.summary.messages : plan.compiled.messages);
-    const apiKey = await whileRunning(credentials.get(captured.modelConfig.credentialRef), signal);
+    const context = await prepared;
+    parentId = context.parentEntryId;
+    if (context.summary) summaryUsage = context.summary.metrics?.requests[0]?.usage ?? null;
     assertRunning(signal);
-    if (!apiKey?.trim()) throw new AppError('CREDENTIAL_NOT_CONFIGURED');
-    const context = await prepareContext(dependencies, execution, captured, selected, apiKey, plan);
-    if (context.summary) {
-      parentId = context.summary.id;
-      summaryUsage = context.summary.metrics?.requests[0]?.usage ?? null;
+    if (!context.ok) {
+      stopReason = context.failure.code === 'SUMMARY_FAILED'
+        ? 'summary_failed' : failureReason(new AppError(context.failure.code), false);
     }
-    stopReason = context.stopReason;
-    assertRunning(signal);
-    if (!stopReason) {
-      const compiled = context.compiled;
+    if (context.ok) {
+      const compiled = context.request, selected = compiled.model;
       activeRoots = compiled.activeRoots;
-      modelClient.assertMessageOrder(selected, compiled.messages);
+      const apiKey = await getApiKey(compiled.credentialRef);
+      assertRunning(signal);
       const result = await callModel(modelClient, selected, compiled.messages, {
         apiKey, signal, maxTokens: compiled.maxTokens,
         temperature: compiled.temperature, thinkingEnabled: compiled.thinkingEnabled,

@@ -12,31 +12,33 @@ StudioV2 仍只接入管理与作者预览，未挂载叙事运行 UI。原 Serv
 
 | 位置 | 职责 |
 | --- | --- |
-| `src/usecases/narrative/index.ts` | 提交校验、同会话内存占位、同步保存用户和捕获快照、停止与关闭 |
-| `src/usecases/narrative/execute.ts` | 编排上下文、正文调用及后处理，事务保存助手与状态，汇总通知、usage 与终态 |
-| `src/usecases/narrative/context.ts` | 通过公开 Service 捕获会话、世界、预设、模型配置、历史和状态视图 |
-| `src/usecases/narrative/materials.ts`、`compile.ts` | 按候选历史重新激活材料、模板替换与纯消息编译/估算 |
-| `src/usecases/narrative/context-policy.ts`、`history.ts` | 输入预算、完整 run 边界、摘要覆盖来源校验与可见正文投影 |
-| `src/usecases/narrative/prepare-context.ts`、`summary.ts` | 滑动窗口/滚动摘要选择、摘要输入、保存与最终预算复核 |
-| `src/usecases/narrative/model-call.ts` | 两类调用共用的取消、流结果收集和指标；叙事 content 先分离后经 EventHub 发布 |
-| `src/usecases/narrative/postprocess/` | 独立标签提取、流式隐藏、JSONL/建议校验与能力异常隔离 |
-| `src/infrastructure/model/client.ts` | SDK 无关的模型目录、输入消息、增量/快照、结束原因、用量及 ModelClient 接口 |
-| `src/infrastructure/pi/` | 固定版本 pi 的 ModelClient 实现，内部解析 SDK 模型并转换公开消息 |
-| `src/infrastructure/database/` | 数据库连接、结构及同步事务工具 |
-| `src/infrastructure/events/` | EventHub 和 SSE 传输，不判断业务终态 |
-| `src/modules/sessions/` | entries、线性历史、指标和受控 output 结果的属主持久化 |
-| `src/modules/state/` | 状态快照、前驱继承、字段更新的目标根校验与候选快照计算，以及受限 when 只读求值 |
-| `src/usecases/set-state.ts` | 通过属主 Service 保存完整快照或逐字段更新；字段写各自使用独立同步事务 |
+| `src/usecases/narrative/index.ts` | 提交校验、同会话内存占位、保存用户、调用唯一上下文入口、停止与关闭 |
+| `src/usecases/narrative/execute.ts` | 等待上下文结果、主模型及后处理、助手与状态保存、通知和总 usage/终态 |
+| `src/usecases/context/index.ts` | prepareContext 唯一公开入口及显式公开类型 |
+| `src/usecases/context/capture.ts` | 首次异步等待前通过公开 Service 冻结本轮输入快照 |
+| `src/usecases/context/narrative.ts` | 场景阶段编排、成功摘要保存、准备结果与已提交回执 |
+| `src/usecases/context/candidate.ts` | 将历史投影、材料选择和真实消息编译组合为候选评估函数 |
+| `src/usecases/context/stages/history/`、`materials/` | 干净历史投影、完整 run 边界、候选材料激活 |
+| `src/usecases/context/stages/model-notes/` | 条目旁注来源与选择，正文和旁注分离 |
+| `src/usecases/context/stages/compact/` | 计划、旧摘要复用、摘要请求与执行、最终候选复核；不持久化 |
+| `src/usecases/context/stages/assemble/`、`lib/` | 最终消息组装、输出协议、模板、输入估算与预算计算 |
+| `src/usecases/narrative/model-call.ts`、`postprocess/` | 正文公开输出适配、独立标签提取、流式隐藏、能力校验及异常隔离 |
+| `src/infrastructure/model/client.ts`、`collect.ts` | SDK 无关模型契约、collectModel/raceAbort、快照复制和调用指标；不依赖业务或事件传输 |
+| `src/infrastructure/pi/` | 固定版本 pi 的 ModelClient 实现，内部转换 SDK 消息与结果 |
+| `src/infrastructure/database/`、`events/` | 数据库连接/同步事务及 EventHub/SSE 传输 |
+| `src/modules/sessions/` | entries、线性历史、指标和受控 output 的属主持久化 |
+| `src/modules/state/` | 状态读取、继承、字段候选及受限 when 求值 |
+| `src/usecases/set-state.ts` | 经属主 Service 保存快照或逐项字段写入 |
 | `src/usecases/test-model.ts` | 已保存模型配置的一次短文本连通性检测 |
 
-业务模块只通过 `service.ts` 提供能力；叙事用例不读取 Repository、存储行或 SQL，不接收数据库连接；装配注入同步 TransactionRunner，事务仅覆盖收尾读取、候选计算和助手保存，不包含模型/网络等待。用例、路由和编译器依赖自有 ModelClient/ModelInfo/ModelMessage，不接触 SDK Model、StopReason 或具体 PiClient；只在装配入口选择 PiClient 实现。pi 不依赖业务模块、会话、entry、EventHub 或 HTTP。装配方为叙事与 SSE 注入同一个 EventHub，不逐层传递正文或终态回调。
+业务模块只通过 `service.ts` 提供能力；叙事用例不读取 Repository、存储行或 SQL，不接收数据库连接；装配注入同步 TransactionRunner，事务仅覆盖收尾读取、候选计算和助手保存，不包含模型/网络等待。用例、路由和编译器依赖自有 ModelClient/ModelInfo/ModelMessage，不接触 SDK Model、StopReason 或具体 PiClient；只在装配入口选择 PiClient 实现。pi 不依赖业务模块、会话、entry、EventHub 或 HTTP。装配方为叙事与 SSE 注入同一个 EventHub。context 生产代码不依赖 narrative、其他 usecase 或事件传输，只通过进度通知交由外层映射 run 事件；外部代码和类型只能从 context/index.ts 导入。
 
 ## 提交与结束
 
 1. HTTP 检查来源、真实会话和可选访问权限。用例检查输入非空白、expectedTipEntryId、同会话并发和停机状态；拒绝的请求不追加消息。
 2. 首次 await 前占用当前会话，生成 runId、userEntryId、assistantEntryId。用户消息立即追加到请求指定的前驱；写入失败则不受理、不调用模型。
-3. 用户保存后同步捕获本轮领域快照。历史中排除且只排除本轮新用户消息，message 状态从原 tip 读取。上下文准备失败作为本轮执行错误处理，已经保存的用户消息保留。
-4. 返回 202 及受理标识，发布带已保存 user 消息的 run.created；其后解析模型、规划上下文、检查顺序和读取凭据；按需要执行一次摘要，然后调用正文模型。尚未取得模型配置时 provider/model 为 null。
+3. 用户保存后调用 prepareContext；其同步部分在首次异步等待前捕获本轮领域快照。历史排除且只排除本轮新用户消息，message 状态从原 tip 读取。上下文准备失败作为本轮执行错误处理，已经保存的用户消息保留。
+4. 返回 202 及受理标识，发布带已保存 user 消息的 run.created；后续上下文准备包括模型预算、候选评估、顺序检查和可选一次摘要。context 编排器独立保存成功摘要并回传准备结果、后续父节点和摘要回执；外层取得可用请求后调用正文模型。摘要进度必须在 run.created 后，保存成功后才发布 run.summarized。尚未取得模型配置时 provider/model 为 null。
 5. 模型 content 经流式分离后映射为 run.delta，能力块保持隐藏；公开 reasoning 和工具参数继续独立累积。最终模型快照重新分离，干净 snapshot 权威替换公开内容，不要求与之前 delta 拼接完全一致。没有增量时也可输出最终快照。
 6. 模型结束、错误、输出不完整或停止都进入保存步骤。仅正常 stop、无工具请求且干净正文有效时执行后处理，分别记录能力结果并准备 message 状态候选。助手正文、output、state 和 metrics 同步事务保存；部分助手保存公开内容但不生成 output。parentId 为成功 compaction ID，没有摘要时为 userEntryId；完全没有公开内容时不造空助手。
 7. 保存助手后将结束结果写入用户 entry 的 extData.narrative，再释放当前会话占位，发布已提交状态变化及有效建议，然后发布唯一一次 run.usage 和唯一终态。每条能力通知异常独立隔离，继续后续通知和终态。stop_reason 区分取消、关闭和主流程失败，保存失败优先；能力错误只留在 output，不改正常 run.completed。
@@ -103,6 +105,33 @@ entry.role 与 payload.message.role 一致。同轮已有消息共享 runId；re
 
 worldState/actionSuggestions 为默认后处理能力，通过 PresetService.resolvePostprocessPrompts 读取非空配置或补默认提示词，忽略旧 enabled，不修改已存预设和 revision。编译提供最终激活状态与固定协议；固定协议覆盖旧提示词中的数组状态更新、强制非空标签及固定三条限制，并明确状态更新不设固定条数上限。worldState 在有激活 message 根时参与，建议按默认能力参与。不增加 capabilities HTTP 或提交响应字段；自定义模板仍可读取 state.entries，缺少值明确标为未设置，不用 initial 补值。
 
+### 唯一上下文入口
+
+调用方只使用 context/index.ts 的 prepareContext(dependencies, input) 和显式公开类型，当前 input.kind 为 narrative，不读取内部 capture、candidate、lib 或 stages。准备结果包含最终模型请求、最终激活状态根、后续 parentEntryId、已提交摘要回执和准备失败信息；摘要草稿不会交给外层叙事保存。context 场景编排器经公开 Service 完成摘要持久化，外层负责主调用、run 事件及终态。
+
+compact 阶段通过候选评估函数重复选择材料、组装最终消息和估算，不把阶段固定为各执行一次的流水线。每个候选都从捕获的干净输入重建；真实摘要复核失败时仍返回成功摘要草稿，保存后将摘要回执与失败一起交还，避免丢失已成功摘要的父链和计量。摘要端口不依赖叙事模型调用适配、正文分离或 SSE。
+
+PreparedContext 以 ok 判别，成功返回 request，失败返回 failure.code；两种结果都有 parentEntryId 和可选 summary:{entryId,metrics}。request 包含 credentialRef，不包含 API key。本轮摘要与正文的凭据读取在 narrative 闭包内复用，不进入上下文返回值或数据库。
+
+narrative/index.ts 先排入执行微任务，再同步调用 prepareContext；入口在首次 await 前捕获快照，后续准备发生在 run.created 之后。内部进度 summary_started 在凭据就绪、摘要实际调用前发出，summary_saved 在成功保存后发出；外层映射到既有 run.summarizing/run.summarized。
+
+### 条目级模型旁注
+
+model-notes 构建按 entryId 关联的独立内存数据，历史正文始终不变。通用构建支持 user/assistant 条目和显式来源；叙事内置状态更新、行动建议两个来源，来源异常独立跳过，不影响另一个来源或正文。
+
+在本轮已捕获历史中先选择最近两条有可见正文的 assistant，再分别读取对应 extData.output；没有 output 不继续向更早消息补足数量。状态来源只取已接受的 updates，建议来源只取有效 items，partial_success 的有效项保留。错误、坏 JSON、失败标签或当前状态倒推值不构成历史旁注。
+
+| 消费方 | 输入投影 |
+| --- | --- |
+| 材料激活 | 干净正文、有效摘要及当前输入 |
+| 摘要模型 | 干净正文，继续去除玩家 instruction |
+| 主模型 | 干净正文及最终保留条目的旁注 |
+| 输入预算 | 实际发送的最终消息，包含旁注 |
+
+只有候选最终保留的 entry 才渲染旁注；滑窗删除或被摘要覆盖后，旁注随条目一起移除。每次渲染从干净正文开始，不重复追加。状态旁注说明当时已应用的更新，行动建议说明尚未执行的选项；当前状态以本轮快照为准，JSON 数据中的保留标签转义。
+
+正文编辑保留已保存 output；旁注表示当时的处理记录，不表示依据编辑后的正文重新校验。旁注不回写历史、不重执行更新、不触发状态事件，也不进入公开聊天、摘要或关键词。无需 notes 表、持久化 schema、contextEligible 或历史重建 API；原文 sourceHash 不包含动态旁注。
+
 ### 自动裁剪与滚动摘要
 
 按 entries.runId 划分完整轮次，首条开场 assistant 和只有用户的失败轮次均正常计数。当前提交不进入历史整理范围，始终保留。仅有 reasoning/tool_calls 的记录不成为模型正文，但仍参与完整轮次边界；交错 runId 不允许被拆开。
@@ -111,7 +140,7 @@ worldState/actionSuggestions 为默认后处理能力，通过 PresetService.res
 - rolling_summary：复用有效旧摘要及未覆盖原文，保护最近 5 个历史 run；选择更早的完整前缀，必要时与旧摘要合并生成一份摘要。摘要输入排除玩家指令区段，不携带 reasoning/tool_calls。每轮最多一次摘要，不为单独重写旧摘要发起调用；无可压缩前缀且超限时报 summary_capacity_exceeded。
 - history.summary 单独承载摘要，history.messages 只承载未覆盖原文。rolling_summary 要求启用的非后处理模板中恰好出现一次 history.summary，否则 invalid_context；不修改已有预设文档。后处理提示词不能引用 input.text、history.messages 或 history.summary，编译拒绝这类引用，防止当前输入、历史消息或摘要重复注入。摘要与保留原文重新参与材料激活。
 - 摘要和正文共用本轮模型与凭据。摘要只接受正常 stop、非空正文且无工具请求的最终快照；允许最终快照修正之前增量。摘要失败/截断/中断不保存任何摘要记录及指标，不生成空 compaction。
-- 成功摘要先独立保存并发布 run.summarized，再复核最终上下文。不超过硬预算即可继续；仍超限直接 summary_capacity_exceeded 结束，保留用户、完整摘要及其 metrics。不再次摘要、不额外裁剪、不切换策略。
+- compact 使用真实摘要复核最终候选，同时保留成功摘要草稿，即使最终预算或编译失败也不能丢失草稿。context 编排器独立保存成功摘要后才发布 run.summarized，返回实际 parentEntryId 与计量回执。不超过硬预算即可继续；仍超限直接 summary_capacity_exceeded 结束，保留用户、完整摘要及其 metrics。不再次摘要、不额外裁剪、不切换策略。
 
 成功摘要保存为同一个 run 内的 entry：
 
@@ -124,9 +153,9 @@ worldState/actionSuggestions 为默认后处理能力，通过 PresetService.res
 }
 ```
 
-sourceHash 为覆盖前缀内全部 message 的 id/seq/runId/role/content 规范化 JSON 的 SHA-256，排除 state、metrics、时间戳和 compaction；覆盖到完整 run 边界。仅用于下次读取时识别历史编辑，不是请求指纹或恢复机制。首次存储 summary 时，coverage 是全部覆盖范围而非仅本次新增前缀。状态仍从真实 tip 的前驱继承，不从摘要重建。
+sourceHash 为覆盖前缀内全部 message 的 id/seq/runId/role/content 规范化 JSON 的 SHA-256，排除 state、metrics、时间戳、compaction 和动态模型旁注；覆盖到完整 run 边界。仅用于下次读取时识别历史编辑，不是请求指纹或恢复机制。首次存储 summary 时，coverage 是全部覆盖范围而非仅本次新增前缀。状态仍从真实 tip 的前驱继承，不从摘要重建。
 
-成功摘要的 usage 可以为 null；失败或中断摘要无记录、无计量。正文 metrics 仍属于 assistant，user.metrics 为 null，不重复计数。HTTP 通用追加禁止 compaction，通用编辑禁止修改摘要 payload/extData 或在普通消息伪造 summary 元数据。摘要只经叙事用例调用 SessionService 保存。
+成功摘要的 usage 可以为 null；失败或中断摘要无记录、无计量。正文 metrics 仍属于 assistant，user.metrics 为 null，不重复计数。HTTP 通用追加禁止 compaction，通用编辑禁止修改摘要 payload/extData 或在普通消息伪造 summary 元数据。摘要只经 context 场景编排器调用 SessionService 保存，compact 阶段不写库。
 
 物理顺序为 user → 可选 compaction → 可选 assistant，各自分配 seq，父链和 tip 原子推进。savedMessageIds 仅列 message，实际 tipEntryId 可能是 compaction；五轮分页与 afterSeq 返回的完整分组包含摘要记录。摘要正文不作为聊天 delta 推送。
 
@@ -194,7 +223,7 @@ SessionService.appendNarrativeAssistant 将干净正文、extData.output、可�
 
 公共追加/编辑禁止写入或删除 output，编辑其他 extData 保留它；正文编辑保留当时处理结果，不重做或回滚状态。旧 entry 没有 output 时正常读取。轮次详情/列表直接返回结构化结果，不新增接口或表。
 
-聊天、关键词激活、摘要和当前主模型历史继续使用干净正文，不回填历史能力块或重复执行更新。条目级 model-only notes 后续独立建设，可服务 user/assistant 等条目；本期没有 contextEligible、旁注 schema 或能力专用历史重建。
+聊天、持久化正文、关键词激活与摘要保持干净。主模型的保留历史由 context 在最终组装时附加条目级 model-only notes，读取历史或旁注不重执行更新；规则见[条目级模型旁注](#条目级模型旁注)。没有持久化 notes schema、contextEligible 或能力专用历史重建模块。
 
 ## 模型与连通性
 

@@ -1,16 +1,24 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { AppError } from '../../errors.js';
 import { openDatabase } from '../../infrastructure/database/connection.js';
 import { createServices, type Services } from '../../services.js';
 import { narrativePreset } from '../../testing/fixtures.js';
-import { planContext } from './prepare-context.js';
-import { historyBoundaries, readSummary, sourceHash } from './history.js';
-import { summaryNarrative } from './summary.js';
-import { captureNarrativeContext } from './context.js';
-import { compileNarrativeContext, estimateInputTokens, parsePromptTemplate } from './compile.js';
+import { planContext as planHistoryContext } from './stages/compact/plan.js';
+import { historyBoundaries } from './stages/history/index.js';
+import { readSummary, sourceHash } from './stages/compact/saved-summary.js';
+import { summaryNarrative, summaryRequest } from './stages/compact/summary-request.js';
+import { compactHistory as compactCandidateHistory, type Summarize } from './stages/compact/index.js';
+import { createCandidateEvaluator } from './candidate.js';
+import { captureNarrativeContext, type NarrativeSnapshot } from './capture.js';
+import { compileNarrativeContext } from './stages/assemble/index.js';
+import * as assembly from './stages/assemble/index.js';
+import { estimateInputTokens } from './lib/estimate.js';
+import { parsePromptTemplate } from './lib/template.js';
+import { systemVariableNames } from './stages/materials/index.js';
 
 let db: DatabaseSync, services: Services, dataRoot: string;
 const model = { contextWindow: 64000, maxTokens: 8192 };
@@ -42,6 +50,18 @@ function capture(inputText = 'Current input') {
   const previousTipEntryId = services.sessions.require('session').tipEntryId;
   append('current-user', 'user', inputText);
   return captureNarrativeContext(services, { sessionId: 'session', userEntryId: 'current-user', previousTipEntryId, inputText });
+}
+
+function planContext(snapshot: NarrativeSnapshot, selectedModel: typeof model, state: Pick<Services['state'], 'evaluateWhen'>) {
+  return planHistoryContext({
+    historyEntries: snapshot.historyEntries, contextStrategy: snapshot.preset.config.contextStrategy,
+  }, selectedModel, createCandidateEvaluator(snapshot, selectedModel, state));
+}
+function compactHistory(snapshot: NarrativeSnapshot, selectedModel: typeof model,
+  state: Pick<Services['state'], 'evaluateWhen'>, summarize: Summarize, signal: AbortSignal) {
+  return compactCandidateHistory({
+    historyEntries: snapshot.historyEntries, contextStrategy: snapshot.preset.config.contextStrategy,
+  }, selectedModel, createCandidateEvaluator(snapshot, selectedModel, state), summarize, signal);
 }
 
 describe('synchronous narrative snapshot', () => {
@@ -242,8 +262,8 @@ describe('core narrative compilation', () => {
     expect(compiled.messages[0]!.content).toBe('Literal {{user}} and Player');
     expect(compiled.messages.at(-2)!.content).toBe(input);
     expect(compiled.messages.at(-1)!.role).toBe('system');
-    expect(() => parsePromptTemplate('{{unknown.path}}')).toThrow('INVALID_NARRATIVE_TEMPLATE');
-    expect(() => parsePromptTemplate('{{user')).toThrow('INVALID_NARRATIVE_TEMPLATE');
+    expect(() => parsePromptTemplate('{{unknown.path}}', systemVariableNames)).toThrow('INVALID_NARRATIVE_TEMPLATE');
+    expect(() => parsePromptTemplate('{{user', systemVariableNames)).toThrow('INVALID_NARRATIVE_TEMPLATE');
   });
 
   it('rejects duplicate or misplaced input variables rather than sending a repeated user message', () => {
@@ -368,5 +388,109 @@ describe('context selection policies', () => {
   it('excludes player instruction ranges from summary source but preserves visible story text', () => {
     expect(summaryNarrative('Story\n<sr_instruction>\nhidden instruction\n</sr_instruction>\nContinued', 'user')).not.toContain('hidden instruction');
     expect(summaryNarrative('Story\n<sr_instruction>\nhidden instruction\n</sr_instruction>\nContinued', 'user')).toContain('Continued');
+  });
+});
+
+describe('model-only notes in context candidates', () => {
+  it('renders captured notes only for model history, counts their tokens and leaves activation, summaries and storage clean', () => {
+    services.sessions.appendNarrativeAssistant('session', {
+      id: 'answer', runId: 'past', type: 'message', role: 'assistant',
+      payload: { message: { role: 'assistant', content: 'A quiet room.', timestamp: 100 } },
+    }, {
+      stateUpdate: { status: 'success', updates: [{ path: 'coins', value: 8 }], results: [{ status: 'success', path: 'coins' }] },
+      actionSuggestions: { status: 'success', items: ['note-only-keyword'], results: [{ status: 'success' }] },
+    });
+    services.worlds.update('world', { lorebook: { entries: [
+      { id: 'note-trigger', content: 'Must stay inactive', load: { mode: 'on_mention', keywords: ['note-only-keyword'] } },
+    ] } });
+    const snapshot = capture(), compiled = compileNarrativeContext(snapshot, model);
+    expect(compiled.messages.find(message => message.role === 'assistant')?.content).toContain('note-only-keyword');
+    expect(snapshot.history.map(message => message.text)).toEqual(['A quiet room.']);
+    expect(snapshot.materials.variables['world.lore']).toEqual({ type: 'text', value: '' });
+    expect(JSON.stringify(summaryRequest(model, 'Summarize', '', snapshot.history))).not.toContain('note-only-keyword');
+    expect(services.sessions.getEntry('session', 'answer')?.payload.message).toMatchObject({ content: 'A quiet room.' });
+    expect(snapshot.views.message).toEqual({});
+    const clean = compileNarrativeContext({ ...snapshot, modelNotes: new Map() }, model);
+    expect(compiled.estimatedInputTokens).toBeGreaterThan(clean.estimatedInputTokens);
+    expect(compiled.estimatedInputTokens).toBe(estimateInputTokens(compiled.messages));
+  });
+
+  it('includes note text when choosing a sliding-window boundary and never transfers a removed note to another entry', () => {
+    append('old', 'assistant', 'Older body');
+    append('recent', 'assistant', 'Recent body');
+    const snapshot = capture();
+    snapshot.preset.config.contextStrategy.strategy = 'sliding_window';
+    snapshot.preset.config.contextStrategy.maxContextTokens = compileNarrativeContext(snapshot, model).estimatedInputTokens + 10;
+    expect(planContext(snapshot, model, services.state).compiled.messages.some(message => message.content === 'Older body')).toBe(true);
+    snapshot.modelNotes = new Map([['old', [{ source: 'example', content: 'large-note-marker ' + 'x'.repeat(6000) }]]]);
+    const selected = planContext(snapshot, model, services.state).compiled;
+    expect(selected.messages.some(message => message.content.includes('Older body'))).toBe(false);
+    expect(selected.messages.some(message => message.content.includes('large-note-marker'))).toBe(false);
+    expect(selected.estimatedInputTokens).toBeLessThanOrEqual(selected.inputBudget);
+    expect(snapshot.history.map(message => message.id)).toEqual(['old', 'recent']);
+    expect(services.sessions.getHistory('session').map(entry => entry.id)).toEqual(['old', 'recent', 'current-user']);
+  });
+});
+
+describe('compaction stage without persistence', () => {
+  function summarySnapshot() {
+    for (let index = 0; index < 8; index++) append('past-' + index, 'assistant', index < 3 ? 'x'.repeat(1200) : 'Recent ' + index);
+    const snapshot = capture();
+    const compiled = compileNarrativeContext(snapshot, model);
+    const protocolTokens = compiled.estimatedInputTokens - estimateInputTokens(compiled.messages.slice(0, -1));
+    snapshot.preset.config.contextStrategy.maxContextTokens = 300 + protocolTokens;
+    return snapshot;
+  }
+
+  it('returns one successful summary draft without writing entries and keeps summary input free of notes', async () => {
+    const snapshot = summarySnapshot();
+    snapshot.modelNotes = new Map([['past-0', [{ source: 'example', content: 'old-note-marker' }]]]);
+    const summarize = vi.fn(async () => ({ ok: true as const, text: 'summary', metrics: null }));
+    const result = await compactHistory(snapshot, model, services.state, summarize, new AbortController().signal);
+    expect(summarize).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(summarize.mock.calls[0])).not.toContain('old-note-marker');
+    expect(result.summaryDraft).toMatchObject({ text: 'summary', coveredThroughEntryId: 'past-2', metrics: null });
+    expect(result.failure).toBeUndefined();
+    expect(result.compiled.messages.some(message => message.content === 'summary')).toBe(true);
+    expect(services.sessions.getHistory('session')).toHaveLength(9);
+    expect(services.sessions.require('session').tipEntryId).toBe('current-user');
+  });
+
+  it('retains a successful summary draft when the final request still exceeds capacity', async () => {
+    const snapshot = summarySnapshot();
+    const summarize = vi.fn(async () => ({ ok: true as const, text: 's'.repeat(6000), metrics: null }));
+    const result = await compactHistory(snapshot, model, services.state, summarize, new AbortController().signal);
+    expect(summarize).toHaveBeenCalledTimes(1);
+    expect(result.summaryDraft?.text).toHaveLength(6000);
+    expect(result.failure).toBe('summary_capacity_exceeded');
+    expect(services.sessions.getHistory('session')).toHaveLength(9);
+  });
+
+  it('retains a successful summary draft if final assembly fails', async () => {
+    const snapshot = summarySnapshot(), failure = new AppError('INVALID_NARRATIVE_TEMPLATE');
+    let spy: ReturnType<typeof vi.spyOn> | undefined;
+    const summarize = async () => {
+      spy = vi.spyOn(assembly, 'compileNarrativeContext').mockImplementationOnce(() => { throw failure; });
+      return { ok: true as const, text: 'summary', metrics: null };
+    };
+    try {
+      const result = await compactHistory(snapshot, model, services.state, summarize, new AbortController().signal);
+      expect(result.summaryDraft?.text).toBe('summary');
+      expect(result.failure).toBe(failure);
+      expect(services.sessions.getHistory('session')).toHaveLength(9);
+    } finally { spy?.mockRestore(); }
+  });
+
+  it('returns no draft for failed or cancelled summaries', async () => {
+    const snapshot = summarySnapshot();
+    const failed = await compactHistory(snapshot, model, services.state, async () => ({ ok: false }), new AbortController().signal);
+    expect(failed.summaryDraft).toBeUndefined();
+    expect(failed.failure).toBe('summary_failed');
+    const controller = new AbortController();
+    await expect(compactHistory(snapshot, model, services.state, async () => {
+      controller.abort();
+      return { ok: true, text: 'Late summary', metrics: null };
+    }, controller.signal)).rejects.toThrow('RUN_STOPPED');
+    expect(services.sessions.getHistory('session')).toHaveLength(9);
   });
 });

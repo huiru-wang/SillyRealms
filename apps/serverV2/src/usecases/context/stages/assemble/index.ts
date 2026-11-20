@@ -1,12 +1,14 @@
-import { resolvePostprocessPrompts } from '../../modules/presets/service.js';
-import { postprocessProtocol } from './postprocess/prompts.js';
-import { contextBudget } from './context-policy.js';
-import { AppError } from '../../errors.js';
-import type { ModelInfo, ModelMessage } from '../../infrastructure/model/client.js';
-import type { NarrativeSnapshot } from './context.js';
-import { systemVariableNames, type SystemVariableName } from './materials.js';
+import { resolvePostprocessPrompts } from '../../../../modules/presets/service.js';
+import { AppError } from '../../../../errors.js';
+import type { ModelInfo, ModelMessage } from '../../../../infrastructure/model/client.js';
+import type { NarrativeSnapshot } from '../../capture.js';
+import { contextBudget } from '../../lib/budget.js';
+import { estimateInputTokens } from '../../lib/estimate.js';
+import { parsePromptTemplate } from '../../lib/template.js';
+import { systemVariableNames } from '../materials/index.js';
+import { renderModelNotes } from '../model-notes/index.js';
+import { postprocessProtocol } from './protocol.js';
 
-type Segment = { type: 'text'; value: string } | { type: 'variable'; name: SystemVariableName };
 export type CompiledNarrativeContext = {
   messages: ModelMessage[];
   maxTokens: number;
@@ -16,49 +18,6 @@ export type CompiledNarrativeContext = {
   inputBudget: number;
   activeRoots: string[];
 };
-const variables = new Set<string>(systemVariableNames);
-
-/** Scan the template exactly once; substituted author/user values remain literal data. */
-export function parsePromptTemplate(prompt: string): Segment[] {
-  const segments: Segment[] = [];
-  let literal = '';
-  const flush = () => {
-    if (literal) segments.push({ type: 'text', value: literal });
-    literal = '';
-  };
-  for (let index = 0; index < prompt.length;) {
-    if (prompt[index] === '\\') {
-      if (prompt[index + 1] === '\\') { literal += '\\'; index += 2; continue; }
-      if (prompt.startsWith('{{', index + 1)) { literal += '{{'; index += 3; continue; }
-    }
-    if (!prompt.startsWith('{{', index)) { literal += prompt[index]!; index++; continue; }
-    const end = prompt.indexOf('}}', index + 2);
-    if (end === -1) throw new AppError('INVALID_NARRATIVE_TEMPLATE');
-    const name = prompt.slice(index + 2, end).trim();
-    if (!variables.has(name)) throw new AppError('INVALID_NARRATIVE_TEMPLATE');
-    flush();
-    segments.push({ type: 'variable', name: name as SystemVariableName });
-    index = end + 2;
-  }
-  flush();
-  return segments;
-}
-
-/** Fixed local text estimate; this is neither measured usage nor automatic calibration. */
-export function estimateInputTokens(messages: readonly ModelMessage[]): number {
-  let tokens = 64;
-  for (const message of messages) {
-    let thirds = 0;
-    for (const char of message.content) {
-      thirds += char.codePointAt(0)! <= 127 ? 1
-        : /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(char)
-          ? 3 : Buffer.byteLength(char, 'utf8') * 3;
-    }
-    tokens += 16 + Math.ceil(thirds / 3);
-  }
-  if (!Number.isSafeInteger(tokens)) throw new AppError('CONTEXT_BUDGET_EXCEEDED');
-  return tokens;
-}
 
 /** Pure compilation of the selected history; budget enforcement belongs to context preparation. */
 export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick<ModelInfo, 'contextWindow' | 'maxTokens'>): CompiledNarrativeContext {
@@ -71,7 +30,7 @@ export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick
       if (pending.trim()) messages.push({ role: node.role === 'auto' ? 'system' : node.role, content: pending, timestamp: 0 });
       pending = '';
     };
-    for (const segment of parsePromptTemplate(node.prompt)) {
+    for (const segment of parsePromptTemplate(node.prompt, systemVariableNames)) {
       if (segment.type === 'text') { pending += segment.value; continue; }
       if (segment.name === 'history.summary') summaryCount++;
       if (segment.name === 'input.text') {
@@ -86,7 +45,7 @@ export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick
       if (variable.type === 'text') pending += variable.value;
       else {
         flush();
-        for (const item of variable.value) messages.push({ role: item.role, content: item.text, timestamp: item.timestamp });
+        for (const item of variable.value) messages.push({ role: item.role, content: renderModelNotes(item.text, snapshot.modelNotes.get(item.id)), timestamp: item.timestamp });
       }
     }
     flush();
@@ -95,7 +54,7 @@ export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick
   if (config.contextStrategy.strategy === 'rolling_summary' && summaryCount !== 1) throw new AppError('INVALID_NARRATIVE_TEMPLATE');
   const prompts = resolvePostprocessPrompts(config);
   const defaults = resolvePostprocessPrompts({ ...config, nodes: [] });
-  const render = (prompt: string): string => parsePromptTemplate(prompt).map(segment => {
+  const render = (prompt: string): string => parsePromptTemplate(prompt, systemVariableNames).map(segment => {
     if (segment.type === 'text') return segment.value;
     const variable = snapshot.materials.variables[segment.name];
     // Postprocessing instructions cannot duplicate the current input or historical message sequence.

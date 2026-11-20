@@ -9,11 +9,17 @@ import { EventHub, type SessionEvent } from '../infrastructure/events/event-hub.
 import { createServices, type Services } from '../services.js';
 import { createUsecases, type Usecases } from '../usecases.js';
 import { narrativePreset } from '../testing/fixtures.js';
-import { captureNarrativeContext } from './narrative/context.js';
+import { prepareContext, type ContextDependencies } from './context/index.js';
+import type { ModelInfo } from '../infrastructure/model/client.js';
 import { createSessionUsecase, type CreateSessionInput } from './create-session.js';
 
 let db: DatabaseSync, dataRoot: string, services: Services, usecases: Usecases, events: EventHub;
 const input: CreateSessionInput = { id: 'session', worldId: 'world', openingId: 'start', userCharacterId: 'player', presetId: 'preset', apiModelConfigId: 'model' };
+const model: ModelInfo = {
+  providerId: 'provider', modelId: 'model', name: 'Model', contextWindow: 64000, maxTokens: 8192,
+  api: 'test', input: ['text'], reasoning: false, thinkingLevels: ['off'], thinkingLevelMap: null,
+  promptCache: null, narrativeCompatible: true, supportsMidConversationSystemMessages: true,
+};
 const number = (key: string, initial: number) => ({ type: 'number', initial, min: 0, max: 100, description: key, rules: { [key]: 'Change with the story.' } });
 beforeEach(() => {
   db = openDatabase(':memory:');
@@ -136,13 +142,28 @@ describe('create a ready session', () => {
     expect(last.hasMore).toBe(false);
   });
 
-  it('uses the saved first message and inherited state in the first player turn', () => {
+  it('uses the saved first message and inherited state in the first player turn', async () => {
     const result = usecases.createSession(input);
     const user = services.sessions.appendEntry('session', { runId: 'next', type: 'message', role: 'user', payload: { message: { role: 'user', content: '进门', timestamp: 1 } } });
-    const context = captureNarrativeContext(services, { sessionId: 'session', inputText: '进门', userEntryId: user.id, previousTipEntryId: result.entry.id });
-    expect(context.history).toHaveLength(1);
-    expect(context.history[0]).toMatchObject({ text: '掌柜，欢迎回来。掌柜！', role: 'assistant' });
-    expect(context.views).toEqual({ global: { day: 9 }, session: { visits: 0 }, message: { coins: 20, energy: 5, bag: { gold: 5 } } });
+    const summarize = vi.fn<ContextDependencies['summarize']>(async () => ({ ok: false }));
+    const context = await prepareContext({
+      ...services, modelClient: { resolve: () => model, assertMessageOrder: vi.fn() }, summarize,
+    }, {
+      kind: 'narrative', sessionId: 'session', runId: user.runId, inputText: '进门',
+      userEntryId: user.id, previousTipEntryId: result.entry.id, signal: new AbortController().signal,
+    });
+    expect(context.ok).toBe(true);
+    if (!context.ok) throw new Error(context.failure.code);
+    expect(context.parentEntryId).toBe(user.id);
+    expect(context.request.messages.filter(message => message.role === 'assistant'))
+      .toEqual([{ content: '掌柜，欢迎回来。掌柜！', role: 'assistant', timestamp: result.entry.timestamp }]);
+    expect(context.request.activeRoots).toEqual(['coins', 'bag']);
+    const instructions = context.request.messages.at(-1)!.content;
+    expect(instructions).toContain('value: 20');
+    expect(instructions).toContain('"gold":5');
+    expect(services.state.getViews({ worldId: 'world', sessionId: 'session', entryId: user.id }))
+      .toEqual({ global: { day: 9 }, session: { visits: 0 }, message: { coins: 20, energy: 5, bag: { gold: 5 } } });
     expect(services.state.requireMessage('session', user.id)).toEqual(result.entry.state);
+    expect(summarize).not.toHaveBeenCalled();
   });
 });

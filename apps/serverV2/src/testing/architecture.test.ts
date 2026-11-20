@@ -78,6 +78,34 @@ describe('Server V2 architecture boundaries', () => {
     expect(await boundaryMessages('testing/example.test.ts', "import { legacy } from '../../../server/src/runtime/config.js';")).toContain('legacy');
   });
 
+  it('exposes context only through its public entry, including types and external tests', async () => {
+    for (const file of ['usecases/narrative/execute.ts', 'usecases/narrative/execute.test.ts']) {
+      for (const source of [
+        "import { projectHistory } from '../context/stages/history/index.js';",
+        "export type { ContextInput } from '../context/types.js';",
+        "const stage = import('../context/stages/compact/index.js');",
+        "type Snapshot = import('../context/capture.js').NarrativeSnapshot;",
+        "const stage = require('../context/narrative.js');",
+        "import { prepareContext } from '../context';",
+      ]) expect(await boundaryMessages(file, source)).toContain('contextEntry');
+      expect(await boundaryMessages(file, "import { prepareContext, type PreparedContext } from '../context/index.js';")).toEqual([]);
+    }
+    expect(await boundaryMessages('usecases/context/index.ts', "export { prepareContext } from './narrative.js'; export type { PreparedContext } from './types.js';")).toEqual([]);
+    expect(await boundaryMessages('usecases/context/index.ts', "export * from './types.js';")).toContain('wildcard');
+    expect(await boundaryMessages('usecases/context/context.test.ts', "import { projectHistory } from './stages/history/index.js';")).toEqual([]);
+  });
+
+  it('keeps context stages independent of narrative execution and event transport', async () => {
+    for (const target of ['../narrative/index.js', '../narrative/model-call.js', '../create-session.js', '../../infrastructure/events/event-hub.js']) {
+      expect(await boundaryMessages('usecases/context/narrative.ts', `import type { Dependency } from '${target}';`)).toContain('contextDependency');
+    }
+    expect(await boundaryMessages('usecases/context/narrative.ts', "import { streamSSE } from 'hono/streaming';")).toContain('reverse');
+    expect(await boundaryMessages('usecases/context/narrative.ts', "import type { SessionService } from '../../modules/sessions/service.js'; import type { ModelClient } from '../../infrastructure/model/client.js'; import { compactHistory } from './stages/compact/index.js';")).toEqual([]);
+    for (const target of ['../../usecases/context/index.js', '../../modules/sessions/service.js']) {
+      expect(await boundaryMessages('infrastructure/model/collect.ts', `import type { Dependency } from '${target}';`)).toContain('infrastructure');
+    }
+  });
+
   it('retains module privacy, read-only cross-domain contracts and SQL ownership', async () => {
     expect(await boundaryMessages('usecases/example.ts', "import type { Session } from '../modules/sessions/types.js';")).toContain('module');
     expect(await boundaryMessages('modules/state/service.ts', "import type { SessionService } from '../sessions/service.js';")).toContain('readonly');

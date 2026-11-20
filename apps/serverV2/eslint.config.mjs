@@ -38,6 +38,8 @@ const boundaries = {
       sdk: 'Only the pi adapter may import pi SDK types or implementations.',
       adapter: 'Business and transport code depend on the SDK-neutral model contract; concrete adapters belong in composition.',
       module: 'The only public business module entry is service.ts.',
+      contextEntry: 'Context consumers must import only usecases/context/index.ts, including public types.',
+      contextDependency: 'Context preparation cannot depend on other usecases or event transport infrastructure.',
       readonly: 'Cross-module module dependencies must be named type-only domain types or explicit Readers, never a full Service.',
       wildcard: 'Export explicit public types and capabilities; wildcard exports can leak module internals.',
       reverse: 'Modules cannot depend on usecases or HTTP/composition; usecases cannot depend on HTTP/composition.',
@@ -57,6 +59,7 @@ const boundaries = {
     const isService = isModule && localPath === 'modules/' + owner + '/service.ts';
     const isTransport = /^(?:routes|http)\//.test(localPath);
     const isUsecase = localPath.startsWith('usecases/');
+    const isContext = localPath.startsWith('usecases/context/');
     const isDatabase = localPath.startsWith('infrastructure/database/');
     const isInfrastructure = localPath.startsWith('infrastructure/');
     const isPi = localPath.startsWith('infrastructure/pi/');
@@ -91,6 +94,11 @@ const boundaries = {
         return;
       }
       const target = sourcePath(targetPath).replace(/\.js$/, '.ts');
+      const targetContext = target === 'usecases/context' || target.startsWith('usecases/context/');
+      if (!isContext && targetContext && target !== 'usecases/context/index.ts') {
+        context.report({ node, messageId: 'contextEntry' });
+        return;
+      }
       const targetOwner = moduleOwner(target);
       const targetService = targetOwner !== null && target === 'modules/' + targetOwner + '/service.ts';
       const repository = targetOwner !== null && target === 'modules/' + targetOwner + '/repository.ts';
@@ -106,6 +114,10 @@ const boundaries = {
         return;
       }
       if (isTest) return;
+      if (isContext && ((target.startsWith('usecases/') && !targetContext) || target.startsWith('infrastructure/events/'))) {
+        context.report({ node, messageId: 'contextDependency' });
+        return;
+      }
       if (isInfrastructure && (targetOwner !== null || target.startsWith('usecases/') || /^(?:routes|http)\//.test(target) || composition.has(target))) {
         context.report({ node, messageId: 'infrastructure' });
         return;

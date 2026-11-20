@@ -56,6 +56,8 @@ run.created 中用户消息的 timestamp 是其保存时的消息时间。messag
 
 普通请求校验或用户写入失败不创建 run.created。用户保存后的准备、生成、停止和保存错误都通过同一轮的 run.stopped 收敛，不再发布 run.started、message.delta 或 run.failed。
 
+摘要由独立 context 模块准备，进度经外层叙事适配到现有事件；context 和 compact 不直接依赖 EventHub 或 SSE。run.summarized 仅由实际已保存摘要回执触发，最终上下文准备失败时仍携带已保存摘要的用量和父链。模型旁注只用于主模型输入，不新增事件，也不进入公开聊天增量。
+
 摘要事件共用 runId/sessionId/provider/model/timestamp；不发布 run.phase、generating，不含 data.phase。摘要内部流不发 run.delta。正常顺序为 run.created → 可选摘要事件 → 干净正文 run.delta/最终 snapshot → 持久化及释放执行锁 → state.changed（有变化）→ action_suggestions.created（有有效建议）→ run.usage → 唯一终态。摘要失败或取消没有 summarized；成功摘要落库后预算仍超限，summarized 后直接 usage → stopped(summary_capacity_exceeded)，没有正文调用。
 
 ### 增量与定稿
@@ -114,7 +116,7 @@ usage 为以下对象或 null：
 }
 ```
 
-隐藏能力数据块属于模型实际输出，usage 不按可见正文重算；输入总量包含缓存读写，缓存字段是细分；total_tokens=input_tokens+output_tokens，reasoning 已包含在输出时不重复相加。计量是快照，不能将累计值重复相加。
+隐藏能力数据块属于模型实际输出，历史模型旁注属于实际输入；usage 均采用模型返回值，不按公开正文或旁注估算替代真实计量；输入总量包含缓存读写，缓存字段是细分；total_tokens=input_tokens+output_tokens，reasoning 已包含在输出时不重复相加。计量是快照，不能将累计值重复相加。
 
 没有开始 SDK 调用尝试时，总量为真实全零；已经开始调用但没有可信统计时为 null。内部 request_started 仅表明调用尝试，不承诺网络已经发送字节。停止不等待迟到 usage，也不在终态后补发。本轮总量汇总成功保存的摘要调用和正文调用；参与统计的任一次 usage 未知则总量为 null。失败/中断摘要不保存记录也不计量，只有失败摘要且无正文调用时总量为零；不作为供应商精确账单。
 
