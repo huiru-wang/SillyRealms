@@ -8,7 +8,7 @@ import {createStateController} from '../state/index.ts';
 import {loadStageWorld} from '../worlds/stage-world.ts';
 import {readSession,readRuntimeConfig,type RuntimeConfig} from './client.ts';
 import type {Session} from './types.ts';
-import type {StageSnapshot,StageRun,StageCommandMap,SessionEvent,NarrativeEvent,Usage,RunPage} from '../../../../../packages/sr-sdk/src/stage-contract.ts';
+import type {StageSnapshot,StageRun,StageCommandMap,SessionEvent,NarrativeEvent,Usage} from '../../../../../packages/sr-sdk/src/stage-contract.ts';
 
 export type WorkspaceSnapshot={
   session:Session|null;config:RuntimeConfig|null;world:Awaited<ReturnType<typeof loadStageWorld>>|null;
@@ -48,13 +48,14 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
   };
   const narrative=createNarrativeController({sessionId,request,getSession:refreshSession,
     onTipChanged:updateTip,
-    onRunSaved:run=>{if(!disposed)history.ingestRun(run);},
-    onRunAccepted:()=>{if(!disposed)publish();},
-    onTerminal:()=>{if(disposed)return;usageRevision++;void state?.read().catch(()=>{});publish();},
+    onTerminal:()=>{if(disposed)return;usageRevision++;void synchronize();},
   });
+  let historySource: ReturnType<typeof history.getSnapshot>['runs'] | undefined;
+  let savedRuns: StageRun[] = [];
   function project():WorkspaceSnapshot{
     const hs=history.getSnapshot(),ns=narrative.getSnapshot(),ss=state?.getSnapshot();
-    const runs:StageRun[]=hs.runs.map(projectRun);
+    if(historySource!==hs.runs){ historySource=hs.runs; savedRuns=hs.runs.map(projectRun); }
+    const runs=ns.run?[...savedRuns]:savedRuns;
     if(ns.run){
       const index=runs.findIndex(run=>run.runId===ns.run!.runId);
       if(index<0)runs.push(ns.run);
@@ -62,7 +63,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
         const saved=runs[index]!,persistedIds=new Set(saved.messages.map(message=>message.id));
         const extra=ns.run.messages.filter(message=>!persistedIds.has(message.id));
         const settled=['completed','stopped'].includes(saved.status);
-        runs[index]={...(!settled?ns.run:saved),messages:[...saved.messages,...extra]};
+        runs[index]=settled?saved:{...ns.run,messages:[...saved.messages,...extra]};
       }
     }
     return {session,config,world,loading,error,worldError,notice:notice??ns.error,sending:ns.sending,stopping:ns.stopping,usageRevision,latestUsage:ns.usage,
@@ -87,16 +88,15 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
     synchronization=(async()=>{
       do{
         repeat=false;
-        const checkpoint=suggestions.checkpoint(),narrativeCheckpoint=narrative.checkpoint(),knownActiveRunId=narrative.getSnapshot().activeRunId;
+        const checkpoint=suggestions.checkpoint(),narrativeCheckpoint=narrative.checkpoint();
         try{
           await refreshSession();
           if(!history.getSnapshot().runs.length)await history.loadRecent();else await history.catchUp();
           if(disposed)return;
           const current=history.getSnapshot();
-          const page:RunPage={items:current.runs,activeRunId:current.activeRunId,hasMore:current.hasMore,nextCursor:current.nextCursor,nextAfterSeq:current.afterSeq};
-          await narrative.recover({page,knownActiveRunId,checkpoint:narrativeCheckpoint});
-          if(disposed)return;
-          const latest=history.getSnapshot().runs.at(-1)??null;
+          const latest=current.runs.at(-1)??null;
+          const active=current.activeRunId && current.runs.find(run=>run.runId===current.activeRunId);
+          narrative.reconcile(active||latest||undefined,narrativeCheckpoint);
           suggestions.restore(latest,checkpoint);
           // Catch-up can discover a newer persisted tip without a terminal event on this connection.
           await refreshSession();

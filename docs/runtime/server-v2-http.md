@@ -8,7 +8,7 @@ HTTP适配器位于 `apps/serverV2/src/routes/`，可调用业务模块Service�
 
 Service 公共输入输出采用显式驼峰领域类型，存储行到领域对象的转换位于 Service，存储行及列名留在模块内部。HTTP 使用 V2 管理接口契约；跨模块展示字段由 route 调属主 Service 组合，不放回 Repository JOIN 或相互依赖的 Service 展示逻辑。作者 JSON、状态键及文档协议里的键不做递归改名。
 
-业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；StudioV2 接入世界内容库、预设、模型配置、设置和基础会话，旧 Server/Studio 保持独立。数据库 user_version=3，只迁移结构匹配的 V2 v1/v2 库（v2 添加预设 revision，v3 添加世界 revision 和 created_at/id 索引），拒绝未知结构和旧 Server 库。createApp传入services时必须同时传入usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureDefault 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
+业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；StudioV2 接入世界内容库、预设、模型配置、设置和基础会话，旧 Server/Studio 保持独立。数据库 user_version=4，只迁移结构匹配的 V2 v1–v3 库（v2 添加预设 revision，v3 添加世界 revision 和 created_at/id 索引，v4 为非 NULL 消息状态添加 (session_id,seq) 索引），拒绝未知结构和旧 Server 库。createApp传入services时必须同时传入usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureDefault 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
 
 ## 普通 JSON 响应
 
@@ -162,20 +162,19 @@ PATCH 仅接受 name、tags、defaultPresetId、defaultApiModelConfigId 的非�
 |---|---|---|
 | GET / POST | /sessions | 会话列表 / 创建 |
 | GET / PATCH / DELETE | /sessions/:id | 会话读取 / 修改 / 删除 |
-| GET / POST | /sessions/:id/entries | 消息/摘要列表 / 追加普通消息 |
-| GET / PATCH | /sessions/:id/entries/:entryId | 单条读取 / 普通消息正文或 extData 更新 |
+| POST | /sessions/:id/entries | 追加普通消息 |
+| PATCH | /sessions/:id/entries/:entryId | 普通消息正文或 extData 更新 |
 | POST | /sessions/:id/narrative/runs | 保存用户消息并受理一次叙事生成 |
 | POST | /sessions/:id/narrative/runs/:runId/stop | 显式停止当前匹配的叙事生成 |
 | GET | /sessions/:id/narrative/runs | 每页最多 5 轮的完整历史或 afterSeq 补查 |
-| GET | /sessions/:id/narrative/runs/:runId | 已保存消息与轮次状态 |
 | GET | /sessions/:id/narrative/usage | 已记录的模型用量汇总 |
 | GET / HEAD | /sessions/:id/events | SSE 事件连接 / 仅检查响应头 |
 
-会话列表支持 worldId、limit、cursor，不提供关键词搜索。route 解析游标位置后调用 SessionService；列表项的 worldName/cover 通过 WorldService 在 route 组合，同一请求缓存重复世界读取。SessionService 只返回自身的 Session 领域对象。条目列表支持 afterSeq、limit。整数 query 必须是合法安全整数，再由 Service 校验允许范围。
+会话列表支持 worldId、limit、cursor，不提供关键词搜索。route 解析游标位置后调用 SessionService；列表项的 worldName/cover 通过 WorldService 在 route 组合，同一请求缓存重复世界读取。SessionService 只返回自身的 Session 领域对象。已保存消息通过轮次游标分页读取。整数 query 必须是合法安全整数，再由 Service 校验允许范围。
 
 会话详情 GET 返回 `data.item: SessionView`，包含 worldId、presetId、apiModelConfigId、userCharacterId、tipEntryId、title 等驼峰字段。PATCH 仅支持 title/presetId/apiModelConfigId，世界与玩家身份创建后不再修改。StudioV2 会话页通过独立 features 使用本节的历史、叙事与 SSE 接口。
 
-摘要仅由叙事流程生成：POST entries 禁止 type=compaction；PATCH entries 禁止修改 compaction 的 payload/extData，也禁止向普通消息写入 summary 元数据。成功摘要通过 entries 或 narrative/runs 读取，payload.summary 为文本，extData.summary 为 {coveredThroughEntryId,sourceHash}，指标保存在该 entry.metrics；state=null 继承。savedMessageIds 不包含摘要，tipEntryId 可以指向摘要。
+摘要仅由叙事流程生成：POST entries 禁止 type=compaction；PATCH entries 禁止修改 compaction 的 payload/extData，也禁止向普通消息写入 summary 元数据。成功摘要通过 narrative/runs 分页中的 entries 读取，payload.summary 为文本，extData.summary 为 {coveredThroughEntryId,sourceHash}，指标保存在该 entry.metrics；state=null 继承。savedMessageIds 不包含摘要，tipEntryId 可以指向摘要。
 
 ### 运行期间写入锁
 
@@ -204,9 +203,9 @@ create-session 用例在同一个同步事务中校验选择、计算初始快�
 
 成功返回 201，`data:{item:SessionView,entry:SessionEntry}`，item.tipEntryId 已指向返回消息。提交后仅发布一次 session.created，不发布 run.* 或 state.changed。会话创建时一般还没有 SSE 订阅，首次展示使用响应或已保存历史，不依赖事件。重复 id 返回冲突，不重复创建；不提供后台任务或自动重试。已有会话不自动补开场、重置状态。
 
-本期只做线性追加。parentId 可省略，默认当前 tip；显式值不匹配时返回 TIP_CONFLICT。新条目、seq 与 tip 的原子更新归 SessionRepository；没有 setTip 或分支切换接口。
+本期只做线性追加。parentId 可省略，默认当前 tip；显式值不匹配时返回 TIP_CONFLICT。追加只核对本会话当前 tip 与最大 seq。新条目、seq 与 tip 的原子更新归 SessionRepository；没有 setTip 或分支切换接口。
 
-SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt/updatedAt，payload 与状态内容保持原键。HTTP 追加条目不接受 metrics，也不提供编辑计量的 HTTP 路由；计量由进程内 SessionService 写入。runId 仅关联同组已保存消息，不区分创建时的首条消息与模型生成；轮次详情组合 entries 与本组首条 entry 的 extData.narrative；缺少结束结果且无活跃运行时状态为 unknown。
+SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt/updatedAt，payload 与状态内容保持原键。HTTP 追加条目不接受 metrics，也不提供编辑计量的 HTTP 路由；计量由进程内 SessionService 写入。runId 仅关联同组已保存消息，不区分创建时的首条消息与模型生成；轮次列表组合 entries 与本组首条 entry 的 extData.narrative；缺少结束结果且无活跃运行时状态为 unknown。
 
 会话范围的读取、修改、状态及 SSE 入口先确认真实会话，再执行可选访问检查；拒绝与不存在统一返回 SESSION_NOT_FOUND。异步检查结束后先检查停机，再确认会话仍存在。配置了访问检查时，会话列表只返回获准条目。
 
@@ -235,7 +234,7 @@ SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt
 
 旧 `/sessions/:id/runs`、`/sessions/:id/runs/:runId/stop`、`/sessions/:id/runs/:runId/entries` 路径不保留别名。事件仍使用 `/sessions/:id/events`，不新增 narrative/events 或 capabilities，提交响应也不返回 capabilities。
 
-`GET /sessions/:id/narrative/runs` 支持以下互斥模式。每页固定上限 5 轮，limit 可省略或为 5，其他值返回 INVALID_REQUEST。
+`GET /sessions/:id/narrative/runs` 支持以下互斥模式。limit 可取 1 到 5 的整数，默认 5，其他值返回 INVALID_REQUEST。
 
 | 查询 | 行为 |
 | --- | --- |
@@ -247,9 +246,9 @@ SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt
 
 向前翻页使用 nextCursor；增量补查使用 nextAfterSeq，hasMore=true 时继续补查。nextAfterSeq 是本页最大 lastSeq，不是事件序号；空页为 null，客户端保持原检查点。浏览历史页面的 nextAfterSeq 不应覆盖客户端已知的较大检查点。activeRunId 是查询时该会话仍活跃的轮次，不受分页范围限制。
 
-`GET /sessions/:id/narrative/runs/:runId` 返回 `data.item`，结构与列表相同。无 entries 返回 RUN_NOT_FOUND。status 为 completed/stopped（来自已保存结果），running/stopping（来自匹配的内存运行），或 unknown（无活跃运行且没有有效结束结果）。详情只返回已保存消息，不提供未落库正文快照。
+列表项的 status 为 completed/stopped（来自已保存结果），running/stopping（来自匹配的内存运行），或 unknown（无活跃运行且没有有效结束结果）。实时生成的正文来自会话 SSE 的 run.delta。
 
-重连时先建立原 SSE，再用页面最新已保存 seq 补查，按 runId 替换完整轮次；同时刷新页面原来处于运行中的轮次详情，因为仅修改结束结果不会产生新 seq。页面无数据时重新读取最新一页。断线期间尚未保存的分片不回放、不保证显示完整；已有最终 snapshot 采用整体替换，终态后补查 entries。不为此增加分片落库或恢复系统。
+重连时先建立原 SSE，再用页面最新已保存 seq 补查，按 runId 替换完整轮次；若末轮尚在运行，afterSeq 回退一条以包含该轮，读取仅改变终态的更新。页面无数据时重新读取最新一页。断线期间尚未保存的分片不回放、不保证显示完整；已有最终 snapshot 采用整体替换，终态后补查 runs。不为此增加分片落库或恢复系统。
 
 每个 run 首条 entry 的 extData.narrative 仅由服务内部写入，不限定 user/assistant 角色：
 
@@ -288,7 +287,7 @@ metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstT
 }
 ```
 
-它只选最新已保存的主叙事 assistant 请求，排除 compaction；输入量取该请求真实 usage，未知时为 null，不拿上一轮已知用量替代。旧记录没有快照时窗口为 null、组成省略，不猜测历史模型窗口。切换配置、当前配置的供应商/模型改变或快照条目不在当前父链时 stale=true；正常追加下一轮或改标题不使旧快照自动过期。没有实际请求或没有保存助手时不产生新快照。
+它只选最新已保存的主叙事 assistant 请求，排除 compaction；输入量取该请求真实 usage，未知时为 null，不拿上一轮已知用量替代。旧记录没有快照时窗口为 null、组成省略，不猜测历史模型窗口。切换配置、当前配置的供应商/模型改变或快照条目的 seq 超过当前 tip时 stale=true；正常追加下一轮或改标题不使旧快照自动过期。没有实际请求或没有保存助手时不产生新快照。
 
 组成来自最终发给模型的 UTF-8 文本：系统模板/材料/后处理说明归 system，摘要归 summary，历史正文/模型旁注/本次 input.text 归 history。沿用 V1 每消息 16 B 的约定开销，普通拼装消息归 system、历史消息归 history。只统计实际发出的内容；这是字节占比，不是逐类计费 Token。上下文窗口占比使用实际 inputTokens/contextWindowTokens，累计 Token 包含已记录摘要及主叙事请求，缓存读写作为输入细分不重复相加。
 
@@ -318,7 +317,7 @@ metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstT
 }
 ```
 
-结果随现有 entries、轮次列表及单轮详情返回，不新增查询或写入端点，不增加能力开关响应字段。该字段由 SessionService 的受控叙事保存入口写入，普通 POST/PATCH 不能伪造或删除。
+结果随轮次列表中的 entries 返回，不新增查询或写入端点，不增加能力开关响应字段。该字段由 SessionService 的受控叙事保存入口写入，普通 POST/PATCH 不能伪造或删除。
 
 每个能力只校验自己的大小写不敏感标签；整对缺失或空标签是 no_updates/no_suggestions，自身标签损坏为 invalid_tag 且不执行该能力。stateUpdate.updates 按输入行序保存全部成功/失败记录，成功项必须有 path/value，失败项仅保留可用的输入字段与诊断。建议数组逐项校验，空白、类型、长度或重复项被过滤，保留有效 items，并以能力 status 表达全部成功、部分成功或无有效建议；三条仅是提示词目标。两类结果均不含 results，errors 仅承载能力级诊断。
 

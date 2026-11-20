@@ -14,7 +14,7 @@
 - 跨模块写入及跨模块事务边界归 usecases；本域必要的多条 SQL 原子操作留在 Repository，例如世界内容+标签、entry追加+tip推进。database 负责 DDL/结构事务，显式维护 updated_at，不新增触发器。
 - infrastructure/database/transaction.ts 的回调必须同步，不接受 Promise。事务中不做文件/网络/模型调用；文件与 DB 用暂存、发布、清理/补偿协调，不宣称强原子性。代表提交成功的事件在成功提交后发布。
 - openDatabase 只建立/检查结构，不播种业务数据。每次启动装配后、监听 HTTP 前调用 initialize，在同一同步事务内按稳定 ID ensureDefault，再 settings.ensure。缺失的内置预设或设置记录自动补齐；已有内置预设内容、revision、用户默认选择和显式 null 均保持原值，重复启动不更新它们。恢复预设沿用名称避重规则，失败整体回滚重试。不创建虚假模型或凭据，也没有前端初始化向导。
-- 本期只支持线性叙事存储：appendEntry 只能接当前 tip，显式 parent 不匹配时报错；追加、seq 分配与 tip 推进原子完成。不提供 setTip；内部 getHistory 只读取当前线性历史供 context 使用。GET /sessions/:id/history 已删除，HTTP 历史读取使用 entries 或 narrative/runs。
+- 本期只支持线性叙事存储：appendEntry 只能接当前 tip，显式 parent 不匹配时报错；追加、seq 分配与 tip 推进原子完成。不提供 setTip；内部 getHistory 只读取当前线性历史供 context 使用。GET /sessions/:id/history 已删除，HTTP 消息历史只使用 narrative/runs。写入只校验当前 tip，模型上下文按 seq 范围一次读取，消息状态按会话和 seq 取最近非 NULL 快照。
 - 正文、历史关系、state、metrics 分别写入明确字段，禁止整行覆盖。state HTTP 统一前缀 /api/v1/state，仅提供 /global/:worldId、/session/:sessionId、/message/:sessionId/:entryId 各 GET/PATCH/PUT；旧 worlds/sessions 的 state 子路径删除，不保留别名。PUT/set 保存完整 scope 快照；消息 NULL 继承前驱，显式空数组终止继承。PATCH 接收 updates:[{path,value}]，按输入顺序独立处理：只替换已存在的根或对象点分路径，缺失路径成功忽略，不创建节点；数组整体替换。沿用共享 state-validation 的定义、类型与 rules 覆盖校验，只检查受影响根，不校验整个 scope。缺失路径及未变化值均不写库；消息继承值仅在实际变更时保存为指定条目的独立快照。StateWriteResult 逐项返回 success/errorCode/errorMessage 与可选字段诊断。
 - 仅开放已实现校验的预设类型，类型与配置统一在 PresetService 校验；引用通过 Reader.require 和数据库外键保证，不恢复 assertNarrativePreset。默认模板与导入导出协议属于 presets 内部领域知识；凭据字节不进入模型配置表。
 - 世界导入保留原始字节，不依赖上传原名；JSON/ZIP 验证卡和资源后发布，失败按明确阶段清理。导出由 DB 当前世界卡、当前标签与 package/ 当前资源构建，名称为当前 world.name.zip，原件不参与重建。卡协议与静态状态定义校验属于 worlds；state 定义、类型和 rules 校验复用既有共享 state-validation。rules 保存自然语言说明，校验其路径及覆盖，不执行说明中的业务条件。
@@ -26,7 +26,7 @@
 - 会话路由先经 SessionService 检查真实会话，再执行可选 canAccessSession；等待后先检查关闭信号，再确认会话仍存在。访问适配器不能代替会话存在性检查。
 - 普通 HTTP 统一 `{ success, errorCode, errorMessage, data }`，错误集中 errors.ts 映射并保留正确状态码；未知异常不泄漏 SQL、路径或堆栈。SSE/文件下载保留原始正文，传输开始前错误仍用 JSON 失败包络。
 - routes 使用 http/response.ts，HTTP 正文/query/游标处理留在传输层，业务校验留在 Service。跨模块列表/详情展示投影由 route 调公开 Service 组合。接口契约见 `../../docs/runtime/server-v2-http.md`。
-- V2 使用独立数据根目录和数据库，user_version=3；只迁移结构匹配的 V2 v1/v2 库，依次添加预设 revision、世界 revision 及导入时间索引，不自动改造/清空旧 Server 库，不导入旧 Server 的建表、恢复或执行逻辑。现有 V2 设置记录保留原值；缺失的 V2 内置预设与设置由启动 initialize 幂等补齐，不导入旧 Server 数据。
+- V2 使用独立数据根目录和数据库，user_version=4；只迁移结构匹配的 V2 v1–v3 库，依次添加预设 revision、世界 revision、导入时间索引和消息状态快照索引，不自动改造/清空旧 Server 库，不导入旧 Server 的建表、恢复或执行逻辑。现有 V2 设置记录保留原值；缺失的 V2 内置预设与设置由启动 initialize 幂等补齐，不导入旧 Server 数据。
 - 本轮仅做函数级测试、typecheck、lint，不启动真实服务或执行 HTTP/浏览器链路验证。函数测试使用内存或临时库、临时文件以及最小凭据替身，不访问真实 Keychain；架构测试检查入口/层级/SQL属主，类型测试检查 Reader 不具有写方法。关闭 HTTP/SSE 后再关库。
 
 ## 运行写入锁
@@ -52,7 +52,7 @@
 ## Narrative 查询与部署配置
 
 - 叙事提交、停止、查询与用量统一在 /api/v1/sessions/:id/narrative；旧 /runs 路径不保留别名。SSE 仍为 /sessions/:id/events；不新增 narrative/events 或 capabilities，提交响应不带 capabilities。
-- runs 列表固定最多 5 轮，limit 只允许省略或 5。历史 cursor 按每轮首 entry.seq 倒序；afterSeq 按最后 entry.seq 升序查询受影响完整轮次。Repository SQL 仅操作本域 entries，不新增 runs 表。返回 nextCursor/nextAfterSeq/activeRunId；单轮详情只读已保存内容和当前活跃状态，不提供流式正文恢复。
+- runs 列表每页 1–5 轮，默认 5 轮。历史 cursor 按每轮首 entry.seq 倒序；afterSeq 按最后 entry.seq 升序查询受影响完整轮次。Repository SQL 仅操作本域 entries，不新增 runs 表。返回 nextCursor/nextAfterSeq/activeRunId；流式正文由会话 SSE 推送。
 - 每个 run 首条 entry.extData.narrative 保存 completed+finishedAt，或 stopped+stopReason+finishedAt。助手保存后写结束结果，再发 usage/终态；失败保留消息，无结束记录且不活跃返回 unknown。通用 entry 编辑不能传入/删除 narrative，写结果保留其他扩展。该字段不是恢复日志，running 只在内存中。
 - metrics.requests 移除 status，增加 provider（新记录为实际 providerId，旧数据未知为 null）。读旧 JSON 丢弃 status，不猜测供应商、不批量迁移；新写入严格校验。usage 汇总已记录的已知 token 并报告未知请求数，不写累计账本；latestContext 只投影最新已保存的主叙事 assistant 请求。metrics.context 保存 requestId、apiModelConfigId、真实 contextWindowTokens 与编译 contextComposition 字节数，摘要不附加该快照。未知输入为 null，旧无快照不推断窗口或组成；模型配置/模型变化或脱离当前父链标记 stale。
 - /api/v1/runtime/config 返回隔离舞台的公开 origin/entryPath 与 debug，不重复 port。stageOrigin/debug 由装配提供，CLI 使用 SERVER_V2_STAGE_ORIGIN/SERVER_V2_DEBUG；不与 Studio 同源，不允许 HTTPS 降级，不新增监听进程。
@@ -78,7 +78,7 @@
 - 仅正常 stop、无工具请求且干净正文有效时执行能力；模型中断/失败只保存部分公开内容，不生成 output。能力独立兜底，状态内部逐行隔离，能力失败不改变正常 completed。公开 delta/最终 snapshot/持久化正文都隐藏能力块，最终快照重新分离，reasoning/tool_calls 不作为能力输入。
 - 用例经同步 TransactionRunner 校验实际 tip，准备状态候选和变化信息，再原子追加助手正文/output/state/metrics。变化必须在追加前计算，避免读取更新后的视图漏发事件。SessionService.appendNarrativeAssistant 是 output 受控保存入口，新写严格接受精简结构，普通 append/update 禁止伪造或删除，编辑其他扩展保留结果，正文编辑不重执行或回滚。SessionService 读取投影兼容旧 output：按旧 results 顺序配对成功 updates，保留重复 path 和各自 reason，失败不提升为成功；旧 action results 仅移除。归一化不回写数据库，无 output 的旧消息不补造结果。
 - 提交和锁释放后、唯一终态前，独立发布实际 state.changed 与非空有效 action_suggestions.created，再发布一次总 usage/终态。run.created 驱动清理旧建议，无空 created 或 cleared。每条能力通知异常不能跳过后续通知或终态。助手保存失败无未提交通知；用户终态保存失败保留已提交状态并通知，但不发布可点击建议。
-- 聊天、持久化正文、关键词及摘要保持干净；主模型历史可由 context 的 model-notes 附加独立旁注。postprocess 不承担历史重建，不重放状态或引用 context 内部阶段。结果继续通过现有 entries/runs 查询读取，不新增表或接口。
+- 聊天、持久化正文、关键词及摘要保持干净；主模型历史可由 context 的 model-notes 附加独立旁注。postprocess 不承担历史重建，不重放状态或引用 context 内部阶段。结果通过 narrative/runs 分组内的 entries 读取，不新增表或接口。
 
 
 ## 运行日志

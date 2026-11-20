@@ -13,9 +13,10 @@ test('bridge forwards supported domain commands without accepting arbitrary HTTP
 test('history accepts ServerV2 page semantics and rejects mixed cursor modes',async()=>{
   const calls=[],command=async(method,input)=>calls.push({method,input});
   await dispatchStageCommand(command,'history.query',{limit:5,afterSeq:6});
-  await assert.rejects(dispatchStageCommand(command,'history.query',{limit:1}));
+  await dispatchStageCommand(command,'history.query',{limit:1});
+  await assert.rejects(dispatchStageCommand(command,'history.query',{limit:6}));
   await assert.rejects(dispatchStageCommand(command,'history.query',{cursor:'older',afterSeq:6}));
-  assert.deepEqual(calls,[{method:'history.query',input:{limit:5,afterSeq:6}}]);
+  assert.deepEqual(calls,[{method:'history.query',input:{limit:5,afterSeq:6}},{method:'history.query',input:{limit:1}}]);
 });
 test('malformed command cannot prevent a later valid state command',async()=>{
   const calls=[],command=async(method,input)=>{calls.push({method,input});return [];};

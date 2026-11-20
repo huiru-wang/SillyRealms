@@ -8,7 +8,7 @@ export interface SRSessionAPI {
   send(text: string): Promise<AcceptedRun>;
   stop(runId: string): Promise<{runId: string; stopping: true}>;
   /** ServerV2 returns items/entries; querying never changes the displayed history. */
-  getHistoryRuns(options?: RunQuery): Promise<RunPage>;
+  getRuns(options?: RunQuery): Promise<RunPage>;
   subscribe(listener: (event: SessionEvent) => void): () => void;
 }
 export interface SRStateAPI {
@@ -71,7 +71,7 @@ export class StageRuntime {
       setDraft: (text: string) => command('composer.setDraft', {text}),
       send: (text: string) => command('narrative.send', {text}),
       stop: (runId: string) => command('narrative.stop', {runId}),
-      getHistoryRuns: (options: RunQuery = {}) => command('history.query', options),
+      getRuns: (options: RunQuery = {}) => command('history.query', options),
       subscribe,
     });
     const write = (updates: StateWrite[]) => command('state.write', {updates});

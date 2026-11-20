@@ -200,12 +200,12 @@ describe('model configurations and application defaults', () => {
 });
 
 describe('default postprocess prompt resolution', () => {
-  it('uses JSONL and optional blocks in fresh defaults', () => {
+  it('uses JSONL state blocks and optional suggestions in fresh defaults', () => {
     const config = presets.ensureDefault().config;
     const resolved = resolvePostprocessPrompts(config);
     expect(resolved.worldState).toContain('JSONL');
     expect(resolved.worldState).toContain('{{state.entries}}');
-    expect(resolved.worldState).toContain('空 state_update 标签或省略');
+    expect(resolved.worldState).toContain('<state_update></state_update>');
     expect(resolved.worldState).not.toContain('最多100项');
     expect(resolved.actionSuggestions).toContain('优先生成三个');
     expect(resolved.actionSuggestions).toContain('空标签、空数组或省略标签');

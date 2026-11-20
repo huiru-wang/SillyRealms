@@ -152,7 +152,7 @@ describe('summary execution and accounting', () => {
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'summary_failed' } });
     expect(summaries()).toEqual([]);
-    expect(services.sessions.listRunEntries('session', accepted.runId)).toHaveLength(1);
+    expect(services.sessions.listEntryRuns('session').items.find(item => item.runId === accepted.runId)!.entries).toHaveLength(1);
     expect(total()).toMatchObject({ total_tokens: 0 });
     expect(services.sessions.recordedUsage('session').recordedRequestCount).toBe(0);
     expect(seen.map(event => event.event)).toEqual(['run.created', 'run.summarizing', 'run.usage', 'run.stopped']);

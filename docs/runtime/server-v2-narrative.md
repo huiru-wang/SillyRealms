@@ -222,7 +222,7 @@ SessionService.appendNarrativeAssistant 将干净正文、extData.output、可�
 
 用户终态独立保存失败时，助手/状态不回滚；实际已提交状态仍通知，但本轮不发布可点击建议。事件在提交和锁释放后、唯一终态前发布，顺序见会话事件文档。
 
-公共追加/编辑禁止写入或删除 output，编辑其他 extData 保留它；正文编辑保留当时处理结果，不重做或回滚状态。新 output 严格使用精简结构；旧格式仅在 SessionService 读取投影时归一化，旧成功 updates 按 results 成功行的顺序配对，保留重复 path 及各自 reason，失败不提升为成功，行动建议移除旧 results。归一化不重写数据库；旧 entry 没有 output 时正常读取且不补造结果。轮次详情/列表返回归一化后的结构化结果，不新增接口或表。
+公共追加/编辑禁止写入或删除 output，编辑其他 extData 保留它；正文编辑保留当时处理结果，不重做或回滚状态。新 output 严格使用精简结构；旧格式仅在 SessionService 读取投影时归一化，旧成功 updates 按 results 成功行的顺序配对，保留重复 path 及各自 reason，失败不提升为成功，行动建议移除旧 results。归一化不重写数据库；旧 entry 没有 output 时正常读取且不补造结果。轮次列表返回归一化后的结构化结果，不新增接口或表。
 
 聊天、持久化正文、关键词激活与摘要保持干净。主模型的保留历史由 context 在最终组装时附加条目级 model-only notes，读取历史或旁注不重执行更新；规则见[条目级模型旁注](#条目级模型旁注)。没有持久化 notes schema、contextEligible 或能力专用历史重建模块。
 
@@ -248,11 +248,11 @@ POST 或 SSE 断开不取消叙事；只有显式 stop 或服务正常关闭触�
 
 ## 轮次查询与结束记录
 
-叙事接口统一位于 `/api/v1/sessions/:id/narrative`，包含 runs 提交、五轮分页、单轮详情、停止与基础 usage 汇总；SSE 继续使用原会话 events 入口。列表返回完整 entries 分组：历史以 firstSeq 倒序，afterSeq 以新增条目对应的 lastSeq 升序。单轮详情将持久化结果与内存活跃记录组合，不保留已结束运行的内存缓存，不返回实时正文快照。
+叙事接口统一位于 `/api/v1/sessions/:id/narrative`，包含 runs 提交、每页最多五轮的游标分页、停止与基础 usage 汇总；SSE 继续使用原会话 events 入口。列表返回完整 entries 分组：历史以 firstSeq 倒序，afterSeq 以新增条目对应的 lastSeq 升序。每个列表项将持久化结果与内存活跃记录组合，不保留已结束运行的内存缓存，不返回实时正文快照。
 
 结束记录在每个 run 首条 entry 的 extData.narrative（普通叙事为 user，创建会话时为 assistant），结构为 `{status:'completed',finishedAt}` 或 `{status:'stopped',stopReason,finishedAt}`。finishedAt 是 Unix 毫秒，stopReason 使用同一叙事原因枚举。用户尚未完成时不写该字段；助手保存失败仍尝试保存失败原因。结果写入失败保留已保存消息并以 message_persist_failed 发事件，没有结果且不活跃时查询返回 unknown。
 
-通用 entry 编辑不能写入或清除 narrative/output，修改其他 extData 时保留服务端结果；正文编辑不重新执行能力。metrics.requests 不再保存 status，增加 provider；旧 status 在读取时丢弃、未知 provider 为 null，新记录严格校验。usage 查询合计已存 metrics 的已知部分并返回未知用量请求数，不宣称完整计费；同时返回 latestContext，取最新已保存主叙事 assistant 请求的真实输入量、请求时模型窗口、配置与字节组成。execute 只在实际调用 metrics 存在时附加 context，摘要不参与 latestContext 选择。配置/模型改变或条目不在当前父链标记 stale；旧数据缺字段保持未知，不借用上一轮数据。组成含 UTF-8 文本和 V1 约定每消息 16 B 开销，系统/摘要/历史字节不是逐类计费 Token；完整字段见 HTTP 契约。
+通用 entry 编辑不能写入或清除 narrative/output，修改其他 extData 时保留服务端结果；正文编辑不重新执行能力。metrics.requests 不再保存 status，增加 provider；旧 status 在读取时丢弃、未知 provider 为 null，新记录严格校验。usage 查询合计已存 metrics 的已知部分并返回未知用量请求数，不宣称完整计费；同时返回 latestContext，取最新已保存主叙事 assistant 请求的真实输入量、请求时模型窗口、配置与字节组成。execute 只在实际调用 metrics 存在时附加 context，摘要不参与 latestContext 选择。配置/模型改变或条目的 seq 超过当前 tip标记 stale；旧数据缺字段保持未知，不借用上一轮数据。组成含 UTF-8 文本和 V1 约定每消息 16 B 开销，系统/摘要/历史字节不是逐类计费 Token；完整字段见 HTTP 契约。
 
 重连只补查已保存 seq；未落库分片不保证补齐，最终 snapshot 替换与终态后的持久化查询负责最终展示。仍活跃的轮次只提供 running/stopping 状态；用户 entry 的结束结果更新不增加 seq，客户端需另查原活跃轮次。接口字段见 [ServerV2 HTTP](server-v2-http.md)。
 

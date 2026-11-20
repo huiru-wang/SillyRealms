@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { AppError } from '../../errors.js';
 
-export const DATABASE_VERSION = 3;
+export const DATABASE_VERSION = 4;
 export const DATABASE_APPLICATION_ID = 0x53525632; // SRV2; distinct from the old Server database.
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
@@ -123,6 +123,8 @@ const UPGRADE_V2_SQL = 'ALTER TABLE presets ADD COLUMN revision INTEGER NOT NULL
 
 const UPGRADE_V3_SQL = 'ALTER TABLE worlds ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0); CREATE INDEX idx_worlds_created ON worlds(created_at, id)';
 
+const UPGRADE_V4_SQL = 'CREATE INDEX idx_entries_state_seq ON entries(session_id, seq) WHERE state IS NOT NULL';
+
 // Let SQLite normalize ALTER TABLE identically for new and upgraded databases.
 function expectedObjects(version: number) {
   const reference = new DatabaseSync(':memory:');
@@ -130,11 +132,12 @@ function expectedObjects(version: number) {
     reference.exec(SCHEMA_SQL);
     if (version >= 2) reference.exec(UPGRADE_V2_SQL);
     if (version >= 3) reference.exec(UPGRADE_V3_SQL);
+    if (version >= 4) reference.exec(UPGRADE_V4_SQL);
     return new Map(reference.prepare("SELECT name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'")
       .all().map(row => [String(row.name), String(row.sql)]));
   } finally { reference.close(); }
 }
-const schemas = new Map([[1, expectedObjects(1)], [2, expectedObjects(2)], [3, expectedObjects(3)]]);
+const schemas = new Map([[1, expectedObjects(1)], [2, expectedObjects(2)], [3, expectedObjects(3)], [4, expectedObjects(4)]]);
 const normalizeSql = (sql: string) => sql.replace(/\s+/g, ' ').trim().toLowerCase();
 
 function inspectDatabase(db: DatabaseSync) {
@@ -180,11 +183,13 @@ export function openDatabase(path: string): DatabaseSync {
           db.exec(SCHEMA_SQL);
           db.exec(UPGRADE_V2_SQL);
           db.exec(UPGRADE_V3_SQL);
+          db.exec(UPGRADE_V4_SQL);
           db.exec('PRAGMA application_id=' + DATABASE_APPLICATION_ID);
         } else {
           assertCompatible(current);
           if (current.version === 1) db.exec(UPGRADE_V2_SQL);
           if (current.version < 3) db.exec(UPGRADE_V3_SQL);
+          if (current.version < 4) db.exec(UPGRADE_V4_SQL);
         }
         db.exec('PRAGMA user_version=' + DATABASE_VERSION);
         assertCompatible(inspectDatabase(db));

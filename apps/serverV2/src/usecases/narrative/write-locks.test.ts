@@ -189,7 +189,7 @@ describe('run write locks across session and state operations', () => {
     expect(() => setState.patchSession('session', [])).toThrow(new AppError('STATE_WRITE_LOCKED'));
     await entered.promise;
     expect(narrative.list('session').activeRunId).toBe(run.accepted.runId);
-    expect(narrative.get('session', run.accepted.runId).status).toBe('running');
+    expect(narrative.list('session').items.find(item => item.runId === run.accepted.runId)!.status).toBe('running');
     expect(narrative.usage('session').recordedRequestCount).toBe(0);
     expect(services.sessions.getHistory('session').map(entry => entry.id)).toEqual([run.accepted.userEntryId]);
     expect(services.state.getSession('session')).toEqual({ coins: 2 });
@@ -213,7 +213,7 @@ describe('run write locks across session and state operations', () => {
       event: outcome === 'completed' ? 'run.completed' : 'run.stopped',
       data: { runId: run.accepted.runId },
     });
-    const entries = services.sessions.listRunEntries('session', run.accepted.runId);
+    const entries = services.sessions.listEntryRuns('session').items.find(item => item.runId === run.accepted.runId)!.entries;
     expect(entries[0]!.extData.narrative).toMatchObject({ status: outcome === 'completed' ? 'completed' : 'stopped' });
     if (outcome === 'completed') {
       expect(entries).toHaveLength(2);

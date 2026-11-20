@@ -3,7 +3,7 @@ import {mkdtemp,readFile,writeFile,mkdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const dir=await mkdtemp(join(tmpdir(),'sr-detail-overlay-'));const out=join(dir,'screens');await mkdir(out);
-const pause=ms=>new Promise(r=>setTimeout(r,ms));const origin=process.env.STUDIO_URL??'http://localhost:5174';
+const pause=ms=>new Promise(r=>setTimeout(r,ms));const origin=process.env.STUDIO_URL??'http://127.0.0.1:5176';
 const data=async path=>(await(await fetch(origin+'/api/v1/'+path)).json()).data;
 const world=(await data('worlds?limit=1')).items[0],preset=(await data('presets?limit=1')).items[0],model=(await data('api-model-configs')).items[0];
 if(!world||!preset||!model)throw Error('Missing existing read-only verification data');

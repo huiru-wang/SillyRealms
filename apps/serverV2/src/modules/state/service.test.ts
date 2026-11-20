@@ -84,9 +84,9 @@ describe('read-only scope snapshots and inheritance', () => {
     append('foreign', undefined, 'two');
     sessions.setEntryState('two', 'foreign', [{ key: 'secret', value: 7 }]);
     db.prepare('UPDATE entries SET parent_id=? WHERE id=?').run('foreign', 'child');
-    expect(() => state.getMessage('one', 'child')).toThrow('INVALID_PARENT_CHAIN');
+    expect(state.getMessage('one', 'child')).toBeNull();
     db.prepare('UPDATE entries SET parent_id=? WHERE id=?').run('child', 'child');
-    expect(() => state.getMessage('one', 'child')).toThrow('INVALID_PARENT_CHAIN');
+    expect(state.getMessage('one', 'child')).toBeNull();
   });
 
   it('builds read-only views at an explicit predecessor and never initializes missing message state', () => {

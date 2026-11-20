@@ -7,7 +7,7 @@ import {createModuleLoader} from '../../../packages/sr-ui-compiler/src/loader';
 import '@tailwindcss/browser';
 import * as ReactDOMClient from 'react-dom/client';
 import * as JSXRuntime from 'react/jsx-runtime';
-import * as SDK from '@sillyrealms/sdk/stage';
+import * as SDK from '@sillyrealms/sdk';
 import {StageProvider} from '../../../packages/sr-sdk/src/stage/context';
 import {StageRuntime} from '../../../packages/sr-sdk/src/stage/runtime';
 import type {SessionEvent, StageSnapshot} from '../../../packages/sr-sdk/src/stage-contract';

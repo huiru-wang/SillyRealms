@@ -1,5 +1,5 @@
 import type {
-  AcceptedRun, MessageDelta, MessageSnapshot, NarrativeEvent, RunPage, StageMessage,
+  AcceptedRun, MessageDelta, MessageSnapshot, NarrativeEvent, StageMessage,
   StageRun, StoredRun, Usage,
 } from '../../../../../packages/sr-sdk/src/stage-contract.ts';
 import type {HttpRequest} from '../../transport/http.ts';
@@ -11,7 +11,6 @@ export type NarrativeSnapshot = {
   drafts: StageMessage[];
   sending: boolean;
   stopping: boolean;
-  recovering: boolean;
   /** Stream continuity was lost; only a final replacement snapshot can repair it. */
   incomplete: boolean;
   usage: Usage | null | undefined;
@@ -21,10 +20,8 @@ export type NarrativeOptions = {
   sessionId: string;
   request: HttpRequest;
   getSession: () => Promise<{tipEntryId: string | null}>;
-  onRunSaved?: (run: StoredRun) => void;
   onTipChanged?: (tipEntryId: string | null) => void;
   onTerminal?: (event: TerminalEvent) => void;
-  onRunAccepted?: (accepted: AcceptedRun) => void;
 };
 const terminal = (status: StageRun['status']) => status === 'completed' || status === 'stopped';
 const errorText = (error: unknown) => error instanceof Error ? error.message : '叙事请求失败';
@@ -54,10 +51,10 @@ export function createNarrativeController(options: NarrativeOptions) {
   const base = 'v1/sessions/' + encodeURIComponent(sessionId) + '/narrative/runs';
   const listeners = new Set<() => void>(), pending = new Set<AbortController>();
   const settled = new Set<string>();
-  let disposed = false, eventRevision = 0, recoveryVersion = 0, continuous = false;
+  let disposed = false, eventRevision = 0, continuous = false;
   let snapshot: NarrativeSnapshot = {
     run: null, activeRunId: null, drafts: [], sending: false, stopping: false,
-    recovering: false, incomplete: false, usage: undefined, error: null,
+    incomplete: false, usage: undefined, error: null,
   };
   const emit = (patch: Partial<NarrativeSnapshot>) => {
     if (disposed) return;
@@ -78,84 +75,34 @@ export function createNarrativeController(options: NarrativeOptions) {
       return result;
     } finally { pending.delete(controller); }
   };
-  const handoff = (run: StoredRun) => {
-    options.onRunSaved?.(structuredClone(run));
-    if (snapshot.run?.runId !== run.runId) return;
-    const saved = new Set(run.entries.map(entry => entry.id));
-    const drafts = snapshot.drafts.filter(message => !saved.has(message.id));
-    if (drafts.length !== snapshot.drafts.length) emit({drafts});
-  };
-  const acceptStored = (run: StoredRun, revision: number, adopt = false) => {
-    handoff(run);
-    if (revision !== eventRevision || (snapshot.run?.runId !== run.runId && !adopt)) return;
-    const current = snapshot.run?.runId === run.runId ? snapshot.run : null;
-    if (current && terminal(current.status) && !terminal(run.status)) return;
-    if (terminal(run.status)) settled.add(run.runId);
-    const active = run.status === 'running' || run.status === 'stopping';
-    emit({
-      run: {runId: run.runId, status: run.status, messages: [], stopReason: run.stopReason, finishedAt: run.finishedAt,
-        ...(active && current?.phase ? {phase: current.phase} : {})},
-      activeRunId: active ? run.runId : null,
-      drafts: current ? snapshot.drafts : [],
-      stopping: run.status === 'stopping',
-      incomplete: active && !continuous,
-    });
-  };
-  const loadRun = async (runId: string) => {
-    const revision = eventRevision;
-    try {
-      const result = await call<{item: StoredRun}>(base + '/' + encodeURIComponent(runId));
-      acceptStored(result.item, revision);
-      return result.item;
-    } catch (error) {
-      if (!disposed) emit({error: errorText(error)});
-      throw error;
-    }
-  };
-  const recover = async (input: {page?: RunPage; knownActiveRunId?: string | null; checkpoint?: number} = {}) => {
-    const version = ++recoveryVersion, revision = input.checkpoint ?? eventRevision;
-    const known = input.knownActiveRunId ?? snapshot.activeRunId;
-    emit({recovering: true, error: null});
-    try {
-      const page = input.page ?? await call<RunPage>(base);
-      if (disposed || version !== recoveryVersion) return page;
-      for (const run of page.items) handoff(run);
-      // The previous active run may only have gained an outcome, with no new seq.
-      const ids = new Set([known, page.activeRunId].filter((id): id is string => !!id));
-      const refreshed = new Map<string, StoredRun>();
-      for (const id of ids) {
-        const result = await call<{item: StoredRun}>(base + '/' + encodeURIComponent(id));
-        if (disposed || version !== recoveryVersion) return page;
-        refreshed.set(id, result.item);
-        handoff(result.item);
-      }
-      if (revision === eventRevision) {
-        const selected = page.activeRunId
-          ? refreshed.get(page.activeRunId) ?? page.items.find(run => run.runId === page.activeRunId)
-          : known && refreshed.has(known) ? refreshed.get(known)
-          : [...page.items].sort((a, b) => b.firstSeq - a.firstSeq)[0];
-        if (selected) acceptStored(selected, revision, true);
-        else emit({activeRunId: page.activeRunId, run: null, drafts: [], stopping: false});
-      }
-      emit({recovering: false});
-      return page;
-    } catch (error) {
-      if (!disposed && version === recoveryVersion) emit({recovering: false, error: errorText(error)});
-      throw error;
-    }
+  // A paged read can finish after a newer live event. Only reconcile its matching revision.
+  const reconcile = (stored: StoredRun | undefined, checkpoint: number) => {
+    if (disposed || checkpoint !== eventRevision || !stored) return;
+    const current = snapshot.run?.runId === stored.runId ? snapshot.run : null;
+    if (current && terminal(current.status) && !terminal(stored.status) && stored.status !== 'unknown') return;
+    const active = stored.status === 'running' || stored.status === 'stopping';
+    if (!current) continuous = false;
+    const saved = new Set(stored.entries.map(entry => entry.id));
+    if (terminal(stored.status)) settled.add(stored.runId);
+    const run = current && terminal(current.status) && stored.status === 'unknown' ? current : {
+      runId: stored.runId, status: stored.status, messages: [], finishedAt: stored.finishedAt, stopReason: stored.stopReason,
+      ...(active && current?.phase ? {phase: current.phase} : {}),
+    };
+    emit({run, activeRunId: active ? stored.runId : null, stopping: stored.status === 'stopping',
+      drafts: active && current ? snapshot.drafts.filter(message => !saved.has(message.id)) : [],
+      incomplete: active && !continuous});
   };
 
   return {
     getSnapshot: () => snapshot,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    loadRun,
-    recover,
+    reconcile,
     checkpoint: () => eventRevision,
     clearError() { if (!disposed) emit({error: null}); },
     setConnected(connected: boolean) {
-      if (!connected && snapshot.activeRunId) {
+      if (!connected) {
         continuous = false;
-        emit({incomplete: true});
+        if (snapshot.activeRunId) emit({incomplete: true});
       }
     },
     accept(event: NarrativeEvent) {
@@ -168,9 +115,8 @@ export function createNarrativeController(options: NarrativeOptions) {
       if (event.event === 'run.created') {
         continuous = true;
         emit({run: {runId: id, status: 'running', phase: 'preparing', messages: []},
-          activeRunId: id, drafts: [], stopping: false, incomplete: false, usage: undefined, error: null});
+          activeRunId: id, drafts: event.data.messages.map(message => ({...message, runId: id, saved: true})), stopping: false, incomplete: false, usage: undefined, error: null});
         callback(() => options.onTipChanged?.(event.data.messages[0].id));
-        void loadRun(id).catch(() => {});
         return;
       }
       const run = snapshot.run ?? {runId: id, status: 'running' as const, messages: []};
@@ -206,11 +152,10 @@ export function createNarrativeController(options: NarrativeOptions) {
         emit({run: {runId: id, status: event.event === 'run.completed' ? 'completed' : 'stopped',
           messages: [], finishedAt: event.data.timestamp,
           ...(event.event === 'run.stopped' ? {stopReason: event.data.stop_reason} : {})},
-          activeRunId: null, stopping: false});
+          drafts: snapshot.drafts.filter(message => event.data.savedMessageIds.includes(message.id)),
+          activeRunId: null, stopping: false, incomplete: false});
         callback(() => options.onTipChanged?.(event.data.tipEntryId));
         callback(() => options.onTerminal?.(event));
-        // A fresh read is essential even if the run.created read is still in flight.
-        void loadRun(id).catch(() => {});
       }
     },
     async send(text: string): Promise<AcceptedRun> {
@@ -232,7 +177,6 @@ export function createNarrativeController(options: NarrativeOptions) {
             activeRunId: accepted.runId, drafts: [], incomplete: false, usage: undefined});
           callback(() => options.onTipChanged?.(accepted.userEntryId));
         }
-        callback(() => options.onRunAccepted?.(accepted));
         return accepted;
       } catch (error) {
         if (!disposed) emit({error: errorText(error)});
@@ -252,7 +196,7 @@ export function createNarrativeController(options: NarrativeOptions) {
       }
     },
     dispose() {
-      disposed = true; recoveryVersion++;
+      disposed = true;
       for (const controller of pending) controller.abort();
       pending.clear(); listeners.clear();
     },

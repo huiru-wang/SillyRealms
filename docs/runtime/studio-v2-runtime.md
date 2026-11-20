@@ -4,7 +4,7 @@
 
 `/sessions/:sessionId` 挂载 `features/sessions/SessionPage.tsx`。世界开局创建成功和会话列表均进入该页。支持线性文本叙事的发送/停止、流式正文、已保存历史分页、查询恢复、三作用域状态、行动建议、世界组件、消息渲染、用量和会话设置。不提供重新生成、失败重试、历史回退、生成中编辑。
 
-本功能只使用 ServerV2 原生契约；用量展示所需的请求快照由 ServerV2 编译、随实际主叙事请求保存并通过 usage 返回。原 Studio/Server 和 SDK 根入口保持独立。
+本功能只使用 ServerV2 原生契约；用量展示所需的请求快照由 ServerV2 编译、随实际主叙事请求保存并通过 usage 返回。SDK 根入口与 V2 舞台运行时共用同一契约。
 
 ## 职责和数据属主
 
@@ -28,25 +28,25 @@ SSE 跟随会话页面，MessagePort 跟随 iframe。重新加载舞台只替换
 - 停止：`POST .../narrative/runs/:runId/stop`；请求取消不等于已收到终态。
 - 历史和状态：使用 narrative/runs 的完整轮次、nextCursor、nextAfterSeq、activeRunId，以及三作用域 state 路径。真实 tip 从 session、摘要事件和终态取得，不能以最后可见 assistant 替代 compaction tip。
 - 当前事件：run.created/summarizing/summarized/delta/usage/completed/stopped、state.changed、action_suggestions.created。旧 run.phase/run.failed、usage.updated、action_suggestions.changed 均不参与 V2。
-- 临时输出按 messageId 归属，delta 追加，snapshot 整体替换。snapshot 不表示已保存；终态后读取本轮，持久 entries 按相同 ID 接管，未保存输出不冒充历史。
+- 临时输出按 messageId 归属，delta 追加，snapshot 整体替换。snapshot 不表示已保存；终态先按 savedMessageIds 移除未保存输出，再补查 runs 页，持久 entries 按相同 ID 接管，未保存输出不冒充历史。
 - action_suggestions.created 是完整集合，run.created 清空旧建议。恢复只认最新 run 的实际完成结果，不能寻找更早建议填补空结果。建议只读取 output.actionSuggestions 的整体 status/items；history 将 output 透传给 Stage，状态成功/失败诊断来自同一 stateUpdate.updates 列表中的 status。两类结果没有 results；旧格式由服务端读取时归一化，前端不重复兼容。
 - 状态 path:"" 替换完整 scope；null 是普通字段值。PATCH success 可以表示路径不存在而被忽略；字段请求值不能直接写入本地缓存。按真实事件/补读同步，混合作用域写入按原顺序分组，无跨 scope 原子承诺。
 
 ## 初次读取与连接恢复
 
-先注册事件消费者并建立 SSE，读取会话元信息、历史和状态。重连后逐页补查新 seq，同时刷新原 active run，因为只更新 user 上的终态可能没有新 seq。读取带代次与事件版本，迟到的 HTTP 结果不得反盖新事件；会话元信息读取合并并在历史恢复后重新确认真实 tip。
+先注册事件消费者并建立 SSE，读取会话元信息、历史和状态。重连后逐页补查新 seq，若最新已读轮次仍在运行，从其末条 seq 的前一位置开始补查，覆盖只有终态变化的情况。读取带代次与事件版本，迟到的 HTTP 结果不得反盖新事件；会话元信息读取合并并在历史恢复后重新确认真实 tip。
 
 SSE 无回放。丢失过流连续性时，不把后续缺头的 delta 拼成完整正文；等待最终 snapshot 或保存结果。断线不停止运行，退出页面只释放本地订阅。异常提交不自动重发，查询同步后仍保留未确认的输入草稿。
 
 ## Stage SDK
 
-V2 frame 的模块加载器将作者源码中的 `@sillyrealms/sdk` 绑定到 `@sillyrealms/sdk/stage`。公共值由 ServerV2 支持的语义组成：
+V2 frame 直接注入作者导入的包根入口 `@sillyrealms/sdk`。公共值由 ServerV2 支持的语义组成：
 
 | API | 返回/行为 |
 |---|---|
 | `useSRSession().send(text)` | 真实 accepted IDs |
 | `useSRSession().stop(runId)` | 真实 stopping 回执 |
-| `useSRSession().getHistoryRuns(query)` | 原生 `RunPage` 的 items/entries 和游标 |
+| `useSRSession().getRuns(query)` | 原生 `RunPage` 的 items/entries 和游标 |
 | `useSRSession().subscribe(listener)` | 原生 SessionEvent 名称和数据 |
 | `useSRSession().setDraft(text)` | 受限命令更新平台输入草稿，返回 Promise |
 | `useSRStageSnapshot()` | 不可变展示镜像，包含连接、历史、当前 run、建议和状态 |
@@ -55,7 +55,7 @@ V2 frame 的模块加载器将作者源码中的 `@sillyrealms/sdk` 绑定到 `@
 | `useSRWorldStateAPI()` | global 状态查询 |
 | `SR.WorldStory` | 官方纯展示组件，不独立执行历史合并/恢复 |
 
-旧 SDK 根入口属于原 Studio；V2 不伪造旧 runs/messages、requestId、failed、extensions 或能力开关。frame 的事件订阅不重复驱动业务 reducer；React 所需镜像只由 Host snapshot 替换。Stage 中的文档在已有隔离文档内直接渲染，不创建嵌套 iframe。
+旧 Studio 使用显式的 SDK legacy 入口；V2 不伪造旧 runs/messages、requestId、failed、extensions 或能力开关。frame 的事件订阅不重复驱动业务 reducer；React 所需镜像只由 Host snapshot 替换。Stage 中的文档在已有隔离文档内直接渲染，不创建嵌套 iframe。
 
 ## 桥接与展示
 

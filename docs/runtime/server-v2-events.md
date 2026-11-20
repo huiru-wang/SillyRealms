@@ -169,7 +169,7 @@ messageId 是承载 output 的助手 entry ID；items 是本轮完整有效集�
 
 标签缺失、空标签、空数组、无有效建议、模型未正常结束或主流程未完成时不发布 created。新 run 的 run.created 已负责清空旧建议，不发送 messageId=null/items=[] 的 created 清空事件，也不增加 cleared。
 
-state.changed 与 action_suggestions.created 独立发布；每条能力通知异常局部处理，继续其余通知及 run.usage/终态，不回滚已提交数据或重新执行能力。能力结果通过已有单轮详情和 entry.extData.output 读取，事件不重复传输全部诊断。首次加载/重连只恢复最新已完成 run 的有效结果，不回找更早建议冒充当前建议。
+state.changed 与 action_suggestions.created 独立发布；每条能力通知异常局部处理，继续其余通知及 run.usage/终态，不回滚已提交数据或重新执行能力。能力结果通过 runs 分页中的 entry.extData.output 读取，事件不重复传输全部诊断。首次加载/重连只恢复最新已完成 run 的有效结果，不回找更早建议冒充当前建议。
 
 ## 预留事件
 
@@ -196,6 +196,6 @@ state.changed 与 action_suggestions.created 独立发布；每条能力通知�
 
 ## 查询配合
 
-事件传输仍为 `/api/v1/sessions/:id/events`，没有 narrative/events、SSE id 或回放。轮次查询位于 narrative/runs：客户端重连后按已有 seq 补查新增 entries，并刷新原来运行中的那一轮的详情；退出后重新进入则读取最新 5 轮。未落库的断线分片无需补齐，现有最终 snapshot 保持替换语义。
+事件传输仍为 `/api/v1/sessions/:id/events`，没有 narrative/events、SSE id 或回放。轮次查询位于 narrative/runs：客户端重连后按已有 seq 补查新增 entries，若末轮曾在运行则覆盖其末条 seq；退出后重新进入则读取最新 5 轮。未落库的断线分片无需补齐，现有最终 snapshot 保持替换语义。
 
-每个 run 首条 entry 的 extData.narrative 保存 `{status,finishedAt,stopReason?}`，正常完成为 completed，其他结算为 stopped，stopReason 与本事件契约相同；写入失败不回滚已存消息。metrics.requests 改为 provider/modelId/requestId/usage/时间信息，不再存 status。助手 extData.output 单独保存后处理结果；终态仅代表正文主流程结果，能力诊断通过既有详情读取。
+每个 run 首条 entry 的 extData.narrative 保存 `{status,finishedAt,stopReason?}`，正常完成为 completed，其他结算为 stopped，stopReason 与本事件契约相同；写入失败不回滚已存消息。metrics.requests 改为 provider/modelId/requestId/usage/时间信息，不再存 status。助手 extData.output 单独保存后处理结果；终态仅代表正文主流程结果，能力诊断通过 runs 分页读取。

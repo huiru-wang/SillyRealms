@@ -64,7 +64,7 @@ describe('create a ready session', () => {
     expect(foreign).not.toHaveBeenCalled();
     expect(result.entry.extData).not.toHaveProperty('origin');
     expect(result.entry).not.toHaveProperty('kind');
-    expect(usecases.narrative.get('session', result.entry.runId)).toMatchObject({ status: 'completed', finishedAt: result.entry.timestamp, entries: [result.entry] });
+    expect(usecases.narrative.list('session').items.find(item => item.runId === result.entry.runId)!).toMatchObject({ status: 'completed', finishedAt: result.entry.timestamp, entries: [result.entry] });
     expect(usecases.narrative.usage('session').recordedRequestCount).toBe(0);
   });
 

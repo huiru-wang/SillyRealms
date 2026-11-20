@@ -10,17 +10,17 @@ import { SessionRepository, type EntryRow, type SessionRow } from './repository.
 import { narrativeOutputSchema, type NarrativeOutput } from './output.js';
 import { readStoredNarrativeOutput } from './stored-output.js';
 import {
-  appendEntrySchema, createSessionSchema, entryListSchema, identifier, metricsSchema,
+  appendEntrySchema, createSessionSchema, identifier, metricsSchema,
   sessionListSchema, updateEntrySchema, updateSessionSchema, narrativeOutcomeSchema, entryRunListSchema,
 } from './schema.js';
 import type {
-  AppendEntryInput, CreateSessionInput, EntryListOptions, EntryMetrics, SessionEntry,
+  AppendEntryInput, CreateSessionInput, EntryMetrics, SessionEntry,
   SessionListOptions, SessionPage, Session, UpdateEntryInput, UpdateSessionInput,
   NarrativeOutcome, EntryRunListOptions, EntryRunPage,
 } from './types.js';
 
 export type {
-  AppendEntryInput, CreateSessionInput, EntryListOptions, EntryMetrics, SessionEntry,
+  AppendEntryInput, CreateSessionInput, EntryMetrics, SessionEntry,
   SessionListOptions, SessionPage, Session, UpdateEntryInput, UpdateSessionInput,
   NarrativeOutcome, EntryRunListOptions, EntryRunPage,
   NarrativeStopReason, EntryRun,
@@ -137,21 +137,8 @@ export class SessionService {
 
   #appendEntry(sessionId: string, value: AppendEntryInput): SessionEntry {
     const id = value.id ?? randomUUID();
-    const session = this.require(sessionId);
-    if (value.parentId !== undefined && value.parentId !== session.tipEntryId) throw new AppError('TIP_CONFLICT');
-    if (session.tipEntryId !== null) this.#readAncestors(sessionId, session.tipEntryId);
     this.#assertMetricsRole(value.role, value.metrics ?? null);
     return toSessionEntry(this.#repository.appendEntry(sessionId, { ...value, id }));
-  }
-
-  listEntries(sessionId: string, options: EntryListOptions = {}): SessionEntry[] {
-    this.require(sessionId);
-    return this.#repository.listEntries(sessionId, entryListSchema.parse(options)).map(toSessionEntry);
-  }
-
-  listRunEntries(sessionId: string, runId: string): SessionEntry[] {
-    this.require(sessionId);
-    return this.#repository.listRunEntries(sessionId, identifier.parse(runId)).map(toSessionEntry);
   }
 
   listEntryRuns(sessionId: string, options: EntryRunListOptions = {}): EntryRunPage {
@@ -178,13 +165,10 @@ export class SessionService {
       const request = latest.metrics.requests.at(-1)!;
       const snapshot = latest.metrics.context?.requestId === request.requestId ? latest.metrics.context : undefined;
       const selected = this.#dependencies.models.get(session.apiModelConfigId);
-      let stale = !selected || selected.modelId !== request.modelId ||
+      const tipSeq = session.tipEntryId === null ? 0 : this.#repository.getEntry(sessionId, session.tipEntryId)?.seq ?? 0;
+      const stale = latest.seq > tipSeq || !selected || selected.modelId !== request.modelId ||
         (request.provider !== null && selected.providerId !== request.provider) ||
         (snapshot !== undefined && snapshot.apiModelConfigId !== session.apiModelConfigId);
-      try {
-        stale ||= session.tipEntryId === null ||
-          !this.#readAncestors(sessionId, session.tipEntryId).some(entry => entry.id === latest.entryId);
-      } catch { stale = true; }
       latestContext = {
         inputTokens: request.usage?.inputTokens ?? null,
         contextWindowTokens: snapshot?.contextWindowTokens ?? null,
@@ -209,7 +193,7 @@ export class SessionService {
 
   getHistory(sessionId: string): SessionEntry[] {
     const session = this.require(sessionId);
-    return session.tipEntryId === null ? [] : this.#readAncestors(sessionId, session.tipEntryId);
+    return session.tipEntryId === null ? [] : this.#repository.contextEntries(sessionId, session.tipEntryId).map(toSessionEntry);
   }
 
   updateEntry(sessionId: string, entryId: string, input: UpdateEntryInput): SessionEntry {
@@ -241,6 +225,10 @@ export class SessionService {
   }
 
   /** Read only this entry's stored snapshot; inheritance belongs to StateService. */
+  inheritedEntryState(sessionId: string, entryId: string) {
+    return this.#repository.inheritedEntryState(identifier.parse(sessionId), identifier.parse(entryId));
+  }
+
   getEntryState(sessionId: string, entryId: string): JsonValue[] | null {
     return this.#repository.getEntryState(identifier.parse(sessionId), identifier.parse(entryId));
   }
@@ -262,24 +250,9 @@ export class SessionService {
     return entry;
   }
 
-  #readAncestors(sessionId: string, tip: string): SessionEntry[] {
-    const result: SessionEntry[] = [], visited = new Set<string>();
-    let current: string | null = tip, nextSequence = Infinity;
-    while (current !== null) {
-      if (visited.has(current)) throw new AppError('INVALID_PARENT_CHAIN', 'cycle');
-      visited.add(current);
-      const entry = this.getEntry(sessionId, current);
-      if (!entry || !Number.isSafeInteger(entry.seq) || entry.seq < 1 || entry.seq >= nextSequence) {
-        throw new AppError('INVALID_PARENT_CHAIN');
-      }
-      result.push(entry); current = entry.parentId; nextSequence = entry.seq;
-    }
-    return result.reverse();
-  }
-
   #assertMetricsRole(role: SessionEntry['role'], metrics: EntryMetrics | null): void {
     if (metrics !== null && role === 'user') throw new AppError('USER_ENTRY_METRICS_NOT_ALLOWED');
   }
 }
 
-export type SessionReader = Pick<SessionService, 'get' | 'require' | 'getState' | 'getEntry'>;
+export type SessionReader = Pick<SessionService, 'get' | 'require' | 'getState' | 'getEntry' | 'inheritedEntryState'>;

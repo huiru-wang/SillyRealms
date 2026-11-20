@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.tsx",
+    ".": "./src/stage/index.tsx",
     "./assets": "./src/asset-url.ts",
     "./state-validation": "./src/state-validation.ts",
     "./world-story.css": "./src/world-story.css",
-    "./stage": "./src/stage/index.tsx"
+    "./legacy": "./src/index.tsx",
+    "./world-document": "./src/world-document/WorldDocumentRenderer.tsx"
   },
   "peerDependencies": {
     "react": "19.2.0",

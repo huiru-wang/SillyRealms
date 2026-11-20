@@ -83,11 +83,6 @@ export const sessionListSchema = z.object({
     id: identifier,
   }).strict().optional(),
 }).strict();
-export const entryListSchema = z.object({
-  afterSeq: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
-  limit: z.number().int().min(1).max(1000).default(100),
-}).strict();
-
 export const narrativeStopReasonSchema = z.enum([
   'cancelled', 'server_shutdown', 'provider_aborted', 'provider_error',
   'provider_context_window_exceeded', 'model_not_found', 'model_capability_unsupported',
@@ -102,6 +97,7 @@ export const narrativeOutcomeSchema = z.discriminatedUnion('status', [
     finishedAt: z.number().int().nonnegative() }).strict(),
 ]);
 export const entryRunListSchema = z.object({
+  limit: z.number().int().min(1).max(5).optional(),
   beforeSeq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   afterSeq: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
 }).strict().refine(value => value.beforeSeq === undefined || value.afterSeq === undefined,

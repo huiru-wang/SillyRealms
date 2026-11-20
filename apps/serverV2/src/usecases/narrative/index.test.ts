@@ -172,7 +172,7 @@ describe('unified narrative events and independent persistence', () => {
   it('saves the user before model work, then publishes one usage total and the committed assistant result', async () => {
     const observedPersisted: string[] = [];
     events.subscribe('session', event => {
-      if (event.event === 'run.created') observedPersisted.push(...services.sessions.listRunEntries('session', event.data.runId as string).map(entry => entry.id));
+      if (event.event === 'run.created') observedPersisted.push(...services.sessions.listEntryRuns('session').items.find(item => item.runId === event.data.runId)!.entries.map(entry => entry.id));
       if (event.event === 'run.usage') observedPersisted.push(services.sessions.require('session').tipEntryId!);
     });
     const { accepted, finished } = submit();
@@ -422,7 +422,7 @@ describe('pre-request and persistence failures', () => {
         stop_reason: 'message_persist_failed', savedMessageIds: [accepted.userEntryId], tipEntryId: accepted.userEntryId,
       } });
       expect(texts()).toEqual(['玩家输入']);
-      expect(services.sessions.listRunEntries('session', accepted.runId)).toHaveLength(1);
+      expect(services.sessions.listEntryRuns('session').items.find(item => item.runId === accepted.runId)!.entries).toHaveLength(1);
     },
   );
 
@@ -681,10 +681,10 @@ describe('queryable narrative results', () => {
   it('exposes active state then a durable outcome without in-memory text snapshots', async () => {
     const { accepted, finished } = submit();
     expect(narrative.list('session').activeRunId).toBe(accepted.runId);
-    expect(narrative.get('session', accepted.runId)).toMatchObject({ status: 'running', entries: [{ id: accepted.userEntryId }] });
+    expect(narrative.list('session').items.find(item => item.runId === accepted.runId)!).toMatchObject({ status: 'running', entries: [{ id: accepted.userEntryId }] });
     await finished;
     expect(narrative.list('session').activeRunId).toBeNull();
-    expect(narrative.get('session', accepted.runId)).toMatchObject({ status: 'completed', finishedAt: expect.any(Number) });
+    expect(narrative.list('session').items.find(item => item.runId === accepted.runId)!).toMatchObject({ status: 'completed', finishedAt: expect.any(Number) });
     expect(history()[0]!.extData.narrative).toMatchObject({ status: 'completed' });
     expect(history()[1]!.metrics!.requests[0]).toMatchObject({ provider: model.providerId, modelId: model.modelId });
     expect(history()[1]!.metrics!.requests[0]).not.toHaveProperty('status');
@@ -696,15 +696,14 @@ describe('queryable narrative results', () => {
       latestContext: { inputTokens: usage.inputTokens, contextWindowTokens: model.contextWindow, modelId: model.modelId,
         stale: false, contextComposition: context.contextComposition } });
     const reloaded = createNarrativeUsecases({ ...services, events, transaction: bindTransaction(db), modelClient: { resolve: resolveModel, assertMessageOrder: vi.fn(), stream } });
-    expect(reloaded.get('session', accepted.runId).status).toBe('completed');
-    expect(() => reloaded.get('session', 'missing')).toThrow('RUN_NOT_FOUND');
+    expect(reloaded.list('session').items.find(item => item.runId === accepted.runId)!.status).toBe('completed');
   });
 
   it('records preparation failure on the user even when no assistant or metrics exists', async () => {
     resolveModel.mockImplementationOnce(() => { throw new AppError('MODEL_NOT_FOUND'); });
     const { accepted, finished } = submit();
     await finished;
-    expect(narrative.get('session', accepted.runId)).toMatchObject({
+    expect(narrative.list('session').items.find(item => item.runId === accepted.runId)!).toMatchObject({
       status: 'stopped', stopReason: 'model_not_found', entries: [{ id: accepted.userEntryId }],
     });
     expect(narrative.usage('session').recordedRequestCount).toBe(0);
@@ -719,7 +718,7 @@ describe('queryable narrative results', () => {
       if (event.event === 'run.delta' && !stopped) {
         stopped = true; narrative.stop('session', accepted.runId);
       }
-      if (event.event === 'run.stopped') observed = narrative.get('session', accepted.runId);
+      if (event.event === 'run.stopped') observed = narrative.list('session').items.find(item => item.runId === accepted.runId)!;
     });
     await finished;
     expect(observed).toMatchObject({ status: 'stopped', stopReason: 'cancelled' });
@@ -734,7 +733,7 @@ describe('queryable narrative results', () => {
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'message_persist_failed' } });
     expect(texts()).toEqual(['玩家输入', '完整正文']);
-    expect(narrative.get('session', accepted.runId).status).toBe('unknown');
+    expect(narrative.list('session').items.find(item => item.runId === accepted.runId)!.status).toBe('unknown');
     expect(history()[0]!.extData).toEqual({});
   });
 });

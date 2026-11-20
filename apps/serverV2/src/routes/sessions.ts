@@ -116,26 +116,12 @@ export function createSessionRoutes({ events, sessions, worlds, appendEntry, cre
     return success(c, { id });
   });
 
-  routes.get('/:id/entries', async c => {
-    const id = c.req.param('id');
-    await access(id, c.req.raw);
-    return success(c, { items: sessions.listEntries(id, { afterSeq: numberQuery(c, 'afterSeq'), limit: numberQuery(c, 'limit') }) });
-  });
-
   routes.post('/:id/entries', async c => {
     const id = c.req.param('id');
     await access(id, c.req.raw);
     const input = await readJson<AppendEntryInput>(c);
     if (Object.hasOwn(input, 'metrics')) throw new AppError('INVALID_REQUEST', '模型调用计量仅允许由服务内部写入');
     return success(c, { item: appendEntry(id, input) }, 201);
-  });
-
-  routes.get('/:id/entries/:entryId', async c => {
-    const id = c.req.param('id');
-    await access(id, c.req.raw);
-    const item = sessions.getEntry(id, c.req.param('entryId'));
-    if (!item) throw new AppError('ENTRY_NOT_FOUND');
-    return success(c, { item });
   });
 
   routes.patch('/:id/entries/:entryId', async c => {

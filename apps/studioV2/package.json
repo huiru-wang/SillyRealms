@@ -7,9 +7,12 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build && vite build --mode world-preview",
-    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs tests/ui/theme.test.mjs",
     "dev:world-preview": "vite --mode world-preview",
-    "preview:world-preview": "vite preview --mode world-preview"
+    "preview:world-preview": "vite preview --mode world-preview",
+    "test:theme": "node --experimental-strip-types --test tests/ui/theme.test.mjs",
+    "test:visual": "node tests/ui/browser.mjs",
+    "preview": "vite preview"
   },
   "dependencies": {
     "@sillyrealms/sdk": "workspace:*",

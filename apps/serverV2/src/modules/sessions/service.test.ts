@@ -108,8 +108,7 @@ describe('linear history and field ownership', () => {
     expect(continuation).toMatchObject({ seq: 5, parentId: 'summary' });
     expect(sessions.get('session')!.tipEntryId).toBe('continuation');
     expect(sessions.getHistory('session').map(value => value.id)).toEqual(['root', 'user', 'answer', 'summary', 'continuation']);
-    expect(sessions.listEntries('session', { afterSeq: 2, limit: 2 }).map(value => value.id)).toEqual(['answer', 'summary']);
-    expect(sessions.listRunEntries('session', 'run').map(value => value.id)).toEqual(['user', 'answer']);
+    expect(sessions.listEntryRuns('session').items.find(item => item.runId === 'run')!.entries.map(value => value.id)).toEqual(['user', 'answer']);
   });
 
   it('rejects stale, cross-session and null parents without moving the tip or consuming a sequence', () => {
@@ -119,22 +118,22 @@ describe('linear history and field ownership', () => {
     for (const parentId of ['root-one', 'root-two', null]) {
       expect(() => append('one', 'invalid', { parentId })).toThrow('TIP_CONFLICT');
       expect(sessions.get('one')!.tipEntryId).toBe('child');
-      expect(sessions.listEntries('one').map(entry => entry.id)).toEqual(['root-one', 'child']);
+      expect(sessions.getHistory('one').map(entry => entry.id)).toEqual(['root-one', 'child']);
     }
     expect(append('one', 'next', { parentId: 'child' }).seq).toBe(3);
   });
 
-  it('rejects corrupt history and a persisted tip that no longer points at the last entry', () => {
+  it('reads linear history by seq and validates the current tip without traversing earlier parents', () => {
     create();
     append('session', 'root');
     append('session', 'child');
     db.prepare('UPDATE entries SET parent_id=? WHERE id=?').run('child', 'root');
-    expect(() => sessions.getHistory('session')).toThrow('INVALID_PARENT_CHAIN');
-    expect(() => append('session', 'corrupt')).toThrow('INVALID_PARENT_CHAIN');
+    expect(sessions.getHistory('session').map(entry => entry.id)).toEqual(['root', 'child']);
+    expect(append('session', 'next').seq).toBe(3);
     db.prepare('UPDATE entries SET parent_id=NULL WHERE id=?').run('root');
     db.prepare('UPDATE sessions SET tip_entry_id=? WHERE id=?').run('root', 'session');
     expect(() => append('session', 'rewound')).toThrow('INVALID_PARENT_CHAIN');
-    expect(sessions.listEntries('session')).toHaveLength(2);
+    expect(sessions.getHistory('session').map(entry => entry.id)).toEqual(['root']);
   });
 
   it('rolls back failed entry insertion and does not consume a sequence or move the tip', () => {
@@ -142,7 +141,7 @@ describe('linear history and field ownership', () => {
     append('session', 'root');
     expect(() => append('session', 'root')).toThrow();
     expect(sessions.get('session')!.tipEntryId).toBe('root');
-    expect(sessions.listEntries('session')).toHaveLength(1);
+    expect(sessions.getHistory('session')).toHaveLength(1);
     expect(append('session', 'next').seq).toBe(2);
   });
 
@@ -263,6 +262,9 @@ describe('run pages, outcomes and recorded usage', () => {
         append('session', `${run}-${message}`, { runId: `r${run}`, role: message === 0 ? 'user' : 'assistant' });
       }
     }
+    const narrow = sessions.listEntryRuns('session', { limit: 1 });
+    expect(narrow.items.map(item => item.runId)).toEqual(['r12']);
+    expect(sessions.listEntryRuns('session', { limit: 2, beforeSeq: narrow.nextBeforeSeq! }).items.map(item => item.runId)).toEqual(['r11', 'r10']);
     const latest = sessions.listEntryRuns('session');
     expect(latest.items.map(item => item.runId)).toEqual(['r12', 'r11', 'r10', 'r9', 'r8']);
     expect(latest.items.at(-1)!.entries).toHaveLength(3);
@@ -461,7 +463,7 @@ describe('server-owned narrative output', () => {
     });
     expect(sessions.getEntry('session', saved.id)!.extData.output).toEqual(expected);
     expect(sessions.require('session').tipEntryId).toBe(saved.id);
-    expect(sessions.listEntries('session')).toHaveLength(1);
+    expect(sessions.getHistory('session')).toHaveLength(1);
   });
 
   it('protects output during public append and editing, preserving other server-owned metadata', () => {
@@ -481,7 +483,7 @@ describe('server-owned narrative output', () => {
     expect(changed.state).toEqual(saved.state);
     expect(changed.metrics).toEqual(saved.metrics);
     expect(changed.seq).toBe(saved.seq);
-    expect(sessions.listEntries('session')).toHaveLength(1);
+    expect(sessions.getHistory('session')).toHaveLength(1);
   });
 
   it('rejects invalid result data before advancing the tip or consuming a sequence', () => {
@@ -493,7 +495,7 @@ describe('server-owned narrative output', () => {
     const misplaced = { ...output(), contextEligible: true };
     expect(() => save(misplaced as never)).toThrow();
     expect(sessions.require('session').tipEntryId).toBeNull();
-    expect(sessions.listEntries('session')).toEqual([]);
+    expect(sessions.getHistory('session')).toEqual([]);
     expect(save().seq).toBe(1);
   });
 
@@ -542,8 +544,8 @@ describe('server-owned narrative output', () => {
       },
     };
     for (const entry of [
-      sessions.getEntry('session', 'legacy'), sessions.listEntries('session')[0],
-      sessions.getHistory('session')[0], sessions.listRunEntries('session', 'run')[0],
+      sessions.getEntry('session', 'legacy'),
+      sessions.getHistory('session')[0],
       sessions.listEntryRuns('session').items[0]!.entries[0],
     ]) expect(entry!.extData).toEqual(expected);
     expect(db.prepare('SELECT ext_data FROM entries WHERE id=?').get('legacy')!.ext_data).toBe(encoded);

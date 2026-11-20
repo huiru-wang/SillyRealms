@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "node ../../scripts/dev.mjs --studio",
+    "dev": "pnpm run \"/^dev:(host|stage)$/\"",
     "dev:host": "vite",
     "dev:stage": "vite --mode stage",
     "typecheck": "tsc --noEmit",

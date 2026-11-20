@@ -4,7 +4,7 @@ import { readStoredMetrics } from './schema.js';
 import { AppError } from '../../errors.js';
 import { encodeJson, type JsonObject, type JsonValue } from '../../infrastructure/database/connection.js';
 import type {
-  AppendEntryInput, CreateSessionInput, EntryListOptions, EntryMetrics,
+  AppendEntryInput, CreateSessionInput, EntryMetrics,
   SessionListOptions, UpdateEntryInput, UpdateSessionInput, EntryRunListOptions, NarrativeOutcome,
 } from './types.js';
 
@@ -138,47 +138,57 @@ export class SessionRepository {
       const session = this.#requireSession(sessionId);
       const parent = value.parentId === undefined ? session.tip_entry_id : value.parentId;
       if (parent !== session.tip_entry_id) throw new AppError('TIP_CONFLICT');
-      const maximum = Number(this.#db.prepare('SELECT coalesce(max(seq),0) AS seq FROM entries WHERE session_id=?').get(sessionId)!.seq);
-      if (parent === null ? maximum !== 0 : this.getEntry(sessionId, parent)?.seq !== maximum) {
-        throw new AppError('INVALID_PARENT_CHAIN');
-      }
+      const latest = this.#db.prepare('SELECT id,seq FROM entries WHERE session_id=? ORDER BY seq DESC LIMIT 1').get(sessionId);
+      if (parent !== (latest?.id ?? null)) throw new AppError('INVALID_PARENT_CHAIN');
+      const seq = Number(latest?.seq ?? 0) + 1;
       this.#assertMetricsUnique(sessionId, value.id, metrics);
       const now = Date.now();
       this.#db.prepare(
         'INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,timestamp,payload,state,ext_data,metrics_json,created_at,updated_at) ' +
         'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-      ).run(value.id, sessionId, parent, value.runId, maximum + 1, value.type, value.role, value.timestamp ?? now,
+      ).run(value.id, sessionId, parent, value.runId, seq, value.type, value.role, value.timestamp ?? now,
         payload, state, ext, metrics === null ? null : encodeJson(metrics, 'object'), now, now);
       this.#db.prepare('UPDATE sessions SET tip_entry_id=?,updated_at=? WHERE id=?').run(value.id, now, sessionId);
       return this.#requireEntry(sessionId, value.id);
     });
   }
 
-  listEntries(sessionId: string, options: Required<EntryListOptions>): EntryRow[] {
-    return this.#db.prepare('SELECT * FROM entries WHERE session_id=? AND seq>? ORDER BY seq LIMIT ?')
-      .all(sessionId, options.afterSeq, options.limit).map(decodeEntry);
+  contextEntries(sessionId: string, tipId: string): EntryRow[] {
+    return this.#db.prepare('SELECT * FROM entries WHERE session_id=? AND seq <= ' +
+      '(SELECT seq FROM entries WHERE session_id=? AND id=?) ORDER BY seq')
+      .all(sessionId, sessionId, tipId).map(decodeEntry);
   }
 
-  listRunEntries(sessionId: string, runId: string): EntryRow[] {
-    return this.#db.prepare('SELECT * FROM entries WHERE session_id=? AND run_id=? ORDER BY seq')
-      .all(sessionId, runId).map(decodeEntry);
+  inheritedEntryState(sessionId: string, entryId: string): JsonValue[] | null | undefined {
+    const row = this.#db.prepare('SELECT (SELECT state FROM entries WHERE session_id=target.session_id ' +
+      'AND seq<=target.seq AND state IS NOT NULL ORDER BY seq DESC LIMIT 1) AS state ' +
+      'FROM entries AS target WHERE target.session_id=? AND target.id=?').get(sessionId, entryId);
+    if (!row) return undefined;
+    return row.state === null ? null : JSON.parse(String(row.state)) as JsonValue[];
   }
 
   listEntryRuns(sessionId: string, options: EntryRunListOptions) {
+    const limit = options.limit ?? 5;
     const forward = options.afterSeq !== undefined;
+    // Seek from the cursor and select one boundary entry per run using (session_id,run_id,seq).
+    const comparison = forward ? '>' : '<';
+    const boundary = forward ? 'MAX' : 'MIN';
     const groups = this.#db.prepare(
-      'SELECT run_id, min(seq) AS first_seq, max(seq) AS last_seq FROM entries WHERE session_id=? GROUP BY run_id ' +
-      (forward ? 'HAVING max(seq)>? ORDER BY max(seq) ASC ' : 'HAVING min(seq)<? ORDER BY min(seq) DESC ') + 'LIMIT 6',
-    ).all(sessionId, forward ? options.afterSeq! : options.beforeSeq ?? Number.MAX_SAFE_INTEGER);
-    const selected = groups.slice(0, 5);
+      'SELECT e.run_id FROM entries e WHERE e.session_id=? AND e.seq' + comparison + '? AND e.seq=(' +
+      'SELECT ' + boundary + '(r.seq) FROM entries r WHERE r.session_id=e.session_id AND r.run_id=e.run_id) ' +
+      'ORDER BY e.seq ' + (forward ? 'ASC' : 'DESC') + ' LIMIT ?',
+    ).all(sessionId, forward ? options.afterSeq! : options.beforeSeq ?? Number.MAX_SAFE_INTEGER, limit + 1);
+    const selected = groups.slice(0, limit);
     if (!selected.length) return { items: [], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null };
     const entries = this.#db.prepare('SELECT * FROM entries WHERE session_id=? AND run_id IN (' +
       selected.map(() => '?').join(',') + ') ORDER BY seq').all(sessionId, ...selected.map(row => String(row.run_id))).map(decodeEntry);
-    const items = selected.map(row => ({ runId: String(row.run_id), firstSeq: Number(row.first_seq),
-      lastSeq: Number(row.last_seq), entries: entries.filter(entry => entry.run_id === row.run_id) }));
+    const items = selected.map(row => {
+      const runEntries = entries.filter(entry => entry.run_id === row.run_id);
+      return { runId: String(row.run_id), firstSeq: runEntries[0]!.seq, lastSeq: runEntries.at(-1)!.seq, entries: runEntries };
+    });
     // A run may gain another entry later; forward progress is its last saved seq, never its first seq.
-    return { items, hasMore: groups.length > 5,
-      nextBeforeSeq: forward || groups.length <= 5 ? null : items.at(-1)!.firstSeq,
+    return { items, hasMore: groups.length > limit,
+      nextBeforeSeq: forward || groups.length <= limit ? null : items.at(-1)!.firstSeq,
       nextAfterSeq: Math.max(...items.map(item => item.lastSeq)) };
   }
 
@@ -187,12 +197,12 @@ export class SessionRepository {
       .all(sessionId).map(row => readStoredMetrics(JSON.parse(String(row.metrics_json))));
   }
 
-  latestNarrativeMetrics(sessionId: string): { entryId: string; metrics: EntryMetrics } | null {
+  latestNarrativeMetrics(sessionId: string): { seq: number; metrics: EntryMetrics } | null {
     const row = this.#db.prepare(
-      "SELECT id,metrics_json FROM entries WHERE session_id=? AND type='message' AND role='assistant' " +
+      "SELECT seq,metrics_json FROM entries WHERE session_id=? AND type='message' AND role='assistant' " +
       "AND metrics_json IS NOT NULL AND json_array_length(metrics_json,'$.requests')>0 ORDER BY seq DESC LIMIT 1",
     ).get(sessionId);
-    return row ? { entryId: String(row.id), metrics: readStoredMetrics(JSON.parse(String(row.metrics_json))) } : null;
+    return row ? { seq: Number(row.seq), metrics: readStoredMetrics(JSON.parse(String(row.metrics_json))) } : null;
   }
 
   setNarrativeOutcome(sessionId: string, entryId: string, outcome: NarrativeOutcome): EntryRow {

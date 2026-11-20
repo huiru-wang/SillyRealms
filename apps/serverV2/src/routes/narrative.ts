@@ -35,11 +35,6 @@ export function createNarrativeRoutes({ sessions, narrative, canAccessSession, s
     const { nextBeforeSeq, ...page } = narrative.list(sessionId, narrativeQuery(sessionId, c.req.query()));
     return success(c, { ...page, nextCursor: nextBeforeSeq === null ? null : encodeCursor(scope, { beforeSeq: nextBeforeSeq }) });
   });
-  routes.get('/:sessionId/narrative/runs/:runId', async c => {
-    const sessionId = c.req.param('sessionId');
-    await requireSessionAccess(sessions, sessionId, c.req.raw, canAccessSession, shutdownSignal);
-    return success(c, { item: narrative.get(sessionId, c.req.param('runId')) });
-  });
   routes.get('/:sessionId/narrative/usage', async c => {
     const sessionId = c.req.param('sessionId');
     await requireSessionAccess(sessions, sessionId, c.req.raw, canAccessSession, shutdownSignal);

@@ -17,7 +17,7 @@ export async function dispatchStageCommand(command: StageCommand, method: unknow
     case 'history.query':
       if(!only(input,['cursor','afterSeq','limit']) || (input.cursor!==undefined&&(typeof input.cursor!=='string'||!input.cursor)) ||
         (input.afterSeq!==undefined&&(!Number.isSafeInteger(input.afterSeq)||Number(input.afterSeq)<0)) ||
-        (input.limit!==undefined&&input.limit!==5) || (input.cursor!==undefined&&input.afterSeq!==undefined)) throw Error('历史查询参数无效');
+        (input.limit!==undefined&&(!Number.isInteger(input.limit)||Number(input.limit)<1||Number(input.limit)>5)) || (input.cursor!==undefined&&input.afterSeq!==undefined)) throw Error('历史查询参数无效');
       break;
     case 'state.write':
       if(!only(input,['updates']) || !Array.isArray(input.updates) || input.updates.some(update=>

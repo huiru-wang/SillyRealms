@@ -11,7 +11,7 @@ test('newest and older pages share one entry store and old pages never lower the
  await history.loadRecent();await history.loadOlder();
  assert.equal(calls[1],'v1/sessions/s/narrative/runs?cursor=older');
  assert.equal(history.getSnapshot().afterSeq,10);
- assert.deepEqual(history.getSnapshot().entries.map(value=>value.seq),[1,2,8,9,10]);
+ assert.deepEqual(history.getSnapshot().runs.flatMap(run=>run.entries).map(value=>value.seq),[1,2,8,9,10]);
  assert.deepEqual(history.getSnapshot().runs.map(value=>value.runId),['a','b']);
  assert.equal(history.getSnapshot().hasMore,false);
 });
@@ -21,40 +21,38 @@ test('catch-up drains every forward page, replaces complete runs and preserves c
  await history.loadRecent();await history.catchUp();await history.catchUp();
  assert.deepEqual(calls.slice(1),['v1/sessions/s/narrative/runs?afterSeq=1','v1/sessions/s/narrative/runs?afterSeq=2','v1/sessions/s/narrative/runs?afterSeq=4']);
  assert.equal(history.getSnapshot().afterSeq,4);
- assert.deepEqual(history.getSnapshot().entries.map(value=>value.id),['e1','e2','e3','e4']);
+ assert.deepEqual(history.getSnapshot().runs.flatMap(run=>run.entries).map(value=>value.id),['e1','e2','e3','e4']);
 });
 test('late running reads cannot erase terminal metadata, output, or the larger lastSeq',async()=>{
- const waiting=deferred(),history=createHistoryController({sessionId:'s',request:()=>waiting.promise});
- const loading=history.loadRecent();
+ const waiting=deferred();
  const completed=run('r',[1,2]);completed.entries[0].extData.narrative={status:'completed',finishedAt:3};
  completed.entries[1].extData.output={actionSuggestions:{status:'success',items:['走']}};
- history.ingestRun(completed);
- waiting.resolve(page([run('r',[1],'running')],{activeRunId:'r'}));await loading;
+ const responses=[page([run('r',[1],'running')],{hasMore:true,nextCursor:'older',activeRunId:'r'}),waiting.promise,page([completed])];
+ const history=createHistoryController({sessionId:'s',request:async()=>responses.shift()});
+ await history.loadRecent();const loading=history.loadOlder();await history.catchUp();
+ waiting.resolve(page([run('r',[1],'running')]));await loading;
  assert.equal(history.getSnapshot().runs[0].status,'completed');
  assert.equal(history.getSnapshot().runs[0].lastSeq,2);
- assert.equal(history.getSnapshot().entries[0].extData.narrative.status,'completed');
- assert.ok(history.getSnapshot().entries[1].extData.output);
+ assert.equal(history.getSnapshot().runs[0].entries[0].extData.narrative.status,'completed');
+ assert.ok(history.getSnapshot().runs[0].entries[1].extData.output);
  assert.equal(history.getSnapshot().activeRunId,null);
 });
-test('compaction advances the saved sequence but is not projected as a chat message',()=>{
- const history=createHistoryController({sessionId:'s',request:async()=>page([])}),stored=run('r',[1,2]);
+test('compaction advances the saved sequence but is not projected as a chat message',async()=>{
+ const stored=run('r',[1,2]);
  stored.entries[1]={...stored.entries[1],type:'compaction',role:null,payload:{summary:'Summary'}};
- history.ingestRun(stored);
+ const history=createHistoryController({sessionId:'s',request:async()=>page([stored])});
+ await history.loadRecent();
  assert.equal(history.getSnapshot().afterSeq,2);
- assert.equal(history.getSnapshot().messages.length,1);
- assert.equal(projectRun(stored).messages.length,1);
+ assert.equal(projectRun(history.getSnapshot().runs[0]).messages.length,1);
 });
 
-test('live run reads beyond a disconnected gap cannot advance the catch-up checkpoint over unseen entries',async()=>{
- const calls=[],responses=[page([run('old',[1])]),page([run('missing',[2,3])]),page([])];
+test('reconnect overlaps the last running seq to capture a terminal outcome without a new entry',async()=>{
+ const calls=[],responses=[page([run('r',[7],'running')],{activeRunId:'r'}),page([run('r',[7],'stopped')])];
  const history=createHistoryController({sessionId:'s',request:async path=>{calls.push(path);return responses.shift();}});
- await history.loadRecent();
- history.ingestRun(run('live',[4,5]));
- assert.equal(history.getSnapshot().afterSeq,1);
- await history.catchUp();
- assert.equal(calls[1],'v1/sessions/s/narrative/runs?afterSeq=1');
- assert.equal(history.getSnapshot().afterSeq,5);
- assert.deepEqual(history.getSnapshot().entries.map(value=>value.seq),[1,2,3,4,5]);
+ await history.loadRecent();await history.catchUp();
+ assert.equal(calls[1],'v1/sessions/s/narrative/runs?afterSeq=6');
+ assert.equal(history.getSnapshot().afterSeq,7);
+ assert.equal(history.getSnapshot().runs[0].status,'stopped');
 });
 
 test('broken forward pagination terminates and disposing rejects late reads without mutating state',async()=>{
@@ -62,23 +60,23 @@ test('broken forward pagination terminates and disposing rejects late reads with
  await assert.rejects(history.catchUp(),/未前进/);
  const waiting=deferred(),other=createHistoryController({sessionId:'s',request:()=>waiting.promise});
  const loading=other.loadRecent();other.dispose();waiting.resolve(page([run('r',[1])]));
- await assert.rejects(loading,{name:'AbortError'});assert.equal(other.getSnapshot().entries.length,0);
+ await assert.rejects(loading,{name:'AbortError'});assert.equal(other.getSnapshot().runs.length,0);
 });
 
-test('history passes compact capability diagnostics to stage messages without duplicating results',()=>{
- const history=createHistoryController({sessionId:'s',request:async()=>page([])}),stored=run('r',[1,2]);
+test('history passes compact capability diagnostics to stage messages without duplicating results',async()=>{
+ const stored=run('r',[1,2]);
  const output={stateUpdate:{status:'partial_success',updates:[
   {status:'success',path:'coins',value:8,reason:'Bought food'},
   {status:'invalid_json',errorCode:'STATE_UPDATE_JSON_INVALID'},
   {status:'invalid_value',path:'energy',value:-1,errorCode:'STATE_VALUE_INVALID'}
  ]},actionSuggestions:{status:'partial_success',items:['Ask the keeper.']}};
  stored.entries[1].extData.output=structuredClone(output);
- history.ingestRun(stored);
- const message=history.getSnapshot().messages[1],projected=projectRun(stored).messages[1];
- assert.deepEqual(message.output,output);assert.deepEqual(projected.output,output);
+ const history=createHistoryController({sessionId:'s',request:async()=>page([stored])});
+ await history.loadRecent();
+ const message=projectRun(history.getSnapshot().runs[0]).messages[1];
+ assert.deepEqual(message.output,output);
  assert.equal('results' in message.output.stateUpdate,false);
  assert.equal('results' in message.output.actionSuggestions,false);
  stored.entries[1].extData.output.stateUpdate.updates[0].value=99;
  assert.equal(message.output.stateUpdate.updates[0].value,8);
- assert.equal(projected.output.stateUpdate.updates[0].value,8);
 });

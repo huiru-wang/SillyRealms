@@ -49,7 +49,7 @@ describe('V2 database lifecycle and constraints', () => {
   it('upgrades a verified V1 database without reseeding data and reopens the V2 schema', () => {
     const path = file();
     const previous = openDatabase(path);
-    previous.exec("ALTER TABLE presets DROP COLUMN revision; ALTER TABLE worlds DROP COLUMN revision; DROP INDEX idx_worlds_created; PRAGMA user_version=1; INSERT INTO app_settings VALUES(1,NULL,NULL,123,123)");
+    previous.exec("ALTER TABLE presets DROP COLUMN revision; ALTER TABLE worlds DROP COLUMN revision; DROP INDEX idx_worlds_created; DROP INDEX idx_entries_state_seq; PRAGMA user_version=1; INSERT INTO app_settings VALUES(1,NULL,NULL,123,123)");
     previous.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('preserved', 'narrative', 'Keep', null, '{}', 7, 8);
     previous.close();
     const upgraded = openDatabase(path);
@@ -64,7 +64,7 @@ describe('V2 database lifecycle and constraints', () => {
   it('upgrades V2 worlds in place and keeps their content and timestamps', () => {
     const path = file();
     const previous = openDatabase(path);
-    previous.exec("ALTER TABLE worlds DROP COLUMN revision; DROP INDEX idx_worlds_created; PRAGMA user_version=2");
+    previous.exec("ALTER TABLE worlds DROP COLUMN revision; DROP INDEX idx_worlds_created; DROP INDEX idx_entries_state_seq; PRAGMA user_version=2");
     previous.prepare("INSERT INTO worlds(id,spec_version,name,characters_json,openings_json,state,created_at,updated_at) VALUES('w','0.1','Keep','[]','[]','{\"coins\":7}',10,20)").run();
     previous.exec("INSERT INTO world_tags VALUES('w','tag',0)");
     previous.close();

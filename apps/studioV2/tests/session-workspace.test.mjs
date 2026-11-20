@@ -30,11 +30,7 @@ function setup(initialActive=false){
   if(path.startsWith('v1/state/global/'))return {item:{weather:'sun'}};
   if(path.startsWith('v1/state/session/'))return {item:{visited:true}};
   if(path.startsWith('v1/state/message/'))return {item:[{key:'coins',value:server.coins}]};
-  if(path.startsWith('v1/sessions/s/narrative/runs/')){
-   const id=decodeURIComponent(path.split('/').at(-1)),item=server.runs.find(run=>run.runId===id);
-   if(!item)throw Error('Unknown run '+id);return {item:structuredClone(item)};
-  }
-  if(path.startsWith('v1/sessions/s/narrative/runs')){
+  if(path.split('?')[0]==='v1/sessions/s/narrative/runs'){
    const afterSeq=new URL('http://local/'+path).searchParams.get('afterSeq');
    const items=server.runs.filter(run=>afterSeq===null||run.lastSeq>Number(afterSeq));
    return {items:structuredClone(items),hasMore:false,nextCursor:null,nextAfterSeq:items.length?Math.max(...items.map(run=>run.lastSeq)):null,activeRunId:server.active};
@@ -74,12 +70,11 @@ test('terminal composition uses the true compaction tip and rereads state after 
  assert.equal(workspace.getSnapshot().stage.activeRunId,null);
  workspace.dispose();
 });
-test('events before POST and a late running GET produce one saved answer with the current suggestions',async()=>{
+test('events before POST and cursor reconciliation produce one saved answer with the current suggestions',async()=>{
  const {workspace,server,channel,calls}=setup();await workspace.start();
- const post=deferred(),oldRead=deferred();let runReads=0;
+ const post=deferred();
  server.onRequest=(path,init)=>{
   if(init.method==='POST'&&path==='v1/sessions/s/narrative/runs')return post.promise;
-  if(path==='v1/sessions/s/narrative/runs/r'&&++runReads===1)return oldRead.promise;
  };
  const sending=workspace.command('narrative.send',{text:'Go'});await nextTurn();
  server.runs.push(run('r',[entry('r-u',2,'r','user')],'running'));server.active='r';server.tip='r-u';
@@ -91,7 +86,6 @@ test('events before POST and a late running GET produce one saved answer with th
  channel.emit({event:'action_suggestions.created',data:{sessionId:'s',runId:'r',messageId:'r-a',items:['继续观察']}});
  channel.emit({event:'run.completed',data:{...fields(),savedMessageIds:['r-u','r-a'],tipEntryId:'r-a'}});
  await nextTurn();
- oldRead.resolve({item:run('r',[entry('r-u',2,'r','user')],'running')});
  post.resolve({runId:'r',userEntryId:'r-u',assistantEntryId:'r-a'});await sending;await nextTurn();
  const view=workspace.getSnapshot();
  assert.equal(view.stage.activeRunId,null);assert.equal(view.stage.runs.at(-1).status,'completed');
@@ -100,6 +94,20 @@ test('events before POST and a late running GET produce one saved answer with th
  assert.deepEqual(view.stage.suggestions.items,['继续观察']);
  assert.equal(calls.filter(call=>call.init.method==='POST'&&call.path==='v1/sessions/s/narrative/runs').length,1);
  workspace.dispose();
+});
+test('reconnecting after a user-only stop reconciles the running seq through one runs page',async t=>{
+ const {workspace,server,channel,calls}=setup(true);
+ t.after(()=>workspace.dispose());
+ await workspace.start();
+ channel.disconnect();calls.length=0;
+ server.active=null;
+ server.runs[1]=run('r',[entry('r-u',2,'r','user')],'stopped');
+ channel.connect();await nextTurn();
+ const stage=workspace.getSnapshot().stage;
+ assert.equal(stage.activeRunId,null);
+ assert.equal(stage.runs.at(-1).status,'stopped');
+ assert.deepEqual(stage.runs.at(-1).messages.map(message=>message.id),['r-u']);
+ assert.deepEqual(calls.map(call=>call.path).filter(path=>path.includes('/narrative/')),['v1/sessions/s/narrative/runs?afterSeq=1']);
 });
 test('closing an active composition only disposes transports and pending reads, never requests stop',async()=>{
  const {workspace,channel,calls}=setup(true);await workspace.start();

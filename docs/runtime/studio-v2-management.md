@@ -36,7 +36,7 @@ StudioV2 与 ServerV2 是独立工作区，不切换或修改原 Studio/Server �
 
 ## 开发入口
 
-在仓库根目录分别执行：
+仓库根目录使用 `pnpm dev` 同时启动 ServerV2、StudioV2 和隔离舞台。使用 `pnpm build` 构建两份静态产物，随后 `pnpm start` 在本地提供 API 和两份产物。也可以分别运行各进程。
 
 ```sh
 pnpm dev:server-v2

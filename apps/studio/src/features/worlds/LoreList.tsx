@@ -1,6 +1,6 @@
 import {useId,useState} from 'react';
 import {ChevronRight} from 'lucide-react';
-import {WorldDocumentRenderer} from '@sillyrealms/sdk';
+import {WorldDocumentRenderer} from '@sillyrealms/sdk/legacy';
 import type {LoreEntry} from './api/worlds';
 import styles from './WorldDetailPage.module.css';
 

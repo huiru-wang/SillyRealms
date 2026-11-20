@@ -7,7 +7,7 @@ import {createModuleLoader} from '../../../packages/sr-ui-compiler/src/loader';
 import '@tailwindcss/browser';
 import * as ReactDOMClient from 'react-dom/client';
 import * as JSXRuntime from 'react/jsx-runtime';
-import * as SDK from '@sillyrealms/sdk';
+import * as SDK from '@sillyrealms/sdk/legacy';
 import { AtomicContext } from '../../../packages/sr-sdk/src/atomic-context';
 import { StateRuntime } from '../../../packages/sr-sdk/src/state-runtime';
 import { SessionRuntime } from '../../../packages/sr-sdk/src/session-runtime';

@@ -1,4 +1,0 @@
-.page{min-height:100%;padding:var(--page-header-top) var(--page-inset) var(--space-10);max-width:800px}
-.group{margin-top:var(--section-gap)}.group h2{font-size:12px;font-weight:500;color:var(--text-muted);margin:0 0 10px}
-.row{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:64px;padding:8px 14px;border:1px solid var(--stroke);border-radius:var(--radius-md);background:var(--surface);color:var(--text);font-size:14px}
-.row>svg{color:var(--text-muted)}.label{display:flex;align-items:center;gap:14px}.label svg{color:var(--text-secondary)}

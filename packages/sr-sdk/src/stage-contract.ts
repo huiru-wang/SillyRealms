@@ -28,7 +28,7 @@ export type StoredRun = {
 export type RunPage = {
   items: StoredRun[]; hasMore: boolean; nextCursor: string | null; nextAfterSeq: number | null; activeRunId: string | null;
 };
-export type RunQuery = {cursor?: string; afterSeq?: number; limit?: 5};
+export type RunQuery = {cursor?: string; afterSeq?: number; limit?: 1 | 2 | 3 | 4 | 5};
 export type EventFields = {runId: string; sessionId: string; provider: string | null; model: string | null; timestamp: number};
 export type SavedRunFields = EventFields & {savedMessageIds: string[]; tipEntryId: string | null};
 export type NarrativeEvent =

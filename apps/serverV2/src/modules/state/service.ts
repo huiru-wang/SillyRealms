@@ -58,33 +58,15 @@ export class StateService {
     return snapshot;
   }
 
-  /** NULL inherits along the linear predecessor chain; an explicit [] stops inheritance. */
+  /** An explicit empty snapshot overrides earlier state in the same session. */
   getMessage(sessionId: string, entryId: string): JsonValue[] | null {
-    identifier(sessionId); identifier(entryId);
-    const visited = new Set<string>();
-    let current: string | null = entryId, nextSequence = Infinity;
-    let result: JsonValue[] | null = null;
-    while (current !== null) {
-      if (visited.has(current)) throw new AppError('INVALID_PARENT_CHAIN', 'cycle');
-      visited.add(current);
-      const entry = this.#sessions.getEntry(sessionId, current);
-      if (!entry) {
-        if (current === entryId) return null;
-        throw new AppError('INVALID_PARENT_CHAIN');
-      }
-      if (!Number.isSafeInteger(entry.seq) || entry.seq < 1 || entry.seq >= nextSequence) {
-        throw new AppError('INVALID_PARENT_CHAIN');
-      }
-      if (result === null && entry.state !== null) result = entry.state;
-      nextSequence = entry.seq;
-      current = entry.parentId;
-    }
-    return result;
+    return this.#sessions.inheritedEntryState(identifier(sessionId), identifier(entryId)) ?? null;
   }
 
   requireMessage(sessionId: string, entryId: string): JsonValue[] | null {
-    if (!this.#sessions.getEntry(identifier(sessionId), identifier(entryId))) throw new AppError('ENTRY_NOT_FOUND');
-    return this.getMessage(sessionId, entryId);
+    const state = this.#sessions.inheritedEntryState(identifier(sessionId), identifier(entryId));
+    if (state === undefined) throw new AppError('ENTRY_NOT_FOUND');
+    return state;
   }
 
   /** The live message scope belongs to the current tip, including inherited state. */

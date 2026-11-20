@@ -27,10 +27,10 @@
 
 - ServerV2 是唯一业务契约：提交 input.text + expectedTipEntryId，返回 runId/userEntryId/assistantEntryId；叙事路径 /sessions/:id/narrative，状态路径 /state/global|session|message。不恢复旧路径或伪造请求去重、能力开关和旧运行状态。用量面板复用 V1 UI 和粒度，只读取 ServerV2 已记录用量及 latestContext；系统/摘要/历史组成按实际编译字节和约定消息开销计算，不冒充逐类计费 Token。模型配置变化后刷新 usage，未知数据保留未知。
 - history 只维护已保存 entries 与分页；narrative 只维护活跃运行和临时输出；workspace 组合展示投影。run.delta.snapshot 整体替换临时消息，只有查询确认的 entries 才接管为保存消息。compaction 不渲染为气泡，但其 seq 与真实 tip 必须保留。
-- session-events 保持一条会话 SSE，显式注册当前事件并按订阅分发；一个监听者失败不影响其他消费者。断线只标记不连续，不重发生成。先建立连接再补查历史，并额外查询原 active run；读取代次防止迟到响应覆盖新事件。
+- session-events 保持一条会话 SSE，显式注册当前事件并按订阅分发；一个监听者失败不影响其他消费者。断线只标记不连续，不重发生成。先建立连接再分页补查历史，覆盖原活跃轮次的末条 seq；读取代次防止迟到响应覆盖新事件。
 - state feature 负责三作用域读写与消息数组归一化。path:"" 替换整个 scope，null 保留普通值；PATCH success 可能是忽略，写后通过补读/真实事件同步，禁止按提交值乐观造状态。真实 tip 变化后再确认 message 状态。
 - suggestions 独立消费 action_suggestions.created，run.created 清空；恢复只取最新 run 的有效完成结果，无建议不回找更早轮次。读取 actionSuggestions 的整体 status/items，不依赖逐项 results；history 向 Stage 透传 output，状态诊断使用每项带 status 的 stateUpdate.updates。旧格式由服务端读取投影归一化，前端不另做兼容。
 - stage-host 校验 origin/source/nonce、消息大小与命令白名单；session/world/tip 绑定由可信页面提供。frame 无直接业务 HTTP 权限。作者预览保持只读 global；会话 stage 通过受限命令提供 send/stop/history/state 写入。
-- V2 frame 注入 SDK ./stage 入口。原 SDK 根入口不变。StageRuntime 只接收不可变投影、转发命令和原生事件；官方 WorldStory 保留展示/滚动，不能再独立拉取和归并运行。messageRender 匹配在 frame 的有界 Worker 中执行。
+- V2 frame 与作者类型共用 SDK 根入口。getRuns 使用 narrative/runs 的原生分页契约。StageRuntime 只接收不可变投影、转发命令和原生事件；官方 WorldStory 保留展示/滚动，不能再独立拉取和归并运行。messageRender 匹配在 frame 的有界 Worker 中执行。
 - 不提供重新生成、失败重试、历史回退和生成中编辑。设置生成中禁用业务配置修改，字号等阅读外观可独立调整。移动会话页隐藏主导航底栏，保留返回会话列表入口。
 - 验证使用函数级注入端口、typecheck 和两个静态构建，不启动真实服务/浏览器/模型或读取 Keychain。集成说明见 ../../docs/runtime/studio-v2-runtime.md。

@@ -163,14 +163,9 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
     return { ...page, items: page.items.map(item => projectRun(sessionId, item)),
       activeRunId: active.get(sessionId)?.runId ?? null };
   };
-  const get = (sessionId: string, runId: string) => {
-    const entries = dependencies.sessions.listRunEntries(sessionId, runId);
-    if (!entries.length) throw new AppError('RUN_NOT_FOUND');
-    return projectRun(sessionId, { runId, firstSeq: entries[0]!.seq, lastSeq: entries.at(-1)!.seq, entries });
-  };
   const usage = (sessionId: string) => dependencies.sessions.recordedUsage(sessionId);
 
-  return { submit, stop, shutdown, list, get, usage };
+  return { submit, stop, shutdown, list, usage };
 }
 
 export type NarrativeUsecases = ReturnType<typeof createNarrativeUsecases>;

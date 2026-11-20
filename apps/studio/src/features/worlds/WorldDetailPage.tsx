@@ -4,7 +4,7 @@ import {WorldComponentView} from './WorldComponentView';
 import {useEffect,useLayoutEffect,useRef,useState,type CSSProperties,type KeyboardEvent,type RefObject,type TouchEvent as ReactTouchEvent,type UIEvent,type WheelEvent as ReactWheelEvent} from 'react';
 import {Link,useParams} from 'react-router-dom';
 import {BookOpen,BookText,ChevronDown,ChevronLeft,ChevronRight,ChevronUp,Compass,Ellipsis,MessageCircle,Settings2,SlidersHorizontal} from 'lucide-react';
-import {WorldDocumentRenderer,useSRAssetBaseUrl} from '@sillyrealms/sdk';
+import {WorldDocumentRenderer,useSRAssetBaseUrl} from '@sillyrealms/sdk/legacy';
 import {WorldAssetsProvider} from '../../world-assets';
 import {Modal} from '../../components/ui/Modal';
 import {getWorld,listSessions,safeImage,type Character,type WorldDetail} from './api/worlds';

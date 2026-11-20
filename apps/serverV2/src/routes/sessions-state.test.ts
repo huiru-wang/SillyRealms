@@ -192,14 +192,13 @@ describe('session HTTP operations', () => {
     expect(Object.keys(root.item).some(key => key.includes('_'))).toBe(false);
     await failure(await request('POST', '/sessions/one/entries', { ...entryInput('branch'), parentId: 'root' }), 'TIP_CONFLICT', 409);
     expect(services.sessions.get('one')!.tipEntryId).toBe('child');
-    expect((await data<{ items: SessionEntry[] }>(await request('GET', '/sessions/one/entries?afterSeq=1&limit=1'))).items.map(item => item.id)).toEqual(['child']);
+    for (const path of ['/sessions/one/entries', '/sessions/one/entries/child', '/sessions/one/narrative/runs/run']) {
+      expect((await request('GET', path)).status).toBe(404);
+    }
     expect((await data<{ item: SessionEntry }>(await request('PATCH', '/sessions/one/entries/child', { payload: { text: 'Edited' } }))).item.payload).toEqual({ text: 'Edited' });
-    expect((await data<{ item: SessionEntry }>(await request('GET', '/sessions/one/entries/child'))).item.parentId).toBe('root');
     await failure(await request('PATCH', '/sessions/one/entries/child', { parentId: null }), 'INVALID_REQUEST', 400);
     await failure(await request('POST', '/sessions/one/entries', { ...entryInput('metrics'), metrics: null }), 'INVALID_REQUEST', 400);
     await failure(await request('PATCH', '/sessions/one/entries/child', { metrics: null }), 'INVALID_REQUEST', 400);
-    await failure(await request('GET', '/sessions/blocked/entries/root'), 'ENTRY_NOT_FOUND', 404);
-    await failure(await request('GET', '/sessions/one/entries/missing'), 'ENTRY_NOT_FOUND', 404);
   });
 
   it('rejects invalid JSON, missing fields and references through the normal error envelope', async () => {
@@ -220,9 +219,7 @@ describe('session HTTP operations', () => {
       ['GET', '/sessions/blocked'],
       ['PATCH', '/sessions/blocked', { title: 'Overwritten' }],
       ['DELETE', '/sessions/blocked'],
-      ['GET', '/sessions/blocked/entries'],
       ['POST', '/sessions/blocked/entries', entryInput('leak')],
-      ['GET', '/sessions/blocked/entries/secret'],
       ['PATCH', '/sessions/blocked/entries/secret', { payload: { text: 'Overwritten' } }],
       ['GET', '/sessions/blocked/events'],
       ['GET', '/state/session/blocked'],
@@ -234,7 +231,7 @@ describe('session HTTP operations', () => {
     ];
     for (const [method, path, body] of checks) await failure(await request(method, path, body), 'SESSION_NOT_FOUND', 404);
     expect(services.sessions.get('blocked')!.title).toBeNull();
-    expect(services.sessions.listEntries('blocked')).toHaveLength(1);
+    expect(services.sessions.getHistory('blocked')).toHaveLength(1);
     expect(services.state.getSession('blocked')).toEqual({});
     expect(services.sessions.getEntry('blocked', 'secret')!.state).toBeNull();
   });
