@@ -1,309 +1,405 @@
-# ServerV2 叙事输出块处理与模型历史方案
+# ServerV2 叙事输出数据块处理方案
 
-状态：待实施。只编写方案，不修改业务代码。依据当前 ServerV2 与原 Server 源码；不以兼容旧 SDK 为设计目标。
+状态：待实施。2026-11-20 按本轮确认的协议重新整理；本轮只修改方案。条目级模型旁注后续独立设计，本期不实现历史输出块重建。
 
 任务：[server-v2-narrative-output-tasks.md](server-v2-narrative-output-tasks.md)。
 
-## 1. 产品目标与结论
+## 1. 目标与确认结论
 
-一次叙事请求仍只生成一次正文，可按既有策略先摘要一次。正文生成完成后，同一条模型回复尾部可以携带状态更新和行动建议；服务端识别、校验并处理，不增加辅助模型调用或自动修复请求。
+一次叙事模型回复包含正文，以及可选的状态更新、行动建议数据块。服务端在展示前分离数据块，分别处理并保存结果。正文主流程正常完成时，任何能力内部失败均不改变 `run.completed`。
 
-玩家看到的流式正文、最终正文、历史聊天始终不包含这些数据块。状态面板展示提交后的状态，行动区展示本轮有效建议。模型后续请求需要看到输出格式的历史示例，不能因为前端隐藏数据块而把模型上下文也一并清空。
-
-推荐方案：**展示正文与模型历史采用不同投影；结构化输出单独保存，编译模型历史时重建有效的数据块。**
-
-- `payload.message.content`：干净的叙事正文，供聊天展示、组件替换、关键词激活和摘要使用。
-- `extData.output`：服务端处理的结构化输出及结果，供状态/建议展示、诊断和模型历史重建使用。
-- 主叙事模型历史：干净正文 + 从结构化结果规范化重建的有效数据块；只用于模型输入，绝不再次执行历史更新。
-- 不重复保存一份完整原始模型正文，不把原始坏 JSON 放回上下文，不新增表或正文副本列。
-
-这可以避免历史全部只有正文而弱化输出格式示例，但不能保证模型百分之百遵循指令。数据块缺失/错误须有明确处理结果；本版不重试、不补发第二次请求修复。
-
-## 2. 当前实现与已有能力
-
-| 当前文件 | 已有行为 / 缺口 |
+| 项目 | 本版约定 |
 | --- | --- |
-| `apps/serverV2/src/usecases/narrative/compile.ts` | 明确跳过所有 postprocess 节点；默认预设中的输出块提示词尚未进入模型请求 |
-| `narrative/model-call.ts` | 消费模型流、形成权威快照和 metrics；正文 delta 当前直接发到 EventHub，必须在这里接入隐藏分流，不能只在保存时裁切 |
-| `narrative/execute.ts` | 保存完整/部分助手公开输出、单独保存用户终态；尚无模型状态/建议处理 |
-| `narrative/history.ts`、`materials.ts` | 历史只有可见正文投影；新增模型投影不能污染摘要来源和材料激活 |
-| `narrative/prepare-context.ts` | 已有滑动窗口与一次滚动摘要；候选预算必须覆盖重建后的实际模型消息 |
-| `modules/state/service.ts`、`patch.ts` | 三 scope 读取、路径替换、类型/rules 校验、变化计算；缺少对一组模型更新的纯候选计算与激活根约束 |
-| `usecases/set-state.ts` | 面向显式状态写入的逐项提交与提交后事件；不能直接把它嵌进叙事收尾来逐项落库 |
-| `modules/sessions` | entries 支持独立 payload/extData/state/metrics；追加条目、seq、tip 原子推进 |
-| `narrative/events.ts` | 已有 state.changed 通路；action_suggestions.changed 仅为预留类型，尚未生产 |
+| 状态更新 | `state_update` 使用 JSONL，每个非空物理行是一条独立更新 |
+| 无需输出 | 缺失标签、空标签均成功且无操作；建议的空数组同样表示无建议 |
+| 标签大小写 | 开始、结束标签均大小写不敏感 |
+| 异常隔离 | 能力之间独立；状态更新各行独立；能力异常不能传播为 run 失败 |
+| 结果状态 | 能力级、更新行级的 `status` 只有 `success / fail` |
+| 部分更新成功 | 能力整体记 `fail`，成功行仍保留并提交，通过逐行结果说明情况 |
+| 建议事件 | 使用 `action_suggestions.created`；新 run 的建议清理由 `run.created` 驱动 |
+| 预算与计量 | 按模型实际输出处理，实际用量以模型返回的 usage 为准，不另设能力输出 token 额度 |
+| 模型历史 | 本期继续使用干净正文；后续通过独立的条目级 model-only notes 能力扩展 |
 
-原 Server 可参考：`runtime/postprocess/stream-splitter.ts`、`parser.ts`、`strict-json.ts`、`state-update.ts`、`action-suggestions.ts`。保留跨分片隐藏、严格解析、逐项状态校验、两个块独立处理等语义；不直接依赖旧模块，也不迁移 RunStore、run_preparations、恢复日志或 run.phase。
+`payload.message.content` 保存干净正文；`extData.output` 保存各能力的成功数据和处理结果。状态面板读取已提交的状态快照。仅当前 run 新生成的数据块进入处理流程，读取历史、重连和摘要不会重新执行能力。
 
-## 3. 产品流程
+本期不增加辅助模型调用、协议修复调用或隐式重试。
 
-```mermaid
-flowchart TD
-  A[保存用户消息并锁定会话执行] --> B[编译真实模型上下文与输出协议]
-  B --> C[按既有策略裁剪或摘要一次]
-  C --> D[模型流输出]
-  D --> E[公开正文流：仅干净文本]
-  D --> F[隐藏尾部：收集状态与建议块]
-  F --> G{正常结束且有有效正文?}
-  G -- 否 --> H[保存已有干净部分正文，不应用输出块]
-  G -- 是 --> I[以最终快照重新分离和严格解析]
-  I --> J[独立计算状态结果与建议结果]
-  J --> K[保存助手正文、输出结果、状态快照和metrics]
-  K --> L[保存本轮终态并形成提交后通知]
-  H --> L
-  L --> M[释放执行锁；状态/建议通知；usage；唯一终态]
-  K --> N[后续请求重建模型历史的数据块]
-```
+## 2. 实施范围与现有职责
 
-只有当前 run 新生成的输出块能进入处理流程。历史重建、读取历史、重连、摘要均不执行更新。
+本方案在既有 ServerV2 叙事链路中增加输出处理，复用以下职责边界：
 
-默认处理范围：
+| 位置 | 本版职责 |
+| --- | --- |
+| `narrative/compile.ts` | 纳入本轮状态材料、默认能力提示词及固定格式示例 |
+| `narrative/model-call.ts` | 分离流式正文，并对最终模型快照重新分离 |
+| `narrative/execute.ts` | 协调各能力独立处理、助手保存及主流程结算 |
+| `modules/state` | 状态路径、类型、rules 校验和候选快照计算 |
+| `modules/sessions` | output 结果契约、受控助手保存及历史读取 |
+| `modules/presets` | 内置能力提示词与默认补足 |
+| 既有上下文模块 | 管理输入上下文及压缩；本期不新增历史数据块拼接 |
+| 既有 EventHub | 发布提交后的状态变化和建议创建事件 |
 
-- 模型状态更新仅针对 **message scope**，且仅能写本轮最终上下文中激活的状态根。global/session 保持现有显式状态接口，不向模型新增跨 scope 写权限。
-- 行动建议默认为本轮提供三个下一步选择，不代表动作已经发生，不自动发送、不自动执行，也不因此改变状态。
-- 这两项按既定方向作为默认叙事能力，不增加 capability 接口或能力开关。没有激活 message 状态根时不要求状态块；行动建议仍要求输出。
+模型状态更新仅针对 **message scope**，且只允许本轮最终上下文中激活的状态根。global/session 继续通过既有显式接口写入。行动建议是尚未执行的选项，不自动发送，也不直接改变状态。
 
-## 4. 提示词与输出协议
+本轮只修订 plan。实施阶段限定 ServerV2 及相关事实文档；StudioV2 舞台、建议按钮和 SDK transport 后续适配。原 Server/Studio 保持独立。
 
-### 4.1 纳入默认能力
+## 3. 输出协议
 
-使用 V2 预设已有 worldState/actionSuggestions 提示词，并在服务端加入稳定的格式约束。原有核心节点/自定义节点的顺序保持；输出契约放在编译后的末尾 system 消息中，保证每轮明确提示格式。
-
-- 内置后处理节点不再被 compile.ts 一律跳过。
-- worldState 仅在最终候选的 activeRoots 非空时参与本轮输出任务，使用该候选的 state.entries。
-- actionSuggestions 每轮参与。
-- 内置后处理节点缺失或提示词为空时，用 PresetService 提供的默认提示词补足；旧 enabled 值忽略，不再作为执行能力开关。非空自定义提示词保留，但不能取消服务端的固定解析协议。
-- 默认提示词和已有节点格式仍由 presets 模块拥有；narrative 不导入 default.ts/schema.ts 等内部文件。补一个明确的公开提示词解析能力即可，不建立提示词服务框架。
-- 不批量改写预设、不改变 revision。StudioV2 旧开关的移除随前端后续适配完成；旧开关值不再控制本版服务端能力，此行为须在实施文档中写明。
-- `ModelClient.assertMessageOrder` 仍检查完整消息顺序；不为兼容模型而随意前移系统消息。
-
-固定协议：
+### 3.1 正常输出
 
 ```text
-叙事正文
-<state_update>[{"path":"coins","value":8,"reason":"购买食物"}]</state_update>
-<action_suggestions>["继续询问店主。","去集市寻找线索。","动身前往城外。"]</action_suggestions>
+店主收下铜钱，递来一碗热汤。
+
+<state_update>
+{"path":"coins","value":8,"reason":"购买食物"}
+{"path":"inventory.soup","value":1,"reason":"获得热汤"}
+</state_update>
+<action_suggestions>
+["继续询问店主。","去集市寻找线索。","动身前往城外。"]
+</action_suggestions>
 ```
 
-有激活状态时 state_update 必须且只能出现一次，无变化输出 `[]`；无激活状态时省略。action_suggestions 必须且只能出现一次。顺序固定；不接受外层容器、Markdown 围栏或尾随正文；需要在正文中展示保留标签时用 HTML 实体。
+`state_update` 内容不再是数组。每个非空物理行必须是一个完整 JSON 对象；一条更新不得跨行，字符串中的换行使用 JSON 的 `\n` 转义。CRLF/LF 均可，空白行忽略。
 
-固定提示词含一个明确标注为“格式示意、不可照抄值”的静态示例，以覆盖无历史、开场或历史已经被摘要的场景。实际状态值以本轮 state.entries 为准，历史更新与建议只是过去的输出记录，不能重复结算或当成已发生动作。
+兼容单条更新与标签位于同一行的写法：
 
-### 4.2 预算
+```text
+<state_update> {"path":"coins","value":8,"reason":"购买食物"} </state_update>
+```
 
-后处理提示词、格式示例及历史重建的数据块全部进入主模型的真实估算。不能按干净正文算预算、发送时才追加隐藏内容。
+在去除边界标签后按内容的物理行处理。两个对象挤在同一物理行属于该行格式错误，不能影响下一行。`action_suggestions` 保持 JSON 数组，不改成 JSONL。
 
-每个候选历史重新计算 activeRoots、输出要求、模型历史投影和最终 messages。沿用既有硬预算、60% 软目标、最近五轮保护、一次摘要后仍超限即 summary_capacity_exceeded，不增加第二次摘要或协议修复调用。
+### 3.2 无需处理
 
-## 5. 流式识别与解析
+以下都属于正常输出：
 
-### 5.1 展示隔离
+```text
+<state_update></state_update>
+<action_suggestions> </action_suggestions>
+```
 
-增加叙事内部 `output/stream-splitter.ts`：
+模型也可以完全省略相应标签。状态更新结果为 `success`、`updates=[]`、`results=[]`；建议结果为 `success`、`items=[]`。不产生缺失标签错误，不新增无变化、未要求等业务状态。
 
-1. 缓冲可能尚未结束的保留标签前缀，处理 `<sta` / `te_update>` 跨分片情况，不能先推送再撤回。
-2. 遇到 state_update/action_suggestions 开始标记后进入隐藏尾部，此后内容不再恢复为公开正文。
-3. 隐藏检测大小写不敏感、检查标记边界；正式解析只接受精确小写协议。旧 `<sr_extensions>` 外层也进入隐藏区，但按不支持的协议报结果错误，不把它显示给用户。
-4. 处理 UTF-16 代理对和尾部不完整前缀；中断时丢弃尚未确定的保留前缀，宁可少显示这段前缀也不泄露半个数据块。
-5. 隐藏尾部上限沿用原 Server 的 256 KiB；超出后停止保存尾部，保持隐藏，记录协议错误。不为此增加持久化缓冲表。
-6. 最终模型快照可能修正 delta。必须对最终 content 重新分离，最终 run.delta.snapshot、持久化正文和解析输入均来自该次分离，不能混用旧流尾部和新正文。
+`<action_suggestions>[]</action_suggestions>` 同样表示无建议。状态块中的非空文本 `[]` 不属于 JSONL 对象协议；该行按格式错误处理，空状态结果使用空标签或省略标签。
 
-raw content 仅在当前调用内用于分离，不直接进入事件。既有公开 reasoning/tool_calls 的字段不被当作正文块解析，也不用于状态写入；前端正文仍只渲染 content。摘要调用沿用其独立纯文本收集，不启用叙事输出块执行。
+### 3.3 标签与文本边界
 
-### 5.2 严格解析
+- `<STATE_UPDATE>`、`<State_Update>` 及其结束标签与小写形式等价；`action_suggestions` 同理。
+- 提示词推荐标签独立成行、每种能力输出一个块，并按状态、建议的顺序给出示例；处理器不因顺序变化或重复出现而让其他能力失败。
+- 能力标签是传输边界。JSON 字符串中需要出现保留标签文本时，对 `<`、`>` 使用 `\u003C`、`\u003E`；正文需要展示保留标签时使用 HTML 实体。
+- 不要求外层容器或 Markdown 围栏。出现容器、杂文或尾随文本时，不再以“整个尾部不可信”为由丢弃其他完整能力块。
+- 无法辨认所属能力的拼错标签不猜测修复；继续定位后续可识别的完整标签。
 
-增加纯函数 `output/parser.ts` 与有界严格 JSON 解析。参考 V1 对引号/转义、重复对象键、嵌套深度和长度的检查，不用单个正则截取 JSON，也不执行 eval。
+## 4. 提示词、预算与用量
 
-- 合法框架中，状态块 JSON 错误与建议块错误独立：一个失败不自动丢弃另一个。
-- 重复块、顺序错乱、无法确定字符串/标签边界、外层容器或尾随正文：整个尾部不可可信，两项均失败，不产生状态副作用。
-- 缺失必需块：对应结果 failed，正文仍保存。
-- 仅在模型正常 stop、无工具请求且干净正文非空时处理输出块。模型错误、length/deferred、取消、关闭或工具调用：已收到的数据块全部 skipped，不应用状态、不发布有效建议。
-- 只有数据块而没有有效正文：沿用 model_output_invalid，不生成空助手作为输出载体。已有 reasoning/tool 公开内容是否保留仍遵守现有规则；这些记录的输出处理为 skipped。
+### 4.1 默认能力提示词
 
-不做容错补括号、自动修 JSON、回退旧正则或追加模型请求。
+- 两项作为默认叙事能力。worldState 在最终候选有激活根时提供状态材料；actionSuggestions 的提示词正常参与每轮请求。
+- 提示词要求有变更时给出 JSONL、无变更时给空标签或省略；建议有内容时输出数组，无建议时同样可留空或省略。
+- 使用 PresetService 提供的公开提示词解析能力；内置节点缺失或提示词为空时补默认值，非空自定义提示词保留。
+- 旧 enabled 值不再作为本版服务端能力开关。不批量修改预设或 revision；StudioV2 开关清理后续适配。
+- 服务端输出格式说明位于编译后的末尾 system 消息。保留原有核心节点、自定义节点顺序及 ModelClient 的消息顺序检查。
+- 给出“格式示意、不可照抄值”的静态示例；当前状态以本轮 `state.entries` 为准。
+- 缺失或空标签即使与提示词建议不同，也不构成运行错误。
 
-## 6. 状态更新处理
+### 4.2 预算口径
 
-输入为数组，每项 `{path,value,reason?}`，最多 100 项。reason 仅用于记录说明，不执行自然语言理由。路径和值使用既有 StateService 校验与 JSON 限制。
+**按模型实际输出处理；实际 token 用量以模型返回的 usage 为准。**
 
-逐项按原顺序在候选快照上计算：
+- 复用既有 `max_output_tokens`，不为正文、状态、建议另外划分 token 配额。
+- 不根据本地估算的数据块大小、更新条数或隐藏输出占比，另行判定 run 超预算失败。
+- 删除原方案固定 100 条更新及全尾部 256 KiB 上限的处理要求，不因共享尾部缓冲超限连带丢弃多个能力。
+- 既有单值 JSON 结构、深度等校验属于数据有效性和资源保护。相应错误局限于当前更新行或当前能力片段；扫描必须继续，不能截断后续正常能力。
+- usage 记录模型返回的完整调用用量，包括隐藏数据块，不以展示正文长度重算或扣减。模型未返回 usage 时保持既有未知值语义，不编造计费数据。
+- 输入上下文继续由既有上下文模块管理；实际参与请求的提示词进入正常预算流程。本方案不重新设计输入压缩，也不以输出 tokens 替代输入上下文预算。
+- 模型因 length、取消或其他主流程原因未正常结束时，沿用既有停止语义；不把它解释为能力输出额度错误。
 
-- 仅 message scope，不接受 scope 字段或 global/session 前缀越权。
-- 根必须属于本轮最终 activeRoots 且仍有定义；路径必须真实存在。模型拼错路径记 rejected，不沿用公共 PATCH 的“缺失路径成功忽略”。公共 PATCH 原语义不变。
-- value 是完整替换值；无增量操作，不合并对象，不创建节点，不允许数组索引，null 不表示删除。
-- 验证类型、数值界限和 rules 覆盖；自然语言 rules 仍是模型指令，服务端不宣称能验证其故事因果。
-- 成功项更新工作副本；失败项保留诊断，继续处理其他项。重复路径按数组顺序处理，不假装互不相关。
-- 全部成功但最终快照不变：unchanged；有变化：applied；部分接受部分拒绝：partial；全部拒绝或整块不合法/缺失：failed；没有激活根：not_required。
+建议数量、每条长度、状态类型/rules 等仍是各能力的内容规则，见后文。
 
-没有激活根却意外输出状态块时：合法空数组仍为 not_required；非空更新全部拒绝并记录 STATE_ROOT_INACTIVE，不能写入任何 scope。框架明确时不影响有效建议。
+## 5. 展示隔离与能力标签扫描
 
-扩展 StateService 的公开 `prepareMessageUpdates`：接收会话/当前前驱、allowedRoots 和模型解析项，返回完整候选快照、已接受的规范化 updates、逐项 results、整体状态。复用 patch.ts/snapshot.ts 内部的路径与替换实现，不在 narrative 重写校验规则。
+### 5.1 流式展示隔离
 
-该能力仅计算，不写库、不发事件。模型需要的“路径必须存在”是该能力的明确规则，不额外造通用校验框架。
+1. 缓冲可能属于保留标签的前缀，处理大小写混合及跨分片情况，不能先展示再撤回。
+2. 识别到能力开始标签或可明确归属能力的损坏边界后进入隐藏尾部；此后不恢复为正文。
+3. 可识别的旧容器边界用于进入隐藏区域；容器本身不执行能力，也不使内部完整能力块失效。
+4. 处理 UTF-16 代理对和不完整标签前缀；中断时不补发尚不能确定为正文的保留前缀。
+5. 最终模型快照可能修正 delta，必须重新分离。最终公开 snapshot、持久化正文及能力处理输入以同一份最终结果为准。
+6. 完全无法辨认为保留边界的任意文本，不能保证自动恢复为某个能力；不宣称能识别所有任意拼写损坏。它不能阻止后续完整标签的独立扫描。
 
-### 6.1 提交边界
+raw content 只在本次调用内用于分离，不直接发入事件。能力块只解析 `content`；reasoning/tool_calls 沿用既有字段契约，不当作状态更新入口。摘要调用继续使用独立纯文本处理。
 
-收尾经用例注入的同步 TransactionRunner：读取当前实际 tip 的继承快照 → 校验 expected parent/tip → 逐项生成候选 → 追加 assistant。正文、extData.output、metrics、最终 message state 保存在同一条 entry 中，append 时原子推进 seq/tip。
+### 5.2 先扫描边界，再解析能力内容
 
-- 有实际状态变化时保存完整继承快照的更新版本；保留非目标根及原有条目附加信息。不变时 state=null 继续继承。
-- 不逐项调用 `setState.patchMessage`：那会提前产生独立提交/事件，并可能在助手保存失败后留下状态变化。
-- 首条用户的 extData.narrative 仍沿用既有独立终态保存；它失败时，不回滚已成功保存的助手/状态，run.stopped 为 message_persist_failed。已提交状态仍须通知。
-- 保存助手失败则本次状态/建议均未提交，不发布成功通知；之前保存的用户和成功摘要不回滚。
-- 本轮不扩展编辑/删除等准入锁。收尾从当前实际快照计算，只改目标路径，保留期间其他路径的外部写入；同一路径以收尾写入为准。tip 改变继续 tip_conflict，定义变更按当前定义校验。本方案不承诺解决并发编辑导致的语义冲突，不加版本/hash 冲突系统。
+扫描器接收本轮支持的能力标签名称，规范化大小写，按文本位置输出各能力的片段和局部边界错误。扫描逻辑不依赖当前 JSON 的引号、括号或解析成功与否。
 
-## 7. 行动建议与失败语义
+- 一个能力缺少闭合标签时，后续完整的能力开始标签就是恢复锚点：结束前一片段，记录前一能力的边界错误，继续扫描新能力。
+- 某行 JSON 少引号，不得让扫描器把后续完整标签当成永远无法离开的字符串。
+- 多余结束标签、损坏标签、乱序、重复块和未知片段，只影响可归属的局部结果，不存在“整尾部失败”状态。
+- 无法归属的片段跳过；对已识别的正常能力块分别处理。未知标签不自动获得能力执行权限。
+- 不修补 JSON、猜测标签名称或发起修复模型请求。
 
-建议必须恰好三个非空、去重后的字符串；每条 trim 后不超过 50 个 Unicode 码点。顺序为缓慢、中速、快速，不增设标签字段。
+例如：
 
-- 合法则 ready 并保存 items；不合法或缺失则 failed、items=[]。
-- 与状态处理独立。状态部分失败不会自动删除有效建议；有效状态也不因建议错误回滚。
-- 新 run 受理时清空当前可点击建议，避免玩家看到上一轮建议；受理失败不清空。
-- 本轮模型失败/中断、没有助手或最终 run 未完成，不发布可点击建议。此前清空状态保持。
-- 不增加建议表或查询接口。历史建议随 assistant.extData.output 读取；首屏从最新 run 的完成状态与输出记录恢复，活跃/停止/unknown 轮次不向前翻找旧建议冒充当前建议。
+```text
+<state_update>
+{"path":"coins","value":8}
+{"path":"inventory.soup","value":
+{"path":"energy","value":10}
+<ACTION_SUGGESTIONS>
+["继续询问店主。","去集市寻找线索。","动身前往城外。"]
+</ACTION_SUGGESTIONS>
+```
 
-**本方案推荐：正文成功保存且模型正常结束时，数据块校验失败不把整轮正文判为失败。** run 可以 completed，extData.output 清楚记录 stateUpdate/actionSuggestions 的 failed/partial。停止原因仍用于模型、取消、预算与持久化等主流程错误。前端后续在终态后读取已有单轮详情，按输出结果展示“状态更新未全部完成”等提示；不能把 run.completed 解读为每个输出块都成功。
+状态块缺少结束标签，第二行 JSON 也有错误。状态能力记录边界及行错误，第一、第三行若通过各自状态校验仍保留；建议块独立完整，照常处理。不能因前一个块不完整而丢掉它。
 
-这样能保留有效正文和独立成功的结果，又不会用一个笼统 stop reason 隐藏逐项诊断。没有隐式重试。
+### 5.3 同一能力多个片段
 
-## 8. 明确的保存结构
+- 状态块按输出位置处理，块内再按物理行处理。重复块不触发整体拒绝；重复路径继续按先后覆盖。
+- 已识别完整开始标签，但缺少结束标签的状态片段，可处理恢复边界或最终 EOF 之前能够完整解析的 JSONL 行，同时记录块边界错误。只在模型正常结束时适用。
+- 开始标签本身无法可靠识别时不从未知片段推测状态更新。
+- 建议块逐块校验；损坏的建议块不覆盖此前有效候选。多个成功候选取最后一个，包括成功的空结果；不把多个建议数组拼成新的数组。
+- 某能力有任何归属错误，整体 `status=fail`，已独立验证的有效数据仍保留。有效建议是否发布依其实际数据和提交结果决定，不能仅用能力整体 status 丢弃它。
 
-以下是新生成助手 entry 的持久化形状；不改变 metrics.requests，不增加 status 到 metrics：
+未来新增能力复用边界扫描与独立调用方式。本期采用简单的静态能力入口，不建立插件、动态注册或后台任务框架。
+
+## 6. JSONL 状态更新
+
+### 6.1 每行独立处理
+
+每个非空行独立经过：
+
+**JSON 解析 → 对象结构检查 → path/value/rules 校验 → 候选快照更新。**
+
+- 每行对象为 `{path,value,reason?}`。严格检查引号、转义、重复对象键及既有 JSON 结构限制；一行失败只影响该行。
+- 一条更新仅能写 message scope，不接收 scope 字段或跨 scope 前缀。
+- 根必须属于本轮最终 activeRoots，路径必须实际存在。缺失路径记录该行错误；公共 PATCH 的“缺失路径忽略”语义保持原契约。
+- value 完整替换目标值，不合并对象、不创建节点、不支持数组索引；null 不表示删除。类型、范围和 rules 复用 StateService。
+- reason 仅是处理说明；自然语言规则不被当作可执行校验。
+- 每条更新、成功记录和行诊断在本行异常边界内一并规范化；成功后才推进工作副本。每行失败恢复到该行之前的工作副本，不能残留半次修改，也不能回滚此前成功行。
+- 后续行继续基于成功行形成的候选快照处理；重复路径按顺序覆盖。
+- 同值替换也是 `success`，是否实际变化通过快照比较决定，不新增业务 status。
+
+错误包括 JSON 语法、对象结构、path、value、类型/rules 和单行计算异常，均通过逐行结果记录。
+
+### 6.2 能力结果与服务边界
+
+StateService 提供 `prepareMessageUpdates` 公开能力，复用现有路径、替换和继承快照逻辑，返回成功更新、逐行结果、候选快照及实际变化描述。它不写库、不发事件、不解析能力标签。
+
+- 所有有效行成功，或缺失/空标签：能力 `success`。
+- 有任何行失败或块边界错误：能力 `fail`，成功更新照常保留。
+- 无激活根但没有更新：`success`；出现非空更新则对应行 `fail`，不能写其他 scope。
+- 获取状态定义、读取状态基础材料等能力级步骤异常：状态能力 `fail`，没有可靠候选时不写状态；建议和正文继续。
+- 单行处理异常在行边界收敛；能力级兜底不能把已可靠完成的行无条件清空。
+
+## 7. 行动建议
+
+`action_suggestions` 继续使用 JSON 数组。有非空内容时沿用既定内容规则：三条非空、trim 后去重的字符串，每条不超过 50 个 Unicode 码点；提示词按缓慢、中速、快速给出选项，不增加标签字段。
+
+- 标签缺失、空白内容或合法空数组：`success`，`items=[]`。
+- 非空内容格式或内容规则不合法：该片段失败，记录错误；不影响状态更新。
+- 建议处理器内部异常只改变建议结果，不能传播到状态能力或正文主流程。
+- 多片段的有效候选选择遵守第 5.3 节；有效 items 与本能力其他失败诊断可以共存。
+- 新 run 受理后，客户端依据 `run.created` 清空上一轮建议；受理失败不清空。
+- 只有本轮有效非空建议已保存、主流程完成，才发布建议创建事件。空结果不产生创建事件。
+- 历史建议通过 assistant.extData.output 读取；首次恢复只认最新 run 的完成结果，活跃、停止或 unknown 轮次不回找旧建议冒充当前建议。
+
+## 8. 能力失败与 run 终态
+
+每个能力有独立异常边界，状态能力内部每行另有独立边界。任何能力解析、材料读取、校验、候选计算或结果规范化异常均转成该能力的结果，不能作为主流程停止原因。
+
+| 情况 | 能力结果 / 副作用 | run 行为 |
+| --- | --- | --- |
+| 标签缺失或空标签 | success，空结果，无操作 | 正常完成 |
+| 某状态行失败 | 该行 fail，能力 fail；其他成功行保留 | 正常完成 |
+| 一个能力标签损坏 | 该能力记录错误；其他完整能力照常处理 | 正常完成 |
+| 某能力处理器抛错 | 该能力局部兜底，其他能力和正文继续 | 正常完成 |
+| 模型错误、length、取消、工具请求等非正常结束 | 本轮能力不产生副作用 | 沿用主流程原终态 |
+| 干净正文无效、tip 冲突、助手/终态无法持久化 | 不以能力结果掩盖主流程问题 | 沿用主流程失败语义 |
+
+上表“正常完成”以模型正常结束、有效正文和主流程持久化成功为前提。数据库整体不可用等导致正文无法保存的故障，不能承诺 completed。
+
+模型未正常完成时，若保存部分助手并记录 output，各能力使用 `fail` 和 `MODEL_NOT_COMPLETED`、空结果；不增加 skipped，也不把未生成的标签报成缺失格式错误。没有助手载体时，不为能力诊断额外制造空 entry。
+
+能力结果进入 SessionService 前分别完成受控规范化。每条状态更新及其结果在行级异常边界内完成规范化，成功后才推进候选快照；能力级兜底保留已经可靠验证的成功行及对应快照，只有无法形成可靠候选时才使用空失败结果。保存的 updates 必须与实际提交的状态候选一致，不能丢掉成功记录却提交其状态，也不能因一行或另一个能力的结果异常清空已验证数据。
+
+## 9. 存储结构与提交
+
+### 9.1 结果结构
 
 ```ts
 payload: {
   message: {
     role: 'assistant',
     content: '店主收下铜钱，递来一碗热汤。',
-    reasoning_content: '...', tool_calls: [], timestamp: 0
+    reasoning_content: '...',
+    tool_calls: [],
+    timestamp: 0
   }
 }
 extData: {
   output: {
-    contextEligible: true,
     stateUpdate: {
-      status: 'applied',
-      updates: [{ index: 0, path: 'coins', value: 8, reason: '购买食物' }],
-      results: [{ index: 0, path: 'coins', status: 'applied' }]
+      status: 'fail',
+      updates: [
+        { blockIndex: 0, line: 1, path: 'coins', value: 8, reason: '购买食物' },
+        { blockIndex: 0, line: 3, path: 'energy', value: 10 }
+      ],
+      results: [
+        { blockIndex: 0, line: 1, path: 'coins', status: 'success' },
+        { blockIndex: 0, line: 2, status: 'fail', errorCode: 'STATE_UPDATE_JSON_INVALID' },
+        { blockIndex: 0, line: 3, path: 'energy', status: 'success' }
+      ],
+      errors: [
+        { blockIndex: 0, errorCode: 'OUTPUT_BLOCK_UNCLOSED' }
+      ]
     },
     actionSuggestions: {
-      status: 'ready',
+      status: 'success',
       items: ['继续询问店主。', '去集市寻找线索。', '动身前往城外。']
     }
   }
 }
-state: [/* 当前完整 message 快照，包含本轮成功更新 */]
-metrics: { requests: [/* 原有正文调用指标；未知 usage 为 null */] }
+state: [/* 完整 message 快照，包含本轮成功更新 */]
+metrics: { requests: [/* 既有模型调用指标；未知 usage 保持既有语义 */] }
 ```
 
-结构边界：
+- 所有新增结果 `status` 只能是 `success | fail`；不使用 applied、unchanged、partial、not_required、ready、skipped、failed 等业务状态。
+- `updates` 仅保存接受的规范化更新，包括同值更新；不保存非法 value。
+- `results` 记录每个非空行的结果。`blockIndex` 从 0 开始，`line` 是块内容物理行号，从 1 开始；开始标签独占一行时，其后的第一个内容行计为 1；行号不随空行过滤改变。
+- `errors` 为可选的块级或能力级诊断；行级错误保留在 results。诊断可附既有 statePath/rulePath，不存原始坏 JSON、堆栈或供应商错误文本。
+- 行级采用稳定错误码，例如 STATE_UPDATE_JSON_INVALID、STATE_PATH_NOT_FOUND、STATE_ROOT_INACTIVE，并复用已有状态校验错误。
+- 边界和能力异常采用 OUTPUT_BLOCK_UNCLOSED、OUTPUT_BLOCK_INVALID、OUTPUT_PROCESSING_FAILED；不再设置标签缺失错误或全尾部失败码。
+- 缺失/空状态块为 `{status:'success',updates:[],results:[]}`；缺失/空建议块为 `{status:'success',items:[]}`。
+- 不保存整份重复 rawContent，不新增表或 schema version，不改 metrics.requests 结构。
 
-- `stateUpdate.status`：not_required / unchanged / applied / partial / failed / skipped。
-- `updates`：仅被接受且经过校验的项，含同值项，保留原数组 index；不保存非法 value。
-- `results`：每项 `{index,path?,status:'applied'|'unchanged'|'rejected',errorCode?,statePath?,rulePath?}`。path 仅在是合法可记录字符串时提供；诊断不保存原始坏 JSON、堆栈或供应商错误文本。
-- 整块失败可有 `stateUpdate.errorCode`，updates/results 为空；无变化合法空数组使用 unchanged。
-- `actionSuggestions.status`：ready / failed / skipped；items 只有 ready 非空，其他为空，可有稳定的 errorCode。
-- skipped 原因用 MODEL_NOT_COMPLETED；缺失/非法分别记录 STATE_UPDATE_MISSING/STATE_UPDATE_INVALID、ACTION_SUGGESTIONS_MISSING/ACTION_SUGGESTIONS_INVALID；框架错误使用 OUTPUT_PROTOCOL_INVALID/OUTPUT_TAIL_TOO_LARGE，路径错误沿用 StateService 诊断并补 STATE_ROOT_INACTIVE/STATE_PATH_NOT_FOUND。
-- contextEligible 表示这份结构化结果是否仍能与该正文配对用于模型历史，正常保存时为 true。它不是恢复标记，不影响是否已经提交状态。
-- 无助手记录时不为诊断制造额外 entry；停止原因仍在首条 user.extData.narrative。
+### 9.2 提交边界
 
-SessionService 提供受控的叙事助手保存能力，校验并允许内部写入 output；普通追加/更新禁止伪造或删除 output。不能把现有通用 appendEntry 简单开放给 HTTP 写入该字段。
+1. 主流程校验当前实际 tip/expected parent。
+2. 在同步收尾事务内取得当前实际状态材料，独立计算各能力结果；状态材料失败仅在状态能力内收敛。
+3. 每个状态行在副本上独立校验，形成最终可靠候选；各能力结果分别规范化。
+4. 原子追加助手正文、output、metrics 与有效状态候选，并推进 seq/tip。
 
-普通编辑改变助手正文时，将 contextEligible 置为 false，保留已记录的状态处理结果以供查看；不自动重做状态、不回滚快照。更新其他 extData 必须保留 output，状态/metrics 修改不改变该标记。旧消息没有 output 时仍按普通正文读取，不补造历史结果。前端不能把 contextEligible=false 的旧建议作为当前可操作建议。
+有实际状态变化时保存完整继承快照的更新版本，保留非目标根及条目附加信息；不变或没有可靠候选时 `state=null`，继续继承。不逐行调用 setState.patchMessage，避免正文保存前提前产生状态提交或事件。
 
-## 9. 解决历史缺失输出格式的问题
+能力整体 fail 不禁止保存成功行的快照和其他能力的有效数据。公共助手追加失败则本次助手/状态/建议均未提交，不发布成功通知；之前保存的用户和成功摘要不回滚。
 
-### 9.1 两种历史投影
+首条用户的终态仍沿用既有独立保存流程。若终态保存失败，保留已经提交的助手/状态，主流程按既有持久化失败结算；实际提交的状态仍通知，本轮不发布可点击建议。
 
-| 使用场景 | 采用内容 |
-| --- | --- |
-| 聊天展示、正文组件替换 | payload.message.content |
-| 角色/世界书关键词激活 | 干净正文 + 有效叙事摘要；不扫描状态 JSON 或行动建议 |
-| 摘要模型输入、摘要 sourceHash | 干净正文；不把建议当作事实，不压缩状态操作记录 |
-| 主叙事 history.messages | 干净正文 + 有效输出块的规范化重建 |
-| 状态面板 | 当前 tip 实际继承的 state，不从历史块重放计算 |
+收尾读取当前快照，只覆盖成功目标路径；保留期间其他路径的显式写入，同一路径以收尾写入为准。tip 改变继续使用现有冲突语义，不新增编辑/删除准入锁或版本/hash 冲突系统。
 
-所有**本次仍保留的原文历史**都可重建数据块，不额外引入“最近 N 条”的新配置。已被滚动摘要覆盖的历史不再发送原文或输出块；格式要求由每轮固定协议继续提供。
+### 9.3 普通编辑
 
-### 9.2 重建规则
+SessionService 提供受控叙事助手保存入口，普通 HTTP 追加/编辑不能伪造或删除 output，其他 extData 编辑须保留服务端结果。
 
-1. user 和开场等无 output 消息保持原文，不生成虚假的状态/建议结果。
-2. 仅 contextEligible=true 的 assistant 可重建；没有该标记的旧消息不猜测。
-3. stateUpdate 为 applied/unchanged 时，用已接受 updates 的 path/value/reason 生成紧凑 JSON；合法无变化确实输出过空数组时重建 `[]`。
-4. partial 时只重建已接受项，排除被拒绝操作；failed/skipped/not_required 不重建状态块。全部失败绝不伪装成成功的空数组。
-5. 建议仅在 ready 时重建；不把失败的建议或缺失块替换为编造示例。
-6. 固定顺序为干净正文、state_update、action_suggestions。序列化对字符串中的 `<`、`>` 使用 JSON Unicode 转义，避免标签被值内容伪造；不重复运行模板替换。
-7. 重建内容是**经过服务端筛选的上下文表示**，不是模型原始输出的字节级副本。结果查询保留逐项诊断以体现这种差异。
-8. 该字符串只在编译请求时生成；禁止把它写回 message.content 或发送到 run.delta。
+普通正文编辑保留能力处理当时的结果记录，不自动重做状态、不回滚快照。旧 entry 没有 output 时正常读取，不补造历史处理结果。本期删除专用于历史重建的 `contextEligible` 及其编辑失效逻辑。
 
-当前状态提示词必须明确“历史更新已结算，以本轮 state.entries 为当前值”。行动建议保持“尚未发生的选项”语义。只保留格式与事实明确的记录，避免原始失败输出被模型模仿。
+## 10. 事件与读取
 
-### 9.3 不采用的方案
+保留既有 run.created/run.delta/run.summarizing/run.summarized/run.usage/run.completed/run.stopped。
 
-| 方案 | 本版不采用的原因 |
-| --- | --- |
-| 所有数据块永久丢弃，仅强化系统提示词 | 后续历史仍缺少成功输出示例，不能充分处理用户反馈 |
-| 原始回复直接保存为用户正文、前端自行正则隐藏 | 流式与历史都可能泄露；组件替换和其他客户端会误用原文 |
-| 另存完整 rawContent 并无条件回填 | 重复正文、重复 token；错误/半截块会继续影响后续模型 |
-| 给每条旧历史伪造空块 | 混淆真实结果与示例，可能把“未处理”教成“无变化” |
-| 单独调用模型补状态/建议 | 增加调用、成本和失败分支，不属于本轮目标 |
-
-## 10. 事件与读取契约
-
-保留现有 run.created/run.delta/run.summarizing/run.summarized/run.usage/run.completed/run.stopped；不增加 run.phase 或 generating。
-
-- run.delta 的增量及最终 snapshot 均只有干净正文。终态前最终 snapshot 仍为替换语义。
-- 状态实际提交且发生变化后，发布一次既有 `state.changed`：`{scope:'message',path:'',value:完整有效状态对象}`。与现有完整快照追加契约一致；未变化、失败、回滚均不发。
-- 正式启用 `action_suggestions.changed`，沿用 V2 扁平形状并允许清空时 messageId=null：
+- run.delta 增量及最终 snapshot 均为干净正文；最终 snapshot 保持替换语义。
+- 状态真实提交且发生变化后，发布一次既有 `state.changed`：
+  `{scope:'message',path:'',value:完整有效状态对象}`。
+- 即使状态能力整体 fail，只要成功行导致实际变化，仍发布 state.changed；不变或未提交不发。
+- 建议事件名称统一为 `action_suggestions.created`：
 
 ```ts
-// 新 run.created 后：清空旧建议
-{ event: 'action_suggestions.changed',
-  data: { sessionId, runId, messageId: null, items: [] } }
-// 正文已提交且 run completed，建议 ready：整组替换
-{ event: 'action_suggestions.changed',
-  data: { sessionId, runId, messageId: assistantEntryId, items: ['...', '...', '...'] } }
+{
+  event: 'action_suggestions.created',
+  data: {
+    sessionId,
+    runId,
+    messageId: assistantEntryId,
+    items: ['继续询问店主。', '去集市寻找线索。', '动身前往城外。']
+  }
+}
 ```
 
-清空事件的 runId 是新受理轮次；有内容时是产生建议的轮次。客户端依据当前 runId 丢弃过期建议。这里是尚未投入生产的 V2 预留类型调整，不恢复旧 SDK 的 suggestions 包装。
+created 表示本轮保存了有效非空建议。新一轮清空旧建议复用 run.created，不发送 messageId=null/items=[] 的 created 清空事件，也不新增 cleared 事件。
 
-正常顺序：run.created → 建议清空 → 可选摘要事件 → 干净正文 delta/最终 snapshot → 持久化及终态记录 → 释放锁 → state.changed（有变化）→ 建议 ready（有效且完成）→ run.usage → 唯一终态。
+发布条件依据当前结果中保留的有效 items、实际提交以及主流程完成，而非要求其他能力成功；同能力其他片段失败也不丢弃已独立验证的有效候选。
 
-收尾先形成已提交的结果和通知列表，再由 index.ts 按序经同一 EventHub 发布，避免事件监听器在提交中途改变终态决策。无回调透传。终态后不再产生本轮输出通知。
+正常顺序：
 
-run 终态字段不额外塞入整份诊断；已有 GET 单轮详情/列表返回 entry.extData.output。前端终态后查询该轮即可获得块结果，首次加载与重连同样读取。未落库流仍不承诺回放，首条 user 终态修改不产生新 seq 的规则不变。
+`run.created（客户端清空旧建议） → 可选摘要事件 → 干净正文 delta/最终 snapshot → 持久化与终态记录 → 释放锁 → state.changed（有变化） → action_suggestions.created（有有效建议） → run.usage → 唯一终态`。
 
-## 11. 代码结构与职责
+收尾先形成提交结果、终态决策和通知列表，再按序经同一 EventHub 发布。每条能力通知独立捕获发布异常，记录诊断并继续发布剩余通知、run.usage 及唯一终态；不重试能力执行、不回滚已提交数据，不反向改变已确定的 run 终态或其他能力结果。终态后不再产生本轮输出通知。
+
+已有单轮详情/列表返回 entry.extData.output；不新增能力查询端点，不在终态事件重复塞入全部诊断。不新增 run.phase，也不承诺未落库流的重放。
+
+## 11. 模型历史与后续模型旁注
+
+### 11.1 本期边界
+
+删除本期专用的输出块重建、拼接模块及其验收任务。主模型历史继续采用干净正文，不能在请求发送前隐藏地拼回 state_update/action_suggestions。
+
+| 场景 | 本期输入 |
+| --- | --- |
+| 聊天展示、正文组件替换 | 干净 message.content |
+| 角色/世界书关键词激活 | 干净正文与有效叙事摘要 |
+| 摘要输入及 sourceHash | 干净正文；不将建议当成已经发生的事实 |
+| 主叙事 history.messages | 既有干净历史正文 |
+| 状态面板 | 当前 tip 的实际继承状态 |
+| 能力结果查询 | entry.extData.output |
+
+本期格式引导通过本轮提示词和静态示例提供，不承诺历史中已经回填成功能力示例。读取 output 不触发任何状态写入。
+
+### 11.2 后续独立能力：条目级 model-only notes
+
+后续单独设计输入上下文构建中的“模型旁注”，不把抽象固定为两种输出能力：
+
+- 旁注附着于条目，可用于 user、assistant 等角色；除能力输出外，可服务其他只需提供给模型的附加信息。
+- 由输入上下文构建统一组织和注入，公开正文保持独立。
+- 状态更新、行动建议未来只是旁注的内部来源，待统一能力完成后再接入。
+- 旁注不承担重新执行历史能力的职责。
+- 存储结构、来源、注入位置、顺序、编辑失效及预算处理另行详细设计；本期不冻结 schema、不加入专用标志或预建框架。
+
+`extData.output` 目前仅是执行结果契约，不能直接被视为未来通用旁注 API。
+
+## 12. 代码结构与职责
 
 ```text
 apps/serverV2/src/usecases/narrative/
   output/
-    stream-splitter.ts    # 保留前缀与隐藏尾部，流/定稿共用
-    strict-json.ts        # 有界严格 JSON 语法检查
-    parser.ts            # 输出块边界、顺序、结构解析
-    processor.ts         # 输出任务规则、建议校验；调用 StateService 计算状态
-    history.ts           # 从保存的结果重建主模型历史，不执行更新
-  model-call.ts          # 正文流分离后直接 EventHub 推送；摘要调用不受影响
-  execute.ts            # 生成收尾、候选处理、提交和结算
-  compile.ts            # 纳入输出契约与真实历史内容
-  materials.ts          # 激活始终使用干净正文
-  history.ts            # 保留可见历史/模型历史的明确边界
-  prepare-context.ts    # 候选预算、输出 activeRoots、摘要只用干净正文
-  events.ts / index.ts   # 输出通知与执行锁生命周期
+    stream-splitter.ts      # 流式/最终正文分离，大小写与跨分片处理
+    parser.ts               # 独立能力片段扫描与局部边界诊断
+    strict-json.ts          # 单行/单片段严格 JSON 解析
+    state-update.ts         # JSONL 逐行处理，调用 StateService
+    action-suggestions.ts   # 建议数组及内容规则
+    processor.ts            # 各能力独立调用和异常边界
+  model-call.ts             # 接入展示隔离
+  execute.ts                # 能力结果、事务提交与主流程结算
+  compile.ts                # 默认能力提示词、当前材料和格式说明
+  events.ts / index.ts      # 提交后通知与锁生命周期
 
 apps/serverV2/src/modules/
-  state/                # 路径/规则校验、候选快照、结果和变化描述
-  sessions/             # output 领域结构、受控保存、通用编辑保护、查询
-  presets/              # 内置提示词及旧节点值的解析/默认补足
+  state/                    # 状态规则、独立候选计算与变化描述
+  sessions/                 # output 领域结构、受控保存、查询与编辑保护
+  presets/                  # 内置提示词及默认补足
 ```
 
-纯字符串处理属于 narrative/output；通用状态规则属于 StateService；存储结构及约束属于 SessionService。usecases.ts 注入同步 TransactionRunner；用例不接数据库、不写 SQL，不依赖模块内部文件。
+不增加 output/history.ts、能力专用历史拼接器或 contextEligible。本期上下文模块继续原职责，未来模型旁注在其独立方案中设计。
 
-不做处理器注册表、插件框架、后台任务、恢复表或抽象基类。schema version 不变，使用已有 JSON 列。
+用例不接数据库、不写 SQL、不依赖模块内部文件；同步事务通过既有装配方式注入。不建立动态处理器注册、后台任务、恢复表、抽象基类或自动重试。
 
-## 12. 验收与本版边界
+## 13. 验收
 
-函数验证覆盖：跨分片/代理对/半个标签隐藏；最终快照修正；重复块/乱序/坏 JSON/字符串内闭合标签/尾部超限；状态项独立成功失败与缺失路径；无激活根；状态与建议独立；正文正常但数据块失败的 completed 语义；取消/错误不执行块；原子追加失败无状态通知；锁释放；建议清空/恢复；历史重建不重放、编辑失效；摘要不吸收 JSON/建议；真实重建内容纳入预算。
+实施阶段采用函数级模型流替身与内存 SQLite，重点验证行为：
 
-使用函数级 ModelClient 流替身及内存 SQLite。执行函数测试、typecheck、lint；不启动服务，不跑 HTTP/浏览器链路，不访问真实模型。模型格式遵循率需要后续实际使用观察，不能用 mock 测试宣称已解决概率性不遵循。
+1. 大小写、跨分片、代理对、未完成前缀与最终快照修正；已识别能力数据不进入公开正文。
+2. 标签缺失、空白标签、建议空数组均为 success；状态非空内容遵守 JSONL。
+3. 坏 JSON 行之前和之后的有效更新都可提交；path/value/rules、重复键及单行抛错均只影响该行。
+4. 状态少引号、缺结束标签或建议标签损坏时，其他完整能力仍正常处理；顺序和重复块不产生全尾部拒绝。
+5. 成功行顺序覆盖、同值成功、非目标状态保留，以及能力 fail 但成功状态仍保存并通知。
+6. 状态材料读取失败不影响正文与建议；建议处理抛错不影响正文与有效状态；结果规范化也逐能力隔离。
+7. 所有能力/行 status 只有 success/fail；块边界、逐行及能力错误均能定位，不引入业务 status。
+8. 主流程正常时，任意能力失败仍 completed；主模型失败、取消、length、无有效正文和主流程持久化失败保留原语义。
+9. 事务追加失败不产生未提交状态/建议通知；用户终态保存失败保留已提交状态；锁覆盖处理与落库。
+10. run.created 清理旧建议；created 仅发布本轮已保存的有效非空建议；不生成空 created，不恢复旧建议充当当前结果。
+11. 历史、关键词、摘要继续使用干净正文，无专用标签回填、无状态重放、无 contextEligible 或提前建设的 notes。
+12. usage 来自模型实际返回，包含隐藏输出；无独立能力 token 配额和全尾部限额连坐。
 
-本次实施范围为 ServerV2、相关事实文档和 AGENTS。StudioV2 舞台展示、建议按钮与旧能力开关清理、SDK transport 适配后续单独做。原 Server/Studio 不修改。无自动执行建议、无 global/session 模型写入、无重试/恢复、无新表。
+运行相关函数测试、typecheck、lint；不启动服务，不运行 HTTP/浏览器链路或真实模型调用。同步相关事实文档和 AGENTS，明确协议、失败隔离、二态结果、事件名称和模型旁注的后续范围。
+
+本轮验收只检查两份方案的一致性和差异；业务实现仍为待实施。
