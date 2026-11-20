@@ -1,5 +1,6 @@
 import type { EntryRun, EntryRunListOptions } from '../../modules/sessions/service.js';
 import { randomUUID } from 'node:crypto';
+import { createRunLogger, type RunLogger } from '../../infrastructure/logging/run-logger.js';
 import { z } from 'zod';
 import { AppError } from '../../errors.js';
 import { prepareContext } from '../context/index.js';
@@ -18,7 +19,7 @@ const submitSchema = z.object({
   input: z.object({ text: z.string().refine(value => value.trim().length > 0, '输入不能为空') }).strict(),
   expectedTipEntryId: identifier.nullable(),
 }).strict();
-type ActiveRun = { runId: string; controller: AbortController; completion: Promise<void> };
+type ActiveRun = { runId: string; controller: AbortController; completion: Promise<void>; log: RunLogger };
 
 /** Session execution lock spans user persistence, optional summary, narrative and settlement. */
 export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
@@ -35,7 +36,8 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
     if (session.tipEntryId !== expectedTipEntryId) throw new AppError('TIP_CONFLICT');
 
     const runId = randomUUID(), userEntryId = randomUUID(), assistantEntryId = randomUUID();
-    const run: ActiveRun = { runId, controller: new AbortController(), completion: Promise.resolve() };
+    const log = createRunLogger({ runId, sessionId }, dependencies.logSink);
+    const run: ActiveRun = { runId, controller: new AbortController(), completion: Promise.resolve(), log };
     active.set(sessionId, run);
     let userMessage: SavedUserMessage;
     try {
@@ -72,18 +74,26 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
       const result = await collectModel(dependencies.modelClient, request.model, request.messages, {
         apiKey, signal: request.signal, maxTokens: request.maxTokens,
         temperature: request.temperature, thinkingEnabled: request.thinkingEnabled,
+        onDiagnostic(event) {
+          log('model.' + event.type, { purpose: 'summary', provider: request.model.providerId,
+            model: request.model.modelId, source: event.source, raw: event.data });
+        },
       });
       if (result.failed || result.stopReason || !result.attempted || result.finishReason !== 'stop' ||
         !result.snapshot.content.trim() || result.snapshot.tool_calls.length) return { ok: false as const };
       return { ok: true as const, text: result.snapshot.content, metrics: result.metrics };
     };
+    // The accepted run exists now; synchronous stop/shutdown logs must follow its creation.
+    log('run.created', { runId, sessionId, provider, model, timestamp: userMessage.timestamp,
+      messages: [{ ...userMessage }] }, userMessage.timestamp);
     // Queue run.created first, then synchronously capture through the sole context entry below.
     run.completion = Promise.resolve().then(() => executeNarrative(dependencies, {
-      sessionId, runId, userEntryId, assistantEntryId, userMessage, provider, model, prepared, getApiKey, signal: run.controller.signal,
+      sessionId, runId, userEntryId, assistantEntryId, userMessage, provider, model, prepared, getApiKey, signal: run.controller.signal, log,
     })).then(settlement => {
       // Settlement is complete: observers may stop or submit a new turn without finding a stale active run.
       if (active.get(sessionId) === run) active.delete(sessionId);
       for (const event of [...settlement.notifications, settlement.usage, settlement.terminal]) {
+        log(event.event, event.data, 'timestamp' in event.data ? event.data.timestamp : undefined);
         try { dependencies.events.publish(sessionId, event); }
         catch { /* Notification delivery cannot change a committed outcome or skip later events. */ }
       }
@@ -98,8 +108,14 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
       previousTipEntryId: expectedTipEntryId, signal: run.controller.signal,
       onProgress(progress) {
         const fields = { sessionId, runId, provider, model, timestamp: Date.now() };
-        if (progress.type === 'summary_started') dependencies.events.publish(sessionId, { event: 'run.summarizing', data: fields });
-        else dependencies.events.publish(sessionId, { event: 'run.summarized', data: { ...fields, entryId: progress.entryId } });
+        if (progress.type === 'summary_started') {
+          log('run.summarizing', fields, fields.timestamp);
+          dependencies.events.publish(sessionId, { event: 'run.summarizing', data: fields });
+        } else {
+          const data = { ...fields, entryId: progress.entryId };
+          log('run.summarized', data, fields.timestamp);
+          dependencies.events.publish(sessionId, { event: 'run.summarized', data });
+        }
       },
     });
     return { runId, userEntryId, assistantEntryId };
@@ -109,14 +125,22 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
     dependencies.sessions.require(identifier.parse(sessionId));
     const run = active.get(sessionId);
     if (!run || run.runId !== identifier.parse(runId)) throw new AppError('RUN_NOT_FOUND');
-    run.controller.abort('cancelled');
+    if (!run.controller.signal.aborted) {
+      run.log('run.stop_requested', { reason: 'cancelled' });
+      run.controller.abort('cancelled');
+    }
     return { runId, stopping: true };
   };
 
   const shutdown = (): Promise<void> => {
     if (closing) return closing;
     shuttingDown = true;
-    for (const run of active.values()) run.controller.abort('server_shutdown');
+    for (const run of active.values()) {
+      if (!run.controller.signal.aborted) {
+        run.log('run.stop_requested', { reason: 'server_shutdown' });
+        run.controller.abort('server_shutdown');
+      }
+    }
     closing = Promise.all([...active.values()].map(run => run.completion)).then(() => {});
     return closing;
   };

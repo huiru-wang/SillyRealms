@@ -1,3 +1,4 @@
+import type { RunLogger, RunLogSink } from '../../infrastructure/logging/run-logger.js';
 import type { TransactionRunner } from '../../infrastructure/database/transaction.js';
 import type { CredentialService } from '../../modules/credentials/service.js';
 import type { ModelService } from '../../modules/models/service.js';
@@ -33,6 +34,8 @@ export type NarrativeDependencies = {
   modelClient: Pick<ModelClient, 'resolve' | 'assertMessageOrder' | 'stream'>;
   events: EventHub;
   transaction: TransactionRunner;
+  /** Defaults to one formatted console line per observation; injectable for embedding/tests. */
+  logSink?: RunLogSink;
 };
 
 export type NarrativeExecution = {
@@ -46,4 +49,5 @@ export type NarrativeExecution = {
   prepared: Promise<PreparedContext>;
   getApiKey: (credentialRef: SummaryModelRequest['credentialRef']) => Promise<string>;
   signal: AbortSignal;
+  log: RunLogger;
 };

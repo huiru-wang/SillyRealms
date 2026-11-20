@@ -1,4 +1,4 @@
-/** Application-owned model boundary. No SDK objects or provider response blobs cross it. */
+/** Application-owned model boundary. Business streams contain no SDK objects; diagnostics are opaque, log-only data. */
 export type ModelThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type ModelThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
 
@@ -64,8 +64,13 @@ export type ModelEvent =
   /** Snapshot replaces accumulated public content; it is not another append delta. */
   | { type: 'done'; snapshot: ModelSnapshot; finishReason: ModelFinishReason; usage: ModelUsage | null }
   | { type: 'error'; snapshot: ModelSnapshot; stopReason: ModelStopReason; usage: ModelUsage | null };
+export type ModelDiagnostic =
+  | { type: 'request'; source: 'provider_payload'; data: unknown }
+  | { type: 'response'; source: 'sdk_message' | 'sdk_error' | 'adapter_error'; data: unknown };
 export type ModelOptions = {
   apiKey: string; signal: AbortSignal; maxTokens: number; temperature?: number; thinkingEnabled?: boolean;
+  /** Sanitized original provider payload / final SDK message, never deltas or business events. */
+  onDiagnostic?: (event: ModelDiagnostic) => void;
 };
 export interface ModelClient {
   listProviders(): ProviderInfo[];

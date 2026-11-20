@@ -19,7 +19,7 @@ function addUsage(left: ModelUsage | null, right: ModelUsage | null): ModelUsage
 /** User-first execution, optional single summary, then narrative and one settlement. */
 export async function executeNarrative(dependencies: NarrativeDependencies, execution: NarrativeExecution): Promise<NarrativeSettlement> {
   const { sessions, modelClient, events } = dependencies;
-  const { sessionId, runId, userEntryId, assistantEntryId, userMessage, provider, model, prepared, getApiKey, signal } = execution;
+  const { sessionId, runId, userEntryId, assistantEntryId, userMessage, provider, model, prepared, getApiKey, signal, log } = execution;
   let snapshot: ModelSnapshot = { role: 'assistant', content: '', reasoning_content: '', tool_calls: [] };
   let usage: ModelUsage | null = zeroUsage(), summaryUsage: ModelUsage | null = zeroUsage();
   let attempted = false, receivedTerminal = false, publishedDelta = false;
@@ -34,6 +34,10 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
   try {
     assertRunning(signal);
     const context = await prepared;
+    if (context.ok) log('context.completed', { ...context.diagnostics, parentEntryId: context.parentEntryId,
+      summaryEntryId: context.summary?.entryId ?? null });
+    else log('context.failed', { failure: context.failure, parentEntryId: context.parentEntryId,
+      summaryEntryId: context.summary?.entryId ?? null });
     parentId = context.parentEntryId;
     if (context.summary) summaryUsage = context.summary.metrics?.requests[0]?.usage ?? null;
     assertRunning(signal);
@@ -49,6 +53,10 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
       const result = await callModel(modelClient, selected, compiled.messages, {
         apiKey, signal, maxTokens: compiled.maxTokens,
         temperature: compiled.temperature, thinkingEnabled: compiled.thinkingEnabled,
+        onDiagnostic(event) {
+          log('model.' + event.type, { purpose: 'narrative', provider: selected.providerId,
+            model: selected.modelId, source: event.source, raw: event.data });
+        },
       }, { events, fields: fields(), messageId: assistantEntryId });
       ({ snapshot, rawContent, usage, attempted, metrics, finishReason, stopReason, receivedTerminal, publishedDelta } = result);
     }
@@ -79,14 +87,17 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
       if (stopReason === undefined) {
         const committed = dependencies.transaction(() => {
           if (sessions.require(sessionId).tipEntryId !== parentId) throw new AppError('TIP_CONFLICT');
+          log('postprocess.started', { messageId: assistantEntryId, allowedRoots: activeRoots });
           const processed = processNarrativeOutput(rawContent, dependencies.state, {
             sessionId, parentId, allowedRoots: activeRoots,
-          });
+          }, (event, data) => log(event, { messageId: assistantEntryId, ...data }));
           sessions.appendNarrativeAssistant(sessionId, { ...input, state: processed.state }, processed.output);
           return { change: processed.change, suggestions: processed.output.actionSuggestions.items };
         });
         committedState = committed.change;
         committedSuggestions = committed.suggestions;
+        log('postprocess.completed', { messageId: assistantEntryId, persisted: true,
+          stateChanged: committedState !== null, suggestionCount: committedSuggestions.length });
       } else {
         // Interrupted/model-failed output is visible history only; no postprocessing was executed.
         sessions.appendEntry(sessionId, input);
@@ -96,6 +107,7 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
     // Persistence failure takes precedence even if the model finished, failed or was cancelled.
     stopReason = error instanceof AppError && error.code === 'TIP_CONFLICT' ? 'tip_conflict'
       : error instanceof AppError && error.code === 'SESSION_NOT_FOUND' ? 'session_deleted' : 'message_persist_failed';
+    log('message.persist_failed', { messageId: assistantEntryId, persisted: false, stop_reason: stopReason });
   }
 
   let savedMessageIds: string[] = [], tipEntryId: string | null = null;

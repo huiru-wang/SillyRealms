@@ -73,6 +73,14 @@ const total = () => seen.filter(event => event.event === 'run.usage').at(-1)?.da
 
 describe('summary execution and accounting', () => {
   it('saves one summary before generation, publishes only summary milestones, and accounts requests once', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: string) => { lines.push(line); });
+    stream.mockImplementation(async function* (selected, messages, options) {
+      options.onDiagnostic?.({ type: 'request', source: 'provider_payload', data: { model: selected.modelId, messages } });
+      yield { type: 'request_started' };
+      options.onDiagnostic?.({ type: 'response', source: 'sdk_message', data: { content: 'summary', usage } });
+      yield done();
+    });
     seed();
     let savedWhenNotified = false;
     hub.subscribe('session', event => {
@@ -99,6 +107,20 @@ describe('summary execution and accounting', () => {
     expect(total()).toMatchObject({ total_tokens: 50 });
     expect(services.sessions.recordedUsage('session')).toMatchObject({ recordedRequestCount: 2, knownUsage: { totalTokens: 50 } });
     expect(narrative.list('session', {}).items[0]?.entries.map(entry => entry.type)).toEqual(['message', 'compaction', 'message']);
+    const logs = lines.map(line => {
+      const match = /^\[[^\]]+\] \[([^\]]+)\] \[(.*)\]$/u.exec(line)!;
+      return { event: match[1], data: JSON.parse(match[2]!) };
+    });
+    expect(logs.filter(item => item.event === 'model.request' || item.event === 'model.response')
+      .map(item => [item.event, item.data.purpose])).toEqual([
+      ['model.request', 'summary'], ['model.response', 'summary'],
+      ['model.request', 'narrative'], ['model.response', 'narrative'],
+    ]);
+    expect(logs.filter(item => item.event === 'context.completed')).toHaveLength(1);
+    expect(logs.findIndex(item => item.event === 'context.completed')).toBeGreaterThan(
+      logs.findIndex(item => item.event === 'run.summarized'));
+    expect(logs.every(item => item.data.runId === accepted.runId)).toBe(true);
+
   });
 
   it('stops after one over-capacity summary, keeps it and its metrics, then can submit from the compaction tip', async () => {

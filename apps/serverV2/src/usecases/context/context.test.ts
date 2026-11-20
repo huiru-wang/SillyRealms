@@ -197,6 +197,20 @@ describe('core narrative compilation', () => {
       ['system', '\nAfter'], ['assistant', 'A custom example'], ['user', 'Current input'],
     ]);
     expect(compiled.messages.filter(item => item.content === 'Current input')).toHaveLength(1);
+    expect(compiled.diagnostics.nodes.find(node => node.id === 'chatHistory')).toMatchObject({
+      name: 'chatHistory', included: true, messageIndexes: [1, 2, 3, 4],
+    });
+    expect(compiled.diagnostics.nodes.find(node => node.id === 'custom')).toMatchObject({ name: 'Custom', messageIndexes: [5] });
+    expect(compiled.diagnostics.nodes.find(node => node.id === 'worldState')).toMatchObject({
+      source: 'default', included: false, reason: 'no_active_state', messageIndexes: [],
+    });
+    expect(compiled.diagnostics.nodes.find(node => node.id === 'actionSuggestions')).toMatchObject({
+      source: 'default', included: true, messageIndexes: [7],
+    });
+    expect(compiled.diagnostics.nodes.at(-1)).toMatchObject({ id: 'postprocessProtocol', source: 'platform', messageIndexes: [7] });
+    expect(compiled.diagnostics.messageCount).toBe(compiled.messages.length);
+    expect(JSON.stringify(compiled.diagnostics)).not.toMatch(/Past input|Past answer|A custom example|Current input/);
+
   });
 
   it('compiles over-budget candidates without trimming or rejecting them before context policy runs', () => {
@@ -407,6 +421,8 @@ describe('model-only notes in context candidates', () => {
     expect(compiled.messages.find(message => message.role === 'assistant')?.content).toContain('note-only-keyword');
     expect(snapshot.history.map(message => message.text)).toEqual(['A quiet room.']);
     expect(snapshot.materials.variables['world.lore']).toEqual({ type: 'text', value: '' });
+    expect(compiled.diagnostics.nodes.find(node => node.id === 'chatHistory')?.modelNoteEntryIds).toEqual(['answer']);
+    expect(JSON.stringify(compiled.diagnostics.nodes)).not.toContain('note-only-keyword');
     expect(JSON.stringify(summaryRequest(model, 'Summarize', '', snapshot.history))).not.toContain('note-only-keyword');
     expect(services.sessions.getEntry('session', 'answer')?.payload.message).toMatchObject({ content: 'A quiet room.' });
     expect(snapshot.views.message).toEqual({});

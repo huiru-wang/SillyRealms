@@ -14,6 +14,7 @@ import { narrativePreset } from '../../testing/fixtures.js';
 import { createNarrativeUsecases, type AcceptedNarrative, type NarrativeUsecases } from './index.js';
 import type { NarrativeTerminalEvent } from './events.js';
 import * as suggestions from './postprocess/action-suggestions.js';
+import { processNarrativeOutput } from './postprocess/processor.js';
 
 const model: ModelInfo = {
   providerId: 'provider', modelId: 'model', name: 'Model', contextWindow: 64000, maxTokens: 8192,
@@ -31,8 +32,11 @@ const done = (content: string, finishReason: 'stop' | 'length' = 'stop'): ModelE
 });
 
 let db: DatabaseSync, root: string, services: Services, hub: EventHub, narrative: NarrativeUsecases;
+let logLines: string[];
 let stream: ReturnType<typeof vi.fn<ModelClient['stream']>>, seen: SessionEvent[];
 beforeEach(async () => {
+  logLines = [];
+  vi.spyOn(console, 'log').mockImplementation((line: string) => { logLines.push(line); });
   db = openDatabase(':memory:');
   root = mkdtempSync(join(tmpdir(), 'sr-postprocess-'));
   services = createServices(db, root, memoryCredentials());
@@ -310,5 +314,64 @@ describe('narrative postprocessing integration', () => {
     expect(output(accepted).stateUpdate.results).toHaveLength(105);
     expect(output(accepted).stateUpdate.status).toBe('success');
     expect(current().coins).toBe(104);
+  });
+});
+
+
+function capabilityLog(event: string) {
+  const line = logLines.find(line => line.includes('] [' + event + '] ['));
+  if (!line) throw new Error('Missing log: ' + event);
+  return JSON.parse(line.slice(line.indexOf('] [', line.indexOf('] [') + 1) + 3, -1)) as Record<string, unknown>;
+}
+
+describe('postprocess diagnostics', () => {
+  it('isolates rejected async diagnostic observers from both capability results', async () => {
+    const processed = processNarrativeOutput(valid(), services.state, {
+      sessionId: 'session', parentId: services.sessions.require('session').tipEntryId!, allowedRoots: ['coins', 'energy'],
+    }, async () => { throw new Error('async observer failed'); });
+    await Promise.resolve();
+    expect(processed.output.stateUpdate.status).toBe('success');
+    expect(processed.output.actionSuggestions.status).toBe('success');
+    expect(current().coins).toBe(10);
+  });
+
+  it('preserves raw JSONL and reports every row and suggestion result before recording persistence', async () => {
+    const rawUpdates = '\n{"path":"coins","value":8}\n{"broken":\n{"path":"energy","value":7}\n';
+    script(body + '<STATE_UPDATE>' + rawUpdates + '</STATE_UPDATE>' + actions(['继续询问。', '', 17]));
+    expect((await submit().finished).event).toBe('run.completed');
+    expect(capabilityLog('state_update.raw')).toMatchObject({ tagStatus: 'present',
+      source: 'block_contents', blocks: [rawUpdates] });
+    expect(capabilityLog('state_update.result')).toMatchObject({
+      phase: 'prepared', status: 'partial_success',
+      results: [{ status: 'success' }, { status: 'invalid_json' }, { status: 'success' }],
+    });
+    expect(capabilityLog('action_suggestions.raw')).toMatchObject({ blocks: ['["继续询问。","",17]'] });
+    expect(capabilityLog('action_suggestions.result')).toMatchObject({
+      phase: 'prepared', status: 'partial_success',
+      results: [{ status: 'success' }, { status: 'empty_suggestion' }, { status: 'invalid_suggestion' }],
+    });
+    expect(capabilityLog('postprocess.completed')).toMatchObject({ persisted: true, stateChanged: true });
+  });
+
+  it('retains the source of a broken own tag while independently reporting the intact capability', async () => {
+    const raw = body + '<state_update>{"path":"coins","value":1}\n' + actions();
+    script(raw);
+    expect((await submit().finished).event).toBe('run.completed');
+    expect(capabilityLog('state_update.raw')).toMatchObject({
+      tagStatus: 'invalid_tag', source: 'unparsed_model_output', raw, blocks: [],
+    });
+    expect(capabilityLog('state_update.result')).toMatchObject({ status: 'invalid_tag' });
+    expect(capabilityLog('action_suggestions.result')).toMatchObject({ status: 'success' });
+    expect(current().coins).toBe(10);
+  });
+
+  it('does not claim postprocess persistence when the assistant transaction rolls back', async () => {
+    vi.spyOn(services.sessions, 'appendNarrativeAssistant').mockImplementation(() => { throw new Error('storage failed'); });
+    expect((await submit().finished).event).toBe('run.stopped');
+    expect(capabilityLog('state_update.result')).toMatchObject({ phase: 'prepared', status: 'success' });
+    expect(logLines.some(line => line.includes('[postprocess.completed]'))).toBe(false);
+    expect(capabilityLog('message.persist_failed')).toMatchObject({ persisted: false, stop_reason: 'message_persist_failed' });
+    expect(current().coins).toBe(10);
+    expect(seen.some(event => event.event === 'state.changed')).toBe(false);
   });
 });

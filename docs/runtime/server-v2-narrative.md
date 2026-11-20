@@ -111,7 +111,7 @@ worldState/actionSuggestions 为默认后处理能力，通过 PresetService.res
 
 compact 阶段通过候选评估函数重复选择材料、组装最终消息和估算，不把阶段固定为各执行一次的流水线。每个候选都从捕获的干净输入重建；真实摘要复核失败时仍返回成功摘要草稿，保存后将摘要回执与失败一起交还，避免丢失已成功摘要的父链和计量。摘要端口不依赖叙事模型调用适配、正文分离或 SSE。
 
-PreparedContext 以 ok 判别，成功返回 request，失败返回 failure.code；两种结果都有 parentEntryId 和可选 summary:{entryId,metrics}。request 包含 credentialRef，不包含 API key。本轮摘要与正文的凭据读取在 narrative 闭包内复用，不进入上下文返回值或数据库。
+PreparedContext 以 ok 判别，成功返回 request 和独立的 diagnostics，失败返回 failure.code；两种结果都有 parentEntryId 和可选 summary:{entryId,metrics}。request 包含 credentialRef，不包含 API key。本轮摘要与正文的凭据读取在 narrative 闭包内复用，不进入上下文返回值或数据库。
 
 narrative/index.ts 先排入执行微任务，再同步调用 prepareContext；入口在首次 await 前捕获快照，后续准备发生在 run.created 之后。内部进度 summary_started 在凭据就绪、摘要实际调用前发出，summary_saved 在成功保存后发出；外层映射到既有 run.summarizing/run.summarized。
 
@@ -254,3 +254,40 @@ POST 或 SSE 断开不取消叙事；只有显式 stop 或服务正常关闭触�
 通用 entry 编辑不能写入或清除 narrative/output，修改其他 extData 时保留服务端结果；正文编辑不重新执行能力。metrics.requests 不再保存 status，增加 provider；旧 status 在读取时丢弃、未知 provider 为 null，新记录严格校验。usage 查询只合计已存 metrics 的已知部分并返回未知用量请求数，不宣称完整计费。
 
 重连只补查已保存 seq；未落库分片不保证补齐，最终 snapshot 替换与终态后的持久化查询负责最终展示。仍活跃的轮次只提供 running/stopping 状态；用户 entry 的结束结果更新不增加 seq，客户端需另查原活跃轮次。接口字段见 [ServerV2 HTTP](server-v2-http.md)。
+
+
+## Run 单行日志
+
+叙事默认写入进程 stdout，每条观测一次输出，格式为 `[yyyy-MM-dd HH:mm:ss] [事件] [JSON对象]`。时间使用服务器本地时区；JSON 紧凑序列化，正文换行与 Unicode 行分隔符转义，长正文不截断。每条数据固定以 runId/sessionId 开头，同一 run 的摘要、主模型、后处理和结算可按 runId 筛选；不同会话可以正常交错，不等 run 结束后才批量输出。
+
+```text
+[2026-11-20 18:30:00] [run.created] [{"runId":"r-1","sessionId":"s-1","messages":[{"id":"u-1","role":"user","content":"购买食物\n询问店主"}]}]
+[2026-11-20 18:30:01] [state_update.raw] [{"runId":"r-1","sessionId":"s-1","messageId":"a-1","tagStatus":"present","blocks":["\n{\"path\":\"coins\",\"value\":8,\"reason\":\"购买食物\"}\n"],"source":"block_contents"}]
+[2026-11-20 18:30:01] [postprocess.completed] [{"runId":"r-1","sessionId":"s-1","messageId":"a-1","persisted":true,"stateChanged":true,"suggestionCount":3}]
+```
+
+示例只展示格式及部分字段；实际日志保留对应事件或处理结果的完整字段。
+
+| 事件 | 数据 |
+| --- | --- |
+| `run.created` | 已保存的用户消息全文和标识、provider/model；受理后立即记录，先于同步停止请求 |
+| `context.completed` | 最终选用候选的所有节点名称、启用/加入结果、来源及最终消息位置；角色和世界书名称、配置条件、实际关键词/排除词/when 结果及原因；激活根、消息数、估算输入与预算 |
+| `context.failed` | 实际准备失败代码、当前父 entry 和已保存摘要 ID，不宣称构建完成 |
+| `run.summarizing` / `run.summarized` | 摘要开始及真正保存后的回执 |
+| `model.request` | `purpose:summary\|narrative`、实际 provider/model、`source:provider_payload` 与 SDK 发送前钩子取得的真实请求体 `raw` |
+| `model.response` | 相同调用归属及完整 `raw`；`sdk_message` 为归一化前的最终 SDK 消息，`sdk_error` 为 SDK 错误消息，`adapter_error` 表示取消、抛错或缺失终态 |
+| `postprocess.started` | 处理的助手 ID 和本轮允许更新的状态根 |
+| `state_update.raw` / `action_suggestions.raw` | 自身标签状态和未经 trim 的原始块内容；坏标签保留完整模型原文并标记 `source:unparsed_model_output`，不会据此恢复执行 |
+| `state_update.result` / `action_suggestions.result` | 完整能力状态、有效更新/建议、每行/每项处理结果及错误；`phase:prepared` 明确此时仅完成计算 |
+| `postprocess.completed` | 助手事务成功后的 `persisted:true`、实际状态变化标记和建议数 |
+| `message.persist_failed` | 助手保存失败原因及 `persisted:false`；先前 prepared 结果不构成已提交声明 |
+| `state.changed` / `action_suggestions.created` | 提交成功后的实际通知数据 |
+| `run.stop_requested` | 用户取消或关机的停止请求，与最终停止结果分开 |
+| `run.usage` | 结算用量事件的全部字段，保留零和未知 null 语义 |
+| `run.completed` / `run.stopped` | 完整终态，包括实际 savedMessageIds、tipEntryId 和适用的 stop_reason |
+
+上下文日志只记录最终候选的诊断，不输出 prompt、历史、角色/世界书正文或完整状态快照，不重复调用 when 或改变关键词匹配语义。`model.request` 则按要求保留真实请求正文，不再另写重复的 `model.input`。不打印 `run.delta` 或供应商 delta，也不把 delta 列表拼成“原始响应”；流式接口的完整 SDK 消息与 HTTP 原始响应字节通过 source 明确区分。
+
+日志属于独立观测通道，不新增 SSE 事件、数据库字段、日志 HTTP 或文件生命周期。context 只返回诊断数据，仍不依赖叙事、EventHub 或日志实现。Pi 的原始数据只进入可选诊断钩子，不进入业务 ModelEvent、公开消息或 entry。
+
+API Key、鉴权 header、明确凭据字段及模型错误中的已知密钥值先脱敏；普通业务 secret/token 字段保留。诊断副本不会改写模型请求、SDK 终态或能力结果；序列化、写入和异步观察者失败均独立兜底，不改变运行终态、状态提交或建议处理。

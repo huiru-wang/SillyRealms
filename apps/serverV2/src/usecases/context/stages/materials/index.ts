@@ -4,6 +4,7 @@ import { AppError } from '../../../../errors.js';
 import type { StateService, StateViews } from '../../../../modules/state/service.js';
 import type { World, WorldCard } from '../../../../modules/worlds/service.js';
 import type { NarrativeHistoryMessage } from '../history/index.js';
+import type { ContextMaterialDiagnostic } from '../../diagnostics.js';
 
 export type MaterialSources = {
   world: World;
@@ -23,6 +24,7 @@ export type NarrativeMaterials = {
   variables: Record<SystemVariableName, PromptVariable>;
   activeRoots: string[];
   diagnostics: { id: string; reason: string; path: string }[];
+  selection: { characters: ContextMaterialDiagnostic[]; lore: ContextMaterialDiagnostic[] };
 };
 type Character = WorldCard['data']['characters'][number] & { enabled?: boolean };
 type LoreEntry = NonNullable<WorldCard['data']['lorebook']>['entries'][number];
@@ -35,26 +37,39 @@ const encoded = (value: unknown) => JSON.stringify(value).replaceAll('<', '\\u00
   .replaceAll('\u2028', '\\u2028').replaceAll('\u2029', '\\u2029');
 const materialText = (value: string, continuation: string) => prose(value).replace(/\r\n?|\n|\u2028|\u2029/g, '\n' + continuation);
 
-/** Keep the established case-sensitive, per-message keyword semantics. */
-export function evaluateLoad(rule: LoadRule, scan: readonly string[], views: StateViews, conditions: Conditions) {
+type LoadEvaluation = Pick<ContextMaterialDiagnostic, 'reason' | 'keywordMatch' | 'whenMatch'> & { active: boolean };
+
+/** Keep the established case-sensitive, per-message keyword semantics and reuse these checks in diagnostics. */
+export function evaluateLoad(rule: LoadRule, scan: readonly string[], views: StateViews, conditions: Conditions): LoadEvaluation {
   if (rule.mode === 'never') return { active: false, reason: 'never' };
   if (rule.mode !== undefined && !['always', 'on_mention'].includes(rule.mode)) return { active: false, reason: 'invalid_rule' };
+  const checks: Pick<LoadEvaluation, 'keywordMatch' | 'whenMatch'> = {};
   if (rule.mode === 'on_mention') {
     if (!rule.keywords?.length || rule.keywords.some(keyword => !keyword)
       || (rule.keyword_logic !== undefined && !['any', 'all'].includes(rule.keyword_logic))) {
       return { active: false, reason: 'invalid_rule' };
     }
-    const matched = (keyword: string) => scan.some(message => message.includes(keyword));
-    if (rule.exclude_keywords?.some(matched)) return { active: false, reason: 'excluded' };
-    const included = rule.keyword_logic === 'all' ? rule.keywords.every(matched) : rule.keywords.some(matched);
-    if (!included) return { active: false, reason: 'keyword_unmatched' };
+    const matches = new Map<string, boolean>();
+    const matched = (keyword: string) => {
+      if (!matches.has(keyword)) matches.set(keyword, scan.some(message => message.includes(keyword)));
+      return matches.get(keyword)!;
+    };
+    const matchedKeywords = rule.keywords.filter(matched);
+    const excludedKeywords = rule.exclude_keywords?.filter(matched) ?? [];
+    const logic = rule.keyword_logic ?? 'any';
+    const included = logic === 'all' ? matchedKeywords.length === rule.keywords.length : matchedKeywords.length > 0;
+    checks.keywordMatch = { logic, matchedKeywords, excludedKeywords, result: !excludedKeywords.length && included };
+    if (excludedKeywords.length) return { active: false, reason: 'excluded', ...checks };
+    if (!included) return { active: false, reason: 'keyword_unmatched', ...checks };
   }
   if (rule.when !== undefined) {
     try {
-      if (!conditions.evaluateWhen(rule.when, views)) return { active: false, reason: 'when_false' };
-    } catch { return { active: false, reason: 'when_evaluation_failed' }; }
+      const result = conditions.evaluateWhen(rule.when, views);
+      checks.whenMatch = { result };
+      if (!result) return { active: false, reason: 'when_false', ...checks };
+    } catch { return { active: false, reason: 'when_evaluation_failed', ...checks, whenMatch: { result: null, error: 'evaluation_failed' } }; }
   }
-  return { active: true, reason: 'matched' };
+  return { active: true, reason: 'matched', ...checks };
 }
 
 function compareRulePaths(left: string, right: string): number {
@@ -70,13 +85,22 @@ export function selectNarrativeMaterials(input: MaterialSources, conditions: Con
   const { world, views, playerId, history, inputText } = input;
   const scan = [input.summary ?? '', ...history.map(item => narrativeForActivation(item.text, item.role)), narrativeForActivation(inputText, 'user')];
   const diagnostics: NarrativeMaterials['diagnostics'] = [];
-  const active = (source: { id: string; enabled?: boolean; load?: LoadRule }, path: string) => {
-    const result = source.enabled === false ? { active: false, reason: 'disabled' }
+  const selection: NarrativeMaterials['selection'] = { characters: [], lore: [] };
+  const active = (source: { id: string; enabled?: boolean; load?: LoadRule }, path: string,
+    record?: { target: ContextMaterialDiagnostic[]; name: string; role?: 'persona' | 'character' }) => {
+    const result: LoadEvaluation = source.enabled === false ? { active: false, reason: 'disabled' }
       : evaluateLoad(source.load ?? {}, scan, views, conditions);
     if (result.reason === 'invalid_rule' || result.reason === 'when_evaluation_failed') {
       diagnostics.push({ id: source.id, reason: result.reason, path });
     }
+    if (record) selectionRecord(record, source, result);
     return result.active;
+  };
+  const selectionRecord = (record: { target: ContextMaterialDiagnostic[]; name: string; role?: 'persona' | 'character' },
+    source: { id: string; enabled?: boolean; load?: LoadRule }, result: LoadEvaluation) => {
+    const { active: matched, ...checks } = result;
+    record.target.push({ id: source.id, name: record.name, ...(record.role ? { role: record.role } : {}),
+      condition: { enabled: source.enabled !== false, load: structuredClone(source.load ?? {}) }, matched, ...checks });
   };
   // These values retain the validated author protocol inside the World domain object.
   const characters = world.characters as unknown as Character[];
@@ -84,13 +108,13 @@ export function selectNarrativeMaterials(input: MaterialSources, conditions: Con
   if (!player) throw new AppError('INVALID_SESSION_CHARACTER');
   const playerName = player.name.trim() || 'Default';
   const render = (value: string) => value.replaceAll('{{user}}', () => playerName);
-  const playerActive = active(player, 'characters.' + player.id);
+  const playerActive = active(player, 'characters.' + player.id, { target: selection.characters, name: player.name, role: 'persona' });
   const selected = characters.map((character, index) => ({ character, index }))
-    .filter(({ character }) => character.id !== playerId && active(character, 'characters.' + character.id))
+    .filter(({ character }) => character.id !== playerId && active(character, 'characters.' + character.id, { target: selection.characters, name: character.name, role: 'character' }))
     .sort((a, b) => (a.character.order ?? 0) - (b.character.order ?? 0) || a.index - b.index);
   const lorebook = world.lorebook as unknown as { entries: LoreEntry[] } | null;
   const lore = (lorebook?.entries ?? []).map((entry, index) => ({ entry, index }))
-    .filter(({ entry }) => active(entry, 'lorebook.' + entry.id))
+    .filter(({ entry }) => active(entry, 'lorebook.' + entry.id, { target: selection.lore, name: entry.title?.trim() || entry.id }))
     .sort((a, b) => (a.entry.load?.order ?? 0) - (b.entry.load?.order ?? 0) || a.index - b.index);
   const definition = world.stateDefinition;
   if (definition !== null) {
@@ -126,6 +150,6 @@ export function selectNarrativeMaterials(input: MaterialSources, conditions: Con
       'input.text': text(inputText),
       'state.entries': text(entries),
     },
-    activeRoots, diagnostics,
+    activeRoots, diagnostics, selection,
   };
 }

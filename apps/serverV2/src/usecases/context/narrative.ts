@@ -59,8 +59,9 @@ export async function prepareContext(dependencies: ContextDependencies, input: P
     assertRunning(input.signal);
     if (result.failure !== undefined) return { ...receipt, ok: false, failure: failure(result.failure) };
     dependencies.modelClient.assertMessageOrder(model, result.compiled.messages);
-    return { ...receipt, ok: true, request: {
-      ...result.compiled, model, credentialRef: snapshot.modelConfig.credentialRef,
+    const { diagnostics, ...request } = result.compiled;
+    return { ...receipt, ok: true, diagnostics, request: {
+      ...request, model, credentialRef: snapshot.modelConfig.credentialRef,
     } };
   } catch (error) {
     return { ...receipt, ok: false, failure: failure(error) };

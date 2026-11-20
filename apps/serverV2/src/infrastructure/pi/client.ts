@@ -8,6 +8,7 @@ import type {
   ModelClient, ModelEvent, ModelFinishReason, ModelInfo, ModelMessage, ModelOptions,
   ModelStopReason, ModelThinkingLevel, ModelThinkingLevelMap, ProviderInfo,
 } from '../model/client.js';
+import { emitModelDiagnostic } from '../model/diagnostics.js';
 import { PiContent } from './stream-content.js';
 import { hasInputUsageReport, normalizeUsage } from './usage.js';
 
@@ -175,7 +176,7 @@ export class PiClient implements ModelClient {
     const content = new PiContent();
     let reported = false;
     let providerFailure: ModelStopReason | undefined;
-    let attempted = false, announced = false;
+    let attempted = false, announced = false, observing = true;
     let iterator: AsyncIterator<AssistantMessageEvent> | undefined;
     const marker = Symbol('aborted');
     let cancel!: () => void;
@@ -190,6 +191,13 @@ export class PiClient implements ModelClient {
         temperature: options.temperature,
         reasoning: options.thinkingEnabled && selected.reasoning ? 'medium' : undefined,
         maxRetries: 0,
+        onPayload: payload => {
+          if (observing && !options.signal.aborted) {
+            emitModelDiagnostic(options, { type: 'request', source: 'provider_payload', data: payload });
+          }
+          // Returning a value replaces the SDK request; diagnostics must never do so.
+          return undefined;
+        },
         onProviderStreamEvent: raw => {
           reported ||= hasInputUsageReport(raw);
           if (providerErrorCode(raw) === 'PROVIDER_CONTEXT_WINDOW_EXCEEDED') providerFailure = 'context_window_exceeded';
@@ -203,11 +211,13 @@ export class PiClient implements ModelClient {
         const next = await Promise.race([iterator.next(), aborted]);
         if (next === marker || options.signal.aborted) throw new AppError('RUN_STOPPED');
         if (next.done) {
+          emitModelDiagnostic(options, { type: 'response', source: 'adapter_error', data: { reason: 'incomplete_output' } });
           yield { type: 'error', snapshot: content.snapshot(), stopReason: 'incomplete_output', usage: null };
           return;
         }
         const event = next.value;
         if (event.type === 'done') {
+          emitModelDiagnostic(options, { type: 'response', source: 'sdk_message', data: event.message });
           const snapshot = content.finish(event.message, false);
           const reason = finishReason(event.message.stopReason);
           if (!reason || content.invalidArguments) {
@@ -219,6 +229,7 @@ export class PiClient implements ModelClient {
           return;
         }
         if (event.type === 'error') {
+          emitModelDiagnostic(options, { type: 'response', source: 'sdk_error', data: event.error });
           yield { type: 'error', snapshot: content.finish(event.error, true),
             stopReason: event.reason === 'aborted' ? 'aborted' : providerFailure ?? modelStopReason(event.error),
             usage: normalizeUsage(event.error.usage, reported) };
@@ -228,10 +239,13 @@ export class PiClient implements ModelClient {
         if (delta) yield { type: 'delta', delta };
       }
     } catch (error) {
+      if (attempted) emitModelDiagnostic(options, { type: 'response', source: 'adapter_error',
+        data: { reason: options.signal.aborted ? 'aborted' : providerFailure ?? modelStopReason(error), error } });
       if (attempted && !announced) yield { type: 'request_started' };
       yield { type: 'error', snapshot: content.snapshot(),
         stopReason: options.signal.aborted ? 'aborted' : providerFailure ?? modelStopReason(error), usage: null };
     } finally {
+      observing = false;
       options.signal.removeEventListener('abort', cancel);
       // An uncooperative return() must not delay releasing the run.
       if (iterator?.return) {

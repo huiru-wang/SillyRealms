@@ -2,6 +2,7 @@ import { resolvePostprocessPrompts } from '../../../../modules/presets/service.j
 import { AppError } from '../../../../errors.js';
 import type { ModelInfo, ModelMessage } from '../../../../infrastructure/model/client.js';
 import type { NarrativeSnapshot } from '../../capture.js';
+import type { ContextDiagnostics, ContextNodeDiagnostic } from '../../diagnostics.js';
 import { contextBudget } from '../../lib/budget.js';
 import { estimateInputTokens } from '../../lib/estimate.js';
 import { parsePromptTemplate } from '../../lib/template.js';
@@ -17,14 +18,24 @@ export type CompiledNarrativeContext = {
   estimatedInputTokens: number;
   inputBudget: number;
   activeRoots: string[];
+  diagnostics: ContextDiagnostics;
 };
 
 /** Pure compilation of the selected history; budget enforcement belongs to context preparation. */
 export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick<ModelInfo, 'contextWindow' | 'maxTokens'>): CompiledNarrativeContext {
   const config = snapshot.preset.config, messages: ModelMessage[] = [];
+  const nodes: ContextNodeDiagnostic[] = [];
   let inputCount = 0, historyCount = 0, summaryCount = 0;
   for (const node of config.nodes) {
-    if (!node.enabled || node.kind === 'postprocess') continue;
+    if (node.kind === 'postprocess') continue;
+    const diagnostic: ContextNodeDiagnostic = {
+      id: node.id, name: node.name, kind: node.kind, role: node.role, enabled: node.enabled,
+      included: false, reason: node.enabled ? 'empty' : 'disabled', source: 'preset', messageIndexes: [],
+    };
+    nodes.push(diagnostic);
+    if (!node.enabled) continue;
+    const startIndex = messages.length;
+    const modelNoteEntryIds: string[] = [];
     let pending = '';
     const flush = () => {
       if (pending.trim()) messages.push({ role: node.role === 'auto' ? 'system' : node.role, content: pending, timestamp: 0 });
@@ -45,10 +56,18 @@ export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick
       if (variable.type === 'text') pending += variable.value;
       else {
         flush();
-        for (const item of variable.value) messages.push({ role: item.role, content: renderModelNotes(item.text, snapshot.modelNotes.get(item.id)), timestamp: item.timestamp });
+        for (const item of variable.value) {
+          const notes = snapshot.modelNotes.get(item.id);
+          if (notes?.length) modelNoteEntryIds.push(item.id);
+          messages.push({ role: item.role, content: renderModelNotes(item.text, notes), timestamp: item.timestamp });
+        }
       }
     }
     flush();
+    diagnostic.messageIndexes = Array.from({ length: messages.length - startIndex }, (_, index) => startIndex + index);
+    diagnostic.included = diagnostic.messageIndexes.length > 0;
+    diagnostic.reason = diagnostic.included ? 'included' : 'empty';
+    if (modelNoteEntryIds.length) diagnostic.modelNoteEntryIds = modelNoteEntryIds;
   }
   if (inputCount !== 1 || historyCount !== 1) throw new AppError('INVALID_NARRATIVE_TEMPLATE');
   if (config.contextStrategy.strategy === 'rolling_summary' && summaryCount !== 1) throw new AppError('INVALID_NARRATIVE_TEMPLATE');
@@ -63,19 +82,35 @@ export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick
     }
     return variable.value;
   }).join('');
-  const renderCapability = (name: keyof typeof prompts): string => {
-    try { return render(prompts[name]); }
-    catch { return render(defaults[name]); }
-  };
+  const capabilityIndex = messages.length;
   const hasState = snapshot.materials.activeRoots.length > 0;
+  const renderCapability = (id: keyof typeof prompts, name: string, included: boolean): string => {
+    const configured = config.nodes.find(node => node.id === id);
+    const diagnostic: ContextNodeDiagnostic = {
+      id, name: configured?.name ?? name, kind: 'postprocess', role: 'system', enabled: configured?.enabled ?? true,
+      included, reason: included ? 'included' : 'no_active_state',
+      source: configured?.prompt.trim() ? 'preset' : 'default', messageIndexes: included ? [capabilityIndex] : [],
+    };
+    nodes.push(diagnostic);
+    if (!included) return '';
+    try { return render(prompts[id]); }
+    catch { diagnostic.source = 'fallback'; return render(defaults[id]); }
+  };
+  const statePrompt = renderCapability('worldState', '世界状态', hasState);
+  const actionPrompt = renderCapability('actionSuggestions', '行动建议', true);
+  nodes.push({ id: 'postprocessProtocol', name: '能力输出协议', kind: 'protocol', role: 'system', enabled: true,
+    included: true, reason: 'included', source: 'platform', messageIndexes: [capabilityIndex] });
   messages.push({ role: 'system', timestamp: 0, content: [
-    ...(hasState ? [renderCapability('worldState')] : []),
-    renderCapability('actionSuggestions'), postprocessProtocol(hasState),
+    ...(hasState ? [statePrompt] : []), actionPrompt, postprocessProtocol(hasState),
   ].join('\n\n') });
   const { maxTokens, inputBudget } = contextBudget(config, model);
   const estimatedInputTokens = estimateInputTokens(messages);
   return {
     messages, maxTokens, inputBudget, estimatedInputTokens, activeRoots: [...snapshot.materials.activeRoots],
+    diagnostics: {
+      nodes, characters: snapshot.materials.selection.characters, lore: snapshot.materials.selection.lore,
+      activeRoots: [...snapshot.materials.activeRoots], messageCount: messages.length, estimatedInputTokens, inputBudget,
+    },
     ...(config.modelParameters.temperature === undefined ? {} : { temperature: config.modelParameters.temperature }),
     thinkingEnabled: config.modelParameters.thinkingEnabled,
   };

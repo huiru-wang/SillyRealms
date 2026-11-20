@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { StateService } from '../../../../modules/state/service.js';
 import { selectNarrativeMaterials, type MaterialSources } from './index.js';
 
@@ -83,4 +83,43 @@ describe('narrative material selection', () => {
     expect(text).not.toContain('<state_update>');
     expect(input.views.message).toEqual({ coins: 5 });
   });
+
+  it('records names, rules and the actual keyword/when outcomes without reevaluating conditions or copying material content', () => {
+    const input = sources();
+    input.world.characters.push(
+      { id: 'visitor', name: 'Visitor', prompt: 'PRIVATE_CHARACTER_PROMPT', load: {
+        mode: 'on_mention', keywords: ['harbor', 'manor'], keyword_logic: 'all', when: 'getState("coins") >= 5',
+      } },
+      { id: 'disabled', name: 'Disabled', enabled: false, prompt: 'PRIVATE_DISABLED_PROMPT', load: { when: 'getState("coins") >= 5' } },
+    );
+    input.world.lorebook = { entries: [
+      { id: 'excluded', title: 'Excluded lore', content: 'PRIVATE_LORE', load: {
+        mode: 'on_mention', keywords: ['harbor'], exclude_keywords: ['manor'], when: 'getState("coins") >= 5',
+      } },
+      { id: 'false', title: 'False lore', content: 'PRIVATE_FALSE_LORE', load: { when: 'getState("coins") < 0' } },
+      { id: 'bad', content: 'PRIVATE_BAD_LORE', load: { when: 'getState("missing") > 0' } },
+    ] };
+    const evaluateWhen = vi.fn(conditions.evaluateWhen);
+    const result = selectNarrativeMaterials(input, { evaluateWhen });
+    expect(evaluateWhen).toHaveBeenCalledTimes(3);
+    expect(result.selection.characters).toMatchObject([
+      { id: 'player', name: 'Robin', role: 'persona', matched: true, reason: 'matched' },
+      { id: 'visitor', name: 'Visitor', role: 'character', matched: true, reason: 'matched',
+        condition: { enabled: true, load: { mode: 'on_mention', when: 'getState("coins") >= 5' } },
+        keywordMatch: { logic: 'all', matchedKeywords: ['harbor', 'manor'], excludedKeywords: [], result: true },
+        whenMatch: { result: true } },
+      { id: 'disabled', matched: false, reason: 'disabled' },
+    ]);
+    expect(result.selection.characters[2]).not.toHaveProperty('whenMatch');
+    expect(result.selection.lore).toMatchObject([
+      { id: 'excluded', name: 'Excluded lore', matched: false, reason: 'excluded',
+        keywordMatch: { matchedKeywords: ['harbor'], excludedKeywords: ['manor'], result: false } },
+      { id: 'false', name: 'False lore', matched: false, reason: 'when_false', whenMatch: { result: false } },
+      { id: 'bad', name: 'bad', matched: false, reason: 'when_evaluation_failed', whenMatch: { result: null, error: 'evaluation_failed' } },
+    ]);
+    expect(result.selection.lore[0]).not.toHaveProperty('whenMatch');
+    expect(JSON.stringify(result.selection)).not.toContain('PRIVATE_');
+    expect(JSON.stringify(result.selection)).not.toContain(input.inputText);
+  });
+
 });

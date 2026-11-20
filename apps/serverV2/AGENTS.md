@@ -72,3 +72,10 @@
 - 用例经同步 TransactionRunner 校验实际 tip，准备状态候选和变化信息，再原子追加助手正文/output/state/metrics。变化必须在追加前计算，避免读取更新后的视图漏发事件。SessionService.appendNarrativeAssistant 是 output 受控保存入口，普通 append/update 禁止伪造或删除，编辑其他扩展保留结果，正文编辑不重执行或回滚。
 - 提交和锁释放后、唯一终态前，独立发布实际 state.changed 与非空有效 action_suggestions.created，再发布一次总 usage/终态。run.created 驱动清理旧建议，无空 created 或 cleared。每条能力通知异常不能跳过后续通知或终态。助手保存失败无未提交通知；用户终态保存失败保留已提交状态并通知，但不发布可点击建议。
 - 聊天、持久化正文、关键词及摘要保持干净；主模型历史可由 context 的 model-notes 附加独立旁注。postprocess 不承担历史重建，不重放状态或引用 context 内部阶段。结果继续通过现有 entries/runs 查询读取，不新增表或接口。
+
+
+## 运行日志
+
+- 叙事按 run 记录 `[yyyy-MM-dd HH:mm:ss] [事件] [紧凑JSON对象]`，时间为服务器本地时间，runId/sessionId 固定在数据开头；每条只占一行，正文不截断。默认 stdout，日志异常不得影响业务。只记录非 delta 生命周期、真实模型请求/完整 SDK 终态、后处理及结算，不重复 model.input。
+- context 成功结果独立返回最终候选 diagnostics：节点、角色和世界书名称、条件与真实匹配结果，不含正文，不重新执行条件，不向 context 注入叙事或日志依赖。模型 raw 只经可选诊断钩子传给观测方，SDK 类型和原始数据不进入业务事件或持久消息。
+- state/actions 原始块和完整处理结果分别记录；坏标签可记录整段原文用于诊断，不能用于恢复执行。结果 phase:prepared 与事务成功的 postprocess.completed/persisted:true 分开，保存失败不能宣称已提交。保留完整 usage 和终态字段，API Key/鉴权等明确凭据先脱敏。契约见 ../../docs/runtime/server-v2-narrative.md#run-单行日志。

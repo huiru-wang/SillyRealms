@@ -5,6 +5,8 @@ import type { EntryMetrics, SessionService } from '../../modules/sessions/servic
 import type { NarrativeContextServices } from './capture.js';
 import type { CompiledNarrativeContext } from './stages/assemble/index.js';
 import type { SummaryOutcome } from './stages/compact/index.js';
+import type { ContextDiagnostics } from './diagnostics.js';
+export type { ContextDiagnostics, ContextMaterialDiagnostic, ContextNodeDiagnostic } from './diagnostics.js';
 
 export type ContextProgress = { type: 'summary_started' } | { type: 'summary_saved'; entryId: string };
 export type PrepareContextInput = {
@@ -34,7 +36,7 @@ export type ContextDependencies = Omit<NarrativeContextServices, 'sessions'> & {
   modelClient: Pick<ModelClient, 'resolve' | 'assertMessageOrder'>;
   summarize: (request: SummaryModelRequest) => Promise<SummaryModelResult>;
 };
-export type ContextModelRequest = CompiledNarrativeContext & {
+export type ContextModelRequest = Omit<CompiledNarrativeContext, 'diagnostics'> & {
   model: ModelInfo;
   credentialRef: ModelConfig['credentialRef'];
 };
@@ -42,6 +44,6 @@ export type ContextFailure = { code: ErrorCode | 'SUMMARY_FAILED' };
 export type SummaryReceipt = { entryId: string; metrics: EntryMetrics | null };
 type ContextReceipt = { parentEntryId: string; summary?: SummaryReceipt };
 export type PreparedContext = ContextReceipt & (
-  | { ok: true; request: ContextModelRequest }
+  | { ok: true; request: ContextModelRequest; diagnostics: ContextDiagnostics }
   | { ok: false; failure: ContextFailure }
 );

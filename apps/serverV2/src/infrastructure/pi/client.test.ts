@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Api, AssistantMessage, AssistantMessageEvent, Context, Model, SimpleStreamOptions, ToolCall } from '@earendil-works/pi-ai';
-import type { ModelEvent, ModelInfo, ModelMessage, ModelSnapshot } from '../model/client.js';
+import type { ModelDiagnostic, ModelEvent, ModelInfo, ModelMessage, ModelSnapshot } from '../model/client.js';
 import { PiClient, providerErrorCode, type PiSdk } from './client.js';
 
 type SdkModel = Model<Api>;
@@ -497,4 +497,113 @@ describe('provider catalog metadata', () => {
     expect(serialized).not.toContain('headers');
     expect(serialized).not.toContain('cost');
   });
+});
+
+describe('PiClient raw diagnostics', () => {
+  it('observes actual provider payload and one complete SDK message before normalization without exposing credentials or mutating requests', async () => {
+    const rawText = 'Story\\n<state_update>\\n{"path":"coins","value":8}\\n</state_update>';
+    const output = message(rawText, {
+      content: [{ type: 'thinking', thinking: 'raw thought', thinkingSignature: 'opaque-signature' },
+        { type: 'text', text: rawText }],
+      usage: { input: 7, output: 12, cacheRead: 4, cacheWrite: 2, reasoning: 5, totalTokens: 25,
+        cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 } },
+    });
+    const business = { secret: 'plot secret', token: 'game token', credential: 'guild member', credentials: { rank: 'silver' } };
+    const payload = { model: 'story', messages: [{ role: 'user', content: 'whole prompt\\nline two' }], arguments: business,
+      api_key: 'secret-test-key', headers: { Authorization: 'Bearer secret-test-key', 'X-Api-Key': 'another-key' } };
+    const seen: ModelDiagnostic[] = [];
+    const client = new PiClient(sdk(async function* (definition, _context, request) {
+      expect(await request.onPayload?.(payload, definition)).toBeUndefined();
+      expect(payload.messages[0]!.content).toBe('whole prompt\\nline two');
+      expect(payload.api_key).toBe('secret-test-key');
+      yield { type: 'text_delta', contentIndex: 1, delta: 'draft', partial: output };
+      yield { type: 'done', reason: 'stop', message: output };
+    }));
+    const result = await collect(client.stream(selected(client), input, { ...options(), onDiagnostic(event) {
+      seen.push(structuredClone(event));
+      if (event.type === 'request') (event.data as typeof payload).messages[0]!.content = 'logger mutation';
+      else (event.data as AssistantMessage).content = [];
+    } }));
+    expect(seen).toEqual([
+      { type: 'request', source: 'provider_payload', data: {
+        model: 'story', messages: [{ role: 'user', content: 'whole prompt\\nline two' }], arguments: business,
+        api_key: '[REDACTED]', headers: { Authorization: '[REDACTED]', 'X-Api-Key': '[REDACTED]' },
+      } },
+      { type: 'response', source: 'sdk_message', data: output },
+    ]);
+    expect(result.at(-1)).toMatchObject({ type: 'done', snapshot: { content: rawText, reasoning_content: 'raw thought' } });
+    expect(JSON.stringify(seen)).not.toMatch(/secret-test-key|another-key/);
+    expect(output.content).toHaveLength(2);
+  });
+
+  it('keeps SDK error data only in diagnostics, redacts credentials inside error prose, and does not synthesize a provider request on early failure', async () => {
+    const seen: ModelDiagnostic[] = [];
+    const output = message('partial', { stopReason: 'error', errorMessage: 'auth secret-test-key failed' });
+    const client = new PiClient(sdk(finite([{ type: 'error', reason: 'error', error: output }])));
+    const result = await collect(client.stream(selected(client), input, { ...options(), onDiagnostic: event => { seen.push(event); } }));
+    expect(seen).toEqual([{ type: 'response', source: 'sdk_error',
+      data: { ...output, errorMessage: 'auth [REDACTED] failed' } }]);
+    expect(result.at(-1)).toMatchObject({ type: 'error', stopReason: 'provider_error', snapshot: { content: 'partial' } });
+    expect(JSON.stringify(result)).not.toContain('errorMessage');
+
+    seen.length = 0;
+    const fail = new PiClient(sdk(() => { throw new Error('connection secret-test-key failed'); }));
+    await collect(fail.stream(selected(fail), input, { ...options(), onDiagnostic: event => { seen.push(event); } }));
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ type: 'response', source: 'adapter_error',
+      data: { reason: 'provider_error', error: { name: 'Error', message: 'connection [REDACTED] failed' } } });
+    expect(JSON.stringify(seen)).not.toContain('secret-test-key');
+  });
+
+  it('isolates synchronous and async diagnostic failures from model completion', async () => {
+    for (const observe of [() => { throw new Error('logging failed'); }, async () => { throw new Error('async logging failed'); }]) {
+      const callback = vi.fn(observe);
+      const client = new PiClient(sdk(async function* (definition, _context, request) {
+        await request.onPayload?.({ messages: ['hello'] }, definition);
+        yield { type: 'done', reason: 'stop', message: message('OK') };
+      }));
+      const result = await collect(client.stream(selected(client), input, { ...options(), onDiagnostic: callback }));
+      expect(result.at(-1)).toMatchObject({ type: 'done', snapshot: { content: 'OK' } });
+      expect(callback).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it('reports incomplete streams as unavailable responses and ignores late payload callbacks after cancellation', async () => {
+    const incomplete: ModelDiagnostic[] = [];
+    const empty = new PiClient(sdk(finite([])));
+    await collect(empty.stream(selected(empty), input, { ...options(), onDiagnostic: event => { incomplete.push(event); } }));
+    expect(incomplete).toEqual([{ type: 'response', source: 'adapter_error', data: { reason: 'incomplete_output' } }]);
+
+    const controller = new AbortController(), seen: ModelDiagnostic[] = [];
+    let requestOptions: SimpleStreamOptions | undefined;
+    const client = new PiClient(sdk((_definition, _context, request) => {
+      requestOptions = request;
+      return { [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }) };
+    }));
+    const iterator = client.stream(selected(client), input, { ...options(controller), onDiagnostic: event => { seen.push(event); } });
+    await iterator.next();
+    const pending = iterator.next();
+    controller.abort();
+    await pending;
+    await iterator.next();
+    expect(seen).toMatchObject([{ type: 'response', source: 'adapter_error', data: { reason: 'aborted' } }]);
+    await requestOptions!.onPayload?.({ late: true }, model());
+    expect(seen).toHaveLength(1);
+  });
+  it('does not execute provider serialization methods while preparing diagnostic copies', async () => {
+    const serialize = vi.fn(() => { throw new Error('provider toJSON must not run during logging'); });
+    const payload = { model: 'story', toJSON: serialize };
+    const observed: string[] = [];
+    const client = new PiClient(sdk(async function* (definition, _context, request) {
+      await request.onPayload?.(payload, definition);
+      expect(serialize).not.toHaveBeenCalled();
+      yield { type: 'done', reason: 'stop', message: message('OK') };
+    }));
+    const result = await collect(client.stream(selected(client), input, { ...options(),
+      onDiagnostic: event => { observed.push(JSON.stringify(event)); } }));
+    expect(observed).toHaveLength(2);
+    expect(observed[0]).toContain('provider_payload');
+    expect(result.at(-1)).toMatchObject({ type: 'done' });
+  });
+
 });

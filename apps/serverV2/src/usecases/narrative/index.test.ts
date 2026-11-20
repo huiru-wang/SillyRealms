@@ -46,11 +46,14 @@ function deferred<T>() {
 }
 
 let db: DatabaseSync, services: Services, dataRoot: string;
+let logLines: string[];
 let events: EventHub, narrative: NarrativeUsecases, seen: NarrativeEvent[];
 let stream: ReturnType<typeof vi.fn<ModelClient['stream']>>;
 let resolveModel: ReturnType<typeof vi.fn<ModelClient['resolve']>>;
 
 beforeEach(async () => {
+  logLines = [];
+  vi.spyOn(console, 'log').mockImplementation((line: string) => { logLines.push(line); });
   db = openDatabase(':memory:');
   dataRoot = mkdtempSync(join(tmpdir(), 'sr-narrative-run-'));
   services = createServices(db, dataRoot, memoryCredentials());
@@ -724,5 +727,84 @@ describe('queryable narrative results', () => {
     expect(texts()).toEqual(['玩家输入', '完整正文']);
     expect(narrative.get('session', accepted.runId).status).toBe('unknown');
     expect(history()[0]!.extData).toEqual({});
+  });
+});
+
+
+function readLogs(runId?: string) {
+  return logLines.map(line => {
+    expect(line).not.toMatch(/[\r\n\u2028\u2029]/u);
+    const match = /^\[[^\]]+\] \[([^\]]+)\] \[(.*)\]$/u.exec(line);
+    if (!match) throw new Error('Invalid run log: ' + line);
+    return { event: match[1]!, data: JSON.parse(match[2]!) as Record<string, unknown> };
+  }).filter(item => runId === undefined || item.data.runId === runId);
+}
+
+describe('run diagnostic logs', () => {
+  it('records the complete run in order without delta or a duplicate model-input log', async () => {
+    stream.mockImplementation(async function* (_model, messages, options) {
+      options.onDiagnostic?.({ type: 'request', source: 'provider_payload',
+        data: { model: 'story-model', messages, apiKey: 'private-test-secret' } });
+      yield { type: 'request_started' };
+      yield text('完整');
+      options.onDiagnostic?.({ type: 'response', source: 'sdk_message',
+        data: { role: 'assistant', content: [{ type: 'text', text: '完整正文' }], usage: { input: 20, output: 5 } } });
+      yield done();
+    });
+    const { accepted, finished } = submit('第一行\n第二行');
+    const terminalEvent = await finished;
+    const logs = readLogs(accepted.runId);
+    expect(logs.map(item => item.event)).toEqual([
+      'run.created', 'context.completed', 'model.request', 'model.response', 'postprocess.started',
+      'state_update.raw', 'state_update.result', 'action_suggestions.raw', 'action_suggestions.result',
+      'postprocess.completed', 'run.usage', 'run.completed',
+    ]);
+    expect(logs[0]!.data).toMatchObject({ runId: accepted.runId, sessionId: 'session',
+      messages: [{ content: '第一行\n第二行' }] });
+    expect(logs.find(item => item.event === 'context.completed')!.data).toMatchObject({
+      nodes: expect.any(Array), characters: expect.any(Array), lore: expect.any(Array),
+    });
+    expect(JSON.stringify(logs.find(item => item.event === 'context.completed'))).not.toContain('第一行');
+    expect(logs.find(item => item.event === 'model.request')!.data).toMatchObject({
+      purpose: 'narrative', provider: model.providerId, model: model.modelId, source: 'provider_payload',
+      raw: { messages: expect.any(Array) },
+    });
+    expect(logs.find(item => item.event === 'model.response')!.data).toMatchObject({
+      purpose: 'narrative', source: 'sdk_message',
+      raw: { content: [{ type: 'text', text: '完整正文' }], usage: { input: 20, output: 5 } },
+    });
+    expect(logs.find(item => item.event === 'run.usage')!.data).toEqual(
+      seen.find(item => item.event === 'run.usage')!.data);
+    expect(logs.at(-1)!.data).toEqual(terminalEvent.data);
+    expect(logLines.join('\n')).not.toContain('private-test-secret');
+  });
+
+  it('logs accepted creation before an immediate stop and includes the actual stopped result', async () => {
+    const { accepted, finished } = submit('立即停止');
+    narrative.stop('session', accepted.runId);
+    const terminalEvent = await finished;
+    const logs = readLogs(accepted.runId);
+    expect(logs.slice(0, 2).map(item => item.event)).toEqual(['run.created', 'run.stop_requested']);
+    expect(logs.at(-1)).toEqual({ event: 'run.stopped', data: terminalEvent.data });
+    expect(logs.filter(item => item.event === 'run.usage')).toHaveLength(1);
+    expect(logs.some(item => item.event === 'postprocess.started')).toBe(false);
+    expect(stream).not.toHaveBeenCalled();
+  });
+
+  it('records context failure without claiming a completed build or model request', async () => {
+    resolveModel.mockImplementation(() => { throw new AppError('MODEL_NOT_FOUND'); });
+    const { accepted, finished } = submit();
+    expect((await finished).event).toBe('run.stopped');
+    const logs = readLogs(accepted.runId);
+    expect(logs.map(item => item.event)).toEqual(['run.created', 'context.failed', 'run.usage', 'run.stopped']);
+    expect(logs[1]!.data).toMatchObject({ failure: { code: 'MODEL_NOT_FOUND' } });
+  });
+
+  it('keeps persistence, usage and completion intact when the log writer throws', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => { throw new Error('log writer unavailable'); });
+    const { accepted, finished } = submit();
+    expect((await finished).event).toBe('run.completed');
+    expect(history().map(entry => entry.id)).toEqual([accepted.userEntryId, accepted.assistantEntryId]);
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(usage));
   });
 });

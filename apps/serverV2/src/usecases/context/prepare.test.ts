@@ -153,4 +153,24 @@ describe('public context preparation', () => {
     expect(prepared.request.messages.some(message => message.content === 'Short summary')).toBe(true);
     expect(summarize).toHaveBeenCalledOnce();
   });
+
+  it('returns only final-candidate diagnostics after compaction and keeps them outside the model request', async () => {
+    seedCompaction();
+    services.worlds.update('world', { lorebook: { entries: [
+      { id: 'old-topic', title: 'Old topic', content: 'PRIVATE_LORE_CONTENT', load: { mode: 'on_mention', keywords: ['Old story'] } },
+    ] } });
+    const prepared = await prepareContext(dependencies, input());
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error(prepared.failure.code);
+    expect(summarize).toHaveBeenCalledOnce();
+    expect(prepared.diagnostics.lore).toMatchObject([
+      { id: 'old-topic', name: 'Old topic', matched: false, reason: 'keyword_unmatched',
+        keywordMatch: { matchedKeywords: [], excludedKeywords: [], result: false } },
+    ]);
+    expect(prepared.diagnostics.messageCount).toBe(prepared.request.messages.length);
+    expect(prepared.diagnostics.estimatedInputTokens).toBe(prepared.request.estimatedInputTokens);
+    expect(prepared.request).not.toHaveProperty('diagnostics');
+    expect(JSON.stringify(prepared.diagnostics)).not.toMatch(/PRIVATE_LORE_CONTENT|Original persona|Current input|Short summary/);
+  });
+
 });
