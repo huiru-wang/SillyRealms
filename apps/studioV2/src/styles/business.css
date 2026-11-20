@@ -56,3 +56,7 @@ a{color:inherit}.page a,.business-form a,.world-actions a{color:var(--accent)}bu
 .preset-save-ok{color:var(--success);background:var(--success-bg)}
 .model-test-button.is-success{color:var(--success);border-color:var(--success)}
 .model-test-button.is-failed{color:var(--danger);border-color:var(--danger)}
+
+/* The isolated stage owns story rendering; these elements only frame it. */
+.stage-loading{position:absolute;inset:20px 0 auto;text-align:center;pointer-events:none;color:var(--text-muted);font-size:var(--font-13)}
+.usage-values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-3);margin:var(--space-4) 0}.usage-values>div{display:flex;justify-content:space-between;gap:var(--space-3)}.usage-values dt{color:var(--text-muted)}.usage-values dd{margin:0;font-variant-numeric:tabular-nums}

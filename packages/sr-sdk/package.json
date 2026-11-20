@@ -7,7 +7,8 @@
     ".": "./src/index.tsx",
     "./assets": "./src/asset-url.ts",
     "./state-validation": "./src/state-validation.ts",
-    "./world-story.css": "./src/world-story.css"
+    "./world-story.css": "./src/world-story.css",
+    "./stage": "./src/stage/index.tsx"
   },
   "peerDependencies": {
     "react": "19.2.0",

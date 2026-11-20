@@ -15,7 +15,7 @@ export default defineConfig(({mode})=>{
  const env=loadEnv(mode,process.cwd(),''),preview=mode==='world-preview';
  const studio=env.VITE_STUDIO_ORIGIN??'http://127.0.0.1:5176';
  const origin=new URL(studio);if(origin.origin!==studio||!['http:','https:'].includes(origin.protocol))throw Error('Invalid VITE_STUDIO_ORIGIN');
- const csp="default-src 'none'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob: "+studio+"; media-src 'self' https: blob: "+studio+"; font-src 'self' data: "+studio+"; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'";
+ const csp="default-src 'none'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob: "+studio+"; media-src 'self' https: blob: "+studio+"; font-src 'self' data: "+studio+"; connect-src 'none'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'";
  const security:Plugin={name:'v2-preview-policy',transformIndexHtml(html){return preview?html.replace(/content="default-src[^\"]*"/, 'content="'+csp+'"'):html;}};
  return {
   plugins:[react(),onlyEntry(preview),security],appType:preview?'mpa':'spa',

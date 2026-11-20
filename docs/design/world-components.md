@@ -37,7 +37,7 @@
 - `stage_component` 未指定或找不到目标时使用官方 `WorldStory`，其消息规则仍可引用共享组件库。目标存在但编译或执行失败时显示错误，不回退；平台不检查、插入或自动执行作者未使用的 `WorldStory`。
 - `description` 可省略，指定时必须是有效组件引用，不接受旧字符串。介绍组件没有消息匹配参数。
 - 开局的 `type`、`component` 成对提供，必须引用存在的组件。省略时只展示 `content` 的静态文本。预览组件与实际会话正文独立；图片、音频等由作者在预览源码中直接引用。
-- V2 将 `content` 中全部精确的 `{{user}}` 替换为所选玩家角色名称后保存为普通 assistant 消息；`initial_state` 保持消息状态整项覆盖语义。开局预览独立于消息渲染。会话内所有消息统一适用 `message_render` 正则与组件替换，不按开场身份分支；StudioV2 当前尚未挂载会话渲染。
+- V2 将 `content` 中全部精确的 `{{user}}` 替换为所选玩家角色名称后保存为普通 assistant 消息；`initial_state` 保持消息状态整项覆盖语义。开局预览独立于消息渲染。会话内所有消息统一适用 `message_render` 正则与组件替换，不按开场身份分支；StudioV2 会话渲染在独立来源的 frame 内执行。
 - `message_render.rules[].replacement.component` 引用 `components[].id`。`CGImage` 若依赖 `groups`，只作为正则消息组件使用，不自动成为介绍或开局预览。
 - 缺失引用在导入时拒绝（舞台允许找不到目标）；源码编译/运行错误在具体视图内显示重试，不阻止使用有效的其他入口。
 
@@ -65,7 +65,7 @@ export default function Preview() {
 
 `getState(path, scope?)` 默认 global；`batchGetState([{path,scope?}])` 返回对应查询值。没有事件订阅或隐式实时刷新。详情运行环境中的 `useSRStateAPI` 是相同只读 API 的别名；作者使用 `useSRWorldStateAPI` 可获得准确的只读类型。
 
-禁止 session/message 状态、状态写入、Session API、事件订阅和直接 Server HTTP。权限由 Host 再次校验，不能靠伪造 iframe 请求绕过。组件不接收原始世界卡、状态定义、会话对象、凭据或底层 transport。`GET /api/v1/worlds/:id/state` 仅供可信 Host 查询当前 global 状态，再按路径返回结果给组件。初始消息状态查看器仍由平台 UI 提供，不能被预览组件读取。
+禁止 session/message 状态、状态写入、Session API、事件订阅和直接 Server HTTP。权限由 Host 再次校验，不能靠伪造 iframe 请求绕过。组件不接收原始世界卡、状态定义、会话对象、凭据或底层 transport。原 Studio 使用 `GET /api/v1/worlds/:id/state`，StudioV2 使用 `GET /api/v1/state/global/:worldId`，均仅供可信 Host 查询当前 global 状态，再按路径返回结果给组件。初始消息状态查看器仍由平台 UI 提供，不能被预览组件读取。
 
 iframe 使用 CSP `connect-src 'none'`，Server 拒绝来自该独立资源来源的 API 请求。切换页面/开局会销毁旧 iframe、终止未完成请求；媒体元素随文档销毁。安全的旧 prose 可使用 `WorldDocumentContent` 渲染在已有隔离文档中。
 

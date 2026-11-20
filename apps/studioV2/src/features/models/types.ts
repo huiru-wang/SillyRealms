@@ -34,3 +34,10 @@ export type ModelDraft = {
   apiKey: string;
   original?: { providerId: string; modelId: string };
 };
+
+export type ModelConnectionUsage={
+  inputTokens:number;outputTokens:number;totalTokens:number;cacheReadTokens:number;cacheWriteTokens:number;
+};
+export type ModelConnectionResult={
+  providerId:string;modelId:string;connected:true;durationMs:number;usage:ModelConnectionUsage|null;
+};

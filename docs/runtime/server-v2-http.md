@@ -174,7 +174,7 @@ PATCH 仅接受 name、tags、defaultPresetId、defaultApiModelConfigId 的非�
 
 会话列表支持 worldId、limit、cursor，不提供关键词搜索。route 解析游标位置后调用 SessionService；列表项的 worldName/cover 通过 WorldService 在 route 组合，同一请求缓存重复世界读取。SessionService 只返回自身的 Session 领域对象。条目列表支持 afterSeq、limit。整数 query 必须是合法安全整数，再由 Service 校验允许范围。
 
-会话详情 GET 返回 `data.item: SessionView`，包含 worldId、presetId、apiModelConfigId、userCharacterId、tipEntryId、title 等驼峰字段。PATCH 仅支持 title/presetId/apiModelConfigId，世界与玩家身份创建后不再修改。StudioV2 不挂载 SessionHost，不主动请求本节的条目、历史、Run 或 SSE 接口。
+会话详情 GET 返回 `data.item: SessionView`，包含 worldId、presetId、apiModelConfigId、userCharacterId、tipEntryId、title 等驼峰字段。PATCH 仅支持 title/presetId/apiModelConfigId，世界与玩家身份创建后不再修改。StudioV2 会话页通过独立 features 使用本节的历史、叙事与 SSE 接口。
 
 摘要仅由叙事流程生成：POST entries 禁止 type=compaction；PATCH entries 禁止修改 compaction 的 payload/extData，也禁止向普通消息写入 summary 元数据。成功摘要通过 entries/history/runs 读取，payload.summary 为文本，extData.summary 为 {coveredThroughEntryId,sourceHash}，指标保存在该 entry.metrics；state=null 继承。savedMessageIds 不包含摘要，tipEntryId 可以指向摘要。
 
@@ -217,7 +217,7 @@ SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt
 
 `POST /sessions/:id/narrative/runs/:runId/stop` 返回 `data:{runId,stopping:true}`。仅匹配该会话当前内存运行；不匹配或已结束返回 RUN_NOT_FOUND/404。返回值表示已请求停止，最终以 `run.stopped` 及其 stop_reason 为准；保存失败优先于普通取消。断开 POST 或 SSE 都不会代替显式 stop。
 
-客户端应先连接 `/sessions/:id/events` 再提交；事件可能早于 POST 响应，按 runId/messageId 关联。断线后重新读取 entries/history 判断已保存内容，不自动重发提交。没有事件回放、重启续跑、自动重试或请求去重接口；当前 StudioV2 仍只接入管理和作者预览，未挂载叙事运行 UI。
+客户端应先连接 `/sessions/:id/events` 再提交；事件可能早于 POST 响应，按 runId/messageId 关联。断线后重新读取 entries/history 判断已保存内容，不自动重发提交。没有事件回放、重启续跑、自动重试或请求去重接口；StudioV2 按这些约束接入会话运行，详见 [StudioV2 运行接入](studio-v2-runtime.md)。
 
 ## 叙事查询与用量
 
@@ -291,7 +291,7 @@ run.completed 表示正文主流程完成，不等同于能力全部成功。能
 
 `GET /runtime/config` 返回 `data:{stage:{origin,entryPath:"/frame.html"},debug}`，Cache-Control 为 no-store。origin 是含端口的完整公开 HTTP(S) 来源，不另返回 port，也不按请求 Host 猜测。来源不能与 Studio 同源；HTTPS Studio 不允许 HTTP 舞台。debug 是前端调试开关，不返回内部环境变量或凭据。
 
-默认舞台来源 `http://127.0.0.1:5177`；CLI 配置 SERVER_V2_STAGE_ORIGIN、SERVER_V2_DEBUG=true，以及已有 SERVER_V2_STUDIO_ORIGIN。舞台由独立静态来源提供，ServerV2 配置接口不启动额外监听器。StudioV2 隔离构建包含 frame.html 和 world-component.html，管理来源仅有 index.html；运行 UI/SDK transport 尚未接入本轮叙事与 state 契约。
+默认舞台来源 `http://127.0.0.1:5177`；CLI 配置 SERVER_V2_STAGE_ORIGIN、SERVER_V2_DEBUG=true，以及已有 SERVER_V2_STUDIO_ORIGIN。舞台由独立静态来源提供，ServerV2 配置接口不启动额外监听器。StudioV2 隔离构建包含 frame.html 和 world-component.html，管理来源仅有 index.html；运行 UI 与 Stage SDK 使用本节叙事和 state 契约。
 
 ## 状态接口
 
@@ -368,12 +368,12 @@ set-state 用例在同步事务内读取、保存、计算变更与收集接收�
 
 不新增连接、SSE id、事件持久化或回放。断线期间的状态事件不补发；接入方初次装载和重连时读取最新快照。
 
-本轮仅整理服务端，未修改 Studio、StudioV2 或 SDK transport。已有世界组件预览对旧 global 路径的调用也尚未迁移。以下是新服务端契约对后续调用方接入的要求，不代表前端已经完成适配：
+StudioV2 的 state feature 与 Stage SDK 已按以下规则接入；世界组件预览使用新 global 路径。原 Studio 保持独立：
 
 - 按需读取各 scope；message GET 的数组/null 需解码成 SDK 读取使用的对象视图，全部状态由三个 GET 的结果组合。
 - 混合 scope 的 batch 按 scope 分组请求对应 PATCH，再按原输入顺序合并结果。
 - 订阅现有会话 SSE 的 state.changed；识别 `path: ""` 整体替换和普通路径替换。message 事件表示当前 tip，不应用到任意历史消息的缓存。
-- success:true 包含成功忽略，不能将每个成功结果都当成已写入并把提交值直接加入本地快照。后续 transport 需以重新读取的服务端状态等权威结果同步缓存，避免缺失路径在客户端出现未保存的值。
+- success:true 包含成功忽略，不能将每个成功结果都当成已写入并把提交值直接加入本地快照。transport 以重新读取的服务端状态等权威结果同步缓存，避免缺失路径在客户端出现未保存的值。
 
 ## SSE 与下载例外
 
@@ -390,4 +390,4 @@ set-state 用例在同步事务内读取、保存、计算变更与收集接收�
 
 ## 验证
 
-函数验证使用内存或临时 SQLite、临时文件和最小 CredentialStore 替身，不访问真实凭据。配合 `typecheck`、`lint` 检查接口和边界。state 路由通过进程内请求验证，不启动真实服务或执行浏览器链路测试，不验证尚未适配的前端。架构lint覆盖modules属主、模块唯一出口、Reader依赖、usecases边界、context唯一公开出口及无叙事/EventHub反向依赖、跨层存储访问和SQL属主；类型检查验证Reader不可调用写方法及事务不能接受异步回调。
+函数验证使用内存或临时 SQLite、临时文件和最小 CredentialStore 替身，不访问真实凭据。配合 `typecheck`、`lint` 检查接口和边界。state 路由通过进程内请求验证，不启动真实服务或执行浏览器链路测试，前端另有函数级控制器与桥接验证，见 StudioV2 文档。架构lint覆盖modules属主、模块唯一出口、Reader依赖、usecases边界、context唯一公开出口及无叙事/EventHub反向依赖、跨层存储访问和SQL属主；类型检查验证Reader不可调用写方法及事务不能接受异步回调。

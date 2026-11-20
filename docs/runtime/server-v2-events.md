@@ -147,7 +147,7 @@ data: {"runId":"r-1","sessionId":"s-1","provider":"deepseek","model":"deepseek-f
 - 缺失路径忽略、同值、失败及回滚不发布；读取和初始化也不发布。PATCH 每项提交后推送，再处理下一项。
 - 普通消息追加若改变有效状态，保存 entry 并推进 tip 后推送完整快照。叙事后处理先计算候选及变更，提交助手/状态并释放执行锁后推送完整 message 快照；partial_success 中有效行造成的真实变化同样发布，无变化继续 null 继承且不发事件。
 
-发布由用例编排，StateService 计算变更，接收会话由 SessionService 查询；EventHub 保持独立。事件没有持久化/重放，初次装载及重连应重新读取状态快照。详见 [状态接口](server-v2-http.md#状态接口)。服务端契约已实现，StudioV2/SDK transport 的接入另行完成。
+发布由用例编排，StateService 计算变更，接收会话由 SessionService 查询；EventHub 保持独立。事件没有持久化/重放，初次装载及重连应重新读取状态快照。详见 [状态接口](server-v2-http.md#状态接口)。StudioV2 的 state feature 与 Stage SDK 已按该契约接入，桥接只传递当前投影和原生事件。
 
 ## 行动建议创建
 

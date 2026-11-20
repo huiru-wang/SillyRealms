@@ -10,9 +10,9 @@ StudioV2 与 ServerV2 是独立工作区，不切换或修改原 Studio/Server �
 | 预设 | 列表、按需读取详情、创建、复制、编辑、删除、文件导入导出、设为默认；当前仅叙事类型 |
 | 模型 | 分页列表、详情、新增、修改、删除、凭据保存状态、设为默认；按 provider 选择 SDK 模型并紧凑展示能力参数 |
 | 设置 | 主题和应用默认预设/模型，默认项可以清空 |
-| 会话 | 从世界详情进入关联列表、选择开局并创建会话和首条消息、查看详情、修改标题/预设/模型、删除 |
+| 会话 | 从世界详情进入关联列表、选择开局并创建会话和首条消息、隔离舞台与叙事运行、修改标题/预设/模型、删除 |
 
-会话创建读取已有世界及可扮演角色，全局会话页和世界详情共用创建弹窗。世界详情只管理名称、标签和默认配置，不提供作者内容编辑器。空 V2 库没有世界时会提示无法创建；不会读取旧 Server 数据或生成模拟世界。创建请求提交 openingId，由 ServerV2 原子保存会话、初始状态及替换 {{user}} 后的首条 assistant 消息，不调用模型或执行作者组件。创建成功仍进入管理详情，舞台渲染与 SDK transport 接入另行完成。复制保留的其他功能源文件未挂载，不构成 V2 的运行能力。
+会话创建读取已有世界及可扮演角色，全局会话页和世界详情共用创建弹窗。世界详情只管理名称、标签和默认配置，不提供作者内容编辑器。空 V2 库没有世界时会提示无法创建；不会读取旧 Server 数据或生成模拟世界。创建请求提交 openingId，由 ServerV2 原子保存会话、初始状态及替换 {{user}} 后的首条 assistant 消息，不调用模型或执行作者组件。创建成功进入会话运行页；发送、停止、历史、状态和行动建议使用 ServerV2 契约，见 [会话运行接入](studio-v2-runtime.md)。
 
 ## 数据行为
 
@@ -23,7 +23,7 @@ StudioV2 与 ServerV2 是独立工作区，不切换或修改原 Studio/Server �
 - 预设目录只加载摘要，编辑器进入详情后加载正文；已保存数据与草稿独立，导航保留草稿。保存携带版本，409 冲突保留草稿，可复制或确认放弃后重新读取。温度留空代表不指定，滚动摘要才要求摘要提示词。
 - 管理列表可继续加载下一页；选择器读取全部摘要页，避免已有配置在第一页外时丢失。查询切换取消过期请求，错误可重试。
 - 设置只提交变化字段。显式清空保存 null，应用默认仅在世界导入时复制，不覆盖已有世界或会话。预设/模型入口设默认后同步全局状态。
-- 模型保存 API Key 到 ServerV2 的 macOS Keychain 适配器，业务数据库仅存引用，返回值不包含密钥。编辑留空保留原 Key，更换服务商需提供新 Key。configured 只表示存储中存在，不表示调用成功。模型目录来自 ServerV2 的 pi SDK；后端已有连通性检测接口，当前管理页尚未提供检测按钮。其他平台需要装配自己的 CredentialStore，默认不落地明文。
+- 模型保存 API Key 到 ServerV2 的 macOS Keychain 适配器，业务数据库仅存引用，返回值不包含密钥。编辑留空保留原 Key，更换服务商需提供新 Key。configured 只表示存储中存在，不表示调用成功。模型目录来自 ServerV2 的 pi SDK；已保存模型配置可由用户显式点击测试连接；检测使用服务端保存的配置，不使用未保存草稿。其他平台需要装配自己的 CredentialStore，默认不落地明文。
 - 模型目录从 `/api/v1/providers/models` 读取 provider 分组；添加/编辑先选服务商，再选该组模型，切服务商清空模型，名称与 API Key 仍由用户填写。目录加载与重试不自动覆盖草稿；已有配置不在当前 SDK 目录中时显示保留项，不自动替换 ID。
 - 模型选择后在紧凑参数区显示上下文窗口、最大输出、推理能力、有效思考档位、协议、输入模态及缓存短/长保留时长；详情复用同一参数展示。thinkingLevels 由 SDK 计算，thinkingLevelMap 保留原始映射；缓存单位秒转为可读时长，缺失显示未提供。缓存值是 SDK 最佳估计，不等于当前调用策略或供应商保证。
 - 不再包含初始化向导页面、入口、专属加载 Hook 或样式，也不根据是否配置默认模型/API Key 阻止访问管理页。每次服务端启动会补齐缺失的内置预设和设置；已有用户修改与默认选择（包括 null）保持不变。没有模型时用户在模型页自行添加。
@@ -48,7 +48,7 @@ ServerV2 默认为 127.0.0.1:3001，数据目录 runtime/server-v2；可配置 S
 
 ## 作者内容预览与部署
 
-预览入口 `world-component.html` 使用独立来源，默认 `http://127.0.0.1:5177`。`dev:world-preview-v2` 提供作者介绍/开局预览及隔离的 frame.html 舞台文档；未启动它时管理和静态内容仍可用，组件显示加载错误及重试。提供静态舞台入口不等于接通会话运行 UI；当前管理页仍不挂载 SessionHost。
+预览入口 `world-component.html` 使用独立来源，默认 `http://127.0.0.1:5177`。`dev:world-preview-v2` 提供作者介绍/开局预览及隔离的 frame.html 舞台文档；未启动它时管理和静态内容仍可用，组件显示加载错误及重试。会话页使用独立 frame.html；舞台重建不销毁会话业务控制器。
 
 `pnpm --filter @sillyrealms/studio-v2 build` 分别构建 `dist`（管理）和 `dist-preview`（world-component.html 与 frame.html 隔离文档）。两个目录必须部署在不同来源；不能把预览文档放回管理来源。配置如下：
 
@@ -71,4 +71,4 @@ ServerV2 默认为 127.0.0.1:3001，数据目录 runtime/server-v2；可配置 S
 
 只执行函数级测试、TypeScript 类型检查和服务端架构 lint。不启动开发服务、不访问真实凭据、不执行 HTTP、浏览器或模型调用链路测试。前端函数测试覆盖预设转换、世界资源地址、预览来源/权限、状态投影、下载与编译缓存；服务端函数测试覆盖世界摘要/版本/组件读取、导入导出与文件清理、会话身份、状态和数据库迁移。预览配置只做函数加载检查；未执行真实浏览器隔离、视觉或媒体播放验收。
 
-ServerV2 的 `/api/v1/runtime/config` 使用 `{stage:{origin,entryPath},debug}`，不再传单独 port。StudioV2 stageURL 按完整 origin 构造 frame.html，校验隔离与 HTTPS，并保留 hostOrigin/nonce。Vite 的 world-preview 模式开放 frame.html/world-component.html 并一同打入 dist-preview，禁止 API 代理；管理模式拒绝这两个 HTML 入口。保留的 host 已更新配置路径，其他会话 transport/UI 的新叙事接口适配仍未挂载，本轮不声称可直接运行完整会话舞台。
+ServerV2 的 `/api/v1/runtime/config` 使用 `{stage:{origin,entryPath},debug}`，不再传单独 port。StudioV2 stageURL 按完整 origin 构造 frame.html，校验隔离与 HTTPS，并保留 hostOrigin/nonce。Vite 的 world-preview 模式开放 frame.html/world-component.html 并一同打入 dist-preview，禁止 API 代理；管理模式拒绝这两个 HTML 入口。会话页现已通过独立 features 与受限桥接入叙事、state 和查询契约；源码/函数验证不替代真实模型与浏览器验收。

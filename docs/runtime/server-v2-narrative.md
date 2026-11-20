@@ -4,11 +4,11 @@
 
 ServerV2 在现有会话上提供按预设整理上下文、可选一次摘要调用、一次正文调用、正文/公开 reasoning/工具请求增量和显式停止。用户受理时先保存；助手完整或部分公开内容在正常结束、失败或停止时独立结算。用户、成功摘要及助手各自保存，不使用跨模型调用的整体事务。SSE 只使用 ServerV2 自有契约，外部仅发布一次 run 总 usage，异常终态仅使用 stop_reason。
 
-StudioV2 仍只接入管理与作者预览，未挂载叙事运行 UI。原 Server/Studio 保持独立。ServerV2 处理正文尾部的状态 JSONL 与行动建议数组；不提供 Agent/tool loop、修复重试、重启恢复、执行状态表或事件回放。
+StudioV2 已接入管理、作者预览与文本叙事运行页，见 [运行接入](studio-v2-runtime.md)。原 Server/Studio 保持独立。ServerV2 处理正文尾部的状态 JSONL 与行动建议数组；不提供 Agent/tool loop、修复重试、重启恢复、执行状态表或事件回放。
 
 会话创建由独立 create-session 用例完成开局选择、{{user}} 替换、session/message 初始状态和首条 assistant 消息的一次事务保存，只发 session.created。首条消息是普通 run 分组的一部分，不分类；其正文参与后续历史，状态被后继继承，不执行模型。
 
-状态 HTTP 独立提供三个 scope 的 GET/PATCH/PUT。叙事后处理只更新本轮激活且已存在的 message 路径，不向模型开放 global/session 写入；公共 PATCH 的缺失路径忽略语义保持不变。state.changed 保持 `{path,scope,value}` 契约，在成功提交实际变化后发布；message 事件表示当前 tip 的有效继承视图。叙事有变化时保存完整助手状态快照，无变化时继续 null 继承；内部 getViews/evaluateWhen 服务于叙事上下文。具体写入与读取语义见 [状态接口](server-v2-http.md#状态接口)。本轮状态接口整理仅修改服务端，StudioV2 与 SDK transport 尚未适配新路径。
+状态 HTTP 独立提供三个 scope 的 GET/PATCH/PUT。叙事后处理只更新本轮激活且已存在的 message 路径，不向模型开放 global/session 写入；公共 PATCH 的缺失路径忽略语义保持不变。state.changed 保持 `{path,scope,value}` 契约，在成功提交实际变化后发布；message 事件表示当前 tip 的有效继承视图。叙事有变化时保存完整助手状态快照，无变化时继续 null 继承；内部 getViews/evaluateWhen 服务于叙事上下文。具体写入与读取语义见 [状态接口](server-v2-http.md#状态接口)。StudioV2 的 state feature 与 Stage SDK 按这些路径和事件语义接入，写后读取权威状态，不乐观推导被忽略的值。
 
 | 位置 | 职责 |
 | --- | --- |

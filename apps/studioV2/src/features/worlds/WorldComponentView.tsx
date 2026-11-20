@@ -49,7 +49,7 @@ function MountedWorldComponent({world,entry,title,retry}:{world:WorldDetail;entr
           try {
             if(JSON.stringify(data).length>300000)throw Error('REQUEST_TOO_LARGE');
             const queries=worldStateQueries(data.method,data.data);
-            const snapshot=await api<{item:Record<string,any>}>('v1/worlds/'+encodeURIComponent(world.id)+'/state',{signal:abort.signal});
+            const snapshot=await api<{item:Record<string,any>}>('v1/state/global/'+encodeURIComponent(world.id),{signal:abort.signal});
             if(!gone)port?.postMessage({type:'response',id:data.id,data:queries.map(query=>({...query,value:readWorldState(snapshot.item,query.path)}))});
           }catch(err){if(!gone)port?.postMessage({type:'response',id:data.id,error:err instanceof Error?err.message:'State read failed'});}
         }

@@ -12,6 +12,7 @@ import {useManagement} from '../../app/ManagementData';
 import {usePagedResource,useResource} from '../../data';
 import {changeProvider,findCatalogModel,keepsSavedSelection,modelDraft,modelDraftError} from './catalog';
 import {ModelMetadata} from './ModelMetadata';
+import {ModelConnectionTest} from './ModelConnectionTest';
 import type {ModelCatalog,ModelConfig,ModelDraft} from './types';
 import styles from './ModelsPage.module.css';
 
@@ -96,7 +97,7 @@ export function ModelsPage(){
        {!draft&&catalogStatus}
        {selectedModel?<ModelMetadata model={selectedModel}/>:catalog.value&&providers.length>0&&<p className={styles.catalogStatus} role="status">当前配置的模型未在目录中，已保存的连接保持不变。</p>}
       </div>
-      <p>连接信息已保存后，可用于绑定配置。尚未验证模型调用。</p>
+      <ModelConnectionTest key={selected.id+":"+selected.updatedAt+":"+selected.credentialStatus} model={selected} disabled={busy||!!draft} editing={!!draft}/>
       <section className={styles.preference}><div><h3>应用默认模型</h3><p>用于之后导入的世界卡。</p></div>{defaultId===selected.id?<span className={styles.defaultState}><Check size={15}/>当前默认</span>:<Button disabled={busy||!settings.value} onClick={()=>void selectDefault(selected.id)}>设为默认</Button>}</section>
       {settings.error&&<ErrorNotice message={settings.error} onRetry={settings.reload}/>}
       <div className={styles.connectionActions}><Button variant="ghost" intent="danger" icon={<Trash2 size={16}/>} disabled={busy} onClick={()=>{setError('');setDeleting(selected);}}>删除配置</Button></div>

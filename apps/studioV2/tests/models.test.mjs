@@ -91,3 +91,43 @@ test('cache durations preserve seconds and distinguish zero, missing and invalid
  assert.equal(cacheDuration(86400),'1 天');assert.equal(cacheDuration(1.5),'1.5 秒');
  for(const value of [null,undefined,-1,NaN,Infinity])assert.equal(cacheDuration(value),'未提供');
 });
+
+import {connectionTestError,testModelConnection} from '../src/features/models/connection-test.ts';
+const connectionResult=()=>({
+  connected:true,providerId:'one',modelId:'shared-id',durationMs:120,
+  usage:{inputTokens:7,outputTokens:2,totalTokens:9,cacheReadTokens:3,cacheWriteTokens:0},
+});
+test('connection testing explicitly posts a saved config ID without keys or editable fields',async()=>{
+  const calls=[],response=connectionResult(),abort=new AbortController();
+  const actual=await testModelConnection('saved/id',abort.signal,async(path,options)=>{
+    calls.push({path,options});return {...response,unpublished:'not exposed'};
+  });
+  assert.equal(calls.length,1);assert.equal(calls[0].path,'v1/api-model-configs/saved%2Fid/test');
+  assert.equal(calls[0].options.method,'POST');assert.equal(calls[0].options.signal,abort.signal);
+  assert.equal(Object.hasOwn(calls[0].options,'body'),false);
+  assert.deepEqual(actual,response);assert.equal(actual.usage.inputTokens,7);
+});
+test('connection results retain real zero values and unknown usage without estimated tokens',async()=>{
+  const result=await testModelConnection('saved',undefined,async()=>({...connectionResult(),durationMs:0,usage:null}));
+  assert.equal(result.durationMs,0);assert.equal(result.usage,null);
+  const zero=await testModelConnection('saved',undefined,async()=>({...connectionResult(),usage:{
+    inputTokens:0,outputTokens:0,totalTokens:0,cacheReadTokens:0,cacheWriteTokens:0,
+  }}));
+  assert.equal(zero.usage.totalTokens,0);
+});
+test('model testing preserves actual API failures and rejects malformed success responses',async()=>{
+  const reason=Object.assign(Error('模型服务调用失败'),{errorCode:'PROVIDER_ERROR'});
+  await assert.rejects(testModelConnection('saved',undefined,async()=>{throw reason;}),error=>error===reason);
+  assert.equal(connectionTestError(reason),'模型服务调用失败（PROVIDER_ERROR）');
+  for(const response of [
+    {...connectionResult(),connected:false},{...connectionResult(),providerId:''},
+    {...connectionResult(),durationMs:NaN},{...connectionResult(),usage:{totalTokens:0}},
+  ])await assert.rejects(testModelConnection('saved',undefined,async()=>response),/模型测试响应格式无效/);
+});
+test('leaving a model detail cancels before execution or discards a late test result',async()=>{
+  const before=new AbortController();before.abort();let requests=0;
+  await assert.rejects(testModelConnection('saved',before.signal,async()=>{requests++;return connectionResult();}),{name:'AbortError'});
+  assert.equal(requests,0);
+  const during=new AbortController();
+  await assert.rejects(testModelConnection('saved',during.signal,async()=>{during.abort();return connectionResult();}),{name:'AbortError'});
+});

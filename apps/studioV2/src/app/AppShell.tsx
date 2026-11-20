@@ -35,9 +35,10 @@ export function AppShell(){
 
   const nav=useNavigate();
   const location=useLocation();
+  const isSessionDetail=/^\/sessions\/[^/]+\/?$/.test(location.pathname);
   const isWorldDetail=/^\/worlds\/[^/]+\/?$/.test(location.pathname);
   const isLibraryDetail=/^\/(?:worlds|sessions|presets|models)\/[^/]+\/?$/.test(location.pathname);
-  const showMobileNav=isLibraryDetail||['/worlds','/sessions','/presets','/models','/settings'].includes(location.pathname.replace(/\/+$/,'')||'/');
+  const showMobileNav=!isSessionDetail&&(isLibraryDetail||['/worlds','/sessions','/presets','/models','/settings'].includes(location.pathname.replace(/\/+$/,'')||'/'));
   const {presets,defaultPresetId}=usePresetStore();
   const presetShortcuts=[...presets.filter(preset=>preset.id===defaultPresetId),...presets.filter(preset=>preset.id!==defaultPresetId)].slice(0,2);
   const toggleCollapsed=()=>{

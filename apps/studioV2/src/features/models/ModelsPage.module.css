@@ -63,3 +63,9 @@
  .page[data-detail="true"]{padding-bottom:0}
  .page[data-detail="true"] .detailBody{flex:1;padding-bottom:var(--mobile-nav-space);scroll-padding-bottom:var(--mobile-nav-space)}
 }
+
+.connectionTest{display:grid;gap:var(--space-3);padding:0 0 var(--space-5)}
+.connectionTestHeading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);flex-wrap:wrap}
+.connectionTestHeading h3{margin:0;font-size:var(--font-13);font-weight:500}
+.connectionTestHeading p{margin:6px 0 0;font-size:var(--font-12);line-height:1.6;color:var(--text-muted)}
+.connectionTest>.credential{margin:0;font-size:var(--font-13)}

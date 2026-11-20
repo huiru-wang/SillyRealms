@@ -1,6 +1,6 @@
 # SillyRealms StudioV2
 
-独立对接 ServerV2 的管理前端：世界内容库、预设、模型配置、设置、基础会话。世界作者内容只读，不挂载 runtime。
+独立对接 ServerV2：世界内容库、预设、模型配置、设置和文本叙事会话。世界作者内容保持只读；会话页提供隔离舞台、流式生成、状态及行动建议。
 
 在仓库根目录分别运行：
 
@@ -18,4 +18,4 @@ StudioV2 默认 http://127.0.0.1:5176，API 默认 http://127.0.0.1:3001。代�
 
 作者组件预览默认使用独立来源 http://127.0.0.1:5177，管理和静态内容不依赖它。生产构建分别输出 dist 与 dist-preview，必须分开来源部署；来源配置和 CSP 约束见管理工作区文档。
 
-隔离服务同时提供 `world-component.html` 与 `frame.html`，均进入 dist-preview。ServerV2 `/api/v1/runtime/config` 通过 SERVER_V2_STAGE_ORIGIN 发布完整舞台来源，SERVER_V2_DEBUG=true 开启公开 debug 标志。当前仅提供舞台文档入口，管理页尚未挂载新会话运行 UI。
+隔离服务同时提供 `world-component.html` 与 `frame.html`，均进入 dist-preview。ServerV2 `/api/v1/runtime/config` 通过 SERVER_V2_STAGE_ORIGIN 发布完整舞台来源，SERVER_V2_DEBUG=true 开启公开 debug 标志。创建会话后进入运行页，Host 与 frame 通过受限 MessagePort 桥连接。架构、SDK 与恢复边界见 [会话运行接入](../../docs/runtime/studio-v2-runtime.md)。
