@@ -128,9 +128,8 @@
 .sr-story .sr-story-latest { position: absolute; bottom: calc(16px + var(--_story-bottom-inset)); inset-inline: 16px; display: flex; justify-content: center; pointer-events: none; }
 .sr-story .sr-story-latest .sr-more { pointer-events: auto; min-height: 40px; padding: 9px 15px; color: var(--_story-text); background: var(--_story-surface); border-color: var(--_story-line); border-radius: 999px; box-shadow: 0 4px 20px #00000012; }
 .sr-story .sr-story-latest span { margin-inline-start: 6px; color: var(--_story-muted); }
-.sr-story .sr-suggestions { box-sizing: border-box; flex: none; width: 100%; max-width: 740px; margin: -4px 0 4px; font-size: 11px; color: var(--_story-muted); }
-.sr-story .sr-suggestions > span { display: block; margin-bottom: 10px; }
-.sr-story .sr-suggestions > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.sr-story .sr-suggestions { display: flex; flex-wrap: wrap; gap: 8px; box-sizing: border-box; flex: none; width: 100%; max-width: 740px; margin: -4px 0 4px; font-size: 11px; color: var(--_story-muted); }
+.sr-story .sr-processing pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .sr-story .sr-suggestions button {
   appearance: none; max-width: 100%; min-height: 38px; border: 1px solid var(--_story-line); border-radius: 8px;
   padding: 9px 12px; color: var(--_story-text); background: transparent; font: inherit; font-size: 12px;
@@ -191,7 +190,7 @@
   .sr-story .sr-more,
   .sr-story .sr-suggestions button,
   .sr-story .sr-error button { min-height: 44px; }
-  .sr-story .sr-suggestions > div { flex-direction: column; align-items: stretch; }
+  .sr-story .sr-suggestions { flex-direction: column; align-items: stretch; }
 }
 @container sr-story (max-width: 340px) {
   .sr-story .sr-chat-messages { padding-inline: 12px; }

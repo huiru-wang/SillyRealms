@@ -7,7 +7,7 @@ export interface SRSessionAPI {
   setDraft(text: string): Promise<void>;
   send(text: string): Promise<AcceptedRun>;
   stop(runId: string): Promise<{runId: string; stopping: true}>;
-  /** ServerV2 returns items/entries; querying never changes the displayed history. */
+  /** Server returns items/entries; querying never changes the displayed history. */
   getRuns(options?: RunQuery): Promise<RunPage>;
   subscribe(listener: (event: SessionEvent) => void): () => void;
 }

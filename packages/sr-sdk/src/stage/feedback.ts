@@ -22,7 +22,7 @@ const stopped: Record<string, string> = {
   internal_error: '本轮生成遇到错误并已停止。',
 };
 
-/** Presentation follows ServerV2 outcomes. Capability diagnostics never change a completed run. */
+/** Presentation follows Server outcomes. Capability diagnostics never change a completed run. */
 export function runNotice(run: StageRun): string | null {
   if (run.status === 'stopping') return '正在停止生成…';
   if (run.status === 'running') return run.phase === 'summarizing' ? '正在整理历史摘要…'

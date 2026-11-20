@@ -8,7 +8,7 @@ importers:
 
   .: {}
 
-  apps/serverV2:
+  apps/server:
     dependencies:
       '@earendil-works/pi-ai':
         specifier: 1.5.0
@@ -72,7 +72,7 @@ importers:
         specifier: 5.1.0
         version: 5.1.0(@types/node@26.6.6)(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
 
-  apps/studioV2:
+  apps/web:
     dependencies:
       '@lexical/history':
         specifier: ^0.53.0

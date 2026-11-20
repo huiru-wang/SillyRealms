@@ -7,7 +7,7 @@ const checks:Array<{name:string;pass:boolean}>=[];
 const wait=()=>new Promise(resolve=>setTimeout(resolve,250));
 const root=createRoot(document.querySelector('#root')!);
 const filtered='<!doctype html><html><head><style>.card{color:red;background-image:url(https://evil.test/a);position:fixed}@import url(https://evil.test/a)</style></head><body><div class="card">内容</div></body></html>';
-const assetBaseUrl='http://127.0.0.1:5189/world-assets/card-one/';
+const assetBaseUrl='http://127.0.0.1:5189/api/v1/worlds/card-one/resources/';
 root.render(<><div className="plain"><WorldDocumentRenderer title="plain" content="普通文本"/></div><div className="card"><WorldDocumentRenderer title="card" content="开局文本"/></div><div id="warning-default"><WorldDocumentRenderer title="default-warning" content={filtered}/></div><div id="warning-hidden"><WorldDocumentRenderer title="hidden-warning" content={filtered} showStyleWarning={false}/></div><SRAssetProvider baseUrl={assetBaseUrl}><WorldDocumentRenderer title="assets" content={'![港口](sr-asset://assets/images/harbor.webp)'}/><div id="component-prose"><WorldDocumentContent content={'<img src="sr-asset://assets/images/harbor.webp">'}/></div></SRAssetProvider></>);
 async function run(){
   await wait();
@@ -30,7 +30,7 @@ async function run(){
   document.documentElement.style.setProperty('--text','#f3eef7');
   document.documentElement.dataset.theme='dark';await wait();
   plain=read('plain');
-  checks.push({name:'Studio text token keeps isolated prose readable without legacy ink',pass:plain?.color==='rgb(243, 238, 247)'});
+  checks.push({name:'Web text token keeps isolated prose readable without legacy ink',pass:plain?.color==='rgb(243, 238, 247)'});
   root.unmount();document.querySelector('#results')!.textContent=JSON.stringify(checks,null,2);document.title=checks.every(c=>c.pass)?'PASS':'FAIL';
 }
 void run();

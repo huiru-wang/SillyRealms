@@ -1,176 +1,147 @@
-import { readRunPage } from '../domain/session/history-page.js';
-import { randomUUID } from 'node:crypto';
-import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
-import { z } from 'zod';
-import { pageByUpdated } from '../common/pagination.js';
-import { readAncestors } from '../domain/session/ancestors.js';
-import { failure } from '../common/http-response.js';
-import { decodePreset } from '../repositories/preset-repository.js';
-import { publicRunResult } from '../domain/session/run-result.js';
-import { ErrorCodes, normalizeError, stateErrorDetails } from '../common/error-codes.js';
-import { initialState, applyOpening, validateSnapshot, decodeMessageState } from '../domain/state/state.js';
+import { AppError } from '../errors.js';
+import type { EventHub } from '../infrastructure/events/event-hub.js';
+import { createSessionEventsResponse } from '../infrastructure/events/session-events.js';
+import { decodeCursor, encodeCursor } from '../http/pagination.js';
+import { numberQuery, readJson, success } from '../http/response.js';
+import { requireSessionAccess, type SessionAccessCheck } from '../http/session-access.js';
+import type {
+  AppendEntryInput, Session, SessionListOptions, SessionService, UpdateEntryInput, UpdateSessionInput,
+} from '../modules/sessions/service.js';
+import type { WorldService } from '../modules/worlds/service.js';
+import type { AppendEntry } from '../usecases/append-entry.js';
+import type { CreateSession, CreateSessionInput } from '../usecases/create-session.js';
 
-import { transaction } from '../domain/tags.js';
-import { worldFailure } from './world-failure.js';
-import { readWorld } from '../repositories/world-repository.js';
-import { MacKeychainStore, type CredentialStore } from '../infrastructure/credentials/store.js';
+export type SessionSummary = Pick<Session, 'id' | 'worldId' | 'presetId' | 'apiModelConfigId' | 'title' | 'updatedAt'>
+  & { worldName: string; cover: string | null };
+export type SessionView = SessionSummary & Pick<Session, 'userCharacterId' | 'tipEntryId' | 'createdAt'>;
 
-const create = z.object({ worldId: z.string().min(1), openingId: z.string().min(1), userCharacterId: z.string().min(1), title: z.string().nullable().optional() }).strict();
-export function sessionRoutes(db: DatabaseSync, busy: (id:string) => boolean = () => false, removeSessions: <T>(ids:string[], remove:()=>T) => Promise<T> = async (_ids, remove) => remove(), worldDeleting:(id:string)=>boolean = () => false, onUpdated:(id:string)=>void = () => {}, credentials: CredentialStore = new MacKeychainStore(), activeRun: (id:string)=>Record<string, any>|null = () => null): Hono {
-  const app = new Hono();
-  const capabilityView = (id: string) => {
-    const row = db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
-    if (!row) return null;
-    const presetRow = db.prepare('SELECT * FROM presets WHERE id=?').get(String(row.preset_id));
-    if (!presetRow) return null;
-    const preset = decodePreset(presetRow);
-    const enabled = (id: string) => preset.config_json.nodes.some(n => n.id === id && n.enabled);
-    return { effective: { state_update: { enabled: enabled('worldState') }, action_suggestions: { enabled: enabled('actionSuggestions') } } };
+function projectSessions(items: readonly Session[], worlds: WorldService): SessionSummary[] {
+  const cache = new Map<string, Pick<SessionSummary, 'worldName' | 'cover'>>();
+  return items.map(item => {
+    let world = cache.get(item.worldId);
+    if (!world) {
+      const current = worlds.require(item.worldId);
+      world = { worldName: current.name, cover: current.cover };
+      cache.set(item.worldId, world);
+    }
+    return {
+      id: item.id, worldId: item.worldId, presetId: item.presetId, apiModelConfigId: item.apiModelConfigId,
+      title: item.title, updatedAt: item.updatedAt, ...world,
+    };
+  });
+}
+
+function projectSession(item: Session, worlds: WorldService): SessionView {
+  return {
+    ...projectSessions([item], worlds)[0]!,
+    userCharacterId: item.userCharacterId, tipEntryId: item.tipEntryId, createdAt: item.createdAt,
   };
-  app.get('/:id/capabilities', c => {
-    const view = capabilityView(c.req.param('id'));
-    return view ? c.json(view) : c.json(failure(ErrorCodes.SESSION_NOT_FOUND), 404);
-  });
-  app.post('/', async c => {
-    try {
-      const input = create.parse(await c.req.json());
-      const title = input.title?.trim() || '未命名会话';
-      if (worldDeleting(input.worldId)) return c.json(failure(ErrorCodes.WORLD_BUSY),409);
-      const source = db.prepare('SELECT * FROM worlds WHERE id=?').get(input.worldId);
-      if (!source) return c.json(failure(ErrorCodes.WORLD_NOT_FOUND),404);
-      const presetId=source.default_preset_id as string|null;
-      const modelId=source.default_api_model_config_id as string|null;
-      if (!presetId || !modelId) return c.json(failure(ErrorCodes.WORLD_CONFIG_INCOMPLETE, '缺少预设或模型配置', { missing: [...(!presetId ? ['presetId'] : []), ...(!modelId ? ['apiModelConfigId'] : [])] }),422);
-      if (!db.prepare('SELECT 1 FROM presets WHERE id=?').get(presetId))
-        return c.json(failure(ErrorCodes.PRESET_NOT_FOUND),422);
-      const modelConfig=db.prepare('SELECT credential_ref FROM api_model_configs WHERE id=?').get(modelId);
-      if (!modelConfig) return c.json(failure(ErrorCodes.API_MODEL_CONFIG_NOT_FOUND),422);
-      if (!await credentials.get(String(modelConfig.credential_ref)))
-        return c.json(failure(ErrorCodes.CREDENTIAL_NOT_CONFIGURED),422);
-      return transaction(db,()=>{
-        const row = db.prepare('SELECT * FROM worlds WHERE id=?').get(input.worldId);
-        if (!row) return c.json(failure(ErrorCodes.WORLD_NOT_FOUND),404);
-        if (row.default_preset_id !== presetId || row.default_api_model_config_id !== modelId)
-          return c.json(failure(ErrorCodes.TIP_CONFLICT, '世界默认配置已更改'),409);
-        let world;
-        try {world=readWorld(row).data;} catch(error) {return c.json(worldFailure(error),422);}
-        const character = world.characters.find((v: { id: string }) => v.id === input.userCharacterId);
-        const opening = world.openings.find((v: { id: string }) => v.id === input.openingId);
-        if (!character?.player_selectable || !opening) return c.json(failure(ErrorCodes.INVALID_OPENING_OR_CHARACTER, '开局或玩家身份不存在或不可选'),422);
-        const sessionState = initialState(world.state, 'session');
-        const messageState = applyOpening(world.state, initialState(world.state, 'message'), opening.initial_state);
-        const id = randomUUID(), entryId = randomUUID(), runId = randomUUID(), now = Date.now();
-        const message = { role: 'assistant', content: [{ type: 'text', text: opening.content }], timestamp: now };
-        db.prepare('INSERT INTO sessions(id,world_id,preset_id,api_model_config_id,user_character_id,tip_entry_id,title,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
-          .run(id,input.worldId,presetId,modelId,input.userCharacterId,entryId,title,JSON.stringify(sessionState),now,now);
-        db.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,branch_count,timestamp,payload,state,ext_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(entryId, id, null, runId, 1, 'message', 'assistant', 0, now, JSON.stringify({ message }), JSON.stringify(Object.entries(messageState).map(([key, value]) => ({ key, value }))), JSON.stringify({ origin: 'opening' }));
-        return c.json({item:{id,worldId:input.worldId,presetId,apiModelConfigId:modelId,userCharacterId:input.userCharacterId,tipEntryId:entryId,title}},201);
-      });
-    } catch(error) {
-      const diagnostic=stateErrorDetails(error);
-      if(diagnostic){const info=normalizeError(error,ErrorCodes.INVALID_SESSION);return c.json({success:false,...info,data:diagnostic},422);}
-      return c.json(failure(ErrorCodes.INVALID_SESSION),422);
-    }
-  });
-  app.patch('/:id', async c => {
-    if (busy(c.req.param('id'))) return c.json(failure(ErrorCodes.SESSION_BUSY),409);
-    try {
-      const patch = z.object({
-        title:z.string().nullable().optional(),
-        presetId:z.string().min(1).optional(),
-        apiModelConfigId:z.string().min(1).optional(),
-        userCharacterId:z.string().min(1).optional(),
-      }).strict().parse(await c.req.json());
-      const row=db.prepare('SELECT * FROM sessions WHERE id=?').get(c.req.param('id'));
-      if (!row) return c.json(failure(ErrorCodes.SESSION_NOT_FOUND),404);
-      const presetId=patch.presetId ?? String(row.preset_id);
-      const modelId=patch.apiModelConfigId ?? String(row.api_model_config_id);
-      if (!db.prepare('SELECT 1 FROM presets WHERE id=?').get(presetId))
-        return c.json(failure(ErrorCodes.PRESET_NOT_FOUND),422);
-      const config=db.prepare('SELECT credential_ref FROM api_model_configs WHERE id=?').get(modelId);
-      if (!config) return c.json(failure(ErrorCodes.API_MODEL_CONFIG_NOT_FOUND),422);
-      if (!await credentials.get(String(config.credential_ref)))
-        return c.json(failure(ErrorCodes.CREDENTIAL_NOT_CONFIGURED),422);
-      if (patch.userCharacterId) {
-        const world=db.prepare('SELECT * FROM worlds WHERE id=?').get(String(row.world_id));
-        if (!world || !readWorld(world).data.characters.some(v => v.id === patch.userCharacterId && v.player_selectable))
-          return c.json(failure(ErrorCodes.INVALID_PLAYER_CHARACTER),422);
-      }
-      if (busy(c.req.param('id'))) return c.json(failure(ErrorCodes.SESSION_BUSY),409);
-      // Atomic update, never partially apply a model/preset pair.
-      db.prepare('UPDATE sessions SET title=?,preset_id=?,api_model_config_id=?,user_character_id=?,updated_at=? WHERE id=?')
-        .run(patch.title!==undefined?patch.title:row.title as string|null,presetId,modelId,patch.userCharacterId??String(row.user_character_id),Date.now(),String(row.id));
-      onUpdated(String(row.id));
-      return c.json({ok:true});
-    } catch { return c.json(failure(ErrorCodes.INVALID_SESSION),422); }
-  });
-  app.get('/:id/history', c => {
-    const id = c.req.param('id');
-    const session = db.prepare('SELECT tip_entry_id FROM sessions WHERE id=?').get(id);
-    if (!session) return c.json(failure(ErrorCodes.SESSION_NOT_FOUND),404);
-    const rawLimit = c.req.query('limit'); const limit = rawLimit === undefined ? 10 : Number(rawLimit);
+}
+
+export type SessionRouteOptions = {
+  events: EventHub;
+  sessions: SessionService;
+  worlds: WorldService;
+  appendEntry: AppendEntry;
+  createSession: CreateSession;
+  canAccessSession?: SessionAccessCheck;
+  shutdownSignal: AbortSignal;
+};
+
+export function createSessionRoutes({ events, sessions, worlds, appendEntry, createSession, canAccessSession, shutdownSignal }: SessionRouteOptions) {
+  const routes = new Hono();
+  const access = (sessionId: string, request: Request) =>
+    requireSessionAccess(sessions, sessionId, request, canAccessSession, shutdownSignal);
+
+  routes.get('/', async c => {
+    const worldId = c.req.query('worldId'), limit = numberQuery(c, 'limit') ?? 100;
+    if (limit < 1 || limit > 1000) throw new AppError('INVALID_REQUEST', 'limit 必须介于 1 与 1000');
+    const scope = 'sessions:' + (worldId ?? '');
     const cursor = c.req.query('cursor');
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) return c.json(failure(ErrorCodes.INVALID_CURSOR, '分页大小无效'),400);
-    let page: ReturnType<typeof readRunPage>;
-    try { page = readRunPage(db, id, String(session.tip_entry_id), limit, cursor); }
-    catch (error) {
-      if (error instanceof Error && error.message === ErrorCodes.INVALID_CURSOR) return c.json(failure(ErrorCodes.INVALID_CURSOR),400);
-      return c.json(failure(ErrorCodes.INVALID_PARENT_CHAIN),500);
-    }
-    const selected = [...page.groups].reverse().map(group => ({ runId: group.id, entries: group.rows }));
-    const runs = selected.slice(0, limit).map(group => ({ ...publicRunResult(group.entries.map(e=>JSON.parse(String(e.ext_data)).run).find(Boolean)??{}), runId: group.runId, status: publicRunResult(group.entries.map(e => JSON.parse(String(e.ext_data)).run).find(Boolean)??{status:'completed'}).status, entries: group.entries.flatMap(entry => {
-      if (entry.type !== 'message' || !['user','assistant'].includes(String(entry.role))) return [];
-      const ext = JSON.parse(String(entry.ext_data));
-      const message = JSON.parse(String(entry.payload)).message;
-      if (!message || message.role !== entry.role) throw new Error(ErrorCodes.ENTRY_ROLE_MISMATCH);
-      const text = typeof message.content === 'string' ? message.content : Array.isArray(message.content) ? message.content.filter((part: {type:string}) => part.type === 'text').map((part: {text:string}) => part.text).join('') : '';
-      return text ? [{ id: entry.id, role: entry.role, text, ...(ext.origin==='opening'?{origin:'opening'}:{}), branchCount: entry.branch_count }] : [];
-    }) }));
-    return c.json({ runs, hasMore: page.hasMore, nextCursor: page.nextCursor });
-  });
-  app.get('/:id/state', c => {
-    const session = db.prepare('SELECT * FROM sessions WHERE id=?').get(c.req.param('id'));
-    if (!session) return c.json(failure(ErrorCodes.SESSION_NOT_FOUND),404);
-    const world = db.prepare('SELECT * FROM worlds WHERE id=?').get(String(session.world_id));
-    if (!world) return c.json(failure(ErrorCodes.WORLD_NOT_FOUND),404);
-    let chain:Record<string,any>[];
-    try { chain=readAncestors(db,String(session.id),String(session.tip_entry_id)); } catch { return c.json(failure(ErrorCodes.INVALID_PARENT_CHAIN),500); }
-    const messageEntry=[...chain].reverse().find(entry=>entry.state !== null);
-    let views:{global:Record<string,unknown>;session:Record<string,unknown>;message:Record<string,unknown>};
-    try {
-      views={global:JSON.parse(String(world.state)),session:JSON.parse(String(session.state)),message:decodeMessageState(String(messageEntry?.state ?? '[]'))};
-      const stateDefinition=readWorld(world).data.state;
-      for (const scope of ['global','session','message'] as const) validateSnapshot(stateDefinition,scope,views[scope]);
-    } catch(error) { return c.json(worldFailure(error),422); }
-    return c.json({...views,tipEntryId:session.tip_entry_id});
-  });
-  app.delete('/:id', async c => {
-    const id = c.req.param('id');
-    if (!db.prepare('SELECT id FROM sessions WHERE id=?').get(id)) return c.json(failure(ErrorCodes.SESSION_NOT_FOUND),404);
-    try {
-      await removeSessions([id],()=>{
-        db.exec('BEGIN IMMEDIATE');
-        try { db.prepare('DELETE FROM entries WHERE session_id=?').run(id); db.prepare('DELETE FROM sessions WHERE id=?').run(id); db.exec('COMMIT'); }
-        catch (err) { db.exec('ROLLBACK'); throw err; }
+    let before = cursor === undefined ? undefined : decodeCursor(cursor, scope) as SessionListOptions['before'];
+    const page = (items: Session[], hasMore: boolean) => {
+      const last = items.at(-1);
+      return success(c, {
+        items: projectSessions(items, worlds), hasMore,
+        nextCursor: hasMore && last ? encodeCursor(scope, { updatedAt: last.updatedAt, id: last.id }) : null,
       });
-      return c.json({ok:true});
-    } catch { return c.json(failure(ErrorCodes.SESSION_DELETE_FAILED),500); }
+    };
+    if (!canAccessSession) {
+      const result = sessions.listPage({ worldId, limit, before });
+      return page(result.items, result.hasMore);
+    }
+    const accessible: Session[] = [];
+    // Look ahead to one accessible item, so hidden rows cannot truncate pages or consume the next visible item.
+    while (accessible.length <= limit) {
+      const result = sessions.listPage({ worldId, limit, before });
+      for (const item of result.items) {
+        try {
+          await access(item.id, c.req.raw);
+          accessible.push(item);
+          if (accessible.length > limit) break;
+        } catch (error) {
+          if (!(error instanceof AppError) || error.code !== 'SESSION_NOT_FOUND') throw error;
+        }
+      }
+      if (accessible.length > limit || !result.hasMore) break;
+      const last = result.items.at(-1)!;
+      before = { updatedAt: last.updatedAt, id: last.id };
+    }
+    return page(accessible.slice(0, limit), accessible.length > limit);
   });
-  app.get('/:id', c => {
-    const row = db.prepare('SELECT id,world_id,preset_id,api_model_config_id,user_character_id,tip_entry_id,title,created_at,updated_at FROM sessions WHERE id=?').get(c.req.param('id'));
-    if (!row) return c.json(failure(ErrorCodes.SESSION_NOT_FOUND),404);
-    return c.json({id:row.id,worldId:row.world_id,presetId:row.preset_id,apiModelConfigId:row.api_model_config_id,userCharacterId:row.user_character_id,activeRun:activeRun(String(row.id)),tipEntryId:row.tip_entry_id,title:row.title,createdAt:row.created_at,updatedAt:row.updated_at});
+
+  routes.post('/', async c => {
+    const input = await readJson<CreateSessionInput>(c);
+    const result = createSession(input);
+    return success(c, { item: projectSession(result.item, worlds), entry: result.entry }, 201);
   });
-  app.get('/', c => {
-    const worldId=c.req.query('worldId');
-    if (worldId !== undefined && !worldId.trim()) return c.json(failure(ErrorCodes.INVALID_REQUEST, '世界 ID 不能为空'),400);
-    try {
-      const sql='SELECT s.id,s.world_id,s.preset_id,s.api_model_config_id,s.title,s.updated_at,w.name AS world_name,w.cover AS world_cover FROM sessions s LEFT JOIN worlds w ON w.id=s.world_id'+(worldId === undefined ? '' : ' WHERE s.world_id=?')+' ORDER BY s.updated_at DESC,s.id DESC';
-      const rows=worldId === undefined ? db.prepare(sql).all() : db.prepare(sql).all(worldId);
-      const page=pageByUpdated(rows,'sessions',c.req.query('limit'),c.req.query('cursor'),worldId);
-      return c.json({...page,items:page.items.map(r=>({id:r.id,worldId:r.world_id,presetId:r.preset_id,apiModelConfigId:r.api_model_config_id,title:r.title,updatedAt:r.updated_at,worldName:r.world_name,cover:r.world_cover??null}))});
-    } catch { return c.json(failure(ErrorCodes.INVALID_CURSOR, '游标无效'),400); }
+
+  routes.get('/:id', async c => {
+    const id = c.req.param('id');
+    await access(id, c.req.raw);
+    return success(c, { item: projectSession(sessions.require(id), worlds) });
   });
-  return app;
+
+  routes.patch('/:id', async c => {
+    const id = c.req.param('id');
+    await access(id, c.req.raw);
+    return success(c, { item: projectSession(sessions.update(id, await readJson<UpdateSessionInput>(c)), worlds) });
+  });
+
+  routes.delete('/:id', async c => {
+    const id = c.req.param('id');
+    await access(id, c.req.raw);
+    if (!sessions.delete(id)) throw new AppError('SESSION_NOT_FOUND');
+    return success(c, { id });
+  });
+
+  routes.post('/:id/entries', async c => {
+    const id = c.req.param('id');
+    await access(id, c.req.raw);
+    const input = await readJson<AppendEntryInput>(c);
+    if (Object.hasOwn(input, 'metrics')) throw new AppError('INVALID_REQUEST', '模型调用计量仅允许由服务内部写入');
+    return success(c, { item: appendEntry(id, input) }, 201);
+  });
+
+  routes.patch('/:id/entries/:entryId', async c => {
+    const id = c.req.param('id');
+    await access(id, c.req.raw);
+    return success(c, { item: sessions.updateEntry(id, c.req.param('entryId'), await readJson<UpdateEntryInput>(c)) });
+  });
+
+  routes.get('/:id/events', async c => {
+    const id = c.req.param('id');
+    await access(id, c.req.raw);
+    // Hono dispatches HEAD through GET; creating a stream here would leave a discarded subscription.
+    if (c.req.raw.method === 'HEAD') return new Response(null, {
+      headers: {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache, no-transform',
+        'x-accel-buffering': 'no',
+      },
+    });
+    return createSessionEventsResponse(events, id, c.req.raw.signal, shutdownSignal);
+  });
+  return routes;
 }

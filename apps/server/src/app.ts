@@ -1,66 +1,85 @@
-import { ErrorCodes } from './common/error-codes.js';
 import { Hono } from 'hono';
-import { debugLog } from './common/debug.js';
-import { bodyLimit } from 'hono/body-limit';
-import type { DatabaseSync } from 'node:sqlite';
-import { SRRuntime, PiGateway, type ModelGateway } from './runtime/index.js';
-import { worldRoutes } from './routes/worlds.js';
-import { appSettingsRoutes } from './routes/app-settings.js';
-import { WorldFileStore, testWorldDataDir } from './infrastructure/world-files/world-file-store.js';
-import { tagRoutes } from './routes/tags.js';
-import { providerRoutes } from './routes/providers.js';
-import { MacKeychainStore, type CredentialStore } from './infrastructure/credentials/store.js';
-import { presetRoutes } from './routes/presets.js';
-import { sessionRuntimeRoutes } from './routes/session-runtime.js';
-import { stateUpdateRoutes } from './routes/state-updates.js';
-import { responseEnvelope } from './common/response-middleware.js';
-import { failure } from './common/http-response.js';
-import { sessionRoutes } from './routes/sessions.js';
+import { localWebOrigins } from '../../../scripts/local-network.mjs';
+import { runtimeConfig } from './http/runtime-config.js';
+import type { EventHub } from './infrastructure/events/event-hub.js';
+import type { SessionAccessCheck } from './http/session-access.js';
+import { errorHandler, failure, success } from './http/response.js';
+import { createModelRoutes } from './routes/models.js';
+import { createNarrativeRoutes } from './routes/narrative.js';
+import { createProviderRoutes } from './routes/providers.js';
+import { createPresetRoutes } from './routes/presets.js';
+import { createSessionRoutes } from './routes/sessions.js';
+import { createSettingsRoutes } from './routes/settings.js';
+import { createStateRoutes } from './routes/state.js';
+import { createWorldRoutes } from './routes/worlds.js';
+import { allowApiOrigin, parseWebOrigin } from './http/origin.js';
+import type { Services } from './services.js';
+import type { Usecases } from './usecases.js';
 
-export function createApp(db: DatabaseSync, credentials: CredentialStore = new MacKeychainStore(), gateway: ModelGateway = new PiGateway(), files: WorldFileStore = new WorldFileStore(testWorldDataDir()), allowedOrigins: ReadonlySet<string> = new Set(), deniedOrigins:ReadonlySet<string> = new Set()): Hono & { shutdown(): Promise<void> } {
+export type AppOptions = {
+  events: EventHub;
+  webOrigin?: string;
+  stageOrigin?: string;
+  debug?: boolean;
+  canAccessSession?: SessionAccessCheck;
+} & (
+  | { services: Services; usecases: Usecases }
+  | { services?: undefined; usecases?: undefined }
+);
+
+export function createApp({ events, services, usecases, canAccessSession, webOrigin, stageOrigin, debug }: AppOptions) {
+  const trustedWebOrigin = parseWebOrigin(webOrigin ?? 'http://127.0.0.1:5176');
+  const config = runtimeConfig({ webOrigin: trustedWebOrigin, stageOrigin, debug });
+  // Vite preserves the Web Host header when proxying /api. Only pair known local listeners.
+  const localConfigs = new Map((webOrigin === undefined && stageOrigin === undefined ? localWebOrigins() : [])
+    .map(origin => [origin, runtimeConfig({ webOrigin: origin, debug })]));
   const app = new Hono();
   const shutdown = new AbortController();
-  app.use('*', async (c,next) => {
-    if(shutdown.signal.aborted)return c.json(failure(ErrorCodes.INTERNAL_ERROR,'服务正在重启，请稍后重试'),503);
-    await next();
-  });
-  app.use('*', responseEnvelope);
-  app.onError((_error,c)=>c.json(failure(ErrorCodes.INTERNAL_ERROR),500));
-  app.notFound(c=>c.req.path.startsWith('/api/')?c.json(failure(ErrorCodes.NOT_FOUND),404):c.text('Not Found',404));
-  app.use('*', async (c,next)=>{const start=Date.now();try{await next();}finally{debugLog('HTTP',{method:c.req.method,path:c.req.path,query:c.req.query(),status:c.res.status,durationMs:Date.now()-start});}});
+  let stopping = false;
+  let closing: Promise<void> | undefined;
   app.use('*', async (c, next) => {
-    const origin = c.req.header('origin');
-    if(origin&&deniedOrigins.has(origin))return c.json(failure(ErrorCodes.ORIGIN_FORBIDDEN),403);
-    if (origin && !(origin === 'null' && c.req.method === 'GET' && !c.req.path.startsWith('/api/'))) {
-      let url: URL;
-      try { url = new URL(origin); } catch { return c.json(failure(ErrorCodes.ORIGIN_FORBIDDEN),403); }
-      if ((!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || !['http:', 'https:'].includes(url.protocol)) && !allowedOrigins.has(origin)) {
-        return c.json(failure(ErrorCodes.ORIGIN_FORBIDDEN),403);
-      }
-    }
+    if (stopping) return failure(c, 'SERVER_SHUTTING_DOWN');
     await next();
   });
-  const ordinaryBodyLimit=bodyLimit({maxSize:11*1024*1024,onError:c=>c.json(failure(ErrorCodes.BODY_TOO_LARGE,'请求内容超过 11 MiB',{path:'$'}),413)});
-  const worldImportBodyLimit=bodyLimit({maxSize:257*1024*1024,onError:c=>c.json(failure(ErrorCodes.BODY_TOO_LARGE,'世界卡上传请求超过 257 MiB',{path:'$'}),413)});
-  app.use('/api/*',(c,next)=>(c.req.method==='POST'&&c.req.path==='/api/v1/worlds/import'?worldImportBodyLimit:ordinaryBodyLimit)(c,next));
-  const provider = providerRoutes(db, credentials, gateway);
-  const runtime = new SRRuntime(db, credentials, gateway);
-  app.route('/api/v1/sessions', sessionRuntimeRoutes(db,runtime,shutdown.signal));
-  app.route('/api/v1/sessions', stateUpdateRoutes(db,runtime));
-  app.route('/api/v1/providers', provider.providers);
-  app.route('/api/v1/api-model-configs', provider.configs);
-  app.route('/api/v1/tags', tagRoutes(db));
-  app.route('/api/v1/worlds', worldRoutes(db, (worldId, ids, remove) => runtime.deleteWorld(worldId,ids,remove), files));
-  app.route('/api/v1/app-settings', appSettingsRoutes(db));
-  app.route('/api/v1/presets', presetRoutes(db));
-  const sessions=sessionRoutes(db, id => runtime.busy(id), (ids, remove) => runtime.deleteSessions(ids,remove), id => runtime.worldDeleting(id), id => runtime.emit(id,'session.updated',{}), credentials, id=>runtime.activeRun(id));
-  app.route('/api/v1/sessions', sessions);
-  app.get('/health', (c) => {
-    db.prepare('SELECT 1').get();
-    return c.json({ ok: true });
+  app.use('/api/*', async (c, next) => {
+    if (!allowApiOrigin(c.req.header('origin'), c.req.url, c.req.method, trustedWebOrigin)) return failure(c, 'ORIGIN_NOT_ALLOWED');
+    if (!services) return failure(c, 'SERVICE_UNAVAILABLE');
+    await next();
   });
-  return Object.assign(app, { shutdown: () => {
-    shutdown.abort();
-    return runtime.shutdown();
+  app.onError(errorHandler);
+  app.notFound(c => failure(c, 'NOT_FOUND'));
+  app.get('/api/v1/runtime/config', c => {
+    c.header('Cache-Control', 'no-store');
+    return success(c, localConfigs.get(new URL(c.req.url).origin) ?? config);
+  });
+  app.get('/health', c => success(c, { ok: true }));
+  if (services) {
+    app.route('/api/v1/presets', createPresetRoutes(services.presets, usecases));
+    app.route('/api/v1/api-model-configs', createModelRoutes(
+      services.models, services.credentials, usecases.modelConfigs, usecases.testModel, shutdown.signal,
+    ));
+    app.route('/api/v1/providers', createProviderRoutes({ listProviders: usecases.listProviders }));
+    app.route('/api/v1/sessions', createNarrativeRoutes({
+      sessions: services.sessions, narrative: usecases.narrative, canAccessSession, shutdownSignal: shutdown.signal,
+    }));
+    app.route('/api/v1/app-settings', createSettingsRoutes(services.settings));
+    app.route('/api/v1/worlds', createWorldRoutes({
+      worlds: services.worlds, sessions: services.sessions,
+      importWorld: usecases.importWorld, exportWorld: usecases.exportWorld,
+    }));
+    app.route('/api/v1/sessions', createSessionRoutes({
+      appendEntry: usecases.appendEntry, createSession: usecases.createSession,
+      sessions: services.sessions, worlds: services.worlds, events, canAccessSession, shutdownSignal: shutdown.signal,
+    }));
+    app.route('/api/v1/state', createStateRoutes({
+      state: services.state, setState: usecases.setState, sessions: services.sessions, canAccessSession, shutdownSignal: shutdown.signal,
+    }));
+  }
+  return Object.assign(app, { shutdown: (): Promise<void> => {
+    if (closing) return closing;
+    stopping = true;
+    // Keep SSE alive until every accepted run has saved its already received body and published its terminal event.
+    closing = (usecases?.narrative.shutdown() ?? Promise.resolve()).finally(() => shutdown.abort());
+    return closing;
   } });
 }

@@ -1,21 +1,21 @@
-# Studio UI SPEC
+# Web UI SPEC
 
 ## 范围与实现入口
 
 本规范适用于平台管理界面、会话宿主和官方 WorldStory。作者组件可以保留自己的美术风格、字体和布局，不能影响平台外壳。
 
-Studio 使用 React、CSS Modules 和 CSS 自定义属性。共享组件负责视觉状态和尺寸，页面负责排列、内容和业务行为。Studio 不以作者 iframe 中的 Tailwind 运行时作为组件样式基础。
+Web 使用 React、CSS Modules 和 CSS 自定义属性。共享组件负责视觉状态和尺寸，页面负责排列、内容和业务行为。Web 不以作者 iframe 中的 Tailwind 运行时作为组件样式基础。
 
 | 契约 | 入口 |
 |---|---|
-| 颜色、内置主题、主题校验、外观快照 | [theme.ts](../../apps/studio/src/styles/theme.ts) |
-| 尺度、响应式尺寸、材质阴影、层级 | [tokens.css](../../apps/studio/src/styles/tokens.css) |
-| 公共控件样式 | [components.css](../../apps/studio/src/styles/components.css) |
-| Button / IconButton / UploadButton / ActionLink | [Button.tsx](../../apps/studio/src/components/ui/Button.tsx) |
-| 页面标题栏 | [PageHeader.tsx](../../apps/studio/src/components/ui/PageHeader.tsx) |
-| Field / Input / Textarea / Panel / Badge | [Field.tsx](../../apps/studio/src/components/ui/Field.tsx) |
-| Select / Switch / Modal | [ui 目录](../../apps/studio/src/components/ui) |
-| 会话条目 | [SessionRow.tsx](../../apps/studio/src/features/sessions/SessionRow.tsx) |
+| 颜色、内置主题、主题校验、外观快照 | [theme.ts](../../apps/web/src/styles/theme.ts) |
+| 尺度、响应式尺寸、材质阴影、层级 | [tokens.css](../../apps/web/src/styles/tokens.css) |
+| 公共控件样式 | [components.css](../../apps/web/src/styles/components.css) |
+| Button / IconButton / UploadButton / ActionLink | [Button.tsx](../../apps/web/src/components/ui/Button.tsx) |
+| 页面标题栏 | [PageHeader.tsx](../../apps/web/src/components/ui/PageHeader.tsx) |
+| Field / Input / Textarea / Panel / Badge | [Field.tsx](../../apps/web/src/components/ui/Field.tsx) |
+| Select / Switch / Modal | [ui 目录](../../apps/web/src/components/ui) |
+| 会话条目 | [SessionRow.tsx](../../apps/web/src/features/sessions/SessionRow.tsx) |
 
 ## Token 使用规则
 
@@ -91,18 +91,18 @@ Studio 使用 React、CSS Modules 和 CSS 自定义属性。共享组件负责�
 ## 表单、选择与状态
 
 - 单行与多行输入使用 `Input`、`Textarea`。`Field` 关联可见 label、说明和错误；错误文本通过 `aria-describedby` 与控件关联，控件设置 `aria-invalid`。
-- StudioV2 弹窗关闭后恢复触发控件焦点：鼠标/触摸关闭不留下键盘焦点环，键盘关闭保留可见提示；后续键盘交互清除指针恢复标记。不用全局取消 outline 或 blur 焦点替代。
+- Web 弹窗关闭后恢复触发控件焦点：鼠标/触摸关闭不留下键盘焦点环，键盘关闭保留可见提示；后续键盘交互清除指针恢复标记。不用全局取消 outline 或 blur 焦点替代。
 - 控件边框使用 `control-border`；只有 focus-visible 显示 2px 焦点环，offset 3px。会话编辑器使用整个输入条的焦点反馈，不给内部编辑区域重复加边框。
 - 单选下拉使用共享 `Select`。箭头固定在控件内部；弹出列表使用主题颜色与 Popover 顶层，按可用空间向上或向下打开。长选项可换行，触发器超长单值可省略。
 - Select 支持方向键、Home/End、Enter/Space、文字检索和 Escape；禁用选项不可选，收起后焦点保留在触发器。
-- 原 Studio 的默认预设／默认模型和世界运行配置必须选有效项。StudioV2 的应用默认和世界默认配置允许选择“未设置”，并保存 null；会话创建仍必须明确选择有效预设和模型。
+- Web 的应用默认和世界默认配置允许选择“未设置”，并保存 null；会话创建仍必须明确选择有效预设和模型。
 - 布尔设置使用 `Switch`，提供可读名称和 `aria-checked`。互斥策略保留原生 radio 语义；选中态同时显示选择标记，不能只改变底色。
 - Badge 是信息标签，不承担选择或点击行为。成功、警告、危险标签消费各自语义颜色。
 - 请求错误使用 `ErrorNotice`，可重试时提供明确重试操作；加载使用 `role="status"`，错误使用 `role="alert"`。加载、空结果、失败不能使用相同文案。
 
 ## 页面与列表
 
-原 Studio 的五个主入口及 StudioV2 的五个管理入口均使用 `PageHeader`。主标题位于固定标题锚点，操作在同一行右侧；辅助描述在下一行。页面不单独修改标题字号和顶部位置。手机上避免为了两个按钮挤压主标题；优先缩短操作文案或使用有名称的图标按钮。
+Web 的五个管理入口使用 `PageHeader`。主标题位于固定标题锚点，操作在同一行右侧；辅助描述在下一行。页面不单独修改标题字号和顶部位置。手机上避免为了两个按钮挤压主标题；优先缩短操作文案或使用有名称的图标按钮。
 
 预设与模型使用同一工作区布局：左列表 240px、列间隔 24px；可用容器宽度 ≤744px 时切换为列表／详情单栏。断点针对可用工作区，不能只根据整个浏览器宽度判断。
 
@@ -147,12 +147,12 @@ Studio 使用 React、CSS Modules 和 CSS 自定义属性。共享组件负责�
 ## 验收命令与检查范围
 
 ```sh
-pnpm --filter @sillyrealms/studio test:theme
-pnpm --filter @sillyrealms/studio typecheck
-pnpm --filter @sillyrealms/studio build
-pnpm --filter @sillyrealms/studio test:visual
+pnpm --filter @sillyrealms/web test:theme
+pnpm --filter @sillyrealms/web typecheck
+pnpm --filter @sillyrealms/web build
+pnpm --filter @sillyrealms/web test:visual
 ```
 
-浏览器回归连接运行中的 Studio，默认 `http://localhost:5174`；可设置 `STUDIO_URL` 和 `CHROME_PATH`。需要至少一个现有世界、预设、模型，以及可运行的介绍组件。测试只读取业务数据，不导入、不保存、不开始会话、不调用模型服务商。截图写入临时目录，结果输出具体路径。
+浏览器回归连接运行中的 Web，默认 `http://127.0.0.1:5176`；可设置 `WEB_URL` 和 `CHROME_PATH`。需要至少一个现有世界、预设、模型，以及可运行的介绍组件。测试只读取业务数据，不导入、不保存、不开始会话、不调用模型服务商。截图写入临时目录，结果输出具体路径。
 
 基础验收包含五主页面双主题的 320／375／820／1280px 标题锚点、操作尺寸、横向溢出，Select／Modal 键盘行为，三类详情滚动尾部、开局工具栏及同模式主题的 iframe 同步。新组件须检查默认、hover、focus-visible、active、disabled、loading、错误和长文案状态。Chrome 移动尺寸仿真不等同于 iOS Safari 真机验收。

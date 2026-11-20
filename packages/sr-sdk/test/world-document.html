@@ -25,7 +25,7 @@ r=render('```html\n<div data-sr-markdown="true">**not bold**</div>\n```\n\n`**co
 check('code is not reinterpreted as Markdown',!r.html.includes('<strong>')&&r.html.includes('**not bold**'));
 r=render('<html><head><style>.x{color:red}</style></head><body><p>hello</p></body></html>','message');
 check('complete document works inline without author style',r.full&&r.html.includes('<p>hello</p>')&&!r.head&&!r.html.includes('<style'));
-const assetBaseUrl='http://127.0.0.1:5189/world-assets/card-one/';
+const assetBaseUrl='http://127.0.0.1:5189/api/v1/worlds/card-one/resources/';
 const withAssets=(source,profile='document')=>renderWorldDocument(source,{profile,assetBaseUrl});
 const dom=html=>new DOMParser().parseFromString(html,'text/html');
 r=withAssets('<img src="sr-asset://assets/images/harbor.webp" onerror="evil()"><script>evil()<\/script>');
@@ -44,7 +44,7 @@ r=withAssets('正常段落<img src="sr-asset://assets/../secret"><img src="sr-as
 check('bad local images fail locally without discarding message text',!dom(r.html).querySelector('img[src]')&&r.html.includes('正常段落')&&r.assetErrors.length>0);
 r=render('<img src="sr-asset://assets/images/harbor.webp">保留正文');
 check('missing world asset context reports a local diagnostic',!dom(r.html).querySelector('img[src]')&&r.html.includes('保留正文')&&r.assetErrors.some(text=>text.includes('缺少当前世界')));
-r=withAssets('<img src="http://127.0.0.1:5189/api/secret"><img src="http://127.0.0.1:5189/world-assets/another-card/assets/a.webp"><img src="'+assetBaseUrl+'assets/images/harbor.webp">');
+r=withAssets('<img src="http://127.0.0.1:5189/api/secret"><img src="http://127.0.0.1:5189/api/v1/worlds/another-card/resources/assets/a.webp"><img src="'+assetBaseUrl+'assets/images/harbor.webp">');
 check('HTTP prose images are restricted to the current world resource root',dom(r.html).querySelectorAll('img[src]').length===1&&dom(r.html).querySelector('img[src]')?.getAttribute('src')===assetBaseUrl+'assets/images/harbor.webp');
 r=withAssets('<a href="sr-asset://assets/x">link</a><img src="custom://x"><img src="sr-asset:javascript:evil()"><video src="sr-asset://assets/a.mp4"></video>');
 check('package support does not enable unknown links protocols or document media',!dom(r.html).querySelector('a[href],img[src],video'));

@@ -3,21 +3,17 @@
   "private": true,
   "packageManager": "pnpm@10.12.1",
   "scripts": {
-    "dev": "node scripts/dev.mjs",
-    "test": "pnpm --filter @sillyrealms/server-v2 test && pnpm --filter @sillyrealms/studio-v2 test",
-    "typecheck": "pnpm --filter @sillyrealms/server-v2 typecheck && pnpm --filter @sillyrealms/studio-v2 typecheck",
-    "lint": "pnpm --filter @sillyrealms/server-v2 lint",
-    "build": "pnpm --filter @sillyrealms/studio-v2 build",
-    "test:browser": "pnpm --filter @sillyrealms/studio-v2 test:theme && pnpm --filter @sillyrealms/studio-v2 test:visual",
-    "dev:studio": "node scripts/dev.mjs --studio",
-    "build:studio": "pnpm --filter @sillyrealms/studio-v2 build",
-    "test:studio:visual": "pnpm --filter @sillyrealms/studio-v2 test:visual",
-    "start": "node scripts/dev.mjs --built",
-    "dev:all": "node scripts/dev.mjs",
-    "dev:studio-v2": "pnpm --filter @sillyrealms/studio-v2 dev",
-    "dev:server-v2": "pnpm --filter @sillyrealms/server-v2 dev",
-    "build:studio-v2": "pnpm --filter @sillyrealms/studio-v2 build",
-    "test:studio-v2": "pnpm --filter @sillyrealms/studio-v2 test",
-    "dev:world-preview-v2": "pnpm --filter @sillyrealms/studio-v2 dev:world-preview"
+    "dev": "node scripts/start.mjs dev",
+    "debug": "node scripts/start.mjs debug",
+    "build": "pnpm --filter @sillyrealms/web build",
+    "start": "node scripts/start.mjs start",
+    "dev:server": "pnpm --filter @sillyrealms/server dev",
+    "dev:web": "pnpm --filter @sillyrealms/web dev",
+    "dev:stage": "pnpm --filter @sillyrealms/web dev:world-preview",
+    "test": "pnpm --filter @sillyrealms/server test && pnpm --filter @sillyrealms/web test",
+    "test:web": "pnpm --filter @sillyrealms/web test",
+    "test:browser": "pnpm --filter @sillyrealms/web test:theme && pnpm --filter @sillyrealms/web test:visual",
+    "typecheck": "pnpm --filter @sillyrealms/server typecheck && pnpm --filter @sillyrealms/web typecheck",
+    "lint": "pnpm --filter @sillyrealms/server lint"
   }
 }

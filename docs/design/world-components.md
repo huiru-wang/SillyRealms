@@ -1,18 +1,16 @@
 # 世界卡组件与展示权限
 
-除下节注明的 V2 差异外，本文描述原 Studio/Server 的运行与展示契约。
-
-## StudioV2 内容库边界
+## Web 内容库边界
 
 - V2 世界卡使用 `spec_version/data`；HTTP 管理详情使用顶层驼峰领域字段，不包含运行 state。已有文本 description 如实展示；新卡导入仍按组件描述协议校验。
-- 世界内容库只读展示作者角色、开局、世界书及状态定义。世界详情沿用原 Studio 的折叠概览、角色条、六个图标 Tab、开局导航及弹窗。角色在头部选择并带入创建确认，弹窗允许选择配置；V2 创建请求携带开局 ID，由服务端初始化状态并保存首条消息；不执行作者组件或调用模型。
-- 图片、音频、字体及组件文件来自 `/api/v1/worlds/:id/resources/*`；SDK 保留旧来源兼容，并支持 V2 资源根目录。
-- 作者介绍与开局组件使用独立预览来源的 `world-component.html`，开发默认 127.0.0.1:5177；StudioV2 默认 127.0.0.1:5176。预览来源不得与管理来源相同。构建及部署配置见 [StudioV2 管理](../runtime/studio-v2-management.md)。
+- 世界内容库只读展示作者角色、开局、世界书及状态定义。世界详情沿用原 Web 的折叠概览、角色条、六个图标 Tab、开局导航及弹窗。角色在头部选择并带入创建确认，弹窗允许选择配置；V2 创建请求携带开局 ID，由服务端初始化状态并保存首条消息；不执行作者组件或调用模型。
+- 图片、音频、字体及组件文件来自 `/api/v1/worlds/:id/resources/*`，SDK 从该资源根目录解析包内地址。
+- 作者介绍与开局组件使用独立预览来源的 `world-component.html`，开发默认 127.0.0.1:5177；Web 默认 127.0.0.1:5176。预览来源不得与管理来源相同。构建及部署配置见 [Web 管理](../runtime/web-management.md)。
 - 预览保留 sandbox、CSP、窗口/来源/nonce 校验。宿主只允许读取当前世界 global 路径，从状态响应 `data.item` 投影，不提供完整状态、写操作或会话能力。主题按 appearance 契约传递。组件错误局部展示并允许重试；离开或切换预览销毁旧文档与连接。
 - 组件 path 优先，读取失败不回退 inline。世界管理不启动 Stage，不执行消息展示规则或状态规则。
 
 
-世界卡保持 `spec / spec_version / data` 包装。组件相关字段位于 `data` 根层：
+世界卡保持 `spec_version / data` 包装。组件相关字段位于 `data` 根层：
 
 ```json
 {
@@ -37,7 +35,7 @@
 - `stage_component` 未指定或找不到目标时使用官方 `WorldStory`，其消息规则仍可引用共享组件库。目标存在但编译或执行失败时显示错误，不回退；平台不检查、插入或自动执行作者未使用的 `WorldStory`。
 - `description` 可省略，指定时必须是有效组件引用，不接受旧字符串。介绍组件没有消息匹配参数。
 - 开局的 `type`、`component` 成对提供，必须引用存在的组件。省略时只展示 `content` 的静态文本。预览组件与实际会话正文独立；图片、音频等由作者在预览源码中直接引用。
-- V2 将 `content` 中全部精确的 `{{user}}` 替换为所选玩家角色名称后保存为普通 assistant 消息；`initial_state` 保持消息状态整项覆盖语义。开局预览独立于消息渲染。会话内所有消息统一适用 `message_render` 正则与组件替换，不按开场身份分支；StudioV2 会话渲染在独立来源的 frame 内执行。
+- V2 将 `content` 中全部精确的 `{{user}}` 替换为所选玩家角色名称后保存为普通 assistant 消息；`initial_state` 保持消息状态整项覆盖语义。开局预览独立于消息渲染。会话内所有消息统一适用 `message_render` 正则与组件替换，不按开场身份分支；Web 会话渲染在独立来源的 frame 内执行。
 - `message_render.rules[].replacement.component` 引用 `components[].id`。`CGImage` 若依赖 `groups`，只作为正则消息组件使用，不自动成为介绍或开局预览。
 - 缺失引用在导入时拒绝（舞台允许找不到目标）；源码编译/运行错误在具体视图内显示重试，不阻止使用有效的其他入口。
 
@@ -65,13 +63,13 @@ export default function Preview() {
 
 `getState(path, scope?)` 默认 global；`batchGetState([{path,scope?}])` 返回对应查询值。没有事件订阅或隐式实时刷新。详情运行环境中的 `useSRStateAPI` 是相同只读 API 的别名；作者使用 `useSRWorldStateAPI` 可获得准确的只读类型。
 
-禁止 session/message 状态、状态写入、Session API、事件订阅和直接 Server HTTP。权限由 Host 再次校验，不能靠伪造 iframe 请求绕过。组件不接收原始世界卡、状态定义、会话对象、凭据或底层 transport。原 Studio 使用 `GET /api/v1/worlds/:id/state`，StudioV2 使用 `GET /api/v1/state/global/:worldId`，均仅供可信 Host 查询当前 global 状态，再按路径返回结果给组件。初始消息状态查看器仍由平台 UI 提供，不能被预览组件读取。
+禁止 session/message 状态、状态写入、Session API、事件订阅和直接 Server HTTP。权限由 Host 再次校验，不能靠伪造 iframe 请求绕过。组件不接收原始世界卡、状态定义、会话对象、凭据或底层 transport。Web 使用 `GET /api/v1/state/global/:worldId`，仅供可信 Host 查询当前 global 状态，再按路径返回结果给组件。初始消息状态查看器仍由平台 UI 提供，不能被预览组件读取。
 
 iframe 使用 CSP `connect-src 'none'`，Server 拒绝来自该独立资源来源的 API 请求。切换页面/开局会销毁旧 iframe、终止未完成请求；媒体元素随文档销毁。安全的旧 prose 可使用 `WorldDocumentContent` 渲染在已有隔离文档中。
 
 ## 存储和兼容性
 
-数据库 v5 将 `worlds.ui_json` 改名为 `components`，保存 JSON 数组；新增独立 `stage_component`，`description` 列保存引用对象的 JSON。领域、导入/导出和详情 API 使用同名公开字段，不兼容 `ui.source/ui.main` 输入。
+世界表的 `components` 列保存组件数组，`stage_component` 保存舞台组件 ID。卡片导入和 HTTP 详情字段见 [Server HTTP 契约](../runtime/server-http.md)。
 
 ## 会话图片与页面隔离
 

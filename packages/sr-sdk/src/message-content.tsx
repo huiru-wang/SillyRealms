@@ -4,7 +4,7 @@ import {parseRoleplay} from '@sillyrealms/roleplay';
 import {applyRoleplayMarkers,roleplayMarkers} from './world-story-roleplay.js';
 import {renderWorldDocument} from './world-document/render.js';
 import {useStoryConfiguration,type MessageComponentProps,type MessageMatch} from './story-context.js';
-import type {ChatMessage} from './run-contract.js';
+import type {StageMessage} from './stage-contract.js';
 import {canShowLiteralPlaceholder,protectedRanges,selectMessageMatches} from './message-ranges.js';
 import {updateMessageDOM} from './message-dom.js';
 import {useSRAssetBaseUrl} from './asset-context.js';
@@ -23,51 +23,51 @@ class ComponentBoundary extends React.Component<{children:React.ReactNode;fallba
   state={failed:false};static getDerivedStateFromError(){return {failed:true};}
   render(){return this.state.failed?<span>{this.props.fallback} <small role="status">组件显示失败，已保留原文</small></span>:this.props.children;}
 }
-export const MessageContent = React.memo(function MessageContent({message,runId}:{message:ChatMessage;runId:string}){
+export const MessageContent = React.memo(function MessageContent({message,runId}:{message:Pick<StageMessage, 'id' | 'role' | 'content'>;runId:string}){
   const config=useStoryConfiguration();
   const assetBaseUrl=useSRAssetBaseUrl();
   const [matches,setMatches]=useState<MessageMatch[]>([]),[targets,setTargets]=useState<Element[]>([]),[failed,setFailed]=useState(false),[warning,setWarning]=useState(false);
   const ref=useRef<HTMLDivElement>(null),nonce=useRef(Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join(''));
   useEffect(()=>{
     let valid=true;
-    if(message.origin==='opening'||!config.rules.length){setMatches([]);setFailed(false);setWarning(false);return;}
-    const timer=setTimeout(()=>{void config.match(message.text,message.role).then(result=>{if(valid){setMatches(result.matches);setWarning(result.warning);setFailed(false);}}).catch(()=>{if(valid){setMatches([]);setWarning(false);setFailed(true);}});},60);
+    if(!config.rules.length){setMatches([]);setFailed(false);setWarning(false);return;}
+    const timer=setTimeout(()=>{void config.match(message.content,message.role).then(result=>{if(valid){setMatches(result.matches);setWarning(result.warning);setFailed(false);}}).catch(()=>{if(valid){setMatches([]);setWarning(false);setFailed(true);}});},60);
     return()=>{valid=false;clearTimeout(timer);};
-  },[message.text,message.role,message.origin,config]);
+  },[message.content,message.role,config]);
   const rendered=useMemo(()=>{
     let cursor=0,raw='';const portals:Array<{key:string;component:React.ComponentType<MessageComponentProps>;props:MessageComponentProps}>=[];
-    const parsed=parseRoleplay(message.text,message.role);
+    const parsed=parseRoleplay(message.content,message.role);
     const instructions=parsed.ranges.filter(range=>range.kind==='instruction');
-    const selected=failed||message.origin==='opening'?[]:selectMessageMatches(message.text,matches,config.rules,config.components,instructions);
-    const spans=protectedRanges(message.text);
-    const fallback=failed||message.origin==='opening'?[]:matches.filter(item=>item.replacement.type==='component'&&!selected.includes(item)&&canShowLiteralPlaceholder(item,spans)&&!instructions.some(range=>item.start<range.end&&item.end>range.start)&&!selected.some(other=>item.start<other.end&&item.end>other.start));
+    const selected=failed?[]:selectMessageMatches(message.content,matches,config.rules,config.components,instructions);
+    const spans=protectedRanges(message.content);
+    const fallback=failed?[]:matches.filter(item=>item.replacement.type==='component'&&!selected.includes(item)&&canShowLiteralPlaceholder(item,spans)&&!instructions.some(range=>item.start<range.end&&item.end>range.start)&&!selected.some(other=>item.start<other.end&&item.end>other.start));
     const blocked=[...selected,...fallback,...instructions];
-    const markers=failed?[]:roleplayMarkers(message.text,blocked,nonce.current);
+    const markers=failed?[]:roleplayMarkers(message.content,blocked,nonce.current);
     // Tags which were not recognized as valid user instructions are literal text,
     // except inside Markdown code or existing HTML where the renderer handles them.
-    const literalTags=Array.from(message.text.matchAll(/<\/?sr_instruction>/g)).filter(match=>{
-      const start=match.index!,lineStart=message.text.lastIndexOf('\n',start-1)+1,lineEnd=message.text.indexOf('\n',start);
-      const standalone=message.text.slice(lineStart,lineEnd<0?message.text.length:lineEnd).trim()===match[0];
-      return !blocked.some(range=>start<range.end&&start+match[0].length>range.start)&&!spans.some(span=>(span.type==='code'||(span.type==='html'&&!standalone&&start!==span.start))&&start<span.end&&start+match[0].length>span.start)&&!(start>0&&message.text[start-1]==='\\');
+    const literalTags=Array.from(message.content.matchAll(/<\/?sr_instruction>/g)).filter(match=>{
+      const start=match.index!,lineStart=message.content.lastIndexOf('\n',start-1)+1,lineEnd=message.content.indexOf('\n',start);
+      const standalone=message.content.slice(lineStart,lineEnd<0?message.content.length:lineEnd).trim()===match[0];
+      return !blocked.some(range=>start<range.end&&start+match[0].length>range.start)&&!spans.some(span=>(span.type==='code'||(span.type==='html'&&!standalone&&start!==span.start))&&start<span.end&&start+match[0].length>span.start)&&!(start>0&&message.content[start-1]==='\\');
     });
     // Decode protocol-only escapes after matching on original offsets. Ordinary
     // Markdown escapes are left to marked, and code/HTML regions stay literal.
-    const htmlContainers=spans.filter(span=>span.type==='syntax'&&span.containerStart!==undefined&&span.containerEnd!==undefined&&message.text[span.start]==='<').map(span=>({start:span.containerStart!,end:span.containerEnd!}));
+    const htmlContainers=spans.filter(span=>span.type==='syntax'&&span.containerStart!==undefined&&span.containerEnd!==undefined&&message.content[span.start]==='<').map(span=>({start:span.containerStart!,end:span.containerEnd!}));
     const displayEscapes:Array<{at:number;end:number;text:string}>=[];
     if(message.role==='user'){
-      for(let index=0;index<message.text.length;index++){
-        if(message.text[index]!=='\\')continue;
-        let end=index+1;while(message.text[end]==='\\')end++;
-        const count=end-index,next=message.text[end];
+      for(let index=0;index<message.content.length;index++){
+        if(message.content[index]!=='\\')continue;
+        let end=index+1;while(message.content[end]==='\\')end++;
+        const count=end-index,next=message.content[end];
         const unprotected=(finish:number)=>!blocked.some(range=>index<range.end&&finish>range.start)&&!spans.some(span=>(span.type==='code'||span.type==='html')&&index<span.end&&finish>span.start)&&!htmlContainers.some(range=>index<range.end&&finish>range.start);
-        if(count===1&&(index===0||message.text[index-1]==='\n')&&(end===message.text.length||next==='\n')&&unprotected(end))displayEscapes.push({at:index,end,text:''});
+        if(count===1&&(index===0||message.content[index-1]==='\n')&&(end===message.content.length||next==='\n')&&unprotected(end))displayEscapes.push({at:index,end,text:''});
         else if(count%2===1&&(next==='“'||next==='”')&&unprotected(end+1))displayEscapes.push({at:end-1,end:end+1,text:next==='“'?'&#8220;':'&#8221;'});
         index=end-1;
       }
     }
     const plain=(start:number,end:number)=>{
-      const changes=[...displayEscapes.filter(item=>item.at>=start&&item.end<=end),...markers.filter(item=>item.at>=start&&(item.at<end||(end===message.text.length&&item.at===end))).map(item=>({at:item.at,end:item.at,text:item.text})),...literalTags.filter(item=>item.index!>=start&&item.index!+item[0].length<=end).map(item=>({at:item.index!,end:item.index!+item[0].length,text:escapeHtml(item[0])}))].sort((a,b)=>a.at-b.at||a.end-b.end);
-      let result='',position=start;for(const change of changes){if(change.at<position)continue;result+=message.text.slice(position,change.at)+change.text;position=change.end;}return result+message.text.slice(position,end);
+      const changes=[...displayEscapes.filter(item=>item.at>=start&&item.end<=end),...markers.filter(item=>item.at>=start&&(item.at<end||(end===message.content.length&&item.at===end))).map(item=>({at:item.at,end:item.at,text:item.text})),...literalTags.filter(item=>item.index!>=start&&item.index!+item[0].length<=end).map(item=>({at:item.index!,end:item.index!+item[0].length,text:escapeHtml(item[0])}))].sort((a,b)=>a.at-b.at||a.end-b.end);
+      let result='',position=start;for(const change of changes){if(change.at<position)continue;result+=message.content.slice(position,change.at)+change.text;position=change.end;}return result+message.content.slice(position,end);
     };
     const parts=[...selected.map(item=>({start:item.start,end:item.end,item,literal:false,instruction:false})),...fallback.map(item=>({start:item.start,end:item.end,item,literal:true,instruction:false})),...instructions.map(range=>({start:range.start,end:range.end,item:undefined,literal:false,instruction:true}))].sort((a,b)=>a.start-b.start);
     let structuralWarning=false,missingComponent=false;
@@ -86,10 +86,10 @@ export const MessageContent = React.memo(function MessageContent({message,runId}
         portals.push({key,component:Component,props:{match:item.match,groups:item.groups,namedGroups:item.namedGroups,message:{id:message.id,role:message.role},runId}});
       } else raw+=substitute(item.replacement.content,item);
     }
-    raw+=plain(cursor,message.text.length);
+    raw+=plain(cursor,message.content.length);
     const document=renderWorldDocument(raw,{profile:'message',slots:new Set(portals.map(portal=>portal.key)),assetBaseUrl});
     return {html:document.html,assetErrors:document.assetErrors,portals,structuralWarning,missingComponent,instructions:parsed.instructionText};
-  },[message.id,message.role,message.text,message.origin,matches,config,runId,failed,assetBaseUrl]);
+  },[message.id,message.role,message.content,matches,config,runId,failed,assetBaseUrl]);
   useLayoutEffect(()=>{
     const container=ref.current;if(!container)return;
     const template=document.createElement('template');template.innerHTML=rendered.html;
@@ -102,4 +102,4 @@ export const MessageContent = React.memo(function MessageContent({message,runId}
     const Component=portal.component;return createPortal(<ComponentBoundary fallback={portal.props.match}><Component {...portal.props}/></ComponentBoundary>,target,portal.key);
   })}</div>;
 }, (previous,next) => previous.runId===next.runId && previous.message.id===next.message.id &&
-  previous.message.role===next.message.role && previous.message.text===next.message.text && previous.message.origin===next.message.origin);
+  previous.message.role===next.message.role && previous.message.content===next.message.content);

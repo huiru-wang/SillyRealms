@@ -1,6 +1,4 @@
-/** ServerV2 wire contracts and the read-only projection consumed by its isolated stage.
- * Kept separate from the original Studio contract; no legacy run states are inferred.
- */
+/** Server wire contracts and the display projection for the isolated stage. */
 import type {StateScope, StateValue, StateWriteResult} from './state-contract.js';
 export type {StateScope, StateValue, StateWriteResult} from './state-contract.js';
 

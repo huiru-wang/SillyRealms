@@ -13,8 +13,8 @@ const Dice:MessageComponent=()=>{const [count,setCount]=useState(0),asset=useSRA
 Dice.srDisplay='inline';
 const config:StoryConfiguration={rules:[rule],components:{Dice},state:{},ready:()=>{},match:async text=>{if(text.includes('FAIL'))throw Error('failure');const start=text.indexOf('DICE');return {warning:false,matches:start<0?[]:[{start,end:start+4,ruleId:'dice',replacement:rule.replacement,match:'DICE',groups:[],namedGroups:{}}]}}};
 const root=createRoot(document.querySelector('#root')!);
-const base='http://127.0.0.1:5189/world-assets/card-one/';
-const show=(text:string,configuration=config,baseUrl=base)=>root.render(<SRAssetProvider baseUrl={baseUrl}><StoryContext.Provider value={configuration}><MessageContent message={{id:'m',role:'assistant',text}} runId="r"/></StoryContext.Provider></SRAssetProvider>);
+const base='http://127.0.0.1:5189/api/v1/worlds/card-one/resources/';
+const show=(text:string,configuration=config,baseUrl=base)=>root.render(<SRAssetProvider baseUrl={baseUrl}><StoryContext.Provider value={configuration}><MessageContent message={{id:'m',role:'assistant',content:text}} runId="r"/></StoryContext.Provider></SRAssetProvider>);
 async function run(){
   show('开始 DICE');await waitFor(()=>!!document.querySelector('#dice'));
   const button=document.querySelector<HTMLButtonElement>('#dice');const slot=button?.closest('[data-sr-slot]');

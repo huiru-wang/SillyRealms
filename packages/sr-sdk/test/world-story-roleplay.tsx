@@ -14,7 +14,7 @@ const replace={id:'author',roles:['user' as const,'assistant' as const],pattern:
 const Dice:MessageComponent=()=>{const [count,setCount]=useState(0);return <button id="dice" onClick={()=>setCount(n=>n+1)}>count:{count}</button>};Dice.srDisplay='inline';
 const config:StoryConfiguration={rules:[rule,replace],components:{Dice},state:{},ready:()=>{},match:async text=>({warning:false,matches:[rule,replace].flatMap(item=>{const start=text.indexOf(item.pattern);return start<0?[]:[{start,end:start+item.pattern.length,ruleId:item.id,replacement:item.replacement,match:item.pattern,groups:[],namedGroups:{}}]})})};
 const root=createRoot(document.querySelector('#root')!);
-const show=(text:string,role:'user'|'assistant'='user')=>root.render(<StoryContext.Provider value={config}><div className="sr-story"><article className="sr-message"><MessageContent message={{id:'m',role,text}} runId="r"/></article></div></StoryContext.Provider>);
+const show=(text:string,role:'user'|'assistant'='user')=>root.render(<StoryContext.Provider value={config}><div className="sr-story"><article className="sr-message"><MessageContent message={{id:'m',role,content:text}} runId="r"/></article></div></StoryContext.Provider>);
 async function run(){
   const text='动作 “你好”\n\n> 安静一点\n\n<div data-sr-markdown="true">**HTML 档案**\n\n<div data-sr-markdown="true">**嵌套档案**</div>\n\n“HTML 中的引号”</div>\n\n<blockquote>普通引用</blockquote>\n\n`“代码”` DICE 作者\n\n<sr_instruction>\nDICE 放慢节奏\n</sr_instruction>\n\n<sr_instruction>\n继续保持第三人称\n</sr_instruction>';
   show(text);await wait();
