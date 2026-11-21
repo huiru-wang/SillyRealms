@@ -57,6 +57,7 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 | 预设、模型、世界、会话或消息不存在 | 404 | PRESET_NOT_FOUND、MODEL_CONFIG_NOT_FOUND、WORLD_NOT_FOUND、SESSION_NOT_FOUND、ENTRY_NOT_FOUND |
 | 资源重复 | 409 | RESOURCE_CONFLICT |
 | 被引用的数据不能删除或关联数据已变化 | 409 | REFERENCE_CONFLICT |
+| 世界存在关联会话，需确认一并删除 | 409 | WORLD_HAS_SESSIONS |
 | 追加前驱不是当前 tip | 409 | TIP_CONFLICT |
 | 存储暂时繁忙 | 503 | STORAGE_BUSY |
 | 业务 Service 未装配、服务关闭中 | 503 | SERVICE_UNAVAILABLE、SERVER_SHUTTING_DOWN |
@@ -88,6 +89,8 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 预设列表支持 type、limit、cursor；模型配置列表支持 limit、cursor，也保留显式 offset 分页。cursor 与 offset 不能同时使用；游标绑定对应资源及筛选条件，不能挪到其他查询。Service 只接收类型化分页参数，HTTP 负责游标编码。
 
 预设详情返回 `{id,revision,type,name,description,config,createdAt,updatedAt}`；列表仅返回去掉 config 的摘要，不读取每个预设的配置正文。当前只支持 type=narrative；config 为 `{schemaVersion:1,nodes,contextStrategy,modelParameters}`。CRUD 不再接受 config_json/context_strategy/model_parameters 顶层字段。
+
+modelParameters 包含可选 temperature、thinkingEnabled 开关及可选 thinkingLevel（minimal、low、medium、high、xhigh、max）。思考深度不指定时保留默认行为；关闭思考或模型不支持思考时不传思考参数。模型支持思考但不支持所选深度时，仅忽略该深度选择并沿用既有默认深度，保持思考开关语义。便携文档及内部存储分别对应 model_parameters.thinking_enabled / thinking_level，旧记录缺少深度时无需迁移。
 
 创建接收 `{name,description,type,config}`（可提供 id）。PATCH 接收修改字段及必填 expectedRevision，成功后 revision 加一；版本过期返回 PRESET_REVISION_CONFLICT/409，保持服务端内容不变。温度可省略，表示未指定；summaryPrompt 只有 rolling_summary 策略要求非空。
 
@@ -126,7 +129,7 @@ promptCache 是 SDK 提供的最佳估计保留时长，缺失表示未提供，
 | GET | /worlds | 摘要列表，名称和标签筛选 |
 | POST | /worlds/import | multipart file 字段上传 JSON 或 ZIP 世界卡 |
 | GET / HEAD | /worlds/:id/export | 按当前世界重建 ZIP / 下载头 |
-| GET / PATCH / DELETE | /worlds/:id | 领域详情 / 管理字段修改 / 受限删除 |
+| GET / PATCH / DELETE | /worlds/:id | 领域详情 / 管理字段修改 / 删除世界及确认后的关联会话 |
 | GET | /worlds/tags | 已绑定标签 `{name,worldCount}` |
 | GET | /worlds/:id/components | 已解析组件源码及按组件 ID 返回的错误 |
 | GET / HEAD | /worlds/:id/original | 下载或检查已保存原件 |
@@ -144,7 +147,9 @@ PATCH 仅接受 name、tags、defaultPresetId、defaultApiModelConfigId 的非�
 
 原件下载固定文件名为 `original.json` 或 `original.zip`，反映已保存的原始字节。包资源路径允许子目录，拒绝路径穿越和符号链接；资源响应包含 MIME、nosniff、只读文档 CSP 和 Access-Control-Allow-Origin: *；文件打开和流生命周期在世界模块内部处理。
 
-删除世界先执行 DB 删除，外键仍拒绝被会话引用的世界；拒绝时文件不动。删除成功后清理整个世界根目录，包括 source/ 和 package/。目录缺失视为已清理；DB 已不存在但目录残留时，重试同一 DELETE 仍会清理并返回成功。两者均不存在返回 WORLD_NOT_FOUND。
+DELETE `/worlds/:id` 未确认关联删除时，有关联会话返回 WORLD_HAS_SESSIONS/409，errorMessage 提示会话数量及再次确认会一并删除会话和消息；此时不修改数据库或文件。再次确认发送 `?deleteSessions=true`；省略或显式 `false` 均不授权删除会话，deleteSessions 的其他取值返回 INVALID_REQUEST/400。没有关联会话时直接删除。
+
+删除由用例编排：在同一个同步数据库事务中，通过 SessionService 删除该世界的全部关联会话及其消息，再删除世界和标签；沿用 SESSION_WRITE_LOCKED，任一会话正在运行或任一步骤失败时，整个事务回滚。配置 canAccessSession 时逐一检查关联会话的访问权限；异步检查后在事务内重新查询，发现未授权的新会话时返回 WORLD_HAS_SESSIONS，保持数据不变。数据库提交后清理整个世界根目录，包括 source/ 和 package/。目录缺失视为已清理；DB 已不存在但目录残留时，重试同一 DELETE 仍会清理并返回成功。两者均不存在返回 WORLD_NOT_FOUND。
 
 文件清理失败返回 WORLD_FILES_DELETE_FAILED，不回滚已完成的 DB 删除；调用方可重试。文件写入/删除按世界串行，并拒绝不安全的世界根目录；不会跟随内部符号链接删除外部目标。
 

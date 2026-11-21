@@ -1,11 +1,11 @@
 import {useRef,useState} from 'react';
 import {Link,useNavigate,useParams} from 'react-router-dom';
-import {ArrowLeft,Check,KeyRound,LoaderCircle,Plus,Settings2,ShieldCheck,Trash2} from 'lucide-react';
+import {ArrowLeft,Check,KeyRound,LoaderCircle,Plus,Settings2,ShieldCheck,Star,Trash2} from 'lucide-react';
 import {PageHeader} from '../../components/ui/PageHeader';
 import {Input,Field} from '../../components/ui/Field';
 import {Select} from '../../components/ui/Select';
 import {Modal} from '../../components/ui/Modal';
-import {Button} from '../../components/ui/Button';
+import {Button,IconButton} from '../../components/ui/Button';
 import {api,ApiError,json} from '../../api';
 import {ErrorNotice,Loading} from '../../app/ui';
 import {useManagement} from '../../app/ManagementData';
@@ -85,7 +85,15 @@ export function ModelsPage(){
     {detail.loading&&<Loading text="正在读取连接…"/>}
     {detail.error&&<ErrorNotice message={detail.error} onRetry={detail.reload}/>}
     {selected?<>
-     <header className={styles.detailHeader}><div><h2>{selected.name}</h2><p>{selected.providerId}</p></div><Button icon={<Settings2 size={16}/>} aria-label="编辑连接" disabled={busy} onClick={()=>{setError('');setDraft(modelDraft(selected));}}>编辑</Button></header>
+     <header className={styles.detailHeader}>
+      <div><h2>{selected.name}</h2><p>{selected.providerId}</p></div>
+      <div className={styles.detailActions} role="group" aria-label="模型配置操作">
+       <ModelConnectionTest key={selected.id+":"+selected.updatedAt+":"+selected.credentialStatus} model={selected} disabled={busy||!!draft}/>
+       <Button size="compact" icon={defaultId===selected.id?<Check size={16}/>:<Star size={16}/>} disabled={busy||!settings.value||defaultId===selected.id} aria-label={defaultId===selected.id?'当前默认模型':'设为默认模型'} title={defaultId===selected.id?'当前应用默认模型':'设为应用默认，用于之后导入的世界卡'} onClick={()=>void selectDefault(selected.id)}>{defaultId===selected.id?'当前默认':'默认'}</Button>
+       <IconButton size="compact" icon={<Settings2 size={16}/>} aria-label="编辑模型配置" title="编辑模型配置" disabled={busy} onClick={()=>{setError('');setDraft(modelDraft(selected));}}/>
+       <IconButton size="compact" intent="danger" icon={<Trash2 size={16}/>} aria-label="删除模型配置" title="删除模型配置" disabled={busy} onClick={()=>{setError('');setDeleting(selected);}}/>
+      </div>
+     </header>
      <div className={styles.detailBody}>
       <dl className={styles.facts}>
        <div><dt>连接名称</dt><dd>{selected.name}</dd></div>
@@ -97,10 +105,7 @@ export function ModelsPage(){
        {!draft&&catalogStatus}
        {selectedModel?<ModelMetadata model={selectedModel}/>:catalog.value&&providers.length>0&&<p className={styles.catalogStatus} role="status">当前配置的模型未在目录中，已保存的连接保持不变。</p>}
       </div>
-      <ModelConnectionTest key={selected.id+":"+selected.updatedAt+":"+selected.credentialStatus} model={selected} disabled={busy||!!draft} editing={!!draft}/>
-      <section className={styles.preference}><div><h3>应用默认模型</h3><p>用于之后导入的世界卡。</p></div>{defaultId===selected.id?<span className={styles.defaultState}><Check size={15}/>当前默认</span>:<Button disabled={busy||!settings.value} onClick={()=>void selectDefault(selected.id)}>设为默认</Button>}</section>
       {settings.error&&<ErrorNotice message={settings.error} onRetry={settings.reload}/>}
-      <div className={styles.connectionActions}><Button variant="ghost" intent="danger" icon={<Trash2 size={16}/>} disabled={busy} onClick={()=>{setError('');setDeleting(selected);}}>删除配置</Button></div>
      </div>
     </>:!detail.loading&&!detail.error&&<div className={styles.empty}><KeyRound size={26}/><h2>选择一个模型配置</h2></div>}
    </section>

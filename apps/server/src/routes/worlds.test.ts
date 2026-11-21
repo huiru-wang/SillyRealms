@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '../infrastructure/database/connection.js';
+import { bindTransaction } from '../infrastructure/database/transaction.js';
+import type { SessionAccessCheck } from '../http/session-access.js';
+import { createDeleteWorld } from '../usecases/delete-world.js';
 import type { Page } from '../http/pagination.js';
 import { errorHandler, type SuccessResponse } from '../http/response.js';
 import { createServices } from '../services.js';
@@ -39,12 +42,7 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'sr-v2-world-routes-'));
   services = createServices(db, root);
   services.settings.ensure({ defaultPresetId: null, defaultApiModelConfigId: null });
-  app = new Hono().onError(errorHandler)
-    .route(base, createWorldRoutes({
-      worlds: services.worlds, sessions: services.sessions,
-      importWorld: createImportWorld({ worlds: services.worlds, settings: services.settings }),
-      exportWorld: createExportWorld({ worlds: services.worlds }),
-    }));
+  app = new Hono().onError(errorHandler).route(base, worldRoutes());
 });
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -53,6 +51,21 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
+function worldRoutes(canAccessSession?: SessionAccessCheck) {
+  return createWorldRoutes({
+    worlds: services.worlds, sessions: services.sessions, canAccessSession,
+    deleteWorld: createDeleteWorld({ worlds: services.worlds, sessions: services.sessions, transaction: bindTransaction(db) }),
+    importWorld: createImportWorld({ worlds: services.worlds, settings: services.settings }),
+    exportWorld: createExportWorld({ worlds: services.worlds }),
+  });
+}
+function sessionWithEntry(worldId: string, id: string, config: ReturnType<typeof configuration>) {
+  const session = services.sessions.create({ ...config, id, worldId, userCharacterId: 'player' });
+  const entry = services.sessions.appendEntry(id, {
+    id: id + '-entry', runId: 'opening', type: 'message', role: 'assistant', payload: { content: 'Opening' },
+  });
+  return { session, entry };
+}
 function jsonRequest(path: string, method: string, body: unknown) {
   return app.request(base + path, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(method === 'PATCH' ? { expectedRevision: 1, ...(body as object) } : body) });
 }
@@ -170,22 +183,129 @@ describe('world routes', () => {
     expect(await readFile(join(otherPaths.package, 'resource.txt'), 'utf8')).toBe('package-world-two');
   });
 
-  it('preserves files when a session prevents the database deletion', async () => {
+  it('requires explicit confirmation and preserves sessions, messages and files before it', async () => {
     const world = services.worlds.create({ ...content(), tags: ['bound'] });
     const paths = await resources(world.id);
-    services.sessions.create({ ...configuration(), worldId: world.id, userCharacterId: 'player' });
-    await failure(await app.request(base + '/' + world.id, { method: 'DELETE' }), 'REFERENCE_CONFLICT', 409);
+    const { session, entry } = sessionWithEntry(world.id, 'linked', configuration());
+    const response = await app.request(base + '/' + world.id, { method: 'DELETE' });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      success: false, errorCode: 'WORLD_HAS_SESSIONS', data: null,
+      errorMessage: expect.stringContaining('1 个会话'),
+    });
+    await failure(await app.request(base + '/' + world.id + '?deleteSessions=false', { method: 'DELETE' }), 'WORLD_HAS_SESSIONS', 409);
+    expect(services.sessions.get(session.id)).not.toBeNull();
+    expect(services.sessions.getEntry(session.id, entry.id)).not.toBeNull();
     expect(services.worlds.require(world.id).tags).toEqual(['bound']);
     expect(await readFile(join(paths.source, 'original.json'), 'utf8')).toBe('original-world-one');
     expect(await readFile(join(paths.package, 'resource.txt'), 'utf8')).toBe('package-world-one');
   });
 
+  it('deletes every confirmed session and message beyond a list page while preserving another world', async () => {
+    const world = services.worlds.create({ ...content(), tags: ['bound'] });
+    const other = services.worlds.create({ ...content(), id: 'world-two', tags: ['keep'] });
+    const paths = await resources(world.id);
+    const otherPaths = await resources(other.id);
+    const config = configuration();
+    const linked = Array.from({ length: 25 }, (_, index) => sessionWithEntry(world.id, 'linked-' + index, config));
+    const retained = sessionWithEntry(other.id, 'retained', config);
+    expect(await data(await app.request(base + '/' + world.id + '?deleteSessions=true', { method: 'DELETE' }))).toEqual({ id: world.id });
+    expect(services.worlds.get(world.id)).toBeNull();
+    for (const { session, entry } of linked) {
+      expect(services.sessions.get(session.id)).toBeNull();
+      expect(services.sessions.getEntry(session.id, entry.id)).toBeNull();
+    }
+    expect(services.worlds.require(other.id).tags).toEqual(['keep']);
+    expect(services.sessions.get(retained.session.id)).not.toBeNull();
+    expect(services.sessions.getEntry(retained.session.id, retained.entry.id)).not.toBeNull();
+    expect(services.presets.get(config.presetId)).not.toBeNull();
+    expect(services.models.get(config.apiModelConfigId)).not.toBeNull();
+    await expect(readdir(paths.root)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(join(otherPaths.package, 'resource.txt'), 'utf8')).toBe('package-world-two');
+  });
+
+  it('rolls back earlier session deletions when a later session has an active run', async () => {
+    const world = services.worlds.create({ ...content(), tags: ['bound'] });
+    const paths = await resources(world.id);
+    const config = configuration();
+    const linked = ['a-idle', 'z-running'].map(id => sessionWithEntry(world.id, id, config));
+    const permit = services.cache.acquireRun({ sessionId: 'z-running', worldId: world.id, runId: 'running' });
+    await failure(await app.request(base + '/' + world.id + '?deleteSessions=true', { method: 'DELETE' }), 'SESSION_WRITE_LOCKED', 409);
+    for (const { session, entry } of linked) {
+      expect(services.sessions.get(session.id)).not.toBeNull();
+      expect(services.sessions.getEntry(session.id, entry.id)).not.toBeNull();
+    }
+    expect(services.worlds.require(world.id).tags).toEqual(['bound']);
+    expect(await readFile(join(paths.package, 'resource.txt'), 'utf8')).toBe('package-world-one');
+    services.cache.releaseRun(permit);
+    expect(await data(await app.request(base + '/' + world.id + '?deleteSessions=true', { method: 'DELETE' }))).toEqual({ id: world.id });
+  });
+
+  it('rolls back all session deletions if deleting the world record fails', async () => {
+    const world = services.worlds.create(content());
+    const paths = await resources(world.id);
+    const { session, entry } = sessionWithEntry(world.id, 'linked', configuration());
+    vi.spyOn(services.worlds, 'deleteRecord').mockImplementationOnce(() => { throw new Error('simulated write failure'); });
+    await failure(await app.request(base + '/' + world.id + '?deleteSessions=true', { method: 'DELETE' }), 'INTERNAL_ERROR', 500);
+    expect(services.worlds.get(world.id)).not.toBeNull();
+    expect(services.sessions.get(session.id)).not.toBeNull();
+    expect(services.sessions.getEntry(session.id, entry.id)).not.toBeNull();
+    expect(await readFile(join(paths.package, 'resource.txt'), 'utf8')).toBe('package-world-one');
+  });
+
+  it('rejects malformed confirmation flags without deleting any data', async () => {
+    const world = services.worlds.create(content());
+    sessionWithEntry(world.id, 'linked', configuration());
+    for (const value of ['1', '0', '', 'TRUE', 'yes']) {
+      await failure(await app.request(base + '/' + world.id + '?deleteSessions=' + value, { method: 'DELETE' }), 'INVALID_REQUEST', 400);
+    }
+    expect(services.worlds.get(world.id)).not.toBeNull();
+    expect(services.sessions.get('linked')).not.toBeNull();
+  });
+
+  it('requires access to every session before a confirmed world deletion', async () => {
+    const world = services.worlds.create(content());
+    const paths = await resources(world.id);
+    const config = configuration();
+    const linked = ['a-allowed', 'z-denied'].map(id => sessionWithEntry(world.id, id, config));
+    const access = vi.fn(async (id: string) => id !== 'z-denied');
+    const guarded = new Hono().onError(errorHandler).route(base, worldRoutes(access));
+    await failure(await guarded.request(base + '/' + world.id + '?deleteSessions=true', { method: 'DELETE' }), 'SESSION_NOT_FOUND', 404);
+    expect(access.mock.calls.map(([id]) => id)).toEqual(['a-allowed', 'z-denied']);
+    for (const { session, entry } of linked) {
+      expect(services.sessions.get(session.id)).not.toBeNull();
+      expect(services.sessions.getEntry(session.id, entry.id)).not.toBeNull();
+    }
+    expect(services.worlds.get(world.id)).not.toBeNull();
+    expect(await readFile(join(paths.package, 'resource.txt'), 'utf8')).toBe('package-world-one');
+  });
+
+  it('refuses an unchecked session created while access authorization was awaiting', async () => {
+    const world = services.worlds.create(content());
+    const config = configuration();
+    sessionWithEntry(world.id, 'old', config);
+    const access = vi.fn(async () => {
+      await Promise.resolve();
+      sessionWithEntry(world.id, 'new', config);
+      return true;
+    });
+    const guarded = new Hono().onError(errorHandler).route(base, worldRoutes(access));
+    await failure(await guarded.request(base + '/' + world.id + '?deleteSessions=true', { method: 'DELETE' }), 'WORLD_HAS_SESSIONS', 409);
+    expect(services.worlds.get(world.id)).not.toBeNull();
+    expect(services.sessions.listIdsByWorld(world.id)).toEqual(['new', 'old']);
+    expect(services.sessions.getEntry('old', 'old-entry')).not.toBeNull();
+    expect(services.sessions.getEntry('new', 'new-entry')).not.toBeNull();
+  });
+
   it('retries file cleanup after the database row was deleted on the first attempt', async () => {
     const world = services.worlds.create(content());
     const paths = await resources(world.id);
+    const { session, entry } = sessionWithEntry(world.id, 'linked', configuration());
     vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('simulated cleanup failure'), { code: 'EACCES' }));
-    await failure(await app.request(base + '/' + world.id, { method: 'DELETE' }), 'WORLD_FILES_DELETE_FAILED', 500);
+    await failure(await app.request(base + '/' + world.id + '?deleteSessions=true', { method: 'DELETE' }), 'WORLD_FILES_DELETE_FAILED', 500);
     expect(services.worlds.get(world.id)).toBeNull();
+    expect(services.sessions.get(session.id)).toBeNull();
+    expect(services.sessions.getEntry(session.id, entry.id)).toBeNull();
     expect(await readFile(join(paths.source, 'original.json'), 'utf8')).toBe('original-world-one');
     expect(await data(await app.request(base + '/' + world.id, { method: 'DELETE' }))).toEqual({ id: world.id });
     await expect(readdir(paths.root)).rejects.toMatchObject({ code: 'ENOENT' });

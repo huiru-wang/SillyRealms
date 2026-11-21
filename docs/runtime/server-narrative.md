@@ -34,6 +34,8 @@ Web 已接入管理、作者预览与文本叙事运行页，见 [运行接入](
 
 业务模块只通过 `service.ts` 提供能力；叙事用例不读取 Repository、存储行或 SQL，不接收数据库连接；装配注入同步 TransactionRunner，事务仅覆盖收尾读取、候选计算和助手保存，不包含模型/网络等待。用例、路由和编译器依赖自有 ModelClient/ModelInfo/ModelMessage，不接触 SDK Model、StopReason 或具体 PiClient；只在装配入口选择 PiClient 实现。pi 不依赖业务模块、会话、entry、EventHub 或 HTTP。装配方为叙事与 SSE 注入同一个 EventHub。context 生产代码不依赖 narrative、其他 usecase 或事件传输，只通过进度通知交由外层映射 run 事件；外部代码和类型只能从 context/index.ts 导入。
 
+主叙事与滚动摘要请求均携带预设的 temperature、thinkingEnabled 和可选 thinkingLevel。标准深度为 minimal、low、medium、high、xhigh、max；未指定时保持既有默认行为。pi 适配层依据当前模型的实际支持档位应用显式选择，不支持所选深度时仅忽略该选择并沿用原有默认深度，保持已开启的思考行为；关闭思考或模型不支持思考时不传 reasoning 参数。
+
 ## 提交与结束
 
 1. HTTP 检查来源、真实会话和可选访问权限。用例检查输入非空白、expectedTipEntryId、同会话并发和停机状态；拒绝的请求不追加消息。

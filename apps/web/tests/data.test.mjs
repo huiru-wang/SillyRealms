@@ -15,6 +15,20 @@ test('editing does not fill an unspecified temperature or leak revision into edi
  assert.equal(Object.hasOwn(input.config.modelParameters,'temperature'),false);
  assert.equal(Object.hasOwn(input,'revision'),false);assert.equal(Object.hasOwn(input,'id'),false);
 });
+test('thinking depth round-trips all standard choices and stays optional for existing presets',()=>{
+ const legacy=fromServer(detail());
+ assert.equal(Object.hasOwn(presetInput(legacy).config.modelParameters,'thinkingLevel'),false);
+ for(const level of ['minimal','low','medium','high','xhigh','max']){
+  const saved=detail();saved.config.modelParameters={thinkingEnabled:true,thinkingLevel:level};
+  const draft=fromServer(saved);
+  assert.equal(getPresetValidationError(draft),null);
+  assert.equal(presetInput(draft).config.modelParameters.thinkingLevel,level);
+  draft.thinkingEnabled=false;
+  assert.deepEqual(presetInput(draft).config.modelParameters,{thinkingEnabled:false,thinkingLevel:level});
+ }
+ legacy.thinkingLevel='ultra';
+ assert.equal(getPresetValidationError(legacy),'请选择有效的思考深度。');
+});
 test('draft nodes do not mutate a saved server object',()=>{
  const saved=detail(),draft=fromServer(saved);draft.nodes[0].prompt='Changed';
  assert.equal(saved.config.nodes[0].prompt,'');

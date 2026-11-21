@@ -97,7 +97,7 @@ export const MessageContent = React.memo(function MessageContent({message,runId}
     updateMessageDOM(container,template.content);
     setTargets(Array.from(container.querySelectorAll('[data-sr-slot]')));
   },[rendered]);
-  return <div className="sr-rich"><div ref={ref}/>{rendered.assetErrors.length>0&&<small role="status">{rendered.assetErrors.join('；')}</small>}{rendered.instructions.length>0&&<div className="sr-rp-instruction-panel"><span>叙事指令</span>{rendered.instructions.map((text,index)=><p key={index}>{text}</p>)}</div>}{failed&&<small role="status">消息展示规则处理失败，已显示原文</small>}{(warning||rendered.structuralWarning)&&<small role="status">部分消息展示规则无效，已保留原文</small>}{rendered.missingComponent&&<small role="status">消息组件不可用，已保留原文</small>}{rendered.portals.map(portal=>{
+  return <div className="sr-rich"><div className="sr-message-markdown" ref={ref}/>{rendered.assetErrors.length>0&&<small role="status">{rendered.assetErrors.join('；')}</small>}{rendered.instructions.length>0&&<div className="sr-rp-instruction-panel"><span>叙事指令</span>{rendered.instructions.map((text,index)=><p key={index}>{text}</p>)}</div>}{failed&&<small role="status">消息展示规则处理失败，已显示原文</small>}{(warning||rendered.structuralWarning)&&<small role="status">部分消息展示规则无效，已保留原文</small>}{rendered.missingComponent&&<small role="status">消息组件不可用，已保留原文</small>}{rendered.portals.map(portal=>{
     const target=targets.find(node=>node.getAttribute('data-sr-slot')===portal.key);if(!target)return null;
     const Component=portal.component;return createPortal(<ComponentBoundary fallback={portal.props.match}><Component {...portal.props}/></ComponentBoundary>,target,portal.key);
   })}</div>;

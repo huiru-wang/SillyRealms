@@ -1,6 +1,6 @@
 import type { RunWritePermit } from '../../infrastructure/cache/index.js';
 import type { ErrorCode } from '../../errors.js';
-import type { ModelClient, ModelInfo, ModelMessage } from '../../infrastructure/model/client.js';
+import type { ModelClient, ModelInfo, ModelMessage, ModelReasoningLevel } from '../../infrastructure/model/client.js';
 import type { ModelConfig } from '../../modules/models/service.js';
 import type { EntryMetrics, SessionService } from '../../modules/sessions/service.js';
 import type { NarrativeContextServices } from './capture.js';
@@ -29,6 +29,7 @@ export type SummaryModelRequest = {
   maxTokens: number;
   temperature?: number;
   thinkingEnabled: boolean;
+  thinkingLevel?: ModelReasoningLevel;
   signal: AbortSignal;
   /** Called once credentials are ready, immediately before invoking the model. */
   onStarted: () => void;

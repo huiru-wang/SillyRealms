@@ -4,6 +4,8 @@ import { AppError } from '../errors.js';
 import { decodeCursor, encodeCursor } from '../http/pagination.js';
 import { numberQuery, readJson, success } from '../http/response.js';
 import { readMultipart } from '../http/multipart.js';
+import { requireSessionAccess, type SessionAccessCheck } from '../http/session-access.js';
+import type { DeleteWorld } from '../usecases/delete-world.js';
 import type { SessionService } from '../modules/sessions/service.js';
 import { worldImportLimits, type World, type WorldDownload, type WorldManagementPatch, type WorldService } from '../modules/worlds/service.js';
 import type { ImportWorld } from '../usecases/import-world.js';
@@ -55,8 +57,9 @@ function worldDetail(world: World) {
   };
 }
 
-export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld }: {
+export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld, deleteWorld, canAccessSession, shutdownSignal }: {
   worlds: WorldService; sessions: SessionService; importWorld?: ImportWorld; exportWorld?: ExportWorld;
+  deleteWorld?: DeleteWorld; canAccessSession?: SessionAccessCheck; shutdownSignal?: AbortSignal;
 }): Hono {
   const routes = new Hono();
   routes.get('/', c => {
@@ -111,8 +114,16 @@ export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld }
     return success(c, { item: worldDetail(item) });
   });
   routes.delete('/:id', async c => {
+    if (!deleteWorld) throw new AppError('SERVICE_UNAVAILABLE');
+    const raw = c.req.query('deleteSessions');
+    if (raw !== undefined && raw !== 'false' && raw !== 'true') {
+      throw new AppError('INVALID_REQUEST', 'deleteSessions 必须为 true 或 false');
+    }
     const id = c.req.param('id');
-    if (!await worlds.delete(id)) throw new AppError('WORLD_NOT_FOUND');
+    const authorizeSession = canAccessSession
+      ? (sessionId: string) => requireSessionAccess(sessions, sessionId, c.req.raw, canAccessSession, shutdownSignal)
+      : undefined;
+    if (!await deleteWorld(id, { deleteSessions: raw === 'true', authorizeSession })) throw new AppError('WORLD_NOT_FOUND');
     return success(c, { id });
   });
   return routes;

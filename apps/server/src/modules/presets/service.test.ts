@@ -83,6 +83,31 @@ describe('typed preset persistence', () => {
     expect(() => presets.update(saved.id, { config: { ...saved.config, contextStrategy: { ...saved.config.contextStrategy, strategy: 'rolling_summary' } } })).toThrow();
   });
 
+  it.each(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const)('persists and imports/exports the %s thinking depth', level => {
+    const input = preset();
+    input.config.modelParameters = { thinkingEnabled: true, thinkingLevel: level };
+    const saved = presets.create(input);
+    expect(presets.require(saved.id).config.modelParameters).toEqual(input.config.modelParameters);
+    const stored = db.prepare('SELECT config_json FROM presets WHERE id=?').get(saved.id)!;
+    expect(JSON.parse(String(stored.config_json)).model_parameters).toEqual({ thinking_enabled: true, thinking_level: level });
+    const document = presets.toDocument(saved);
+    expect(document.model_parameters).toEqual({ thinking_enabled: true, thinking_level: level });
+    expect(presets.importDocument(document).config.modelParameters).toEqual(input.config.modelParameters);
+  });
+
+  it('keeps old presets unspecified and rejects unknown thinking depths', () => {
+    const saved = presets.create(preset());
+    expect(saved.config.modelParameters).not.toHaveProperty('thinkingLevel');
+    const document = presets.toDocument(saved);
+    expect(document.model_parameters).not.toHaveProperty('thinking_level');
+    expect(presets.importDocument(document).config.modelParameters).not.toHaveProperty('thinkingLevel');
+    for (const value of ['off', 'ultra', '', 3, null]) {
+      expect(() => presets.importDocument({
+        ...document, model_parameters: { ...document.model_parameters, thinking_level: value },
+      })).toThrow();
+    }
+  });
+
   it('enforces same-type names, rejects unimplemented types and legacy config shells', () => {
     const input = preset();
     const created = presets.create(input);

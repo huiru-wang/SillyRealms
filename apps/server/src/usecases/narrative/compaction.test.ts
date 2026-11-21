@@ -72,6 +72,19 @@ const summaries = () => services.sessions.getHistory('session').filter(entry => 
 const total = () => seen.filter(event => event.event === 'run.usage').at(-1)?.data.usage;
 
 describe('summary execution and accounting', () => {
+  it('forwards the saved thinking depth through both summary and main narrative requests', async () => {
+    const preset = services.presets.require('preset');
+    services.presets.update(preset.id, { config: {
+      ...preset.config, modelParameters: { thinkingEnabled: true, thinkingLevel: 'xhigh' },
+    } });
+    seed();
+    expect(await submit().finished).toMatchObject({ event: 'run.completed' });
+    expect(stream).toHaveBeenCalledTimes(2);
+    for (const [, , request] of stream.mock.calls) {
+      expect(request).toMatchObject({ thinkingEnabled: true, thinkingLevel: 'xhigh' });
+    }
+  });
+
   it('saves one summary before generation, publishes only summary milestones, and accounts requests once', async () => {
     const lines: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((line: string) => { lines.push(line); });

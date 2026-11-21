@@ -1,3 +1,4 @@
+export type PresetThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type ContextStrategy = 'rolling_summary' | 'sliding_window';
 export type PresetRole = 'system' | 'user' | 'assistant' | 'auto';
 export type PresetNode = {
@@ -17,6 +18,7 @@ export type WebPreset = {
   maxOutputTokens: number;
   temperature: number | undefined;
   thinkingEnabled: boolean;
+  thinkingLevel?: PresetThinkingLevel;
   summaryPrompt: string;
   nodes: PresetNode[];
   revision: number;
@@ -25,6 +27,6 @@ export type WebPreset = {
 export type PresetSummary={id:string;type:'narrative';name:string;description:string|null;revision:number;createdAt:number;updatedAt:number};
 export type PresetInput={
   type:'narrative';name:string;description:string|null;
-  config:{schemaVersion:1;nodes:PresetNode[];contextStrategy:{strategy:ContextStrategy;maxContextTokens:number;maxOutputTokens:number;summaryPrompt:string};modelParameters:{temperature?:number;thinkingEnabled:boolean}};
+  config:{schemaVersion:1;nodes:PresetNode[];contextStrategy:{strategy:ContextStrategy;maxContextTokens:number;maxOutputTokens:number;summaryPrompt:string};modelParameters:{temperature?:number;thinkingEnabled:boolean;thinkingLevel?:PresetThinkingLevel}};
 };
 export type PresetDetail=PresetSummary & PresetInput;

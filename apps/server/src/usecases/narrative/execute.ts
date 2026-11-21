@@ -52,7 +52,7 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
       assertRunning(signal);
       const result = await callModel(modelClient, selected, compiled.messages, {
         apiKey, signal, maxTokens: compiled.maxTokens,
-        temperature: compiled.temperature, thinkingEnabled: compiled.thinkingEnabled,
+        temperature: compiled.temperature, thinkingEnabled: compiled.thinkingEnabled, thinkingLevel: compiled.thinkingLevel,
         onDiagnostic(event) {
           log('model.' + event.type, { purpose: 'narrative', provider: selected.providerId,
             model: selected.modelId, source: event.source, raw: event.data });

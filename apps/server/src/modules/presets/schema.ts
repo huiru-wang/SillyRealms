@@ -48,6 +48,7 @@ export const narrativeConfigSchema = z.object({
   modelParameters: z.object({
     temperature: z.number().min(0).max(2).optional(),
     thinkingEnabled: z.boolean().default(false),
+    thinkingLevel: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
   }).strict(),
 }).strict().superRefine(({ nodes, contextStrategy }, context) => {
   if (contextStrategy.strategy === 'rolling_summary' && !contextStrategy.summaryPrompt.trim()) {

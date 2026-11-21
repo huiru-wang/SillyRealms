@@ -71,7 +71,7 @@
 .sr-story .sr-message.user {
   width: fit-content; max-width: min(82%, 580px); align-self: flex-end;
   /* Align to the reading column's right edge, including on very wide stages. */
-  margin-inline-end: max(0px, calc((100% - 740px) / 2)); padding: 12px 20px;
+  margin-inline-end: max(0px, calc((100% - 740px) / 2)); padding: 8px 16px;
   border-radius: 24px;
   background: color-mix(in srgb, var(--_story-accent) 14%, var(--_story-surface));
 }
@@ -79,6 +79,12 @@
 .sr-story .sr-rich { font-size: var(--sr-story-font-size, 16px); font-weight: 400; line-height: 1.85; color: inherit; overflow-wrap: anywhere; }
 .sr-story .sr-rich > :first-child { margin-top: 0; }
 .sr-story .sr-rich > :last-child { margin-bottom: 0; }
+/* Markdown lives inside its own DOM patch target; reset the actual block edges. */
+.sr-story .sr-message-markdown { display: flow-root; }
+.sr-story .sr-rich .sr-message-markdown > :first-child,
+.sr-story .sr-rich .sr-message-markdown :where(blockquote, ul, ol, li) > :first-child { margin-top: 0; }
+.sr-story .sr-rich .sr-message-markdown > :last-child,
+.sr-story .sr-rich .sr-message-markdown :where(blockquote, ul, ol, li) > :last-child { margin-bottom: 0; }
 .sr-story .sr-rich p { margin: 0 0 .9em; }
 .sr-story .sr-rich h1,
 .sr-story .sr-rich h2,
@@ -127,6 +133,9 @@
 .sr-story .sr-story-latest span { margin-inline-start: 6px; color: var(--_story-muted); }
 .sr-story .sr-story-content > .sr-thinking { margin: 0; }
 .sr-story .sr-suggestions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; box-sizing: border-box; width: 100%; margin: 16px 0 0; }
+.sr-story .sr-reasoning { margin: 0 0 12px; min-width: 0; }
+.sr-story .sr-reasoning summary { box-sizing: border-box; min-height: var(--touch-target, 40px); padding: 8px 0; color: var(--_story-muted); font-size: 13px; line-height: 24px; cursor: pointer; list-style-position: inside; }
+.sr-story .sr-reasoning-content { box-sizing: border-box; height: 192px; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; padding: 12px 16px; border: 1px solid var(--_story-line); border-radius: 12px; background: var(--_story-surface); color: var(--_story-muted); font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sr-story .sr-processing { margin: 16px 0 0; }
 .sr-story .sr-processing pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .sr-story .sr-suggestions button {
@@ -169,11 +178,14 @@
 .sr-story .sr-message .sr-rp-instruction-panel { margin-top: 18px; color: var(--_story-muted); white-space: pre-wrap; overflow-wrap: anywhere; font-size: .9em; }
 .sr-story .sr-message .sr-rp-instruction-panel > span { display: block; margin-bottom: 5px; font-size: 11px; font-weight: 550; }
 .sr-story .sr-message .sr-rp-instruction-panel p { margin: 0; }
+.sr-story .sr-message.user .sr-message-markdown:empty + .sr-rp-instruction-panel { margin-top: 0; }
 .sr-story .sr-story-toolbar button:focus-visible,
 .sr-story .sr-more:focus-visible,
 .sr-story .sr-suggestions button:focus-visible,
 .sr-story .sr-story-state :where(button, summary):focus-visible,
-.sr-story .sr-rich a:focus-visible { outline: 2px solid var(--_story-focus); outline-offset: 3px; }
+.sr-story .sr-rich a:focus-visible,
+.sr-story .sr-reasoning summary:focus-visible,
+.sr-story .sr-reasoning-content:focus-visible { outline: 2px solid var(--_story-focus); outline-offset: 3px; }
 .sr-story .sr-chat-messages:focus-visible { outline: 2px solid var(--_story-focus); outline-offset: -3px; }
 @media (hover: hover) {
   .sr-story .sr-story-toolbar button:not([aria-expanded="true"]):hover,
@@ -186,12 +198,13 @@
   }
 }
 @media (pointer: coarse) {
-  .sr-story .sr-suggestions button { min-height: 44px; }
+  .sr-story .sr-suggestions button,
+  .sr-story .sr-reasoning summary { min-height: 44px; }
 }
 @container sr-story (max-width: 600px) {
   .sr-story .sr-story-toolbar { min-height: 48px; padding-inline: 16px; }
   .sr-story .sr-chat-messages { padding: 12px 16px var(--_story-reading-bottom-space); gap: 24px; }
-  .sr-story .sr-message.user { max-width: 86%; padding: 12px 16px; border-radius: 20px; }
+  .sr-story .sr-message.user { max-width: 86%; padding: 8px 16px; border-radius: 20px; }
   .sr-story .sr-story-toolbar button,
   .sr-story .sr-more,
   .sr-story .sr-suggestions button,

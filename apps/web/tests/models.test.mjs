@@ -61,7 +61,7 @@ test('editing a saved connection never restores a secret and tolerates unavailab
  assert.equal(modelDraftError(draft,[]),'请选择当前服务商下的模型。');
 });
 
-test('metadata displays raw SDK limits and explicit mappings without inferring supported thinking levels',()=>{
+test('metadata displays SDK supported thinking levels directly without exposing provider mappings',()=>{
  const facts=Object.fromEntries(modelFacts(model('one')).map(fact=>[fact.field,fact]));
  assert.equal(facts.contextWindow.value,'131,072 tokens');
  assert.equal(facts.maxTokens.value,'8,192 tokens');
@@ -69,9 +69,11 @@ test('metadata displays raw SDK limits and explicit mappings without inferring s
  assert.equal(facts.api.value,'openai-completions');assert.equal(facts.input.value,'文本 · 图片');
  assert.equal(facts.promptCache.value,'短 5 分钟 · 长 1 小时');
  assert.equal(facts.promptCache.label,'提示词缓存');assert.equal(facts.promptCache.detail,'目录参考保留时长');
- assert.equal(facts.thinkingLevelMap.value,'off → disabled · low → light · high → full · max → 不支持');
- assert.equal(facts.thinkingLevelMap.detail,'可用档位：off / low / high');
- assert.ok(!facts.thinkingLevelMap.detail.includes('medium'));
+ assert.equal(facts.thinkingLevels.label,'可用思考级别');
+ assert.equal(facts.thinkingLevels.value,'off / low / high');
+ assert.equal(facts.thinkingLevels.detail,undefined);
+ assert.equal(facts.thinkingLevelMap,undefined);
+ assert.ok(!facts.thinkingLevels.value.includes('medium'));
 });
 
 test('missing SDK metadata remains unknown and off alone does not imply reasoning support',()=>{
@@ -79,8 +81,9 @@ test('missing SDK metadata remains unknown and off alone does not imply reasonin
   reasoning:false,thinkingLevels:['off'],thinkingLevelMap:null,promptCache:null,
  })).map(fact=>[fact.field,fact]));
  assert.equal(facts.reasoning.value,'不支持');
- assert.equal(facts.thinkingLevelMap.value,'未提供映射');
- assert.equal(facts.thinkingLevelMap.detail,'可用档位：off');
+ assert.equal(facts.thinkingLevels.value,'不支持');
+ const unknown=Object.fromEntries(modelFacts(model('one',{thinkingLevels:undefined,thinkingLevelMap:{high:'deep'}})).map(fact=>[fact.field,fact]));
+ assert.equal(unknown.thinkingLevels.value,'未提供');
  assert.equal(facts.promptCache.value,'未提供');assert.equal(facts.promptCache.detail,undefined);
  const partial=Object.fromEntries(modelFacts(model('one',{promptCache:{short:300,long:null}})).map(fact=>[fact.field,fact]));
  assert.equal(partial.promptCache.value,'短 5 分钟 · 长 未提供');

@@ -66,7 +66,6 @@ export function CreateSessionDialog({onClose,worldId:initialWorldId,lockedWorld=
    <label>预设<Select aria-label="会话预设" value={preset} disabled={busy} onChange={e=>setPreset(e.target.value)}><option value="">选择预设</option>{presets.presets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></label>
    <label>模型<Select aria-label="会话模型" value={model} disabled={busy} onChange={e=>setModel(e.target.value)}><option value="">选择模型</option>{models.page?.items.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</Select></label>
   </div>
-  <p><a href="/presets" target="_blank" rel="noreferrer">管理预设</a> · <a href="/models" target="_blank" rel="noreferrer">管理模型</a> <Button size="compact" disabled={busy} onClick={()=>{presets.reload();models.reload();}}>刷新配置目录</Button></p>
   {worlds.page?.items.length===0&&<p>当前 Server 中还没有世界数据，暂时无法创建会话。</p>}
   {(worlds.loading||world.loading||models.loading||presets.loading)&&<Loading/>}
   {error&&<ErrorNotice message={error}/>}{worlds.error&&<ErrorNotice message={worlds.error} onRetry={worlds.reload}/>}{world.error&&<ErrorNotice message={world.error} onRetry={world.reload}/>}{models.error&&<ErrorNotice message={models.error} onRetry={models.reload}/>}{presets.error&&<ErrorNotice message={presets.error} onRetry={presets.reload}/>}

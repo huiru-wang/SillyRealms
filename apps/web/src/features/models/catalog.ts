@@ -49,11 +49,7 @@ export function cacheDuration(seconds: number | null | undefined): string {
 
 export type ModelFact = { field: string; label: string; value: string; detail?: string; wide?: boolean };
 export function modelFacts(model: CatalogModel): ModelFact[] {
-  const map = model.thinkingLevelMap;
-  const mapping = map === null || map === undefined || !Object.keys(map).length
-    ? '未提供映射'
-    : Object.entries(map).map(([level, value]) => level + ' → ' + (value === null ? '不支持' : value)).join(' · ');
-  const levels = model.thinkingLevels?.length ? model.thinkingLevels.join(' / ') : '未提供';
+  const levels = model.reasoning === false ? '不支持' : model.thinkingLevels?.length ? model.thinkingLevels.join(' / ') : '未提供';
   const modalities = model.input?.map(value => value === 'text' ? '文本' : value === 'image' ? '图片' : value).join(' · ') || '未提供';
   return [
     { field: 'contextWindow', label: '上下文', value: tokenCount(model.contextWindow) },
@@ -65,6 +61,6 @@ export function modelFacts(model: CatalogModel): ModelFact[] {
       ? '短 ' + cacheDuration(model.promptCache.short) + ' · 长 ' + cacheDuration(model.promptCache.long) : '未提供',
       detail: model.promptCache && Object.values(model.promptCache).some(value => typeof value === 'number' && Number.isFinite(value) && value >= 0)
         ? '目录参考保留时长' : undefined },
-    { field: 'thinkingLevelMap', label: '思考级别映射', value: mapping, detail: '可用档位：' + levels, wide: true },
+    { field: 'thinkingLevels', label: '可用思考级别', value: levels, wide: true },
   ];
 }

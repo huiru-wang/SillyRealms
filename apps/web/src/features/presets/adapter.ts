@@ -13,6 +13,7 @@ export function fromServer(raw: PresetDetail): WebPreset {
     maxOutputTokens: raw.config.contextStrategy.maxOutputTokens,
     temperature: raw.config.modelParameters.temperature,
     thinkingEnabled: raw.config.modelParameters.thinkingEnabled,
+    thinkingLevel: raw.config.modelParameters.thinkingLevel,
     summaryPrompt: raw.config.contextStrategy.summaryPrompt,
     nodes: structuredClone(raw.config.nodes),
     revision: raw.revision,
@@ -26,6 +27,7 @@ export function getPresetValidationError(preset: WebPreset): string | null {
   if (!Number.isSafeInteger(preset.maxContextTokens) || preset.maxContextTokens < 2 || !Number.isSafeInteger(preset.maxOutputTokens) || preset.maxOutputTokens < 1) return '请输入有效的上下文和输出预算。';
   if (preset.temperature !== undefined && (!Number.isFinite(preset.temperature) || preset.temperature < 0 || preset.temperature > 2)) return '温度必须在 0 到 2 之间。';
   if (typeof preset.thinkingEnabled !== 'boolean') return '请选择是否开启深度思考。';
+  if (preset.thinkingLevel !== undefined && !['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(preset.thinkingLevel)) return '请选择有效的思考深度。';
   const ids = new Set<string>();
   for (const node of preset.nodes) {
     if (!node.id || ids.has(node.id) || !node.name.trim() || typeof node.prompt !== 'string' || typeof node.enabled !== 'boolean') return '请检查节点名称、提示词和 ID。';
@@ -50,7 +52,7 @@ export function presetInput(preset: WebPreset):PresetInput {
     config:{
       schemaVersion:1,nodes:preset.nodes.map(({id,name,kind,role,enabled,prompt})=>({id,name,kind,role,enabled,prompt})),
       contextStrategy:{strategy:preset.contextStrategy,maxContextTokens:preset.maxContextTokens,maxOutputTokens:preset.maxOutputTokens,summaryPrompt:preset.summaryPrompt},
-      modelParameters:{...(preset.temperature===undefined?{}:{temperature:preset.temperature}),thinkingEnabled:preset.thinkingEnabled},
+      modelParameters:{...(preset.temperature===undefined?{}:{temperature:preset.temperature}),thinkingEnabled:preset.thinkingEnabled,...(preset.thinkingLevel===undefined?{}:{thinkingLevel:preset.thinkingLevel})},
     },
   };
 }

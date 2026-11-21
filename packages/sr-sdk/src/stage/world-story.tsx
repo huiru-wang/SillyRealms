@@ -6,6 +6,7 @@ import type {StageRun, Suggestions} from '../stage-contract.js';
 import {useSRHistory, useSRSession, useSRStageSnapshot} from './context.js';
 import {messageNotice, runNotice, streamNotice} from './feedback.js';
 import {StatePanel} from './state-panel.js';
+import {MessageReasoning} from './message-reasoning.js';
 
 const StoryRun = React.memo(function StoryRun({run, suggestions, connected, onChoose}: {
   run: StageRun; suggestions: Suggestions | null; connected: boolean; onChoose(text: string): void;
@@ -14,6 +15,7 @@ const StoryRun = React.memo(function StoryRun({run, suggestions, connected, onCh
   return <>{run.messages.map(message =>
     <article key={message.id} className={'sr-message ' + message.role} data-message-id={message.id}
       aria-label={message.role === 'user' ? '我的消息' : '故事消息'}>
+      {message.role === 'assistant' && <MessageReasoning text={message.reasoning_content}/>}
       <div className="sr-story-content"><MessageContent message={message} runId={run.runId}/>{!message.content.trim() && <p className="sr-thinking" role="status">{messageNotice(message, run.status)}</p>}</div>
       {message.role === 'assistant' && suggestions?.messageId === message.id &&
         <section className="sr-suggestions" aria-label="行动建议">{suggestions.items.map((item, index) =>

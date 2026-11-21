@@ -75,7 +75,7 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
       request.onStarted();
       const result = await collectModel(dependencies.modelClient, request.model, request.messages, {
         apiKey, signal: request.signal, maxTokens: request.maxTokens,
-        temperature: request.temperature, thinkingEnabled: request.thinkingEnabled,
+        temperature: request.temperature, thinkingEnabled: request.thinkingEnabled, thinkingLevel: request.thinkingLevel,
         onDiagnostic(event) {
           log('model.' + event.type, { purpose: 'summary', provider: request.model.providerId,
             model: request.model.modelId, source: event.source, raw: event.data });

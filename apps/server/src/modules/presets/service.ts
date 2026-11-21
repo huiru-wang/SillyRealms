@@ -44,6 +44,7 @@ function toPreset(record: StoredPreset): Preset {
         modelParameters: {
           ...(config.model_parameters.temperature === undefined ? {} : { temperature: config.model_parameters.temperature }),
           thinkingEnabled: config.model_parameters.thinking_enabled,
+          ...(config.model_parameters.thinking_level === undefined ? {} : { thinkingLevel: config.model_parameters.thinking_level }),
         },
       },
     }),

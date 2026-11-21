@@ -48,6 +48,23 @@ const input: ModelMessage[] = [{ role: 'user', content: 'hello', timestamp: 1 }]
 const started: ModelEvent = { type: 'request_started' };
 
 describe('PiClient SDK boundary', () => {
+  it.each([
+    { name: 'legacy enabled default', definition: model(), enabled: true, level: undefined, expected: 'medium' },
+    { name: 'explicit supported depth', definition: model({ thinkingLevelMap: { high: 'deep' } }), enabled: true, level: 'high', expected: 'high' },
+    { name: 'extended supported depth', definition: model({ thinkingLevelMap: { xhigh: 'extra' } }), enabled: true, level: 'xhigh', expected: 'xhigh' },
+    { name: 'disabled thinking', definition: model(), enabled: false, level: 'high', expected: undefined },
+    { name: 'non-reasoning model', definition: model({ reasoning: false }), enabled: true, level: 'high', expected: undefined },
+    { name: 'explicitly unsupported depth', definition: model({ thinkingLevelMap: { high: null } }), enabled: true, level: 'high', expected: 'medium' },
+    { name: 'unavailable extended depth', definition: model(), enabled: true, level: 'max', expected: 'medium' },
+  ] as const)('applies thinking options for $name without disabling enabled thinking', async ({ definition, enabled, level, expected }) => {
+    const stream = vi.fn(finite([{ type: 'done', reason: 'stop', message: message('OK') }]));
+    const client = new PiClient(sdk(stream, [definition]));
+    await collect(client.stream(selected(client), input, { ...options(), thinkingEnabled: enabled, thinkingLevel: level }));
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(stream.mock.calls[0]![2].reasoning).toBe(expected);
+    expect(stream.mock.calls[0]![0].thinkingLevelMap).toEqual(definition.thinkingLevelMap);
+  });
+
   it('makes one explicit-key request, keeps ordered roles, and exposes public reasoning/text with a safe snapshot', async () => {
     let captured: { context: Context; options: SimpleStreamOptions } | undefined;
     const output = message('hello world', {

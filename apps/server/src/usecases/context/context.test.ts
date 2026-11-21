@@ -316,9 +316,9 @@ describe('core narrative compilation', () => {
 
   it('honors generation settings and rejects an output limit larger than model capacity', () => {
     const snapshot = capture();
-    snapshot.preset.config.modelParameters = { temperature: 0.4, thinkingEnabled: true };
+    snapshot.preset.config.modelParameters = { temperature: 0.4, thinkingEnabled: true, thinkingLevel: 'high' };
     const compiled = compileNarrativeContext(snapshot, { contextWindow: 6000, maxTokens: 4096 });
-    expect(compiled).toMatchObject({ maxTokens: 4096, inputBudget: 880, temperature: 0.4, thinkingEnabled: true });
+    expect(compiled).toMatchObject({ maxTokens: 4096, inputBudget: 880, temperature: 0.4, thinkingEnabled: true, thinkingLevel: 'high' });
     expect(() => compileNarrativeContext(snapshot, { contextWindow: 6000, maxTokens: 1000 })).toThrow('INVALID_MODEL_BUDGET');
     expect(() => compileNarrativeContext(snapshot, { contextWindow: 4096, maxTokens: 4096 })).toThrow('INVALID_MODEL_BUDGET');
   });

@@ -1,5 +1,6 @@
 import {PageHeader} from '../../components/ui/PageHeader';
 import {Switch} from '../../components/ui/Switch';
+import {Select} from '../../components/ui/Select';
 import {Input,Textarea} from '../../components/ui/Field';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, PointerEvent as ReactPointerEvent } from 'react';
@@ -7,12 +8,20 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronRight, Copy, FileText, GripVertical, Layers3, LockKeyhole, MoreHorizontal, Plus, SlidersHorizontal, Star, Trash2, Undo2 } from 'lucide-react';
 import { Button,UploadButton } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
-import type { ContextStrategy, PresetNode, WebPreset } from './types';
+import type { ContextStrategy, PresetNode, PresetThinkingLevel, WebPreset } from './types';
 import { getPresetValidationError, usePresetStore } from './PresetStore';
 import { PromptEditorDialog } from './PromptEditorDialog';
 import type { PromptValue } from './PromptEditorDialog';
 import styles from './Presets.module.css';
 
+const THINKING_LEVELS: { value: PresetThinkingLevel; label: string }[] = [
+  { value: 'minimal', label: '极低 · minimal' },
+  { value: 'low', label: '低 · low' },
+  { value: 'medium', label: '中等 · medium' },
+  { value: 'high', label: '高 · high' },
+  { value: 'xhigh', label: '更高 · xhigh' },
+  { value: 'max', label: '最高 · max' },
+];
 const STRATEGIES: { id: ContextStrategy; label: string; hint: string }[] = [
   { id: 'rolling_summary', label: '滚动摘要', hint: '整理较早对话，保留最近内容。' },
   { id: 'sliding_window', label: '滑动窗口', hint: '保留最近对话，移出较早内容。' },
@@ -359,6 +368,16 @@ export function PresetLibraryPage() {
                   <p id={formId + '-thinking-help'}>对支持思考的模型生效，通常需要更长时间。</p>
                 </div>
                 <Switch id={formId + '-thinking'} checked={preset.thinkingEnabled} label="开启深度思考" describedBy={formId + '-thinking-help'} onChange={() => update({ thinkingEnabled: !preset.thinkingEnabled })} />
+              </div>
+              <div className={styles.parameterRow}>
+                <div className={styles.settingCopy}>
+                  <label htmlFor={formId + '-thinking-level'}>思考深度</label>
+                  <p id={formId + '-thinking-level-help'}>开启深度思考后生效；不支持所选级别时使用默认深度。</p>
+                </div>
+                <Select className={styles.parameterInput} id={formId + '-thinking-level'} aria-label="思考深度" aria-describedby={formId + '-thinking-level-help'} disabled={!preset.thinkingEnabled} value={preset.thinkingLevel??''} onChange={event => update({ thinkingLevel: event.target.value ? event.target.value as PresetThinkingLevel : undefined })}>
+                  <option value="">默认</option>
+                  {THINKING_LEVELS.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}
+                </Select>
               </div>
             </div>
           </section>

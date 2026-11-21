@@ -34,6 +34,7 @@ export async function prepareContext(dependencies: ContextDependencies, input: P
         ...request, model, credentialRef: snapshot.modelConfig.credentialRef, signal: input.signal,
         temperature: snapshot.preset.config.modelParameters.temperature,
         thinkingEnabled: snapshot.preset.config.modelParameters.thinkingEnabled,
+        thinkingLevel: snapshot.preset.config.modelParameters.thinkingLevel,
         onStarted: () => notify({ type: 'summary_started' }),
       });
     }, input.signal);

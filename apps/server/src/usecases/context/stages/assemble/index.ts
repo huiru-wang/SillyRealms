@@ -1,6 +1,6 @@
 import { resolvePostprocessPrompts } from '../../../../modules/presets/service.js';
 import { AppError } from '../../../../errors.js';
-import type { ModelInfo, ModelMessage } from '../../../../infrastructure/model/client.js';
+import type { ModelInfo, ModelMessage, ModelReasoningLevel } from '../../../../infrastructure/model/client.js';
 import type { NarrativeSnapshot } from '../../capture.js';
 import type { ContextDiagnostics, ContextNodeDiagnostic } from '../../diagnostics.js';
 import { contextBudget } from '../../lib/budget.js';
@@ -21,6 +21,7 @@ export type CompiledNarrativeContext = {
   maxTokens: number;
   temperature?: number;
   thinkingEnabled: boolean;
+  thinkingLevel?: ModelReasoningLevel;
   estimatedInputTokens: number;
   inputBudget: number;
   activeRoots: string[];
@@ -145,5 +146,6 @@ export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick
     },
     ...(config.modelParameters.temperature === undefined ? {} : { temperature: config.modelParameters.temperature }),
     thinkingEnabled: config.modelParameters.thinkingEnabled,
+    ...(config.modelParameters.thinkingLevel === undefined ? {} : { thinkingLevel: config.modelParameters.thinkingLevel }),
   };
 }

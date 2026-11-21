@@ -11,7 +11,7 @@ type StoredConfig = {
     max_output_tokens: number;
     summary_prompt: string;
   };
-  model_parameters: { temperature?: number; thinking_enabled: boolean };
+  model_parameters: { temperature?: number; thinking_enabled: boolean; thinking_level?: PresetValue['config']['modelParameters']['thinkingLevel'] };
 };
 
 export type StoredPreset = {
@@ -40,6 +40,7 @@ function storedConfig(config: PresetValue['config']): StoredConfig {
     model_parameters: {
       ...(config.modelParameters.temperature === undefined ? {} : { temperature: config.modelParameters.temperature }),
       thinking_enabled: config.modelParameters.thinkingEnabled,
+      ...(config.modelParameters.thinkingLevel === undefined ? {} : { thinking_level: config.modelParameters.thinkingLevel }),
     },
   };
 }

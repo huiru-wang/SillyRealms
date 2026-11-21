@@ -173,6 +173,11 @@ export class PiClient implements ModelClient {
       throw new AppError('MODEL_CAPABILITY_UNSUPPORTED');
     }
     const context = sdkContext(selected, messages);
+    // Ignore unsupported depth choices without turning off an enabled thinking switch.
+    const reasoning = options.thinkingEnabled && selected.reasoning
+      ? options.thinkingLevel && getSupportedThinkingLevels(selected).includes(options.thinkingLevel)
+        ? options.thinkingLevel : 'medium'
+      : undefined;
     const content = new PiContent();
     let reported = false;
     let providerFailure: ModelStopReason | undefined;
@@ -189,7 +194,7 @@ export class PiClient implements ModelClient {
       iterator = this.sdk.streamSimple(selected, context, {
         apiKey: options.apiKey, signal: options.signal, maxTokens: options.maxTokens,
         temperature: options.temperature,
-        reasoning: options.thinkingEnabled && selected.reasoning ? 'medium' : undefined,
+        reasoning,
         maxRetries: 0,
         onPayload: payload => {
           if (observing && !options.signal.aborted) {

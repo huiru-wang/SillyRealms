@@ -66,6 +66,7 @@ export function createApp({ events, services, usecases, canAccessSession, webOri
     app.route('/api/v1/worlds', createWorldRoutes({
       worlds: services.worlds, sessions: services.sessions,
       importWorld: usecases.importWorld, exportWorld: usecases.exportWorld,
+      deleteWorld: usecases.deleteWorld, canAccessSession, shutdownSignal: shutdown.signal,
     }));
     app.route('/api/v1/sessions', createSessionRoutes({
       appendEntry: usecases.appendEntry, createSession: usecases.createSession,

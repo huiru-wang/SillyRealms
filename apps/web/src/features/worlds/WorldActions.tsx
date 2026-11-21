@@ -14,6 +14,8 @@ import type {WorldDetail} from './api/worlds';
 
 export function WorldActions({world,onSaved}:{world:WorldDetail;onSaved:(world:WorldDetail)=>void}){
  const [confirm,setConfirm]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ const [deleteWarning,setDeleteWarning]=useState<{worldId:string;message:string}|null>(null);
+ const warning=deleteWarning?.worldId===world.id?deleteWarning:null;
  const [editing,setEditing]=useState(false);
  const [menu,setMenu]=useState<{top:number;right:number}|null>(null),trigger=useRef<HTMLButtonElement>(null),panel=useRef<HTMLDivElement>(null);
  const closeMenu=(focus=false,keyboard=false)=>{setMenu(null);if(focus&&trigger.current)restoreDialogFocus(trigger.current,keyboard);};
@@ -26,7 +28,10 @@ export function WorldActions({world,onSaved}:{world:WorldDetail;onSaved:(world:W
   return()=>{document.removeEventListener('pointerdown',outside);window.removeEventListener('resize',dismiss);};
  },[menu]);
  function openMenu(){const bounds=trigger.current?.getBoundingClientRect();if(bounds)setMenu({top:bounds.bottom+6,right:Math.max(16,window.innerWidth-bounds.right)});}
- const pending=useRef(false),navigate=useNavigate();const {refreshWorlds,rememberWorldCleanup}=useManagement();
+ const pending=useRef(false),navigate=useNavigate();const {refreshWorlds,refreshSessions,rememberWorldCleanup}=useManagement();
+ useEffect(()=>{setConfirm(false);setDeleteWarning(null);setError('');},[world.id]);
+ const closeConfirmation=()=>{if(pending.current)return;setConfirm(false);setDeleteWarning(null);setError('');};
+ const afterDelete=()=>{refreshWorlds();refreshSessions();navigate('/worlds');};
  const download=async(kind:'export'|'original')=>{
   if(pending.current)return;pending.current=true;setBusy(true);setError('');
   try{await downloadWorld(world.id,kind);}catch(reason){setError(reason instanceof Error?reason.message:'下载失败');}
@@ -34,10 +39,11 @@ export function WorldActions({world,onSaved}:{world:WorldDetail;onSaved:(world:W
  };
  const remove=async()=>{
   if(pending.current)return;pending.current=true;setBusy(true);setError('');
-  try{await api('v1/worlds/'+encodeURIComponent(world.id),{method:'DELETE'});refreshWorlds();navigate('/worlds');}
+  try{await api('v1/worlds/'+encodeURIComponent(world.id)+(warning?'?deleteSessions=true':''),{method:'DELETE'});afterDelete();}
   catch(reason){
-   if(reason instanceof ApiError&&reason.errorCode==='WORLD_FILES_DELETE_FAILED'){rememberWorldCleanup({id:world.id,name:world.name});refreshWorlds();navigate('/worlds');}
-   else if(reason instanceof ApiError&&reason.errorCode==='WORLD_NOT_FOUND'){refreshWorlds();navigate('/worlds');}
+   if(reason instanceof ApiError&&reason.errorCode==='WORLD_HAS_SESSIONS')setDeleteWarning({worldId:world.id,message:reason.message});
+   else if(reason instanceof ApiError&&reason.errorCode==='WORLD_FILES_DELETE_FAILED'){rememberWorldCleanup({id:world.id,name:world.name});afterDelete();}
+   else if(reason instanceof ApiError&&reason.errorCode==='WORLD_NOT_FOUND')afterDelete();
    else setError(reason instanceof Error?reason.message:'删除失败');
   }finally{pending.current=false;setBusy(false);}
  };
@@ -49,11 +55,11 @@ export function WorldActions({world,onSaved}:{world:WorldDetail;onSaved:(world:W
    <button role="menuitem" onClick={()=>{closeMenu(true);setEditing(true);}}>编辑名称与标签</button>
    <button role="menuitem" onClick={()=>{closeMenu(true);void download('export');}}>导出世界卡</button>
    <button role="menuitem" onClick={()=>{closeMenu(true);void download('original');}}>下载导入原件</button>
-   <button role="menuitem" onClick={()=>{closeMenu(true);setError('');setConfirm(true);}}>删除世界卡</button>
+   <button role="menuitem" onClick={()=>{closeMenu(true);setError('');setDeleteWarning(null);setConfirm(true);}}>删除世界卡</button>
   </div>,document.body)}
   {editing&&<Modal title="名称与标签" onClose={()=>setEditing(false)}><WorldMetadataForm world={world} onSaved={item=>{onSaved(item);setEditing(false);}}/></Modal>}
   {error&&!confirm&&<Modal title="世界卡操作失败" onClose={()=>setError('')}><ErrorNotice message={error}/></Modal>}
-  {confirm&&<Modal title="删除世界" onBeforeClose={()=>!pending.current} onClose={()=>setConfirm(false)} footer={<><Button disabled={busy} onClick={()=>setConfirm(false)}>取消</Button><Button variant="primary" intent="danger" loading={busy} onClick={()=>void remove()}>确认删除</Button></>}><p>删除“{world.name}”及其包内文件？此操作无法撤销。存在关联会话时无法删除，请先处理会话。</p><Link to={'/sessions?worldId='+encodeURIComponent(world.id)}>查看关联会话</Link>{error&&<ErrorNotice message={error}/>}</Modal>}
+  {confirm&&<Modal title={warning?'删除世界及会话':'删除世界'} onBeforeClose={()=>!pending.current} onClose={closeConfirmation} footer={<><Button disabled={busy} onClick={closeConfirmation}>取消</Button><Button variant="primary" intent="danger" loading={busy} onClick={()=>void remove()}>{warning?'删除世界及会话':'确认删除'}</Button></>}><p>删除“{world.name}”及其包内文件？此操作无法撤销。</p><Link to={'/sessions?worldId='+encodeURIComponent(world.id)} aria-disabled={busy} onClick={event=>{if(pending.current)event.preventDefault();else closeConfirmation();}}>查看关联会话</Link>{warning&&<ErrorNotice message={warning.message}/>} {error&&<ErrorNotice message={error}/>}</Modal>}
  </>;
 }
 export function WorldCleanupNotice(){

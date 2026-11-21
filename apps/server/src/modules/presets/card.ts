@@ -13,7 +13,7 @@ export type PresetDocument = {
     max_output_tokens: number;
     summary_prompt: string;
   };
-  model_parameters: { temperature?: number; thinking_enabled: boolean };
+  model_parameters: { temperature?: number; thinking_enabled: boolean; thinking_level?: PresetValue['config']['modelParameters']['thinkingLevel'] };
 };
 
 const documentSchema = z.object({
@@ -29,6 +29,7 @@ const documentSchema = z.object({
   model_parameters: z.object({
     temperature: z.unknown().optional(),
     thinking_enabled: z.unknown().optional(),
+    thinking_level: z.unknown().optional(),
   }).strict(),
 }).strict();
 
@@ -50,6 +51,7 @@ export function parsePresetDocument(input: unknown): PresetValue {
       modelParameters: {
         ...(Object.hasOwn(value.model_parameters, 'temperature') ? { temperature: value.model_parameters.temperature } : {}),
         thinkingEnabled: value.model_parameters.thinking_enabled,
+        ...(Object.hasOwn(value.model_parameters, 'thinking_level') ? { thinkingLevel: value.model_parameters.thinking_level } : {}),
       },
     },
   });
@@ -70,6 +72,7 @@ export function toPresetDocument(value: PresetValue): PresetDocument {
     model_parameters: {
       ...(config.modelParameters.temperature === undefined ? {} : { temperature: config.modelParameters.temperature }),
       thinking_enabled: config.modelParameters.thinkingEnabled,
+      ...(config.modelParameters.thinkingLevel === undefined ? {} : { thinking_level: config.modelParameters.thinkingLevel }),
     },
   };
 }

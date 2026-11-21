@@ -13,6 +13,7 @@ export const ERRORS = {
   WORLD_IMPORT_CLEANUP_FAILED: { message: '世界导入失败且资源清理未完成，请重试清理', status: 500 },
   WORLD_EXPORT_FAILED: { message: '世界导出失败', status: 500 },
   WORLD_FILES_DELETE_FAILED: { status: 500, message: '世界文件清理失败，请重试删除' },
+  WORLD_HAS_SESSIONS: { status: 409, message: '删除世界需要确认关联会话' },
   INTERNAL_ERROR: { message: '服务内部错误', status: 500 },
   STORAGE_BUSY: { message: '存储暂时繁忙，请稍后重试', status: 503 },
   RESOURCE_CONFLICT: { message: '资源已存在或名称重复', status: 409 },

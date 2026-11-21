@@ -1,5 +1,6 @@
 /** Application-owned model boundary. Business streams contain no SDK objects; diagnostics are opaque, log-only data. */
 export type ModelThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type ModelReasoningLevel = Exclude<ModelThinkingLevel, 'off'>;
 export type ModelThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
 
 export type ModelInfo = {
@@ -68,7 +69,7 @@ export type ModelDiagnostic =
   | { type: 'request'; source: 'provider_payload'; data: unknown }
   | { type: 'response'; source: 'sdk_message' | 'sdk_error' | 'adapter_error'; data: unknown };
 export type ModelOptions = {
-  apiKey: string; signal: AbortSignal; maxTokens: number; temperature?: number; thinkingEnabled?: boolean;
+  apiKey: string; signal: AbortSignal; maxTokens: number; temperature?: number; thinkingEnabled?: boolean; thinkingLevel?: ModelReasoningLevel;
   /** Sanitized original provider payload / final SDK message, never deltas or business events. */
   onDiagnostic?: (event: ModelDiagnostic) => void;
 };

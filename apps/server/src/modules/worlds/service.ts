@@ -215,17 +215,26 @@ export class WorldService {
     return this.#repository.listTags().map(row => ({ name: row.name, worldCount: row.world_count }));
   }
 
-  async delete(id: string): Promise<boolean> {
+  deleteRecord(id: string): boolean {
     assertWorldId(id);
-    // A rejected DB deletion must never remove the still-referenced world's files.
-    const dbDeleted = this.#repository.delete(id);
+    return this.#repository.delete(id);
+  }
+
+  async deleteFiles(id: string): Promise<boolean> {
+    assertWorldId(id);
     try {
-      const filesRemoved = await this.#files.remove(id);
-      return dbDeleted || filesRemoved;
+      return await this.#files.remove(id);
     } catch {
       // Retrying also cleans up a directory whose DB row was already deleted.
       throw new AppError('WORLD_FILES_DELETE_FAILED');
     }
+  }
+
+  /** Single-world cleanup used by import compensation; management deletion is a usecase. */
+  async delete(id: string): Promise<boolean> {
+    const dbDeleted = this.deleteRecord(id);
+    const filesRemoved = await this.deleteFiles(id);
+    return dbDeleted || filesRemoved;
   }
 
   requireOpening(worldId: string, openingId: string): WorldOpening {

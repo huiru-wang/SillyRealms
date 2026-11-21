@@ -7,6 +7,7 @@ import { createNarrativeUsecases } from './usecases/narrative/index.js';
 import { createTestModel } from './usecases/test-model.js';
 import { createModelConfigUsecases } from './usecases/model-config.js';
 import { createDeletePreset } from './usecases/delete-preset.js';
+import { createDeleteWorld } from './usecases/delete-world.js';
 import { createExportPreset } from './usecases/export-preset.js';
 import { createExportWorld } from './usecases/export-world.js';
 import { createImportPreset } from './usecases/import-preset.js';
@@ -30,6 +31,7 @@ export function createUsecases({ services, transaction, events, modelClient = ne
     initialize: createInitialize({ presets, settings, transaction }),
     setState: createSetState({ worlds, sessions, state: services.state, transaction, events, cache: services.cache }),
     appendEntry: createAppendEntry({ sessions, state: services.state, transaction, events }),
+    deleteWorld: createDeleteWorld({ worlds, sessions, transaction }),
     importWorld: createImportWorld({ worlds, settings }),
     exportWorld: createExportWorld({ worlds }),
     importPreset: createImportPreset({ presets }),
