@@ -1,0 +1,209 @@
+/* One persistent floating sidebar, regardless of its width. Layout and content move together. */
+.layout{
+  --sidebar-gutter:14px;
+  display:grid;
+  grid-template-columns:calc(var(--size-sidebar-expanded) + var(--sidebar-gutter) * 2) minmax(0,1fr);
+  min-height:100dvh;
+  background:var(--canvas);
+  transition:grid-template-columns var(--motion-layout) var(--ease-layout);
+}
+.layout[data-collapsed="true"]{
+  grid-template-columns:calc(var(--size-sidebar-collapsed) + var(--sidebar-gutter) * 2) minmax(0,1fr);
+}
+.sidebarWrap{
+  position:sticky;top:0;z-index:10;
+  min-width:0;height:100dvh;
+  padding:var(--sidebar-gutter);
+}
+.sidebar{
+  display:flex;flex-direction:column;
+  width:100%;height:100%;min-width:0;
+  overflow:hidden;
+  padding:15px 8px 13px;
+  border:1px solid var(--sidebar-edge);
+  border-radius:20px;
+  background:var(--sidebar-bg);
+  box-shadow:var(--shadow-control);
+}
+.brandRow{display:flex;align-items:center;min-width:0;height:52px;flex-shrink:0;margin-bottom:16px}
+.brand{
+  display:flex;align-items:center;gap:14px;
+  width:100%;height:46px;min-width:0;
+  overflow:hidden;padding:0 12px;
+  white-space:nowrap;text-align:left;
+  border-radius:11px;
+}
+.brandName{
+  display:block;flex:none;
+  font-size:19px;letter-spacing:-.035em;font-weight:600;
+  opacity:1;
+  transition:opacity var(--motion-reveal) var(--ease-standard) 115ms;
+}
+.primaryNav{display:flex;flex-direction:column;gap:4px;min-width:0;flex-shrink:0}
+.navItem{
+  display:flex;align-items:center;gap:16px;
+  width:100%;min-width:0;height:44px;
+  padding:0 12px;overflow:hidden;
+  white-space:nowrap;
+  border-radius:11px;border:1px solid transparent;
+  color:var(--text-secondary);font-size:var(--font-13);font-weight:500;
+  transition:background-color var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),color var(--motion-fast) var(--ease-standard);
+}
+.navItem svg,.bottomButton svg{flex:0 0 20px}
+.navLabel,.bottomLabel{
+  display:block;flex:none;white-space:nowrap;
+  opacity:1;
+  transition:opacity var(--motion-reveal) var(--ease-standard) 115ms;
+}
+.navSelected,
+.navSelected:hover{
+  background:var(--selection-bg);
+  border-color:var(--stroke);
+  color:var(--text);
+}
+.navItem:not(.navSelected):hover{background:var(--surface-hover);color:var(--text)}
+.bottomButton:not(.navSelected):hover{background:var(--surface-hover);color:var(--text)}
+.sessionRow:not([aria-current]):hover,.presetRow:not([aria-current]):hover{background:var(--surface-hover)}
+@media(hover:none){
+  .navItem:not(.navSelected):hover,.bottomButton:not(.navSelected):hover,.sessionRow:not([aria-current]):hover{
+    background:transparent;color:inherit;
+  }
+  .presetRow:not([aria-current]):hover{background:transparent}
+}
+.sidebarData{
+  flex:1;min-height:0;min-width:0;
+  margin-top:18px;overflow:auto;scrollbar-width:none;
+  transition:margin-top var(--motion-layout) var(--ease-layout);
+}
+.sidebarData::-webkit-scrollbar{display:none}
+.dataSection{min-width:0;border-top:1px solid var(--stroke);padding:14px 0 18px;transition:padding var(--motion-layout) var(--ease-layout),border-color var(--motion-fast)}
+.sectionTitle{margin:0;font-size:inherit;font-weight:inherit}
+.shortcuts{max-height:160px;overflow:hidden;opacity:1;padding-top:4px;transition:max-height var(--motion-layout) var(--ease-layout),padding-top var(--motion-layout) var(--ease-layout),opacity var(--motion-reveal) var(--ease-standard) 115ms}
+.sessionRow{
+  display:flex;align-items:center;gap:12px;
+  width:100%;min-height:64px;padding:5px 12px;
+  text-align:left;border-radius:10px;
+  transition:background-color var(--motion-fast) var(--ease-standard);
+}
+.sessionRow img{height:44px;width:44px;border-radius:10px;object-fit:cover;flex-shrink:0}
+.rowText{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}
+.rowText strong{font-size:12px;line-height:1.35;font-weight:500;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rowText small{font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sessionRow[aria-current],.sessionRow[aria-current]:hover{background:var(--selection-bg)}
+.sessionRow[aria-current] .rowText strong{color:var(--text)}
+.presetRow{
+  width:100%;height:45px;display:flex;align-items:center;justify-content:space-between;
+  border-radius:10px;background:transparent;
+  padding:0 12px;margin-bottom:6px;
+  font-size:12px;color:var(--text-secondary);text-align:left;white-space:nowrap;
+  transition:background-color var(--motion-fast) var(--ease-standard);
+}
+.presetName{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sessionRow:focus-visible,.presetRow:focus-visible{outline-offset:-2px}
+.presetRow[aria-current="page"],.presetRow[aria-current="page"]:hover{background:var(--selection-bg);color:var(--text)}
+.defaultPill{flex-shrink:0;margin-left:8px;padding:3px 8px;background:var(--accent-soft);border-radius:7px;font-size:11px;color:var(--text-secondary)}
+.bottom{
+  display:flex;flex-direction:column;gap:4px;
+  flex-shrink:0;min-width:0;
+  margin-top:auto;padding:10px 0 0;
+  border-top:1px solid var(--stroke);
+}
+.bottomButton{
+  display:flex;align-items:center;gap:16px;
+  width:100%;min-width:0;height:42px;
+  padding:0 12px;overflow:hidden;
+  border-radius:10px;
+  color:var(--text-secondary);font-size:13px;text-align:left;
+  white-space:nowrap;
+  transition:background-color var(--motion-fast) var(--ease-standard),color var(--motion-fast) var(--ease-standard);
+}
+/* Contents remain mounted. Collapse fades content out early; expand reveals after the track starts widening. */
+.layout[data-collapsed="true"] .brandName,
+.layout[data-collapsed="true"] .navLabel,
+.layout[data-collapsed="true"] .bottomLabel{
+  opacity:0;
+  transition:opacity var(--motion-hide) var(--ease-standard) 0ms;
+}
+.layout[data-collapsed="true"] .sidebarData{margin-top:4px}
+.layout[data-collapsed="true"] .dataSection{padding:0 0 4px;border-color:transparent}
+.layout[data-collapsed="true"] .shortcuts{max-height:0;padding-top:0;opacity:0;transition:max-height var(--motion-layout) var(--ease-layout),padding-top var(--motion-layout) var(--ease-layout),opacity var(--motion-hide) var(--ease-standard)}
+.main{
+  --page-viewport-height:100dvh;
+  height:100dvh;min-width:0;overflow-y:auto;
+  background:radial-gradient(ellipse 75% 36% at 38% -13%,var(--canvas-glow),transparent 82%),var(--canvas);
+}
+.worldDetailMain{scrollbar-width:none}
+.worldDetailMain::-webkit-scrollbar{display:none}
+.settingRow{display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--stroke)}
+.settingRow button{color:var(--accent);font-size:12px}
+.mobileOpen,.mobileShade,.mobileClose{display:none}
+.skipLink{position:fixed;z-index:50;top:8px;left:8px;padding:11px 16px;border-radius:8px;background:var(--surface-raised);color:var(--text);transform:translateY(-160%)}
+.skipLink:focus-visible{transform:translateY(0)}
+
+@media(max-width:760px){
+  .layout,.layout[data-collapsed="true"]{display:block}
+  .sidebarWrap{
+    position:fixed;inset:0 auto 0 0;z-index:30;
+    width:min(316px,88vw);height:100dvh;padding:12px;
+    transform:translateX(-105%);visibility:hidden;
+    transition:transform var(--motion-layout) var(--ease-layout),
+      visibility 0s linear var(--motion-layout);
+  }
+  .mobileVisible{
+    transform:translateX(0);visibility:visible;
+    transition:transform var(--motion-layout) var(--ease-layout),
+      visibility 0s linear 0s;
+  }
+  .sidebar{padding:15px 8px 13px}
+  .mobileVisible .brandName,.mobileVisible .navLabel,.mobileVisible .bottomLabel,
+  .layout[data-collapsed="true"] .mobileVisible .brandName,
+  .layout[data-collapsed="true"] .mobileVisible .navLabel,
+  .layout[data-collapsed="true"] .mobileVisible .bottomLabel{opacity:1}
+  .layout[data-collapsed="true"] .mobileVisible .sidebarData{margin-top:18px}
+  .layout[data-collapsed="true"] .mobileVisible .dataSection{padding:14px 0 18px;border-color:var(--stroke)}
+  .layout[data-collapsed="true"] .mobileVisible .shortcuts{max-height:160px;padding-top:4px;opacity:1}
+  .mobileOpen{
+    display:grid;position:fixed;top:19px;left:15px;width:44px;height:44px;
+    place-items:center;border-radius:9px;background:var(--surface-raised);
+    z-index:11;border:1px solid var(--stroke);
+  }
+  .mobileShade{
+    display:block;position:fixed;inset:0;z-index:29;
+    background:var(--shade);
+    opacity:0;visibility:hidden;pointer-events:none;
+    transition:opacity var(--motion-overlay) var(--ease-standard),
+      visibility 0s linear var(--motion-overlay);
+  }
+  .mobileShade[data-open="true"]{
+    opacity:1;visibility:visible;pointer-events:auto;
+    transition:opacity var(--motion-overlay) var(--ease-standard),
+      visibility 0s linear 0s;
+  }
+  .mobileClose{display:grid;place-items:center;position:absolute;right:22px;top:33px;color:var(--text-muted)}
+  .main{height:100dvh}
+}
+.mobileNav{display:none}
+@media(max-width:760px){
+  .sidebarWrap,.mobileOpen,.mobileShade,.mobileClose{display:none}
+  .layout{--mobile-nav-bottom:max(20px,env(safe-area-inset-bottom));--mobile-nav-space:calc(64px + var(--mobile-nav-bottom) + 16px)}
+  .mobileListMain{--page-viewport-height:calc(100dvh - var(--mobile-nav-space));padding-bottom:var(--mobile-nav-space)}
+  .mobileDetailMain{--page-viewport-height:100dvh;padding-bottom:0}
+  .mobileNav{
+    position:fixed;z-index:var(--z-navigation);left:16px;right:16px;bottom:var(--mobile-nav-bottom);height:64px;
+    display:grid;grid-template-columns:repeat(5,minmax(0,1fr));align-items:center;padding:4px;
+    border:1px solid var(--glass-border);border-radius:20px;
+    background:var(--glass-bg);
+    box-shadow:var(--glass-shadow);
+    -webkit-backdrop-filter:blur(16px) saturate(150%);backdrop-filter:blur(16px) saturate(150%);
+  }
+  .mobileNavItem{position:relative;display:flex;min-width:0;min-height:52px;align-items:center;justify-content:center;flex-direction:column;gap:3px;color:var(--text-secondary);border-radius:15px;font-size:11px;line-height:1.2;transition:color var(--motion-fast)}
+  .mobileNavSelected{color:var(--text)}
+  .mobileNavSelected::after{content:"";position:absolute;bottom:2px;width:4px;height:4px;border-radius:50%;background:currentColor}
+  .mobileNavItem:active{color:var(--text)}
+  @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.mobileNav{background:var(--glass-fallback)}}
+  @media(prefers-reduced-transparency:reduce){.mobileNav{background:var(--glass-fallback);backdrop-filter:none;-webkit-backdrop-filter:none}}
+}
+
+/* Brand stays readable as text in both sidebar widths. */
+.layout[data-collapsed="true"] .brandName{opacity:1;visibility:visible}

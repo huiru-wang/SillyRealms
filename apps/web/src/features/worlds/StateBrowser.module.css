@@ -1,0 +1,23 @@
+/* Shared state browser shell; scope backgrounds come from the existing theme. */
+.browser{min-width:0}
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);margin-bottom:var(--space-3)}
+.browser .toolbar h3,.browser .scopeHeading h3,.browser .detailHeading h3{margin:0;font-size:var(--font-16);font-weight:var(--weight-strong);line-height:var(--line-label)}
+.help{position:relative;flex:none}
+.browser .helpText{position:absolute;z-index:var(--z-popover);top:calc(100% + var(--space-1));right:0;width:max-content;max-width:calc(100vw - var(--space-16));padding:var(--space-3) var(--space-4);border:1px solid var(--stroke);border-radius:var(--radius-item);background:var(--surface-raised);color:var(--text);box-shadow:var(--shadow-popover);font-size:var(--font-14);line-height:var(--line-body);overflow-wrap:anywhere}
+.scope{padding:var(--space-4);border-radius:var(--radius-panel);min-width:0}
+.scope+.scope{margin-top:var(--space-4)}
+.scope[data-scope=global]{background:var(--surface)}
+.scope[data-scope=session]{background:var(--surface-raised)}
+.scope[data-scope=message]{background:var(--selection-bg)}
+.scopeHeading{margin-bottom:var(--space-2)}
+.browser .scopeHeading p,.browser .detailHeading p{margin:var(--space-1) 0 0;color:var(--text-secondary);font-size:var(--font-12);line-height:var(--line-body);overflow-wrap:anywhere}
+.node{padding:var(--space-3) 0;min-width:0}
+.node+.node{border-top:1px solid var(--stroke)}
+.node:last-child{padding-bottom:0}
+.nodeHeading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);min-width:0}
+.nodeHeading strong,.leafKey{font-size:var(--font-14);font-weight:var(--weight-strong);line-height:var(--line-label);overflow-wrap:anywhere;min-width:0;color:var(--text)}
+.nodeHeading>button{flex-shrink:0}
+.browser .description{margin:var(--space-1) 0 0;font-size:var(--font-14);line-height:var(--line-body);color:var(--text-secondary);overflow-wrap:anywhere;white-space:pre-wrap}
+.children{margin-left:var(--space-3);margin-top:var(--space-2);min-width:0}
+.children[hidden],.helpText[hidden]{display:none}
+.detailHeading{margin:var(--space-3) 0}

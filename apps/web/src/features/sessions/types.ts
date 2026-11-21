@@ -1,0 +1,1 @@
+export type Session={id:string;worldId:string;worldName:string;cover:string|null;userCharacterId:string;presetId:string;apiModelConfigId:string;title:string|null;tipEntryId:string|null;updatedAt:number};

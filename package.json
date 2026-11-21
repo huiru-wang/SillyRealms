@@ -1,0 +1,19 @@
+{
+  "name": "sillyrealms",
+  "private": true,
+  "packageManager": "pnpm@10.12.1",
+  "scripts": {
+    "dev": "node scripts/start.mjs dev",
+    "debug": "node scripts/start.mjs debug",
+    "build": "pnpm --filter @sillyrealms/web build",
+    "start": "node scripts/start.mjs start",
+    "dev:server": "pnpm --filter @sillyrealms/server dev",
+    "dev:web": "pnpm --filter @sillyrealms/web dev",
+    "dev:stage": "pnpm --filter @sillyrealms/web dev:world-preview",
+    "test": "pnpm --filter @sillyrealms/server test && pnpm --filter @sillyrealms/web test",
+    "test:web": "pnpm --filter @sillyrealms/web test",
+    "test:browser": "pnpm --filter @sillyrealms/web test:theme && pnpm --filter @sillyrealms/web test:visual",
+    "typecheck": "pnpm --filter @sillyrealms/server typecheck && pnpm --filter @sillyrealms/web typecheck",
+    "lint": "pnpm --filter @sillyrealms/server lint"
+  }
+}

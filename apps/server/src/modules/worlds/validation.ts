@@ -1,0 +1,207 @@
+import { z } from 'zod';
+import { parseExpressionAt, type AnyNode } from 'acorn';
+import lodash from 'lodash';
+import { parseSRAssetUri } from '@sillyrealms/sdk/assets';
+import {
+  isSafeStateKey, validateStateJson, validateStateSchema, validateStateValue,
+  type StateSchema,
+} from '@sillyrealms/sdk/state-validation';
+import { AppError } from '../../errors.js';
+
+const blocked = new Set(['__proto__', 'constructor', 'prototype']);
+const operators = new Set(['===', '!==', '<', '<=', '>', '>=', '+', '-', '*', '/', '%']);
+const logical = new Set(['&&', '||', '??']);
+function unsupported(): never { throw new Error('Unsupported when expression'); }
+
+/** Validate the bounded author expression grammar; this module never evaluates expressions. */
+export function validateWhen(input: string): void {
+  if (Buffer.byteLength(input) > 4096) unsupported();
+  const root = parseExpressionAt(input, 0, { ecmaVersion: 'latest' });
+  if (input.slice(root.end).trim()) unsupported();
+  let count = 0;
+  const validate = (node: AnyNode): void => {
+    if (++count > 256) unsupported();
+    switch (node.type) {
+      case 'Literal':
+        if (!(node.value === null || ['string', 'number', 'boolean'].includes(typeof node.value))) unsupported();
+        break;
+      case 'UnaryExpression':
+        if (!['!', '+', '-'].includes(node.operator)) unsupported();
+        validate(node.argument); break;
+      case 'BinaryExpression':
+        if (!operators.has(node.operator)) unsupported();
+        validate(node.left); validate(node.right); break;
+      case 'LogicalExpression':
+        if (!logical.has(node.operator)) unsupported();
+        validate(node.left); validate(node.right); break;
+      case 'ConditionalExpression':
+        validate(node.test); validate(node.consequent); validate(node.alternate); break;
+      case 'CallExpression': {
+        if (node.optional || node.callee.type !== 'Identifier' || node.callee.name !== 'getState' ||
+          node.arguments.length < 1 || node.arguments.length > 2) unsupported();
+        const path = node.arguments[0]!;
+        let parts: string[];
+        if (path.type === 'Literal' && typeof path.value === 'string') parts = lodash.toPath(path.value);
+        else if (path.type === 'ArrayExpression') {
+          parts = path.elements.map(element => {
+            if (element?.type !== 'Literal' || typeof element.value !== 'string') unsupported();
+            return element.value;
+          });
+        } else unsupported();
+        if (!parts.length || parts.length > 32 || parts.some(part => !part || blocked.has(part))) unsupported();
+        const options = node.arguments[1];
+        if (options) {
+          if (options.type !== 'ObjectExpression' || options.properties.length !== 1) unsupported();
+          const property = options.properties[0]!;
+          if (property.type !== 'Property' || property.computed || property.key.type !== 'Identifier' ||
+            property.key.name !== 'scope' || property.value.type !== 'Literal' ||
+            typeof property.value.value !== 'string' || !['global', 'session', 'message'].includes(property.value.value)) unsupported();
+        }
+        break;
+      }
+      default: unsupported();
+    }
+  };
+  validate(root);
+}
+
+const atomicStateSchema = z.custom<StateSchema>((value) => value !== null && typeof value === 'object');
+const nonblank=z.string().refine(v=>v.trim().length>0,'Expected nonempty text');
+const id=z.string().trim().min(1);
+const dict=z.record(z.string(),z.unknown());
+const condition=z.string().superRefine((value,ctx)=>{
+  try {validateWhen(value);} catch {ctx.addIssue({code:'custom',message:'Unsupported when expression'});}
+});
+const rules={
+  mode:z.enum(['always','on_mention','never']).optional(), keywords:z.array(nonblank).optional(),
+  keyword_logic:z.enum(['any','all']).optional(), exclude_keywords:z.array(nonblank).optional(), when:condition.optional(),
+};
+function keywords(rule:{mode?:string;keywords?:string[]},ctx:z.RefinementCtx) {
+  if(rule.mode==='on_mention' && !rule.keywords?.length) ctx.addIssue({code:'custom',path:['keywords'],message:'Expected at least one keyword'});
+}
+const load=z.object(rules).superRefine(keywords);
+const loreLoad=z.object({...rules,order:z.number().int().optional()}).superRefine(keywords);
+const character=z.object({id,name:nonblank,description:z.string().optional(),prompt:z.string().optional(),avatar:z.string().optional(),order:z.number().int().optional(),player_selectable:z.boolean().optional(),load:load.optional()});
+const componentId=z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$-]*$/);
+const componentView=z.object({type:z.literal('component'),component:componentId}).strict();
+export const openingSchema=z.object({id,name:nonblank,content:nonblank,initial_state:dict.optional(),type:z.literal('component').optional(),component:componentId.optional()}).superRefine((value,ctx)=>{if((value.type===undefined)!==(value.component===undefined))ctx.addIssue({code:'custom',path:['component'],message:'type and component must be specified together'});});
+const lore=z.object({id,title:z.string().optional(),content:nonblank,enabled:z.boolean().optional(),load:loreLoad.optional()});
+function unique(items:{id:string}[],ctx:z.RefinementCtx) {
+  const seen=new Set<string>();
+  items.forEach((item,i)=>{if(seen.has(item.id)) ctx.addIssue({code:'custom',path:[i,'id'],message:'Duplicate ID'}); seen.add(item.id);});
+}
+const boundedBytes=(limit:number)=>z.string().refine(value=>Buffer.byteLength(value,'utf8')<=limit,`Exceeds ${limit} bytes`);
+const renderRule=z.object({
+  id,
+  name:z.string().optional(),
+  roles:z.array(z.enum(['user','assistant'])).min(1),
+  pattern:z.string().min(1).max(2000),
+  flags:z.string().optional(),
+  replacement:z.discriminatedUnion('type',[
+    z.object({type:z.literal('markdown'),content:boundedBytes(100000)}).strict(),
+    z.object({type:z.literal('html'),content:boundedBytes(100000)}).strict(),
+    z.object({type:z.literal('component'),component:componentId}).strict(),
+  ]),
+}).strict().superRefine((rule,ctx)=>{
+  const flags=rule.flags??'g';
+  if(!/^[gimsu]*$/.test(flags) || new Set(flags).size!==flags.length) {
+    ctx.addIssue({code:'custom',path:['flags'],message:'Invalid regular expression flags'});return;
+  }
+  try {new RegExp(rule.pattern,flags);} catch {ctx.addIssue({code:'custom',path:['pattern'],message:'Invalid regular expression'});}
+});
+const messageRender=z.object({
+  rules:z.array(renderRule).max(100).superRefine(unique).optional(),
+}).strict();
+const componentPath=z.string().superRefine((value,ctx)=>{
+  try {parseSRAssetUri(value,'components');} catch {ctx.addIssue({code:'custom',message:'Expected an sr-asset://components/ package path'});}
+});
+const componentSource=z.object({
+  id:componentId,
+  path:componentPath.optional(),
+  component:boundedBytes(1024*1024).optional(),
+}).strict().superRefine((value,ctx)=>{
+  if(value.path===undefined && !value.component?.trim())ctx.addIssue({code:'custom',message:'Expected path or nonempty component'});
+});
+const components=z.array(componentSource).max(100).superRefine(unique).superRefine((value,ctx)=>{
+  if(value.reduce((total,item)=>total+Buffer.byteLength(item.component??'','utf8'),0)>2*1024*1024)ctx.addIssue({code:'custom',message:'Components exceed 2 MiB'});
+});
+const schema=z.object({spec_version:z.literal('0.1'),data:z.object({
+  name:id,description:componentView.optional(),tags:z.array(id).optional(),cover:z.string().optional(),
+  characters:z.array(character).superRefine(unique).refine(items=>items.some(v=>v.player_selectable===true),'Expected a selectable player character'),
+  openings:z.array(openingSchema).min(1).superRefine(unique),state:atomicStateSchema.optional(),
+  lorebook:z.object({entries:z.array(lore).superRefine(unique)}).optional(),message_render:messageRender.optional(),ui:z.never().optional(),components:components.optional(),stage_component:componentId.optional(),extensions:z.custom<Record<string,unknown>>(v=>v!==null && typeof v==='object' && !Array.isArray(v),'Expected extension object').optional()
+})});
+
+export type WorldCard = z.infer<typeof schema>;
+
+export class CardError extends AppError {
+  constructor(readonly path: string, readonly reason: string) {
+    super('INVALID_WORLD_CARD', path + ': ' + reason);
+  }
+}
+
+function location(parts: PropertyKey[]): string {
+  return parts.reduce<string>((path, part) => path + (typeof part === 'number' ? '[' + part + ']' : '.' + String(part)), '$');
+}
+
+function validateDefinition(value: unknown): asserts value is StateSchema {
+  try {
+    validateStateSchema(value);
+    for (const scope of ['global', 'session', 'message'] as const) {
+      for (const definition of Object.values(value.scopes[scope] ?? {})) {
+        if (definition.load?.when !== undefined) validateWhen(definition.load.when);
+      }
+    }
+  } catch (error) {
+    throw new CardError('$.data.state', error instanceof Error ? error.message : 'Invalid state definition');
+  }
+}
+
+/** Validate the author protocol and references without executing narrative rules. */
+export function validateCard(raw: unknown): WorldCard {
+  function depth(value: unknown, level: number): void {
+    if (level > 64) throw new CardError('$', 'World exceeds maximum depth');
+    if (value && typeof value === 'object') for (const child of Object.values(value)) depth(child, level + 1);
+  }
+  depth(raw, 0);
+  const rawState = (raw as { data?: { state?: unknown } } | null)?.data?.state;
+  if (rawState !== undefined) validateDefinition(rawState);
+  const openings = (raw as { data?: { openings?: unknown } } | null)?.data?.openings;
+  if (Array.isArray(openings)) openings.forEach((opening, index) => {
+    if (opening && typeof opening === 'object' && 'initial_state' in opening) {
+      try { validateStateJson(opening.initial_state); }
+      catch (error) {
+        throw new CardError('$.data.openings[' + index + '].initial_state', error instanceof Error ? error.message : 'Invalid initial value');
+      }
+    }
+  });
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0]!;
+    throw new CardError(location(issue.path), issue.message);
+  }
+  const card = parsed.data;
+  const components = new Set(card.data.components?.map(component => component.id));
+  const reference = (id: string | undefined, path: string) => {
+    if (id !== undefined && !components.has(id)) throw new CardError(path, 'Component not found');
+  };
+  reference(card.data.description?.component, '$.data.description.component');
+  reference(card.data.stage_component, '$.data.stage_component');
+  card.data.openings.forEach((opening, index) => {
+    const path = '$.data.openings[' + index + ']';
+    reference(opening.component, path + '.component');
+    for (const [key, value] of Object.entries(opening.initial_state ?? {})) {
+      if (!isSafeStateKey(key)) throw new CardError(path + '.initial_state.' + key, 'Unsafe state key');
+      const definition = card.data.state?.scopes.message?.[key];
+      if (!definition) throw new CardError(path + '.initial_state.' + key, 'State root not found');
+      try { validateStateValue(definition, value, key, 'message'); }
+      catch (error) { throw new CardError(path + '.initial_state.' + key, error instanceof Error ? error.message : 'Invalid initial value'); }
+    }
+  });
+  card.data.message_render?.rules?.forEach((rule, index) => {
+    if (rule.replacement.type === 'component') reference(rule.replacement.component, '$.data.message_render.rules[' + index + '].replacement.component');
+  });
+  return card;
+}
+
+export function validateComponents(value: unknown) { return components.parse(value); }

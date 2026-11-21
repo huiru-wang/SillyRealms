@@ -1,0 +1,106 @@
+# Managed by SillyRealms deploy/start.sh.
+# Included by the http {} block in /etc/nginx/nginx.conf.
+# Main application: static Web + loopback API.
+server {
+    listen @@WEB_LISTEN@@;
+    server_name @@WEB_HOST@@;
+@@WEB_TLS@@
+    root @@WEB_ROOT@@;
+    index index.html;
+    client_max_body_size 300m;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header Connection "";
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 5s;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    proxy_next_upstream off;
+
+    location = /health {
+        proxy_pass http://127.0.0.1:@@SERVER_PORT@@;
+        proxy_buffering off;
+        proxy_cache off;
+    }
+
+    location = /api {
+        return 404;
+    }
+
+    location ^~ /api/ {
+        # No trailing slash: preserve the complete /api/v1/... request path.
+        proxy_pass http://127.0.0.1:@@SERVER_PORT@@;
+        # Session SSE must flush each event; world downloads also stream directly.
+        proxy_buffering off;
+        proxy_cache off;
+        gzip off;
+    }
+
+    location ^~ /assets/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    location = /index.html {
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    # Never execute isolated Stage documents on the trusted Web origin.
+    location ~* \.html$ {
+        return 404;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+
+# Isolated Stage: only the second static build, never a business API proxy.
+server {
+    listen @@STAGE_LISTEN@@;
+    server_name @@STAGE_HOST@@;
+@@STAGE_TLS@@
+    root @@STAGE_ROOT@@;
+
+    location = /api {
+        return 404;
+    }
+
+    location ^~ /api/ {
+        return 404;
+    }
+
+    location = / {
+        return 404;
+    }
+
+    location = /frame.html {
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+        # Keep the CSP inside the built HTML; this response policy adds ancestor binding.
+        add_header Content-Security-Policy "frame-ancestors @@WEB_ORIGIN@@" always;
+    }
+
+    location = /world-component.html {
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+        add_header Content-Security-Policy "frame-ancestors @@WEB_ORIGIN@@" always;
+    }
+
+    location ^~ /assets/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    location ~* \.html$ {
+        return 404;
+    }
+
+    location / {
+        try_files $uri =404;
+    }
+}

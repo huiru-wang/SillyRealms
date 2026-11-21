@@ -1,0 +1,55 @@
+<!doctype html><meta charset="utf-8"><title>World document regression</title><pre id="results">running</pre>
+<script type="module">
+import {renderWorldDocument} from '../src/world-document/render.ts';
+const checks=[];
+function check(name,condition){checks.push({name,pass:!!condition});}
+const render=(s,profile='document',slots)=>renderWorldDocument(s,{profile,slots});
+let r=render('# 标题\n\n文字 **粗体**\n\n<div data-sr-markdown="true">\n**档案**\n\n- 一\n- 二\n</div>\n\n> 引用');
+check('mixed Markdown and explicit HTML container',r.html.includes('<strong>粗体</strong>')&&r.html.includes('<strong>档案</strong>')&&r.html.includes('<li>一</li>')&&!r.html.includes('data-sr-markdown'));
+r=render('<div data-sr-markdown="true">**outer**<div data-sr-markdown="true">**inner**</div></div>');
+check('nested explicit containers',r.html.includes('<strong>outer</strong>')&&r.html.includes('<strong>inner</strong>'));
+r=render('<!doctype html><html><head><style>.card{color:red;background-image:url(https://evil.test/a);position:fixed}@import url(https://evil.test/a)</style><meta http-equiv="refresh" content="0;url=https://evil.test"></head><body><div class="card" onclick="evil()">内容</div><script>evil()<\/script></body></html>');
+check('full document reports filtered CSS',r.removedStyles);
+check('full document preserves safe CSS only',r.full&&r.head.includes('color:')&&!/url|position|import/i.test(r.head)&&!/<script|onclick|meta/i.test(r.html+r.head));
+r=render('<style>.a{color:red}</style><p>ok</p>');
+check('safe CSS does not cause a warning',!r.removedStyles);
+r=render('<div style="color:red;background-image:u\\72l(https://evil.test);position:fixed">x</div><style>.a{color:blue;background:url(https://evil.test)}</style>','message');
+check('message rejects stylesheets and CSS escapes',!/<style|url|position|background/i.test(r.html+r.head)&&r.html.includes('color'));
+r=render('<img src="data:image/svg+xml,evil" srcset="https://evil.test 1x" onerror="evil()"><a href="javascript:evil()">bad</a><svg><script>evil()<\/script></svg><iframe src="https://evil.test"></iframe><form><input></form>');
+check('dangerous resources and active content removed',!/(data:|srcset|onerror|javascript:|<svg|<iframe|<form|<input|<script)/i.test(r.html));
+r=render('<a href="https://example.com">ok</a><img src="https://example.com/a.png">');
+check('HTTPS links and images retained safely',r.html.includes('https://example.com')&&r.html.includes('noopener noreferrer')&&r.html.includes('target="_blank"'));
+r=render('<span data-sr-slot="fake"></span><span data-sr-slot="real"></span><span data-sr-slot="real"></span>','message',new Set(['real']));
+check('only a single registered slot survives',!r.html.includes('fake')&&(r.html.match(/data-sr-slot/g)||[]).length===1);
+r=render('```html\n<div data-sr-markdown="true">**not bold**</div>\n```\n\n`**code**`');
+check('code is not reinterpreted as Markdown',!r.html.includes('<strong>')&&r.html.includes('**not bold**'));
+r=render('<html><head><style>.x{color:red}</style></head><body><p>hello</p></body></html>','message');
+check('complete document works inline without author style',r.full&&r.html.includes('<p>hello</p>')&&!r.head&&!r.html.includes('<style'));
+const assetBaseUrl='http://127.0.0.1:5189/api/v1/worlds/card-one/resources/';
+const withAssets=(source,profile='document')=>renderWorldDocument(source,{profile,assetBaseUrl});
+const dom=html=>new DOMParser().parseFromString(html,'text/html');
+r=withAssets('<img src="sr-asset://assets/images/harbor.webp" onerror="evil()"><script>evil()<\/script>');
+check('package HTML images become local HTTP without active content',dom(r.html).querySelector('img')?.getAttribute('src')===assetBaseUrl+'assets/images/harbor.webp'&&!/onerror|<script/i.test(r.html)&&r.assetErrors.length===0);
+r=withAssets('![雾港](<sr-asset://assets/images/雾港 封面.webp>)');
+check('Markdown package images preserve raw Unicode and spaces until URL construction',dom(r.html).querySelector('img')?.getAttribute('src')===assetBaseUrl+'assets/images/'+encodeURIComponent('雾港 封面.webp')&&r.assetErrors.length===0);
+r=withAssets('![A &amp; B &quot;quoted&quot;](sr-asset://assets/a.webp)');
+check('Markdown image alt entities are decoded once without breaking attributes',dom(r.html).querySelector('img')?.getAttribute('alt')==='A & B "quoted"'&&dom(r.html).querySelector('img')?.getAttribute('src')===assetBaseUrl+'assets/a.webp');
+r=withAssets('![图](sr-asset://assets/a&amp;b.webp)');
+check('Markdown image source entities resolve the decoded package filename',dom(r.html).querySelector('img')?.getAttribute('src')===assetBaseUrl+'assets/a%26b.webp'&&r.assetErrors.length===0);
+r=withAssets('<div data-sr-markdown="true">![港口](sr-asset://assets/images/harbor.webp)</div>');
+check('nested Markdown package images use the same resolver',dom(r.html).querySelector('img')?.getAttribute('src')===assetBaseUrl+'assets/images/harbor.webp');
+r=withAssets('<!doctype html><html><head><style>.a{color:red}</style></head><body><img src="sr-asset://assets/images/harbor.webp"></body></html>');
+check('full document retains safe styles and package image',r.head.includes('color:')&&dom(r.html).querySelector('img')?.getAttribute('src')===assetBaseUrl+'assets/images/harbor.webp');
+r=withAssets('正常段落<img src="sr-asset://assets/../secret"><img src="sr-asset://assets/%2e%2e/secret"><img src="sr-asset://components/Main.tsx">','message');
+check('bad local images fail locally without discarding message text',!dom(r.html).querySelector('img[src]')&&r.html.includes('正常段落')&&r.assetErrors.length>0);
+r=render('<img src="sr-asset://assets/images/harbor.webp">保留正文');
+check('missing world asset context reports a local diagnostic',!dom(r.html).querySelector('img[src]')&&r.html.includes('保留正文')&&r.assetErrors.some(text=>text.includes('缺少当前世界')));
+r=withAssets('<img src="http://127.0.0.1:5189/api/secret"><img src="http://127.0.0.1:5189/api/v1/worlds/another-card/resources/assets/a.webp"><img src="'+assetBaseUrl+'assets/images/harbor.webp">');
+check('HTTP prose images are restricted to the current world resource root',dom(r.html).querySelectorAll('img[src]').length===1&&dom(r.html).querySelector('img[src]')?.getAttribute('src')===assetBaseUrl+'assets/images/harbor.webp');
+r=withAssets('<a href="sr-asset://assets/x">link</a><img src="custom://x"><img src="sr-asset:javascript:evil()"><video src="sr-asset://assets/a.mp4"></video>');
+check('package support does not enable unknown links protocols or document media',!dom(r.html).querySelector('a[href],img[src],video'));
+r=withAssets('示例 sr-asset://assets/images/harbor.webp\n\n`sr-asset://assets/images/harbor.webp`\n\n```html\n<img src="sr-asset://assets/images/harbor.webp">\n```');
+check('resource URLs in text and code remain literal',!dom(r.html).querySelector('img')&&r.html.includes('sr-asset://assets/images/harbor.webp')&&!r.html.includes(assetBaseUrl));
+document.querySelector('#results').textContent=JSON.stringify(checks,null,2);
+document.title=checks.every(c=>c.pass)?'PASS':'FAIL';
+</script>

@@ -1,0 +1,8 @@
+{
+  "webOrigin": "http://203.0.113.10",
+  "stageOrigin": "http://203.0.113.10:8081",
+  "serverPort": 3001,
+  "dataRoot": "/root/SillyRealms/data",
+  "staticRoot": "/var/www/sillyrealms",
+  "nginxDir": "/etc/nginx"
+}

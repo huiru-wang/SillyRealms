@@ -1,0 +1,49 @@
+.backdrop{
+  position:fixed;inset:0;z-index:var(--z-modal);display:grid;place-items:center;
+  background:var(--shade);padding:var(--space-4);backdrop-filter:blur(6px);
+  opacity:0;
+  transition:opacity var(--motion-overlay) var(--ease-standard);
+}
+.panel{
+  display:flex;flex-direction:column;min-width:0;
+  width:min(440px,100%);max-height:calc(100dvh - var(--space-8));
+  border:1px solid var(--stroke-strong);
+  border-radius:var(--radius-overlay);background:var(--surface);box-shadow:var(--shadow-dialog);
+  overflow:hidden;
+  opacity:0;transform:translateY(9px) scale(.987);
+  transition:opacity var(--motion-overlay) var(--ease-standard),
+    transform var(--motion-overlay) var(--ease-layout);
+}
+.backdrop[data-state="open"]{opacity:1}
+.backdrop[data-state="open"] .panel{opacity:1;transform:translateY(0) scale(1)}
+.header{
+  display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);
+  flex-shrink:0;padding:var(--space-2) var(--overlay-padding);border-bottom:1px solid var(--stroke);
+}
+.header h2{min-width:0;margin:0;font-size:var(--font-18);line-height:var(--line-label);font-weight:var(--weight-strong);overflow-wrap:anywhere}
+
+
+.body{
+  flex:1 1 auto;min-height:0;min-width:0;overflow-y:auto;overscroll-behavior:contain;
+  padding:var(--overlay-padding);line-height:var(--line-body);color:var(--text-secondary);
+}
+.body>p{margin:0 0 var(--space-3)}
+.body>:last-child{margin-block-end:0}
+.footer{
+  display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:var(--space-2);flex-shrink:0;
+  padding:var(--space-2) var(--overlay-padding);border-top:1px solid var(--stroke);
+}
+.backdrop[data-size="editor"]{padding:var(--space-6)}
+.backdrop[data-size="editor"] .panel{width:min(760px,100%);max-height:calc(100dvh - 48px)}
+@media(max-width:760px){
+  .backdrop[data-size="editor"]{
+    padding:12px;
+    padding-top:max(12px,env(safe-area-inset-top));
+    padding-bottom:max(12px,env(safe-area-inset-bottom));
+  }
+  .backdrop[data-size="editor"] .panel{
+    width:100%;
+    max-height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    border-radius:var(--radius-card);
+  }
+}

@@ -1,0 +1,60 @@
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
+import {mkdtemp,mkdir,rm,writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import type {DatabaseSync} from 'node:sqlite';
+import {openDatabase} from '../../infrastructure/database/connection.js';
+import {createServices} from '../../services.js';
+import {worldCardFixture} from './test-fixtures.js';
+import {cardToWorld,parseCard} from './parser.js';
+import {narrativePreset} from '../../testing/fixtures.js';
+let db:DatabaseSync,root:string,services:ReturnType<typeof createServices>;
+beforeEach(async()=>{db=openDatabase(':memory:');root=await mkdtemp(join(tmpdir(),'sr-world-management-'));services=createServices(db,root);});
+afterEach(async()=>{vi.restoreAllMocks();db.close();await rm(root,{recursive:true,force:true});});
+const content=()=>cardToWorld(parseCard(worldCardFixture()));
+describe('world management functions',()=>{
+ it('queries summaries and literal name/tag filters without decoding large document columns',()=>{
+  vi.spyOn(Date,'now').mockReturnValue(100);
+  services.worlds.create({...content(),id:'c',name:'港 100%',tags:['港','夜']});
+  services.worlds.create({...content(),id:'b',name:'港 100%',tags:['港']});
+  services.worlds.create({...content(),id:'a',name:'山',tags:['山']});
+  db.exec("PRAGMA ignore_check_constraints=ON; UPDATE worlds SET components='unreadable' WHERE id='c'");
+  const first=services.worlds.listPage({q:'100%',tag:'港',limit:1});
+  expect(first.items[0]).toMatchObject({id:'c',tags:['港','夜'],createdAt:100});
+  expect(first.items[0]).not.toHaveProperty('components');expect(first.hasMore).toBe(true);
+  const next=services.worlds.listPage({q:'100%',tag:'港',limit:1,before:{createdAt:100,id:'c'}});
+  expect(next.items.map(item=>item.id)).toEqual(['b']);expect(next.hasMore).toBe(false);
+ });
+ it('updates only management fields with revision protection and keeps author JSON/state intact',()=>{
+  const world=services.worlds.create({...content(),id:'world'});
+  const before=db.prepare('SELECT characters_json,openings_json,state FROM worlds WHERE id=?').get(world.id);
+  const updated=services.worlds.updateManagement(world.id,{name:'Renamed',tags:[' 夜 ','夜'],expectedRevision:world.revision});
+  expect(updated).toMatchObject({name:'Renamed',tags:['夜'],revision:2});
+  expect(db.prepare('SELECT characters_json,openings_json,state FROM worlds WHERE id=?').get(world.id)).toEqual(before);
+  expect(()=>services.worlds.updateManagement(world.id,{name:'Lost',expectedRevision:1})).toThrow('WORLD_REVISION_CONFLICT');
+  expect(services.worlds.require(world.id).name).toBe('Renamed');
+  services.worlds.setState(world.id,{coins:99});expect(services.worlds.require(world.id).revision).toBe(2);
+  expect(()=>services.worlds.updateManagement(world.id,{expectedRevision:2,characters:[]} as never)).toThrow();
+ });
+ it('retains legacy content while clearing defaults and rejects missing references atomically',()=>{
+  const preset=services.presets.create(narrativePreset()),world=services.worlds.create({...content(),defaultPresetId:preset.id});
+  db.prepare('UPDATE worlds SET description=? WHERE id=?').run('legacy prose',world.id);
+  expect(()=>services.worlds.updateManagement(world.id,{name:'lost',tags:['lost'],defaultPresetId:'missing',expectedRevision:1})).toThrow('PRESET_NOT_FOUND');
+  expect(services.worlds.require(world.id)).toMatchObject({name:world.name,tags:world.tags,revision:1});
+  const updated=services.worlds.updateManagement(world.id,{defaultPresetId:null,expectedRevision:1});
+  expect(updated.description).toBe('legacy prose');expect(updated.defaultPresetId).toBeNull();
+ });
+ it('validates new definitions before persistence',()=>{
+  expect(()=>services.worlds.create({...content(),characters:[]})).toThrow('INVALID_WORLD_CARD');
+  expect(()=>services.worlds.create({...content(),description:'unsupported prose'})).toThrow('INVALID_WORLD_CARD');
+  expect(services.worlds.listPage().items).toEqual([]);
+ });
+ it('returns component-specific file errors without an inline fallback or absolute paths',async()=>{
+  const world=services.worlds.create({...content(),components:[{id:'inline',component:'export default ()=>null'},{id:'file',path:'sr-asset://components/file.tsx'},{id:'missing',path:'sr-asset://components/missing.tsx',component:'must not fall back'}]});
+  const directory=join(services.worlds.paths(world.id).package,'components');await mkdir(directory,{recursive:true});
+  await writeFile(join(directory,'file.tsx'),'export default ()=>"file"');
+  const result=await services.worlds.getComponents(world.id);
+  expect(result.items.map(item=>item.id)).toEqual(['inline','file']);expect(result.errors.missing).toBeTruthy();
+  expect(JSON.stringify(result.errors)).not.toContain(root);
+ });
+});
