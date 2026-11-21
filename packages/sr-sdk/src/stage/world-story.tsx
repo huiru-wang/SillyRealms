@@ -11,18 +11,18 @@ const StoryRun = React.memo(function StoryRun({run, suggestions, connected, onCh
   run: StageRun; suggestions: Suggestions | null; connected: boolean; onChoose(text: string): void;
 }) {
   const {debug} = useStoryConfiguration(), notice = runNotice(run);
-  return <>{run.messages.map(message => <React.Fragment key={message.id}>
-    <article className={'sr-message ' + message.role} data-message-id={message.id}>
-      <span className="sr-message-source">{message.role === 'user' ? '我' : '故事'}</span>
+  return <>{run.messages.map(message =>
+    <article key={message.id} className={'sr-message ' + message.role} data-message-id={message.id}
+      aria-label={message.role === 'user' ? '我的消息' : '故事消息'}>
       <div className="sr-story-content"><MessageContent message={message} runId={run.runId}/>{!message.content.trim() && <p className="sr-thinking" role="status">{messageNotice(message, run.status)}</p>}</div>
+      {message.role === 'assistant' && suggestions?.messageId === message.id &&
+        <section className="sr-suggestions" aria-label="行动建议">{suggestions.items.map((item, index) =>
+          <button key={index} type="button" disabled={!connected} onClick={() => onChoose(item)}>{item}</button>
+        )}</section>}
+      {message.role === 'assistant' && debug === true && message.output &&
+        <details className="sr-thinking sr-processing"><summary>数据处理结果</summary><pre>{JSON.stringify(message.output, null, 2)}</pre></details>}
     </article>
-    {message.role === 'assistant' && suggestions?.messageId === message.id &&
-      <section className="sr-suggestions" aria-label="行动建议">{suggestions.items.map((item, index) =>
-        <button key={index} type="button" disabled={!connected} onClick={() => onChoose(item)}>{item}</button>
-      )}</section>}
-    {message.role === 'assistant' && debug === true && message.output &&
-      <details className="sr-thinking sr-processing"><summary>数据处理结果</summary><pre>{JSON.stringify(message.output, null, 2)}</pre></details>}
-  </React.Fragment>)}{notice && <p className={run.status === 'stopped' ? 'sr-error' : 'sr-thinking'} role="status">{notice}</p>}</>;
+  )}{notice && <p className={run.status === 'stopped' ? 'sr-error' : 'sr-thinking'} role="status">{notice}</p>}</>;
 });
 
 /** Rendering and reading position only. The Host supplies history, live output and recovery results. */

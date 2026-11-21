@@ -1,0 +1,28 @@
+{
+  "status": "pass",
+  "zip": "/Users/wanghuiru/Workspace/SillyRealms/world/worldcards/庄园/manor-world.zip",
+  "zipBytes": 132072078,
+  "zipSha256": "136238ca6e2f22f4e2272eb8d3cacbaa4202a2ac7f36fbf981f8efad81c3cb09",
+  "packageBytes": 132432251,
+  "fileCount": 735,
+  "characterCount": 18,
+  "openingCount": 8,
+  "componentCount": 15,
+  "componentFileCount": 15,
+  "assetCount": 719,
+  "assetBytes": 131605976,
+  "stateSchemaVersion": 2,
+  "localReferenceOccurrences": 1548,
+  "uniqueLocalReferences": 734,
+  "unreferencedAssetCount": 0,
+  "remainingHttpUrlCount": 0,
+  "checks": {
+    "importSizeAndArchive": "pass",
+    "cardAndStateParser": "pass",
+    "declaredComponentResources": "pass",
+    "moduleGraph": "pass",
+    "tsxCompilation": "pass",
+    "allLocalResourceReferences": "pass",
+    "temporaryWorkspaceCleanup": "pass"
+  }
+}

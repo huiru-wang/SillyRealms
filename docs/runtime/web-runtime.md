@@ -60,7 +60,7 @@ Stage SDK 通过 `@sillyrealms/sdk` 导入。frame 的事件订阅不重复驱�
 
 ## 桥接与展示
 
-官方 WorldStory 将行动建议放在对应助手消息框下方。服务端运行配置的 `debug` 为 true 且该消息有处理结果时，在建议下方显示可展开的「数据处理结果」。
+官方 WorldStory 直接展示 AI 正文，用户消息使用右对齐的主题强调色淡色气泡。行动建议放在对应 AI 消息正文下方，以轻边框、淡阴影的圆角按钮呈现，点击填入草稿。服务端运行配置的 `debug` 为 true 且该消息有处理结果时，在建议下方显示可展开的「数据处理结果」。
 
 frame 没有业务 HTTP/模型凭据。SDK 发起 narrative.send/stop、history.loadMore/refresh/query、state.read/write、composer.setDraft 等白名单命令；Host 用当前会话绑定决定资源身份。查询返回值、原生事件和展示快照通过 MessagePort 返回。预览文档仍只开放 global 查询。
 

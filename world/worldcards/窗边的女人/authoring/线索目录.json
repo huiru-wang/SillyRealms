@@ -1,0 +1,422 @@
+[
+  {
+    "id": "01",
+    "number": 1,
+    "owner": "public",
+    "title": "0号病人事件",
+    "text": "松木病院在九十年代末研究抗 HIV 药物。原作设定某种蛋白只存在于健康 RH 阴性女性体内，在感染 HIV 并濒死时变成抗体；血型可遗传。此为虚构医学设定，不能作现实诊疗依据。",
+    "source": "线索.pdf · PDF 页 3",
+    "kind": "事件",
+    "image": "sr-asset://assets/clues/01.jpg"
+  },
+  {
+    "id": "02",
+    "number": 2,
+    "owner": "public",
+    "title": "白衣死神事件",
+    "text": "白衣死神在夜间袭击落单的白衣者，并非仅针对性工作者。现场留下受害者眼球；原作虚构 ATTT 仪器可读取死前三分钟影像。",
+    "source": "线索.pdf · PDF 页 5",
+    "kind": "事件",
+    "image": "sr-asset://assets/clues/02.jpg"
+  },
+  {
+    "id": "03",
+    "number": 3,
+    "owner": "public",
+    "title": "天国之门事件",
+    "text": "天国之门在本作中是极端组织，各城负责人称阿尔法羊。其恶毒献祭仪式在受害者身上写侮辱文字，并把红色倒五角星羊头画在身上。",
+    "source": "线索.pdf · PDF 页 11",
+    "kind": "事件",
+    "image": "sr-asset://assets/clues/03.jpg"
+  },
+  {
+    "id": "04",
+    "number": 4,
+    "owner": "blackmass",
+    "title": "求饶的录音",
+    "text": "一段电话录音。黑弥撒说：“求求你，我不想死。”只有这些卡面文字可用，没有附带音频文件。",
+    "source": "线索.pdf · PDF 页 9",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/04.jpg"
+  },
+  {
+    "id": "05",
+    "number": 5,
+    "owner": "blackmass",
+    "title": "面具合照",
+    "text": "照片中众人戴着面具，似在举行仪式；中间男人的面具标着 α。",
+    "source": "线索.pdf · PDF 页 9",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/05.jpg"
+  },
+  {
+    "id": "06",
+    "number": 6,
+    "owner": "blackmass",
+    "title": "写给邓爱欣的情书",
+    "text": "一封写给邓爱欣的情书。原卡没有提供正文，不得补造信件日期或内容。",
+    "source": "线索.pdf · PDF 页 17",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/06.jpg"
+  },
+  {
+    "id": "07",
+    "number": 7,
+    "owner": "blackmass",
+    "title": "一本日记",
+    "text": "日记写着：“得不到的就要毁掉它，毁不掉的就要颠覆它。”",
+    "source": "线索.pdf · PDF 页 17",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/07.jpg"
+  },
+  {
+    "id": "08",
+    "number": 8,
+    "owner": "mengqiuxue",
+    "title": "带问号的照片",
+    "text": "一张邓爱欣的照片，上面用白字写着“？”。保留原图，可自行换角度观察。",
+    "source": "线索.pdf · PDF 页 15",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/08.jpg"
+  },
+  {
+    "id": "08-hard",
+    "number": 8,
+    "owner": "mengqiuxue",
+    "title": "期末设计作业",
+    "text": "一张评分 A 的期末零件设计图，图上有“？”符号。保留原图，可自行换角度观察。",
+    "source": "线索.pdf · PDF 页 13",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/08-hard.jpg"
+  },
+  {
+    "id": "09",
+    "number": 9,
+    "owner": "mengqiuxue",
+    "title": "被划掉的合照",
+    "text": "两男一女合照，女人头像被刀划乱，并写着“耻辱”。",
+    "source": "线索.pdf · PDF 页 17",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/09.jpg"
+  },
+  {
+    "id": "10",
+    "number": 10,
+    "owner": "mengqiuxue",
+    "title": "臂力棒",
+    "text": "一根臂力棒。",
+    "source": "线索.pdf · PDF 页 15",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/10.jpg"
+  },
+  {
+    "id": "11",
+    "number": 11,
+    "owner": "mengqiuxue",
+    "title": "去北方的车票",
+    "text": "2 月 14 日早晨去北方小城的实名火车票，显示已经使用。",
+    "source": "线索.pdf · PDF 页 15",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/11.jpg"
+  },
+  {
+    "id": "12",
+    "number": 12,
+    "owner": "prometheus",
+    "title": "全新电脑订购单",
+    "text": "2005 年一批全新电脑的订购单，附有保修卡。",
+    "source": "线索.pdf · PDF 页 1",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/12.jpg"
+  },
+  {
+    "id": "13",
+    "number": 13,
+    "owner": "prometheus",
+    "title": "研究员工作证",
+    "text": "松木病院的工作证，上面写着“研究员”。",
+    "source": "线索.pdf · PDF 页 1",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/13.jpg"
+  },
+  {
+    "id": "14",
+    "number": 14,
+    "owner": "prometheus",
+    "title": "秘密协议",
+    "text": "一份与某政府官员有关的“实验器具”秘密协议。",
+    "source": "线索.pdf · PDF 页 1",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/14.jpg"
+  },
+  {
+    "id": "15",
+    "number": 15,
+    "owner": "prometheus",
+    "title": "住所照片",
+    "text": "一张邓爱欣住处的照片。",
+    "source": "线索.pdf · PDF 页 1",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/15.jpg"
+  },
+  {
+    "id": "16",
+    "number": 16,
+    "owner": "qiuge",
+    "title": "撕掉的情书",
+    "text": "一封撕掉的、写给黑弥撒的情书。",
+    "source": "线索.pdf · PDF 页 15",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/16.jpg"
+  },
+  {
+    "id": "17",
+    "number": 17,
+    "owner": "qiuge",
+    "title": "扫描的检查报告",
+    "text": "一张邓爱欣检查报告的扫描电子版，HIV 检测呈阳性。报告不是其从事性交易的证据。",
+    "source": "线索.pdf · PDF 页 3",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/17.jpg"
+  },
+  {
+    "id": "18",
+    "number": 18,
+    "owner": "qiuge",
+    "title": "银项链",
+    "text": "银质项链的吊坠里有一张被撕掉的照片，背后写着“十年之约”。",
+    "source": "线索.pdf · PDF 页 13",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/18.jpg"
+  },
+  {
+    "id": "19",
+    "number": 19,
+    "owner": "qiuge",
+    "title": "中年女性照片",
+    "text": "一张中年女性的照片，背面写着 α。",
+    "source": "线索.pdf · PDF 页 9",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/19.jpg"
+  },
+  {
+    "id": "20",
+    "number": 20,
+    "owner": "gentleman",
+    "title": "松木病院病历",
+    "text": "一份松木病院病历；原手册说明其表明斯文男人患有 HIV 相关疾病。",
+    "source": "线索.pdf · PDF 页 7",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/20.jpg"
+  },
+  {
+    "id": "21",
+    "number": 21,
+    "owner": "gentleman",
+    "title": "回城的车票",
+    "text": "2 月 14 日回宁河城的实名火车票，显示已经使用。",
+    "source": "线索.pdf · PDF 页 13",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/21.jpg"
+  },
+  {
+    "id": "22",
+    "number": 22,
+    "owner": "gentleman",
+    "title": "餐馆前的自拍",
+    "text": "餐馆前自拍里可见三轮车。题字是：“生活对我各种不公，不过农村的孩子输不起，为了家人只有不断努力！”",
+    "source": "线索.pdf · PDF 页 7",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/22.jpg"
+  },
+  {
+    "id": "23",
+    "number": 23,
+    "owner": "gentleman",
+    "title": "食堂任职证明",
+    "text": "一份曾供职于松木病院食堂的证明。",
+    "source": "线索.pdf · PDF 页 7",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/23.jpg"
+  },
+  {
+    "id": "24",
+    "number": 24,
+    "owner": "wuchang",
+    "title": "铁佛珠",
+    "text": "一串用鱼线串着的铁制佛珠。",
+    "source": "线索.pdf · PDF 页 11",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/24.jpg"
+  },
+  {
+    "id": "25",
+    "number": 25,
+    "owner": "wuchang",
+    "title": "天国之门资料",
+    "text": "很多天国之门的资料。",
+    "source": "线索.pdf · PDF 页 11",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/25.jpg"
+  },
+  {
+    "id": "26",
+    "number": 26,
+    "owner": "wuchang",
+    "title": "小盒子订单",
+    "text": "很多在网上购买小盒子的订单。",
+    "source": "线索.pdf · PDF 页 9",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/26.jpg"
+  },
+  {
+    "id": "27",
+    "number": 27,
+    "owner": "wuchang",
+    "title": "养猪场照片",
+    "text": "一张养猪场照片，饲料的样子异常，疑似含血肉。只说明卡面观察，不凭这一张图直接定罪。",
+    "source": "线索.pdf · PDF 页 13",
+    "kind": "人物",
+    "image": "sr-asset://assets/clues/27.jpg"
+  },
+  {
+    "id": "28",
+    "number": 28,
+    "owner": "public",
+    "title": "邓爱欣日记 · 沙砾",
+    "text": "“谣言和欺骗就像沙砾，随风而去，使绿洲变成了沙漠。”",
+    "source": "线索.pdf · PDF 页 3",
+    "kind": "日记",
+    "image": "sr-asset://assets/clues/28.jpg"
+  },
+  {
+    "id": "29",
+    "number": 29,
+    "owner": "public",
+    "title": "邓爱欣日记 · 森林",
+    "text": "小狗带小白鼠进了森林\n遇见了阴险的狮子\n那虚伪的小乌鸦\n喜欢着操控小熊的兔子\n聪明的小野猫也有糊涂的时候\n因为小时候经历的阴霾\n森林里多愉快，多愉快\n大家一起过着快乐的日子",
+    "source": "线索.pdf · PDF 页 11",
+    "kind": "日记",
+    "image": "sr-asset://assets/clues/29.jpg"
+  },
+  {
+    "id": "30",
+    "number": 30,
+    "owner": "public",
+    "title": "第一处发现",
+    "text": "黑色塑料袋，内有十多斤遗体组织。地图 1 号点发现；本条开局公开。",
+    "source": "线索.pdf · PDF 页 3",
+    "kind": "地图",
+    "image": "sr-asset://assets/clues/30.jpg"
+  },
+  {
+    "id": "31",
+    "number": 31,
+    "owner": "public",
+    "title": "红白编织袋",
+    "text": "红白编织袋，内有约二十斤遗体组织。",
+    "source": "线索.pdf · PDF 页 5",
+    "kind": "地图",
+    "image": "sr-asset://assets/clues/31.jpg"
+  },
+  {
+    "id": "32",
+    "number": 32,
+    "owner": "public",
+    "title": "宁河之家旅行袋",
+    "text": "“宁河之家”旅行袋，内脏整齐装在其中。",
+    "source": "线索.pdf · PDF 页 5",
+    "kind": "地图",
+    "image": "sr-asset://assets/clues/32.jpg"
+  },
+  {
+    "id": "33",
+    "number": 33,
+    "owner": "public",
+    "title": "黑色书包",
+    "text": "黑色书包中装着邓爱欣的头颅。只作物证描述。",
+    "source": "线索.pdf · PDF 页 7",
+    "kind": "地图",
+    "image": "sr-asset://assets/clues/33.jpg"
+  },
+  {
+    "id": "34",
+    "number": 34,
+    "owner": "public",
+    "title": "床单包裹",
+    "text": "床单包裹着邓爱欣的骨骼。",
+    "source": "线索.pdf · PDF 页 5",
+    "kind": "地图",
+    "image": "sr-asset://assets/clues/34.jpg"
+  },
+  {
+    "id": "media-box",
+    "number": null,
+    "owner": "public",
+    "title": "白衣死神影像说明",
+    "text": "原组织者手册说明：白衣死神取下眼球后，会放在有防腐液的小盒子里，而不是丢在地上。",
+    "source": "组织者手册.pdf · PDF 页 11",
+    "kind": "缺失媒体的文字替代",
+    "image": null
+  },
+  {
+    "id": "media-tail",
+    "number": null,
+    "owner": "public",
+    "title": "跟踪影像说明",
+    "text": "原组织者手册说明：梦秋雪曾跟踪黑弥撒，知道他会在夜晚偷窥邓爱欣。",
+    "source": "组织者手册.pdf · PDF 页 11–12",
+    "kind": "缺失媒体的文字替代",
+    "image": null
+  },
+  {
+    "id": "media-blood",
+    "number": null,
+    "owner": "public",
+    "title": "医院影像说明",
+    "text": "原组织者手册说明：囚鸽调换了自己与邓爱欣的血样标签；邓爱欣并不是所记录的 RH 阴性。",
+    "source": "组织者手册.pdf · PDF 页 11–12",
+    "kind": "缺失媒体的文字替代",
+    "image": null
+  },
+  {
+    "id": "media-mask",
+    "number": null,
+    "owner": "public",
+    "title": "少年目击信息",
+    "text": "手册复盘及两份角色本记载：梦秋雪少年时戴孙悟空面具，目击无常杀害自己的姐姐。缺失视频的画面、台词、时间码不补写。",
+    "source": "组织者手册.pdf · PDF 页 7、12；梦秋雪.pdf · PDF 页 2；无常.pdf · PDF 页 3",
+    "kind": "缺失媒体的文字替代",
+    "image": null
+  },
+  {
+    "id": "media-ad",
+    "number": null,
+    "owner": "public",
+    "title": "小广告的时间",
+    "text": "原组织者手册明确：终局广告中的虚构致命邮寄服务，在邓爱欣生前已存在。本版仅以剧情文字呈现，不包含链接、配方、采购或现实寄送步骤。",
+    "source": "组织者手册.pdf · PDF 页 6、9、11",
+    "kind": "缺失媒体的文字替代",
+    "image": null
+  },
+  {
+    "id": "scene-forensics",
+    "number": null,
+    "owner": "public",
+    "kind": "第三幕公开案卷",
+    "title": "院落与室内取证",
+    "text": "院内隐蔽处有直接留在地上的双眼；院墙画红色倒五角星羊头，旁有项链。遗体有烫洗、肥皂水痕迹，刀口整齐，颈部深勒痕与后颈贯穿伤。门锁损坏，屋内有电脑、闹钟，窗台旁有未干水迹，楼道少一套灯具。这是警方取证记录；此处不附主持推理答案。",
+    "source": "六份人物剧本·第三幕；组织者手册.pdf·11页",
+    "image": null
+  },
+  {
+    "id": "scene-forum",
+    "number": null,
+    "owner": "public",
+    "kind": "第三幕公开观察",
+    "title": "旧论坛的异常",
+    "text": "论坛里资料与广告越来越多。游客指出其中用到了十年前流行的灰鸽子，具备定时发送文件的功能。结合此前已知的邓爱欣计算机能力讨论，但暂不直接公布幕后安排。这里不执行任何真实木马程序。",
+    "source": "六份人物剧本·第三幕",
+    "image": null
+  }
+]

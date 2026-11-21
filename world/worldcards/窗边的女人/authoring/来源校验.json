@@ -1,0 +1,52 @@
+[
+  {
+    "path": "人物剧本/囚鸽.pdf",
+    "sha256": "66db75159c391142f334e9d7acab5e4717080df2755690ab9a7deaf044b0d419",
+    "bytes": 36794233
+  },
+  {
+    "path": "人物剧本/斯文男人.pdf",
+    "sha256": "bedc8f45c259f4b7eddb7b019aa1591f6ea106044d4ed049c541536325e70555",
+    "bytes": 34842954
+  },
+  {
+    "path": "人物剧本/无常.pdf",
+    "sha256": "c8690dc8c51426882bc905c270894e442e99b6b1d07dd8314077d9fc2ebd2ea5",
+    "bytes": 34020561
+  },
+  {
+    "path": "人物剧本/普罗米修斯.pdf",
+    "sha256": "898244c897e8ef1c061a40fc2e071cad2d8c596a25ffd83c59d0ab87297190d3",
+    "bytes": 38618193
+  },
+  {
+    "path": "人物剧本/梦秋雪.pdf",
+    "sha256": "b3502d71d528a8ff07ebb86784732a0840e6e76b4e6022a6e64f454bff262412",
+    "bytes": 37041361
+  },
+  {
+    "path": "人物剧本/黑弥撒.pdf",
+    "sha256": "73fe3937d8963ba3bb633246b1ae62b788b8c0c97a76196f608df3a931006841",
+    "bytes": 37184832
+  },
+  {
+    "path": "人物剧本前言.pdf",
+    "sha256": "e1e2b44f16ea479cb2d1c811ac7288c011fe38ff2aa3101d5f1bc6435a0d28f0",
+    "bytes": 2267653
+  },
+  {
+    "path": "地图.jpg",
+    "sha256": "d770a759eed93d4ae1846899536b2635ed85f040b319a4e39867356758d1c4a7",
+    "bytes": 1878189
+  },
+  {
+    "path": "线索.pdf",
+    "sha256": "b84c3fb698394a7bcac3e759e7d785ab740e70e5164f517e55bf6d09c8a2a98d",
+    "bytes": 88910283
+  },
+  {
+    "path": "组织者手册.pdf",
+    "sha256": "c2175bbc55c1151d7bd140f87b2e6c9c080d577f1b468337b6465a5f064c0914",
+    "bytes": 41449789
+  }
+]

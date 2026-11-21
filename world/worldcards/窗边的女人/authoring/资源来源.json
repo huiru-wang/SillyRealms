@@ -1,0 +1,475 @@
+[
+  {
+    "asset": "assets/clues/12.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 1,
+    "cropAt1600": [
+      0,
+      0,
+      500,
+      700
+    ],
+    "sha256": "63f694cd0239c02f49e1fd64b1204e0e53b9029d7a56ba7feada9d8b6477a015"
+  },
+  {
+    "asset": "assets/clues/13.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 1,
+    "cropAt1600": [
+      500,
+      0,
+      500,
+      700
+    ],
+    "sha256": "80e969a43da95953d5b68a508052f594848dc08e1ba1b4a765aff072ec853b83"
+  },
+  {
+    "asset": "assets/clues/15.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 1,
+    "cropAt1600": [
+      0,
+      704,
+      500,
+      700
+    ],
+    "sha256": "41b96df35ee3cef4b5cd17c60080e7f15f9ab11955d30b124df098a7434f671d"
+  },
+  {
+    "asset": "assets/clues/14.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 1,
+    "cropAt1600": [
+      500,
+      704,
+      500,
+      700
+    ],
+    "sha256": "cbe529871708bea6d19ee5ba9235c9fb6389aef90d4dee8d4a8a419309a850c2"
+  },
+  {
+    "asset": "assets/clues/28.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 3,
+    "cropAt1600": [
+      0,
+      0,
+      500,
+      700
+    ],
+    "sha256": "e30377b1e4d3b1a0f09f2a671d8bd63fef5c3d9e05dbcd4960b518810050ba8e"
+  },
+  {
+    "asset": "assets/clues/17.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 3,
+    "cropAt1600": [
+      500,
+      0,
+      500,
+      700
+    ],
+    "sha256": "8b562bffc46bc34f1a9dd7c8c9a16043d8287182ed0ce4f234abcbfbfb9182db"
+  },
+  {
+    "asset": "assets/clues/01.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 3,
+    "cropAt1600": [
+      0,
+      704,
+      500,
+      700
+    ],
+    "sha256": "b7c1cb601ea22d680eeaac2e40763a720bd3aa95ccb834fe4cffe2b3bb834bce"
+  },
+  {
+    "asset": "assets/clues/30.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 3,
+    "cropAt1600": [
+      500,
+      704,
+      500,
+      700
+    ],
+    "sha256": "82a086cd0f18a2f3fdc165f95c96f7864689f677d06101b166fa2c64c5b292cc"
+  },
+  {
+    "asset": "assets/clues/02.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 5,
+    "cropAt1600": [
+      0,
+      0,
+      500,
+      700
+    ],
+    "sha256": "32dbede9c360ebf4d6a7efe14777dbe02ef6a167c0d5bb59f397cf6c4cd39b8d"
+  },
+  {
+    "asset": "assets/clues/34.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 5,
+    "cropAt1600": [
+      500,
+      0,
+      500,
+      700
+    ],
+    "sha256": "e1a35769e7bfc92f9b3b3aa6e8743b7433567e23d4a1c98030deaec325f23c1e"
+  },
+  {
+    "asset": "assets/clues/31.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 5,
+    "cropAt1600": [
+      0,
+      704,
+      500,
+      700
+    ],
+    "sha256": "a3e4d2ff8afe268eeac44fb851cd87828123fa3250b8528771638a0f5896190d"
+  },
+  {
+    "asset": "assets/clues/32.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 5,
+    "cropAt1600": [
+      500,
+      704,
+      500,
+      700
+    ],
+    "sha256": "3527d906fd0159c736de24e5fd3a6e51a646753463130e50b04df462a17223a1"
+  },
+  {
+    "asset": "assets/clues/33.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 7,
+    "cropAt1600": [
+      0,
+      0,
+      500,
+      700
+    ],
+    "sha256": "d33cc5db34ae252a124ca840fbc6d7e10e74acda46a562d037f58a838294b68d"
+  },
+  {
+    "asset": "assets/clues/22.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 7,
+    "cropAt1600": [
+      500,
+      0,
+      500,
+      700
+    ],
+    "sha256": "819cb8aebf5dc64d48b0b2cfd01bb6429d2062eb5a94e0fd93a65caa7541e3cf"
+  },
+  {
+    "asset": "assets/clues/23.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 7,
+    "cropAt1600": [
+      0,
+      704,
+      500,
+      700
+    ],
+    "sha256": "c8e9d72d05dca9a73efa028a614653a6cebd9bdecd06bf39cbf6d54f17231b2d"
+  },
+  {
+    "asset": "assets/clues/20.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 7,
+    "cropAt1600": [
+      500,
+      704,
+      500,
+      700
+    ],
+    "sha256": "4f60c85c16ed29bcc6ef8d70d7ecbaefeb2c365c7dfecb998229b3c382a7ea61"
+  },
+  {
+    "asset": "assets/clues/26.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 9,
+    "cropAt1600": [
+      0,
+      0,
+      500,
+      700
+    ],
+    "sha256": "9b30c5abaf04f64f386d1d4c4ecaba9537f86bfa7176b1796ae702523e2aa1b8"
+  },
+  {
+    "asset": "assets/clues/04.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 9,
+    "cropAt1600": [
+      500,
+      0,
+      500,
+      700
+    ],
+    "sha256": "66731ffa73ac06066771eb44947a194212586f4e1dc1f07f9167c47c1430fb05"
+  },
+  {
+    "asset": "assets/clues/05.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 9,
+    "cropAt1600": [
+      0,
+      704,
+      500,
+      700
+    ],
+    "sha256": "0d451f100b9f8b6d403548b8d4aad0bfe2b2e546acd4dd0d6de0d0b9ea21bc80"
+  },
+  {
+    "asset": "assets/clues/19.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 9,
+    "cropAt1600": [
+      500,
+      704,
+      500,
+      700
+    ],
+    "sha256": "32510b183f8897dc4d4417055dd26540743b94de392098e3189b10031e5f338c"
+  },
+  {
+    "asset": "assets/clues/29.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 11,
+    "cropAt1600": [
+      0,
+      0,
+      500,
+      700
+    ],
+    "sha256": "7352ffe2ac25cd708c86e7955161d053f51f8425b2a3b977dbcf62f862dec643"
+  },
+  {
+    "asset": "assets/clues/24.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 11,
+    "cropAt1600": [
+      500,
+      0,
+      500,
+      700
+    ],
+    "sha256": "69e1995d31d182fb3ff95833db07066fe52deebd02651502b2cf28547c63cfff"
+  },
+  {
+    "asset": "assets/clues/03.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 11,
+    "cropAt1600": [
+      0,
+      704,
+      500,
+      700
+    ],
+    "sha256": "9add806babb9efeb9277de74c2ea5c0aa87fcefad0d176e3f7c2784b0e043909"
+  },
+  {
+    "asset": "assets/clues/25.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 11,
+    "cropAt1600": [
+      500,
+      704,
+      500,
+      700
+    ],
+    "sha256": "3b8a7cdd44d9a784515c23d30ddb442203a1fa9f47462ff9a3c71283e6bc8cfb"
+  },
+  {
+    "asset": "assets/clues/21.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 13,
+    "cropAt1600": [
+      0,
+      0,
+      500,
+      700
+    ],
+    "sha256": "7ac6296eecce4e1c321f7edc0c49bfcb2d27e94e18fedc8ecef6d2ef9f595255"
+  },
+  {
+    "asset": "assets/clues/08-hard.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 13,
+    "cropAt1600": [
+      500,
+      0,
+      500,
+      700
+    ],
+    "sha256": "e35341430c9bdf8b0afe895df6756f75b8188104f679900efe55f8f329b58ee0"
+  },
+  {
+    "asset": "assets/clues/27.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 13,
+    "cropAt1600": [
+      0,
+      704,
+      500,
+      700
+    ],
+    "sha256": "86eb1cd1369573c300e070f17a8639647bba65004e5187ebcc16ea24018f0aef"
+  },
+  {
+    "asset": "assets/clues/18.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 13,
+    "cropAt1600": [
+      500,
+      704,
+      500,
+      700
+    ],
+    "sha256": "38ff005a4047f02b0917f1bd7b89588c47ea2bc8f2496f41840ff57868bbdafd"
+  },
+  {
+    "asset": "assets/clues/16.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 15,
+    "cropAt1600": [
+      0,
+      0,
+      500,
+      700
+    ],
+    "sha256": "d8fcb725c2d66ab4957de88d09ce49cb32258099ffef627ebdff355e92f4defc"
+  },
+  {
+    "asset": "assets/clues/10.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 15,
+    "cropAt1600": [
+      500,
+      0,
+      500,
+      700
+    ],
+    "sha256": "e81d8d36edb7b6d4c480462e6cf8c00404d4e6c6358d84938f846717b61d59ef"
+  },
+  {
+    "asset": "assets/clues/08.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 15,
+    "cropAt1600": [
+      0,
+      704,
+      500,
+      700
+    ],
+    "sha256": "3983622af20124359b843db55d0b895714afaaa7121d740cb70f070c9ad2d02a"
+  },
+  {
+    "asset": "assets/clues/11.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 15,
+    "cropAt1600": [
+      500,
+      704,
+      500,
+      700
+    ],
+    "sha256": "04cdb97864a7b807e3e96fd29fa5304f4d375b55a58566f4fd7c372858b0af14"
+  },
+  {
+    "asset": "assets/clues/06.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 17,
+    "cropAt1600": [
+      0,
+      0,
+      500,
+      700
+    ],
+    "sha256": "032d3dcf887b0aa51f7c6fba907ea2a406f4962d28bdb9a209a7db12eb152667"
+  },
+  {
+    "asset": "assets/clues/07.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 17,
+    "cropAt1600": [
+      500,
+      0,
+      500,
+      700
+    ],
+    "sha256": "d005af302f40b12056aea35d0014f87deaebe0c4401e7406dd81f5fd7723a69e"
+  },
+  {
+    "asset": "assets/clues/09.jpg",
+    "source": "线索.pdf",
+    "pdfPage": 17,
+    "cropAt1600": [
+      0,
+      704,
+      500,
+      700
+    ],
+    "sha256": "ab411c54d70000526ac927c4f88d156e51a4baab80a7cecb697f19a607b44d79"
+  },
+  {
+    "asset": "assets/blackmass.jpg",
+    "source": "人物剧本/黑弥撒.pdf",
+    "pdfPage": 1,
+    "transform": "完整封面缩放到长边1000px",
+    "sha256": "1700f9eae6c6942d91c680415162a4d7bce383bb81549df54fda5d4ca64163c6"
+  },
+  {
+    "asset": "assets/mengqiuxue.jpg",
+    "source": "人物剧本/梦秋雪.pdf",
+    "pdfPage": 1,
+    "transform": "完整封面缩放到长边1000px",
+    "sha256": "360d75a89883b93a52e35998161a92ef35747accb03940d3b6fb010d5db53207"
+  },
+  {
+    "asset": "assets/gentleman.jpg",
+    "source": "人物剧本/斯文男人.pdf",
+    "pdfPage": 1,
+    "transform": "完整封面缩放到长边1000px",
+    "sha256": "4ff5b91cacd7a031dd55aed116d30da3cb6f18bff4b892777bc48c6edf7a5c6f"
+  },
+  {
+    "asset": "assets/wuchang.jpg",
+    "source": "人物剧本/无常.pdf",
+    "pdfPage": 1,
+    "transform": "完整封面缩放到长边1000px",
+    "sha256": "f8a922205a35a524876c9af435215a83ea02112f49b38cd64413df2f3c429206"
+  },
+  {
+    "asset": "assets/qiuge.jpg",
+    "source": "人物剧本/囚鸽.pdf",
+    "pdfPage": 1,
+    "transform": "完整封面缩放到长边1000px",
+    "sha256": "5cef4255040f99899b7071f977ee898e39ee4726683eb1aa4f6d3f4f4b686510"
+  },
+  {
+    "asset": "assets/prometheus.jpg",
+    "source": "人物剧本/普罗米修斯.pdf",
+    "pdfPage": 1,
+    "transform": "完整封面缩放到长边1000px",
+    "sha256": "36fff4f11bbec62d8ef83016f66d8454e8a63d4be0db98b33e2ea3cd85da9afc"
+  },
+  {
+    "asset": "assets/map.jpg",
+    "source": "地图.jpg",
+    "transform": "原件字节复制"
+  },
+  {
+    "asset": "assets/cover.jpg",
+    "source": "组织者手册.pdf",
+    "pdfPage": 1,
+    "transform": "沿用先前提取的封面"
+  }
+]

@@ -57,7 +57,7 @@
 .sr-story .sr-story-toolbar button[aria-expanded="true"] { color: var(--_story-text); background: color-mix(in srgb, var(--_story-accent) 9%, transparent); }
 .sr-story .sr-chat-messages {
   flex: 1; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior-y: contain;
-  padding: 18px 24px var(--_story-reading-bottom-space); display: flex; flex-direction: column; align-items: center; gap: 24px;
+  padding: 18px 24px var(--_story-reading-bottom-space); display: flex; flex-direction: column; align-items: center; gap: 32px;
   scroll-padding-bottom: var(--_story-reading-bottom-space);
   overflow-anchor: none; scroll-behavior: auto; scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--_story-muted) 30%, transparent) transparent;
@@ -65,19 +65,16 @@
 }
 .sr-story .sr-message {
   width: 100%; max-width: 740px; min-width: 0; flex: none; display: block; margin: 0;
-  padding: 18px 22px; color: var(--_story-text); text-align: start;
-  border: 1px solid color-mix(in srgb, var(--_story-line) 65%, transparent); border-radius: 18px;
-  background: color-mix(in srgb, var(--_story-surface) 55%, transparent);
+  padding: 0; color: var(--_story-text); text-align: start;
+  border: 0; border-radius: 0; background: transparent; box-shadow: none;
 }
 .sr-story .sr-message.user {
   width: fit-content; max-width: min(82%, 580px); align-self: flex-end;
   /* Align to the reading column's right edge, including on very wide stages. */
-  margin-inline-end: max(0px, calc((100% - 740px) / 2)); padding: 12px 16px;
-  border-color: color-mix(in srgb, var(--_story-accent) 22%, var(--_story-line));
-  background: color-mix(in srgb, var(--_story-accent) 10%, var(--_story-surface));
+  margin-inline-end: max(0px, calc((100% - 740px) / 2)); padding: 12px 20px;
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--_story-accent) 14%, var(--_story-surface));
 }
-.sr-story .sr-message-source { display: block; margin-bottom: 8px; color: var(--_story-muted); font-size: 11px; font-weight: 500; line-height: 1.6; letter-spacing: .08em; }
-.sr-story .sr-message.user .sr-message-source { color: var(--_story-accent); text-align: end; }
 .sr-story .sr-story-content { min-width: 0; max-width: 100%; padding: 0; background: transparent; border: 0; overflow-wrap: anywhere; }
 .sr-story .sr-rich { font-size: var(--sr-story-font-size, 16px); font-weight: 400; line-height: 1.85; color: inherit; overflow-wrap: anywhere; }
 .sr-story .sr-rich > :first-child { margin-top: 0; }
@@ -128,15 +125,20 @@
 .sr-story .sr-story-latest { position: absolute; bottom: calc(16px + var(--_story-bottom-inset)); inset-inline: 16px; display: flex; justify-content: center; pointer-events: none; }
 .sr-story .sr-story-latest .sr-more { pointer-events: auto; min-height: 40px; padding: 9px 15px; color: var(--_story-text); background: var(--_story-surface); border-color: var(--_story-line); border-radius: 999px; box-shadow: 0 4px 20px #00000012; }
 .sr-story .sr-story-latest span { margin-inline-start: 6px; color: var(--_story-muted); }
-.sr-story .sr-suggestions { display: flex; flex-wrap: wrap; gap: 8px; box-sizing: border-box; flex: none; width: 100%; max-width: 740px; margin: -4px 0 4px; font-size: 11px; color: var(--_story-muted); }
+.sr-story .sr-story-content > .sr-thinking { margin: 0; }
+.sr-story .sr-suggestions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; box-sizing: border-box; width: 100%; margin: 16px 0 0; }
+.sr-story .sr-processing { margin: 16px 0 0; }
 .sr-story .sr-processing pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .sr-story .sr-suggestions button {
-  appearance: none; max-width: 100%; min-height: 38px; border: 1px solid var(--_story-line); border-radius: 8px;
-  padding: 9px 12px; color: var(--_story-text); background: transparent; font: inherit; font-size: 12px;
+  appearance: none; box-sizing: border-box; min-width: 0; max-width: 100%; min-height: var(--touch-target, 40px);
+  border: 1px solid color-mix(in srgb, var(--_story-line) 35%, transparent); border-radius: 20px;
+  padding: 8px 16px; color: var(--_story-text); background: var(--_story-surface); font: inherit; font-size: 13px;
   line-height: 1.6; text-align: start; overflow-wrap: anywhere; cursor: pointer;
-  transition: border-color 160ms ease, background-color 160ms ease;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--shadow-color, var(--_story-line)) 45%, transparent);
+  transition: border-color var(--motion-fast, 130ms) ease, background-color var(--motion-fast, 130ms) ease, box-shadow var(--motion-fast, 130ms) ease;
 }
-.sr-story .sr-suggestions button:disabled { opacity: .5; cursor: default; }
+.sr-story .sr-suggestions button:not(:disabled):active { background: color-mix(in srgb, var(--_story-accent) 6%, var(--_story-surface)); box-shadow: none; }
+.sr-story .sr-suggestions button:disabled { opacity: .5; cursor: default; box-shadow: none; }
 .sr-story .sr-story-state { flex: 0 0 288px; min-width: 0; min-height: 0; width: 288px; color: var(--_story-text); background: var(--_story-surface); border: 0; border-inline-start: 1px solid var(--_story-line); }
 .sr-story aside.sr-story-state { display: flex; flex-direction: column; }
 .sr-story .sr-state-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 18px; flex: none; min-height: 56px; box-sizing: border-box; }
@@ -178,19 +180,23 @@
   .sr-story .sr-more:not(:disabled):hover,
   .sr-story .sr-state-heading button:hover,
   .sr-story .sr-state-error button:hover { color: var(--_story-text); background: color-mix(in srgb, var(--_story-accent) 8%, transparent); }
-  .sr-story .sr-suggestions button:not(:disabled):hover { border-color: color-mix(in srgb, var(--_story-accent) 55%, var(--_story-line)); background: color-mix(in srgb, var(--_story-accent) 6%, transparent); }
+  .sr-story .sr-suggestions button:not(:disabled):not(:active):hover {
+    border-color: color-mix(in srgb, var(--_story-line) 55%, transparent);
+    background: color-mix(in srgb, var(--_story-accent) 3%, var(--_story-surface));
+  }
+}
+@media (pointer: coarse) {
+  .sr-story .sr-suggestions button { min-height: 44px; }
 }
 @container sr-story (max-width: 600px) {
   .sr-story .sr-story-toolbar { min-height: 48px; padding-inline: 16px; }
-  .sr-story .sr-chat-messages { padding: 12px 16px var(--_story-reading-bottom-space); gap: 20px; }
-  .sr-story .sr-message { padding: 14px 16px; border-radius: 16px; }
-  .sr-story .sr-message.user { max-width: 86%; padding: 10px 14px; }
-  .sr-story .sr-message-source { margin-bottom: 7px; }
+  .sr-story .sr-chat-messages { padding: 12px 16px var(--_story-reading-bottom-space); gap: 24px; }
+  .sr-story .sr-message.user { max-width: 86%; padding: 12px 16px; border-radius: 20px; }
   .sr-story .sr-story-toolbar button,
   .sr-story .sr-more,
   .sr-story .sr-suggestions button,
   .sr-story .sr-error button { min-height: 44px; }
-  .sr-story .sr-suggestions { flex-direction: column; align-items: stretch; }
+  .sr-story .sr-suggestions { flex-direction: column; }
 }
 @container sr-story (max-width: 340px) {
   .sr-story .sr-chat-messages { padding-inline: 12px; }
