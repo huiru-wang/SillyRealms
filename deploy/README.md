@@ -9,7 +9,8 @@
 - Node.js **22.19.0 或更高版本**。
 - 仓库声明的 pnpm **10.12.1**。
 - Nginx，且系统中已有 `nginx.service`。
-- `curl`、`flock`（通常由 util-linux 提供）。
+- `git`、`curl`、`flock`（通常由 util-linux 提供）。
+- 项目是带 `origin` 的 Git 克隆，位于 `main` 分支；服务器已具备仓库读取权限（私有仓库推荐使用只读部署密钥）。
 
 脚本会安装项目依赖和构建产物；操作系统软件、DNS、证书与网络入口由服务器环境提供。由于后端通过 tsx 运行 TypeScript，安装会保留开发依赖。
 
@@ -24,9 +25,10 @@ include /etc/nginx/conf.d/*.conf;
 
 ## 首次一键启动
 
-例如项目已经放在 `/root/SillyRealms`。将下面示例地址 `203.0.113.10` **替换为客户端实际访问的服务器 IP**：
+先将仓库克隆到服务器（示例使用 `/root/SillyRealms`），再将下面示例地址 `203.0.113.10` **替换为客户端实际访问的服务器 IP**：
 
 ```bash
+git clone --branch main git@github.com:huiru-wang/SillyRealms.git /root/SillyRealms
 cd /root/SillyRealms
 WEB_ORIGIN=http://203.0.113.10 STAGE_ORIGIN=http://203.0.113.10:8081 bash deploy/start.sh
 ```
@@ -35,7 +37,9 @@ WEB_ORIGIN=http://203.0.113.10 STAGE_ORIGIN=http://203.0.113.10:8081 bash deploy
 
 项目路径自动取脚本所在仓库，不要求目录名一定叫 SillyRealms。首次必须提供两个来源；来源不能带路径、结尾斜杠、查询参数或用户名密码。两个来源必须不同；不同端口或不同域名均可。HTTPS 主站必须使用 HTTPS 舞台。
 
-只检查配置、Node、pnpm 和 Nginx，不写文件、不构建、不启停服务：
+如果已有目录来自压缩包或文件上传、没有 Git 元数据，先备份并迁移为 Git 克隆，同时保留原数据目录、部署配置与主密钥；脚本会拒绝直接更新非 Git 目录，不会自动覆盖它。
+
+只检查配置、Node、pnpm 和 Nginx，不拉取代码、不写文件、不构建、不启停服务：
 
 ```bash
 WEB_ORIGIN=http://203.0.113.10 STAGE_ORIGIN=http://203.0.113.10:8081 bash deploy/start.sh --check
@@ -48,11 +52,13 @@ cd /root/SillyRealms
 bash deploy/start.sh
 ```
 
-更新代码后也执行同一个命令。代码更新由你自行完成；脚本不会拉取、清理或重置 Git 工作区。
+该命令先从 `origin` 拉取 `main`，仅以 fast-forward 更新到本次获取的精确提交，再加载更新后的部署代码，安装依赖、构建并重启服务。成功日志会显示已部署的完整提交号。
+
+本地不在 `main`、有未提交的已跟踪文件改动、存在未推送提交或分叉、Git 操作未完成，以及拉取失败时，脚本会在构建和启停服务前退出。脚本不执行 stash、reset 或 clean；不冲突的未跟踪文件和被忽略的运行数据会保留。若远端新增文件与本地未跟踪或被忽略的文件冲突，更新也会停止，交由人工处理。`--help` 和 `--check` 均不触发 Git 更新。
 
 ## 一次执行做什么
 
-1. 获取全局部署锁，检查版本、来源、路径、端口及 Nginx 系统服务。
+1. 获取全局部署锁，检查 Git 工作区并拉取 `origin/main`，仅允许快进更新；随后检查版本、来源、路径、端口及 Nginx 系统服务。
 2. 执行 `pnpm install --frozen-lockfile --prod=false` 与 `pnpm build`，构建时注入正确的主站和舞台来源。
 3. 将 `apps/web/dist` 与 `apps/web/dist-preview` 复制到按内容哈希命名的静态发布目录。相同产物重复执行会复用同一个目录。
 4. 首次生成独立主密钥，生成后端环境文件、systemd unit 和 Nginx 站点配置。
@@ -144,4 +150,4 @@ pnpm --filter @sillyrealms/server typecheck
 pnpm --filter @sillyrealms/server lint
 ```
 
-函数测试只使用临时目录，验证配置、发布幂等、入口切换与凭据保护，不启动服务或访问现有数据库、Keychain。实际部署流程需在目标 Linux 服务器运行。
+函数测试只使用临时目录和本地 Git 仓库，验证 main 快进更新、更新失败中止、未提交改动与运行文件保护，以及配置、发布幂等、入口切换和凭据保护；不启动服务或访问现有数据库、Keychain。实际部署流程需在目标 Linux 服务器运行。

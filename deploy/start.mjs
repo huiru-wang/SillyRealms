@@ -396,6 +396,7 @@ async function deploy(config) {
     await run('systemctl', ['enable', service, 'nginx.service']);
     await atomicWrite(join(config.configDir, 'deploy.json'), JSON.stringify(
       Object.fromEntries(CONFIG_KEYS.map(key => [key, config[key]])), null, 2) + '\n');
+    if (process.env.SR_DEPLOY_REVISION) log('已部署 origin/main：' + process.env.SR_DEPLOY_REVISION);
     log('部署完成：' + config.webOrigin);
     log('隔离舞台：' + config.stageOrigin);
     log('后续重复执行 bash deploy/start.sh 即可；日志：journalctl -u sillyrealms -f');
@@ -434,8 +435,9 @@ async function main(args) {
   }
   if (args[0] === '--help') {
     console.log('首次：WEB_ORIGIN=http://服务器IP STAGE_ORIGIN=http://服务器IP:8081 bash deploy/start.sh\n' +
-      '后续：bash deploy/start.sh\n' +
-      '--check 只检查配置和已安装的 Node/pnpm/Nginx，不构建、不启动服务、不写入配置。\n' +
+      '后续：bash deploy/start.sh（自动拉取 origin/main，再构建部署）\n' +
+      '部署目录需为 main 分支的 Git 克隆；存在本地改动、分叉或拉取失败时停止部署。\n' +
+      '--check 只检查配置和已安装的 Node/pnpm/Nginx，不拉取代码、不构建、不启动服务、不写入配置。\n' +
       '默认配置 /etc/sillyrealms/deploy.json；SR_CONFIG_DIR 可覆盖配置目录。\n' +
       '详见 deploy/README.md。');
     return;
