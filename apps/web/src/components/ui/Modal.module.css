@@ -6,7 +6,7 @@
 }
 .panel{
   display:flex;flex-direction:column;min-width:0;
-  width:min(440px,100%);max-height:calc(100dvh - 40px);
+  width:min(440px,100%);max-height:calc(100dvh - var(--space-8));
   border:1px solid var(--stroke-strong);
   border-radius:var(--radius-overlay);background:var(--surface);box-shadow:var(--shadow-dialog);
   overflow:hidden;
@@ -17,22 +17,23 @@
 .backdrop[data-state="open"]{opacity:1}
 .backdrop[data-state="open"] .panel{opacity:1;transform:translateY(0) scale(1)}
 .header{
-  display:flex;align-items:center;justify-content:space-between;gap:12px;
-  flex-shrink:0;padding:var(--space-4) var(--overlay-padding);border-bottom:1px solid var(--stroke);
+  display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);
+  flex-shrink:0;padding:var(--space-2) var(--overlay-padding);border-bottom:1px solid var(--stroke);
 }
-.header h2{min-width:0;margin:0;font-size:var(--font-20);font-weight:600;overflow-wrap:anywhere}
+.header h2{min-width:0;margin:0;font-size:var(--font-18);line-height:var(--line-label);font-weight:var(--weight-strong);overflow-wrap:anywhere}
 
 
 .body{
   flex:1 1 auto;min-height:0;min-width:0;overflow-y:auto;overscroll-behavior:contain;
-  padding:var(--overlay-padding);line-height:1.7;color:var(--text-secondary);
+  padding:var(--overlay-padding);line-height:var(--line-body);color:var(--text-secondary);
 }
-.body p{margin:0 0 12px}
+.body>p{margin:0 0 var(--space-3)}
+.body>:last-child{margin-block-end:0}
 .footer{
-  display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:var(--space-3);flex-shrink:0;
-  padding:var(--space-4) var(--overlay-padding);border-top:1px solid var(--stroke);
+  display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:var(--space-2);flex-shrink:0;
+  padding:var(--space-2) var(--overlay-padding);border-top:1px solid var(--stroke);
 }
-.backdrop[data-size="editor"]{padding:24px}
+.backdrop[data-size="editor"]{padding:var(--space-6)}
 .backdrop[data-size="editor"] .panel{width:min(760px,100%);max-height:calc(100dvh - 48px)}
 @media(max-width:760px){
   .backdrop[data-size="editor"]{
@@ -42,11 +43,7 @@
   }
   .backdrop[data-size="editor"] .panel{
     width:100%;
-    height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
     max-height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
     border-radius:var(--radius-card);
   }
-  .backdrop[data-size="editor"] .header{padding:14px 16px}
-  .backdrop[data-size="editor"] .body{padding:16px}
-  .backdrop[data-size="editor"] .footer{padding:12px 16px}
 }

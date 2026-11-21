@@ -95,7 +95,7 @@ export function PromptEditorDialog({title, initialValue, metadata = false, descr
     <form id={formId} onSubmit={apply} className={styles.promptForm}>
       <div className={styles.promptIntro}>
         <p className={styles.dialogDescription}>{description}</p>
-        {onRestore && <Button type="button" disabled={restoring} onClick={() => void restore()}>{restoring ? '正在恢复…' : '恢复默认提示词'}</Button>}
+        {onRestore && <Button size="compact" type="button" disabled={restoring} onClick={() => void restore()}>{restoring ? '正在恢复…' : '恢复默认提示词'}</Button>}
       </div>
       {error && <p className={styles.formError} role="alert">{error}</p>}
       {metadata && <div className={styles.nodeFields}>

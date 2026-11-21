@@ -6,11 +6,12 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronRight, Copy, FileText, GripVertical, Layers3, LockKeyhole, MoreHorizontal, Plus, SlidersHorizontal, Star, Trash2, Undo2 } from 'lucide-react';
-import { Button,UploadButton } from '../../components/ui/Button';
+import { Button,IconButton,UploadButton } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import type { ContextStrategy, PresetNode, PresetThinkingLevel, WebPreset } from './types';
 import { getPresetValidationError, usePresetStore } from './PresetStore';
 import { PromptEditorDialog } from './PromptEditorDialog';
+import { presetMenuPlacement } from './menu-placement';
 import type { PromptValue } from './PromptEditorDialog';
 import styles from './Presets.module.css';
 
@@ -47,7 +48,7 @@ export function PresetLibraryPage() {
   const navigate = useNavigate();
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
-  const [menuAbove, setMenuAbove] = useState(false);
+  const menuPanelRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [dragId, setDragId] = useState<string | null>(null);
@@ -80,6 +81,29 @@ export function PresetLibraryPage() {
     const timer = window.setTimeout(() => setStatus(''), 3200);
     return () => window.clearTimeout(timer);
   }, [status]);
+  useLayoutEffect(() => {
+    const panel = menuPanelRef.current, anchor = panel?.parentElement;
+    const boundary = menu === 'preset' ? contentRef.current?.parentElement : contentRef.current;
+    if (!menu || !panel || !anchor || !boundary) return;
+    const place = () => {
+      const viewport = window.visualViewport, top = viewport?.offsetTop ?? 0;
+      const height = panel.scrollHeight + panel.offsetHeight - panel.clientHeight;
+      const position = presetMenuPlacement(anchor.getBoundingClientRect(), boundary.getBoundingClientRect(),
+        {top, bottom: top + (viewport?.height ?? innerHeight)}, height);
+      if (!position) {setMenu(null); return;}
+      panel.dataset.placement = position.above ? 'above' : 'below';
+      panel.style.maxHeight = position.maxHeight + 'px';
+    };
+    const scroll = (event: Event) => {if (!panel.contains(event.target as Node)) place();};
+    place();
+    const observer = new ResizeObserver(place); observer.observe(anchor); observer.observe(boundary);
+    window.addEventListener('resize', place); window.addEventListener('scroll', scroll, true);
+    window.visualViewport?.addEventListener('resize', place); window.visualViewport?.addEventListener('scroll', place);
+    return () => {
+      observer.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', scroll, true);
+      window.visualViewport?.removeEventListener('resize', place); window.visualViewport?.removeEventListener('scroll', place);
+    };
+  }, [menu]);
   useEffect(() => {
     if (!menu) return;
     const close = (event: PointerEvent) => {
@@ -257,12 +281,8 @@ export function PresetLibraryPage() {
           onChange={() => changeNode(node.id, current => ({...current, enabled: !current.enabled}))} />
         : <span className={styles.nodeFixed} title="始终启用" aria-hidden="true"><LockKeyhole size={14} /></span>}
       <div className={styles.menuAnchor} data-preset-menu>
-        <button type="button" className={styles.nodeMore} aria-label={'更多节点操作：' + node.name} aria-expanded={menu === menuKey} data-menu-trigger={menuKey} onClick={event => {
-          const edge = contentRef.current?.getBoundingClientRect().bottom ?? innerHeight;
-          setMenuAbove(event.currentTarget.getBoundingClientRect().bottom + (custom ? 280 : 110) > edge);
-          setMenu(menu === menuKey ? null : menuKey);
-        }}><MoreHorizontal size={16} /></button>
-        {menu === menuKey && <div className={styles.menuPanel} data-placement={menuAbove ? 'above' : 'below'} role="group" aria-label="节点操作">
+        <IconButton size="compact" icon={<MoreHorizontal size={16}/>} aria-label={'更多节点操作：' + node.name} aria-expanded={menu === menuKey} data-menu-trigger={menuKey} onClick={() => setMenu(menu === menuKey ? null : menuKey)}/>
+        {menu === menuKey && <div ref={menuPanelRef} className={styles.menuPanel} role="group" aria-label="节点操作">
           {custom && <>
             <button type="button" autoFocus disabled={index === 0} onClick={() => moveNode(node.id, -1)}><ArrowUp size={14} />上移</button>
             <button type="button" disabled={index === preset!.nodes.length - 1} onClick={() => moveNode(node.id, 1)}><ArrowDown size={14} />下移</button>
@@ -313,7 +333,7 @@ export function PresetLibraryPage() {
             <span data-preset-description className={styles.itemDescription} title={item.description || undefined}>{item.description || '暂无描述'}</span>
           </button>)}
           {!presets.length && <div className={styles.emptyList}><Layers3 size={24} /><p>还没有预设</p>
-            <button type="button" onClick={create}>创建第一个预设</button>
+            <Button size="compact" variant="ghost" onClick={create}>创建第一个预设</Button>
           </div>}
         </div>
       </section>
@@ -330,8 +350,8 @@ export function PresetLibraryPage() {
             </div>
             <div className={styles.editorActions}>
               <div className={styles.menuAnchor} data-preset-menu>
-                <button type="button" className={styles.iconButton} aria-label="更多预设操作" aria-expanded={menu === 'preset'} data-menu-trigger="preset" onClick={() => setMenu(menu === 'preset' ? null : 'preset')}><MoreHorizontal size={19} /></button>
-                {menu === 'preset' && <div className={styles.menuPanel} role="group" aria-label="预设操作">
+                <IconButton icon={<MoreHorizontal size={19}/>} aria-label="更多预设操作" aria-expanded={menu === 'preset'} data-menu-trigger="preset" onClick={() => setMenu(menu === 'preset' ? null : 'preset')}/>
+                {menu === 'preset' && <div ref={menuPanelRef} className={styles.menuPanel} role="group" aria-label="预设操作">
                   <button type="button" autoFocus disabled={preset.id === defaultPresetId} onClick={() => { void perform(async()=>{await setDefaultPreset(preset.id);closeMenu('preset');setStatus('已设为默认预设');}); }}><Star size={14} />设为默认</button>
                   <button type="button" onClick={() => { void perform(async()=>{const id=await duplicatePreset(preset.id);setMenu(null);select(id);}); }}><Copy size={14} />复制预设</button>
                   <button type="button" disabled={!dirty} onClick={() => { revertPreset(preset.id); closeMenu('preset'); setError(''); setStatus('已恢复保存的版本'); }}><Undo2 size={14} />放弃更改</button>
@@ -403,7 +423,7 @@ export function PresetLibraryPage() {
           <section className={styles.formSection} aria-labelledby={formId + '-nodes'} data-preset-section="nodes">
             <div className={styles.sectionHeading}>
               <h3 id={formId + '-nodes'}>提示词编排</h3>
-              <button type="button" className={styles.textButton} aria-label="添加自定义节点" onClick={() => openCustom()}><Plus size={15} />自定义节点</button>
+              <Button size="compact" variant="ghost" icon={<Plus size={15}/>} aria-label="添加自定义节点" onClick={() => openCustom()}>自定义节点</Button>
             </div>
             <div className={styles.nodeStack} ref={groupRef} data-preset-nodes>
               {preset.nodes.map(nodeRow)}

@@ -273,18 +273,19 @@
 
 .content .startError{margin:12px 0 0;color:var(--text)}
 /* Readonly names are primary; labels are secondary; the modal has one accent action. */
-.startSummary{display:grid;gap:var(--space-6);margin:0}
-.startSummary>div{display:grid;gap:var(--space-2)}
-.startSummary dt{font-size:var(--font-12);color:var(--text-muted)}
-.startSummary dd{display:flex;align-items:center;gap:var(--space-3);margin:0;min-width:0;overflow-wrap:anywhere;color:var(--text);font-size:var(--font-16);font-weight:500}
+.startSummary{display:grid;gap:var(--space-3);margin:0 0 var(--space-3)}
+.startSummary>div{display:grid;grid-template-columns:var(--space-16) minmax(0,1fr);align-items:center;gap:var(--space-3)}
+.startSummary dt{font-size:var(--font-12);line-height:var(--line-label);color:var(--text-muted)}
+.startSummary dd{display:flex;align-items:center;gap:var(--space-2);margin:0;min-width:0;overflow-wrap:anywhere;color:var(--text);font-size:var(--font-14);font-weight:500}
 .startSummary dd>span:last-child{min-width:0}
-.startAvatar{display:grid;place-items:center;flex:none;width:40px;height:40px;overflow:hidden;border:1px solid var(--stroke-strong);border-radius:var(--radius-sm);background:var(--surface-raised);color:var(--text-secondary)}
+.startAvatar{display:grid;place-items:center;flex:none;width:var(--space-8);height:var(--space-8);overflow:hidden;border:1px solid var(--stroke-strong);border-radius:var(--radius-sm);background:var(--surface-raised);color:var(--text-secondary)}
 .startAvatar img{width:100%;height:100%;object-fit:cover}
 .startFailure{margin:var(--space-5) 0 0;color:var(--text);font-size:var(--font-13);overflow-wrap:anywhere}
 
 
 
-.content .stateIntro,.stateIntro{font-size:13px;line-height:1.7;color:var(--text-muted);margin:0 0 20px}
+.content .stateIntro,.stateIntro{font-size:13px;line-height:1.7;color:var(--text-muted);margin:0 0 var(--space-3)}
+.content :global(.business-form)>.stateIntro{margin:0}
 .stateGroup{margin:0 0 30px}
 .stateGroupHeading{display:flex;align-items:baseline;gap:12px;margin:0 0 10px}
 .content .stateGroupHeading h3{margin:0;font-size:15px}

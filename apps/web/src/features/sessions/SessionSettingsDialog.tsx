@@ -1,4 +1,4 @@
-import {Button} from '../../components/ui/Button';
+import {Button,IconButton} from '../../components/ui/Button';
 import {Input,Textarea} from '../../components/ui/Field';
 import {Select} from '../../components/ui/Select';
 import React,{useEffect,useRef} from 'react';
@@ -25,7 +25,7 @@ export function SessionSettingsDialog(props:Props){
     onClick={event=>{if(event.target===event.currentTarget)props.onCancel();}}>
     <header className="host-settings-dialog-header">
       <div><span className="host-settings-eyebrow">SESSION</span><h2 id="host-settings-title">会话设置</h2></div>
-      <button type="button" className="host-settings-close" aria-label="关闭会话设置" onClick={props.onCancel}><X size={17}/></button>
+      <IconButton aria-label="关闭会话设置" onClick={props.onCancel}><X size={17}/></IconButton>
     </header>
     <div className="host-settings-fields">
       <label>会话标题<Input value={props.title} onChange={event=>props.onTitleChange(event.target.value)} maxLength={120} disabled={props.disabled}/></label>
