@@ -1,3 +1,4 @@
+import { decodeParameters } from './model-parameters.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
@@ -41,11 +42,7 @@ function toPreset(record: StoredPreset): Preset {
           maxOutputTokens: config.context_strategy.max_output_tokens,
           summaryPrompt: config.context_strategy.summary_prompt,
         },
-        modelParameters: {
-          ...(config.model_parameters.temperature === undefined ? {} : { temperature: config.model_parameters.temperature }),
-          thinkingEnabled: config.model_parameters.thinking_enabled,
-          ...(config.model_parameters.thinking_level === undefined ? {} : { thinkingLevel: config.model_parameters.thinking_level }),
-        },
+        modelParameters: decodeParameters(config.model_parameters),
       },
     }),
     createdAt: record.created_at,

@@ -8,8 +8,8 @@ export function Button({children,icon,variant='secondary',intent='neutral',size=
   {loading?<span className="sr-spinner" aria-hidden="true"/>:icon&&<span className="sr-button-icon" aria-hidden="true">{icon}</span>}<span className="sr-button-label">{children}</span>
  </button>;
 }
-export function IconButton({children,icon,variant='ghost',className='',...props}:Omit<Props,'children'>&{'aria-label':string;children?:ReactNode}){
- return <Button {...props} variant={variant} className={'sr-icon-button '+className} icon={icon??children}/>;
+export function IconButton({children,icon,variant='ghost',className='',inset=false,...props}:Omit<Props,'children'>&{'aria-label':string;children?:ReactNode;inset?:boolean}){
+ return <Button {...props} variant={variant} className={'sr-icon-button '+className} data-inset={inset||undefined} icon={icon??children}/>;
 }
 export function ActionLink({children,variant='secondary',intent='neutral',size='standard',className='',...props}:AnchorHTMLAttributes<HTMLAnchorElement>&Appearance){
  return <a {...props} className={'sr-button '+className} data-variant={variant} data-intent={intent} data-size={size}>{children}</a>;

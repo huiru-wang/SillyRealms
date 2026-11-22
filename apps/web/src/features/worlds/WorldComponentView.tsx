@@ -1,30 +1,29 @@
 import {localOrigin} from '../../local-origin';
 import {readAppearance} from '../../styles/theme';
 import {Button} from '../../components/ui/Button';
-import {useEffect,useRef,useState} from 'react';
-import {compileComponents} from '../../../../../packages/sr-ui-compiler/src/index';
+import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {api} from '../../api';
 import {randomId} from '../../random-id';
 import {worldPreviewURL} from './preview-url';
-import {createPreviewCompiler} from './preview-compilation-cache';
-import {compileWorldComponents} from './compile-world-components';
 import {worldAssetBaseUrl} from '../../world-assets';
 import {worldStateQueries,readWorldState} from './world-component-protocol';
-import type {WorldDetail} from './api/worlds';
+import type {PreviewModules} from './preview-cache';
 
-const compilePreview=createPreviewCompiler(compileComponents);
+type Props={worldId:string;entry:string;title:string;active:boolean;load:(refresh?:boolean)=>Promise<PreviewModules>};
 
-export function WorldComponentView({world,entry,title}:{world:WorldDetail;entry:string;title:string}) {
+export function WorldComponentView(props:Props) {
   const [revision,setRevision]=useState(0);
-  return <MountedWorldComponent key={world.id+':'+entry+':'+revision} world={world} entry={entry} title={title} retry={()=>setRevision(value=>value+1)}/>;
+  return <MountedWorldComponent key={revision} {...props} refresh={revision>0} retry={()=>setRevision(value=>value+1)}/>;
 }
-function MountedWorldComponent({world,entry,title,retry}:{world:WorldDetail;entry:string;title:string;retry:()=>void}) {
+function MountedWorldComponent({worldId,entry,title,active,load,refresh,retry}:Props&{refresh:boolean;retry:()=>void}) {
   const frame=useRef<HTMLIFrameElement>(null),[error,setError]=useState(''),[loaded,setLoaded]=useState(false),[height,setHeight]=useState(1);
   const [source,setSource]=useState<string>(),onFrameLoad=useRef<(()=>void)|undefined>(undefined);
+  const visible=useRef(active),notifyVisibility=useRef<(()=>void)|undefined>(undefined);
+  useLayoutEffect(()=>{visible.current=active;notifyVisibility.current?.();},[active]);
   useEffect(()=>{
     const nonce=randomId();
     setSource(undefined);setLoaded(false);setHeight(1);setError('');
-    let gone=false,port:MessagePort|undefined,connected=false,ready=false,compiled:Awaited<ReturnType<typeof compileComponents>>|undefined;
+    let gone=false,port:MessagePort|undefined,connected=false,ready=false,compiled:PreviewModules|undefined;
     let expectedOrigin:string|undefined;
     const abort=new AbortController();
     const fail=(reason?:unknown)=>{if(gone)return;setError(reason instanceof Error?reason.message:typeof reason==='string'?reason:'组件加载失败，请重试或检查世界卡组件。');gone=true;clearTimeout(timer);abort.abort();port?.close();};
@@ -36,21 +35,22 @@ function MountedWorldComponent({world,entry,title,retry}:{world:WorldDetail;entr
       frame.current?.contentWindow?.postMessage({type:'sr-world-probe',nonce},expectedOrigin);
     };
     function appearance(){if(gone)return;port?.postMessage({type:'appearance',...readAppearance()});}
-    function render(){if(ready&&compiled){appearance();port?.postMessage({type:'render',entry,modules:compiled,assetBaseUrl:worldAssetBaseUrl(location.origin,world.id)});}}
+    notifyVisibility.current=()=>{if(!gone&&ready)port?.postMessage({type:'visibility',active:visible.current});};
+    function render(){if(ready&&compiled){appearance();notifyVisibility.current?.();port?.postMessage({type:'render',entry,modules:compiled,assetBaseUrl:worldAssetBaseUrl(location.origin,worldId)});}}
     const listener=(event:MessageEvent)=>{
       if(gone||connected||!expectedOrigin||event.source!==frame.current?.contentWindow||event.origin!==expectedOrigin||event.data?.type!=='sr-world-ready'||event.data.nonce!==nonce)return;
       connected=true;const channel=new MessageChannel();port=channel.port1;
       port.onmessage=async({data})=>{
         if(gone||!data||typeof data!=='object')return;
-        if(data.type==='ready'){ready=true;render();}
+        if(data.type==='ready'){ready=true;notifyVisibility.current?.();render();}
         else if(data.type==='mounted'){clearTimeout(timer);setLoaded(true);}
         else if(data.type==='ui-error')fail(data.message);
-        else if(data.type==='resize'&&Number.isFinite(data.height)&&data.height>=0&&data.height<=100000)setHeight(Math.max(1,Math.ceil(data.height)));
+        else if(data.type==='resize'&&visible.current&&Number.isFinite(data.height)&&data.height>=0&&data.height<=100000)setHeight(Math.max(1,Math.ceil(data.height)));
         else if(data.type==='request'&&Number.isSafeInteger(data.id)){
           try {
             if(JSON.stringify(data).length>300000)throw Error('REQUEST_TOO_LARGE');
             const queries=worldStateQueries(data.method,data.data);
-            const snapshot=await api<{item:Record<string,any>}>('v1/state/global/'+encodeURIComponent(world.id),{signal:abort.signal});
+            const snapshot=await api<{item:Record<string,any>}>('v1/state/global/'+encodeURIComponent(worldId),{signal:abort.signal});
             if(!gone)port?.postMessage({type:'response',id:data.id,data:queries.map(query=>({...query,value:readWorldState(snapshot.item,query.path)}))});
           }catch(err){if(!gone)port?.postMessage({type:'response',id:data.id,error:err instanceof Error?err.message:'State read failed'});}
         }
@@ -59,13 +59,13 @@ function MountedWorldComponent({world,entry,title,retry}:{world:WorldDetail;entr
     };
     window.addEventListener('message',listener);
     const theme=new MutationObserver(appearance);theme.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme','style','class']});
-    void compileWorldComponents(world,sources=>compilePreview(world.id,sources),abort.signal).then(value=>{if(!gone){compiled=value;render();}}).catch(fail);
+    void load(refresh).then(value=>{if(!gone){compiled=value;render();}}).catch(fail);
     try {
       const url=worldPreviewURL(import.meta.env.VITE_WORLD_PREVIEW_ORIGIN??localOrigin(location.origin, 5177),location.origin,nonce);
       expectedOrigin=url.origin;setSource(url.href);
     } catch(error) {fail(error);}
-    return()=>{gone=true;clearTimeout(timer);abort.abort();theme.disconnect();port?.close();onFrameLoad.current=undefined;window.removeEventListener('message',listener);};
-  },[world.id,world.components,entry]);
+    return()=>{gone=true;clearTimeout(timer);abort.abort();theme.disconnect();port?.close();onFrameLoad.current=undefined;notifyVisibility.current=undefined;window.removeEventListener('message',listener);};
+  },[worldId,entry,load,refresh]);
   if(error)return <div role="alert"><p>{error}</p><Button variant="secondary" onClick={retry}>重试</Button></div>;
   return <>{!loaded&&<p role="status">正在加载组件…</p>}{source&&<iframe key={source} ref={frame} title={title} data-world-component={entry} src={source} sandbox="allow-scripts allow-same-origin" onLoad={()=>onFrameLoad.current?.()} style={{display:'block',width:'100%',height,border:0,visibility:loaded?'visible':'hidden'}}/>}</>;
 }

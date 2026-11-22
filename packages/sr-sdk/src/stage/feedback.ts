@@ -6,6 +6,7 @@ const stopped: Record<string, string> = {
   provider_error: '模型服务返回错误，本轮生成已停止。',
   provider_aborted: '模型服务中断了本轮生成。',
   provider_context_window_exceeded: '本轮内容超过模型上下文容量。',
+  output_limit_reached: '本轮已达到输出长度上限。请调高当前预设的「最大输出长度」，保存后重试。',
   output_incomplete: '模型输出未完整结束。',
   model_output_invalid: '模型未返回有效正文。',
   model_not_found: '当前模型不可用。',
@@ -40,7 +41,7 @@ export function streamNotice(snapshot: Pick<StageSnapshot, 'streamIncomplete'>):
 export function messageNotice(message: StageMessage, status: StageRun['status']): string | null {
   if (message.role !== 'assistant' || message.content.trim()) return null;
   if (message.reasoning_content?.trim()) return message.saved
-    ? '已保存的这条消息只有思考内容，没有正文。' : '已收到思考内容，尚未收到正文。';
+    ? '已保存的这条消息只有思考内容，没有正文。' : null;
   if (message.tool_calls?.length) return '模型返回了工具调用，当前会话不执行工具。';
   return status === 'running' || status === 'stopping' ? '正在等待正文…' : '本条消息没有可显示的正文。';
 }

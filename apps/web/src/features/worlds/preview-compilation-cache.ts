@@ -2,7 +2,7 @@ import type {ComponentSource} from '../../../../../packages/sr-ui-compiler/src/m
 
 type CompiledPreview={code:Record<string,string>;errors:Record<string,string>};
 
-/** Detail previews only. Cache compiled code, never component instances or state. */
+/** Application-wide compiled code only; the detail page separately owns its bounded iframe pool. */
 export function createPreviewCompiler(compile:(sources:ComponentSource[])=>Promise<CompiledPreview>) {
   const cache=new Map<string,{source:string;result:Promise<CompiledPreview>}>();
   return (worldId:string,sources:ComponentSource[]):Promise<CompiledPreview>=>{

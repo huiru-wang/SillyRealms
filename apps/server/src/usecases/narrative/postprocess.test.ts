@@ -240,7 +240,9 @@ describe('narrative postprocessing integration', () => {
   it.each(['length', 'missing'] as const)('does not execute complete data blocks when model completion is %s', async finish => {
     const raw = valid(); script(raw, [raw], finish);
     const { accepted, finished } = submit();
-    expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'output_incomplete' } });
+    expect(await finished).toMatchObject({ event: 'run.stopped', data: {
+      stop_reason: finish === 'length' ? 'output_limit_reached' : 'output_incomplete',
+    } });
     expect(saved(accepted).payload.message).toMatchObject({ content: body });
     expect(saved(accepted).extData).not.toHaveProperty('output');
     expect(current().coins).toBe(10);

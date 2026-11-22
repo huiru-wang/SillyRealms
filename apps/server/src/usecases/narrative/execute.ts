@@ -38,7 +38,7 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
       summaryEntryId: context.summary?.entryId ?? null });
     else log('context.failed', { failure: context.failure, parentEntryId: context.parentEntryId,
       summaryEntryId: context.summary?.entryId ?? null });
-    parentId = context.parentEntryId;
+    if (context.parentEntryId !== null) parentId = context.parentEntryId;
     if (context.summary) summaryUsage = context.summary.metrics?.requests[0]?.usage ?? null;
     assertRunning(signal);
     if (!context.ok) {
@@ -52,7 +52,7 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
       assertRunning(signal);
       const result = await callModel(modelClient, selected, compiled.messages, {
         apiKey, signal, maxTokens: compiled.maxTokens,
-        temperature: compiled.temperature, thinkingEnabled: compiled.thinkingEnabled, thinkingLevel: compiled.thinkingLevel,
+        ...compiled.modelParameters,
         onDiagnostic(event) {
           log('model.' + event.type, { purpose: 'narrative', provider: selected.providerId,
             model: selected.modelId, source: event.source, raw: event.data });

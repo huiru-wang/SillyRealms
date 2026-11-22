@@ -1,3 +1,5 @@
+import { SamplingRow } from './SamplingRow';
+import { samplingFields } from './sampling';
 import {PageHeader} from '../../components/ui/PageHeader';
 import {Switch} from '../../components/ui/Switch';
 import {Select} from '../../components/ui/Select';
@@ -374,14 +376,10 @@ export function PresetLibraryPage() {
           </section>
           <section className={styles.formSection} aria-labelledby={formId + '-model'} data-preset-section="model">
             <div className={styles.sectionHeading}><h3 id={formId + '-model'}>模型参数</h3></div>
+            <p className={styles.samplingHint}>预设可跨模型使用。调用时仅应用当前模型支持的值。</p>
             <div className={styles.settingsGroup}>
-              <div className={styles.parameterRow}>
-                <div className={styles.settingCopy}>
-                  <label htmlFor={formId + '-temperature'}>温度</label>
-                  <p id={formId + '-temperature-help'}>较低的值更稳定，较高的值增加变化。</p>
-                </div>
-                <Input className={styles.parameterInput} id={formId + '-temperature'} aria-label="温度" aria-describedby={formId + '-temperature-help'} type="number" min={0} max={2} step="any" value={preset.temperature??''} placeholder="使用服务商默认值" onChange={event => update({ temperature: event.target.value===''?undefined:Number(event.target.value) })} />
-              </div>
+              {samplingFields.map(field => <SamplingRow key={field.key} field={field} value={preset[field.key]}
+                onChange={value => update({ [field.key]: value })} />)}
               <div className={styles.parameterRow}>
                 <div className={styles.settingCopy}>
                   <label htmlFor={formId + '-thinking'}>深度思考</label>

@@ -1,4 +1,4 @@
-export { prepareContext } from './narrative.js';
+export { prepareContext } from './prepare.js';
 export type {
   ContextDependencies, ContextFailure, ContextModelRequest, ContextProgress,
   ContextDiagnostics, ContextMaterialDiagnostic, ContextNodeDiagnostic,

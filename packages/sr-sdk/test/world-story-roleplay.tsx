@@ -29,9 +29,13 @@ async function run(){
   check('multi-line speech is highlighted across Markdown breaks',!!document.querySelector('.sr-rp-speech br')&&document.querySelector('.sr-rp-speech')?.textContent==='“第一行第二行”');
   show('“第一行\nDICE 第二行”');await wait();
   check('author component prevents overlapping multiline speech styling',!!document.querySelector('#dice')&&!document.querySelector('.sr-rp-speech'));
-  const serialized=serializeRoleplay([{id:'a',kind:'action',text:'普通“字面引号”\n\n路径 C:\\manor'}]);
+  const serialized=serializeRoleplay([{id:'a',kind:'action',text:'她点头说：“明天见。”\n\n路径 C:\\manor'}]);
   show(serialized);await wait();
-  check('serialized action decodes quotes, blank line and backslash',!!document.querySelector('#root')?.textContent?.includes('普通“字面引号”')&&!!document.querySelector('#root')?.textContent?.includes('路径 C:\\manor')&&!document.querySelector('.sr-rp-speech')&&!document.querySelector('#root')?.textContent?.includes('\\“'));
+  check('inline user dialogue survives action serialization and highlights only the quotation',document.querySelector('.sr-rp-speech')?.textContent==='“明天见。”'&&!!document.querySelector('#root')?.textContent?.includes('她点头说：“明天见。”')&&!!document.querySelector('#root')?.textContent?.includes('路径 C:\\manor'));
+  show(serializeRoleplay([{id:'a',kind:'action',text:'字面\\“引号\\”和“对白”'}]));await wait();
+  check('explicit user escapes stay literal',document.querySelectorAll('.sr-rp-speech').length===1&&document.querySelector('.sr-rp-speech')?.textContent==='“对白”');
+  show(serializeRoleplay([{id:'s',kind:'speech',text:'我说过“明天见”。'}]));await wait();
+  check('inner quotes preserve the complete dedicated speech block',document.querySelector('.sr-rp-speech')?.textContent==='“我说过“明天见”。”');
   show(serializeRoleplay([{id:'a',kind:'action',text:'字面“引号” DICE'}]));await wait();
   check('source offset matching survives display escape decoding',!!document.querySelector('#dice')&&!!document.querySelector('#root')?.textContent?.includes('字面“引号”'));
   show('`\\“代码\\”`\n\n<div>\\“HTML\\”</div>', 'user');await wait();

@@ -12,6 +12,7 @@ import {createModuleLoader} from '../../../packages/sr-ui-compiler/src/loader';
 import {WorldStateContext,WorldDocumentContent,useSRWorldStateAPI,type SRWorldStateAPI} from '../../../packages/sr-sdk/src/world-state';
 import {RichText,SRAssetProvider,useSRAssetUrl} from '@sillyrealms/sdk';
 import './world-component-frame.css';
+import {createPreviewActivity} from './features/worlds/preview-activity';
 let port:MessagePort|undefined,sequence=0;
 const pending=new Map<number,{resolve:(value:any)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
 function read(entries:Array<{path:string;scope?:'global'}>):Promise<any> {
@@ -34,7 +35,13 @@ const rootElement=document.getElementById('root')!,root=ReactDOMClient.createRoo
 const hostOrigin = stageHostOrigin(location.search, location.origin, import.meta.env.VITE_WEB_ORIGIN ?? localOrigin(location.origin, 5176));
 if(!hostOrigin||window.parent===window)root.render(<p>此内容尚未连接，请从 SR 世界卡详情打开。</p>);
 let lastHeight=0;
-const resize=new ResizeObserver(()=>{const height=Math.ceil(rootElement.getBoundingClientRect().height);if(height!==lastHeight){lastHeight=height;port?.postMessage({type:'resize',height});}});
+const activity=createPreviewActivity(document);
+function reportHeight(force=false){
+  if(!activity.active)return;
+  const height=Math.ceil(rootElement.getBoundingClientRect().height);
+  if(force||height!==lastHeight){lastHeight=height;port?.postMessage({type:'resize',height});}
+}
+const resize=new ResizeObserver(()=>reportHeight());
 resize.observe(rootElement);
 window.addEventListener('message',event=>{
   if(!hostOrigin||window.parent===window||event.source!==window.parent||event.origin!==hostOrigin||event.data?.nonce!==nonce)return;
@@ -48,6 +55,9 @@ window.addEventListener('message',event=>{
       if(data.error)request.reject(Error(data.error));else request.resolve(data.data);
     } else if(data.type==='appearance') {
       applyAppearance(data);
+    } else if(data.type==='visibility'&&typeof data.active==='boolean') {
+      activity.setActive(data.active);
+      if(data.active)requestAnimationFrame(()=>reportHeight(true));
     } else if(data.type==='render') {
       try {
         const load=createModuleLoader(data.modules.code,data.modules.errors,{'react':React,'react-dom/client':ReactDOMClient,'react/jsx-runtime':JSXRuntime,'@sillyrealms/sdk':sdk},(source,module,require)=>new Function('module','exports','require','React',source)(module,module.exports,require,React));
@@ -59,6 +69,6 @@ window.addEventListener('message',event=>{
   };
   port.start();port.postMessage({type:'ready'});
 });
-window.addEventListener('pagehide',()=>{resize.disconnect();for(const request of pending.values()){clearTimeout(request.timer);request.reject(Error('Component closed'));}pending.clear();port?.close();});
+window.addEventListener('pagehide',()=>{activity.dispose();resize.disconnect();for(const request of pending.values()){clearTimeout(request.timer);request.reject(Error('Component closed'));}pending.clear();port?.close();});
 window.addEventListener('error',event=>port?.postMessage({type:'ui-error',message:event.message||'组件运行错误'}));
 window.addEventListener('unhandledrejection',event=>port?.postMessage({type:'ui-error',message:event.reason instanceof Error?event.reason.message:'组件发生未处理的异步错误'}));

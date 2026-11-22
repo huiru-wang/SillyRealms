@@ -126,7 +126,7 @@ usage 不代表消息保存成功。摘要 metrics 随成功的 compaction 保�
 
 savedMessageIds 表达本轮结算确认保存的消息，tipEntryId 是结算读取的实际会话 tip。部分消息已保存时也列入 savedMessageIds；保存失败时不把预分配助手 ID 列为已保存。compaction 不列入 savedMessageIds，但摘要后未保存正文时 tipEntryId 可以指向 compaction。会话不存在时 tip 可为 null。独立的删除操作不由生成回滚或恢复。
 
-停止原因包括用户取消、服务关闭、模型或凭据不可用、上下文/输出错误及持久化失败，采用稳定的小写原因码。典型值为 cancelled、server_shutdown、provider_error、provider_context_window_exceeded、model_not_found、credential_not_configured、context_budget_exceeded、summary_capacity_exceeded、summary_failed、output_incomplete、model_output_invalid、tool_execution_unsupported、message_persist_failed、tip_conflict。保存失败优先于原来的取消或生成原因。详细异常留在服务端，不对外转发 SDK 错误对象。
+停止原因包括用户取消、服务关闭、模型或凭据不可用、上下文/输出错误及持久化失败，采用稳定的小写原因码。典型值为 cancelled、server_shutdown、provider_error、provider_context_window_exceeded、model_not_found、credential_not_configured、context_budget_exceeded、summary_capacity_exceeded、summary_failed、output_limit_reached、output_incomplete、model_output_invalid、tool_execution_unsupported、message_persist_failed、tip_conflict。保存失败优先于原来的取消或生成原因。详细异常留在服务端，不对外转发 SDK 错误对象。
 
 例如模型请求失败，但部分助手内容已保存：
 

@@ -1,7 +1,7 @@
 import {Button,IconButton} from '../../components/ui/Button';
 import {SessionRow} from '../sessions/SessionRow';
-import {WorldComponentView} from './WorldComponentView';
-import {useEffect,useLayoutEffect,useRef,useState,type CSSProperties,type KeyboardEvent,type RefObject,type TouchEvent as ReactTouchEvent,type UIEvent,type WheelEvent as ReactWheelEvent} from 'react';
+import {WorldComponentCache} from './WorldComponentCache';
+import {memo,useEffect,useLayoutEffect,useRef,useState,type CSSProperties,type Dispatch,type KeyboardEvent,type RefObject,type SetStateAction,type TouchEvent as ReactTouchEvent,type UIEvent,type WheelEvent as ReactWheelEvent} from 'react';
 import {Link,useParams,useSearchParams} from 'react-router-dom';
 import {BookOpen,BookText,ChevronDown,ChevronLeft,ChevronRight,ChevronUp,Compass,Ellipsis,MessageCircle,Settings2,SlidersHorizontal} from 'lucide-react';
 import {WorldDocumentRenderer} from '@sillyrealms/sdk/world-document';
@@ -99,33 +99,51 @@ function SessionSection({worldId}:{worldId:string}){
     {page?.hasMore&&!error&&<Button disabled={loading} onClick={more}>{loading?'加载中…':'加载更多'}</Button>}
   </>;
 }
-function SectionContent({section,world,characterId,onSaved}:{section:Section;world:WorldDetail;characterId?:string;onSaved:(world:WorldDetail)=>void}){
+type DetailContentProps={section:Section;world:WorldDetail;characterId?:string;onSaved:(world:WorldDetail)=>void};
+// Keep the preview pool at one DOM position: moving an iframe also reloads its document.
+const WorldDetailContent=memo(function WorldDetailContent(props:DetailContentProps){
+  const {section,world}=props;
   const [openingIndex,setOpeningIndex]=useState(0);
-  const [stateOpen,setStateOpen]=useState(false);
-  const data=world,opening=data.openings[openingIndex];
+  const opening=world.openings[openingIndex];
+  const active=section==='介绍'&&world.description&&typeof world.description!=='string'
+    ?{id:'introduction',entry:world.description.component,title:'世界介绍'}
+    :section==='开局'&&opening?.component?{id:'opening:'+opening.id,entry:opening.component,title:opening.name}:null;
   const touch=useRef<number|null>(null);
   const frameCleanup=useRef<(()=>void)|null>(null);
-  useEffect(()=>()=>frameCleanup.current?.(),[]);
+  useLayoutEffect(()=>()=>{frameCleanup.current?.();frameCleanup.current=null;touch.current=null;},[section,opening?.id]);
   const finishSwipe=(end:number|undefined)=>{
-    if(end!==undefined&&touch.current!==null&&Math.abs(end-touch.current)>50)setOpeningIndex(i=>Math.max(0,Math.min(data.openings.length-1,i+(end<touch.current!?1:-1))));
+    if(section==='开局'&&end!==undefined&&touch.current!==null&&Math.abs(end-touch.current)>50){
+      const step=end<touch.current?1:-1;
+      setOpeningIndex(i=>Math.max(0,Math.min(world.openings.length-1,i+step)));
+    }
     touch.current=null;
   };
-  if(section==='会话')return <SessionSection worldId={world.id}/>;
-  if(section==='世界书')return <LoreList entries={data.lorebook?.entries??[]}/>;
-  if(section==='世界状态')return <WorldState state={data.stateDefinition??undefined}/>;
-  if(section==='开局')return opening?<><div onTouchStart={event=>{touch.current=event.target instanceof Element&&event.target.closest('[role=dialog]')?null:event.touches[0]?.clientX??null;}} onTouchEnd={event=>finishSwipe(event.changedTouches[0]?.clientX)} onLoadCapture={event=>{
-    if(!(event.target instanceof HTMLIFrameElement))return;
-    frameCleanup.current?.();const doc=event.target.contentDocument;if(!doc)return;
+  return <div onTouchStart={event=>{touch.current=section!=='开局'||event.target instanceof Element&&event.target.closest('[role=dialog]')?null:event.touches[0]?.clientX??null;}} onTouchEnd={event=>finishSwipe(event.changedTouches[0]?.clientX)} onLoadCapture={event=>{
+    if(section!=='开局'||!(event.target instanceof HTMLIFrameElement))return;
+    // Prose documents are same-origin; author previews retain their isolated origin.
+    const doc=event.target.contentDocument;if(!doc)return;
+    frameCleanup.current?.();
     const start=(e:TouchEvent)=>{touch.current=e.touches[0]?.clientX??null;};
     const end=(e:TouchEvent)=>finishSwipe(e.changedTouches[0]?.clientX);
     doc.addEventListener('touchstart',start,{passive:true});doc.addEventListener('touchend',end,{passive:true});
     frameCleanup.current=()=>{doc.removeEventListener('touchstart',start);doc.removeEventListener('touchend',end);};
   }}>
-    <div className={styles.openingToolbar}><div className={styles.openingNav}><IconButton disabled={openingIndex===0} onClick={()=>setOpeningIndex(i=>i-1)} aria-label="上一个开局"><ChevronLeft size={15}/></IconButton><span aria-label={'第 '+(openingIndex+1)+' 个开局，共 '+data.openings.length+' 个'}>{openingIndex+1}/{data.openings.length}</span><IconButton disabled={openingIndex===data.openings.length-1} onClick={()=>setOpeningIndex(i=>i+1)} aria-label="下一个开局"><ChevronRight size={15}/></IconButton></div><div className={styles.openingActions}><Button size="compact" onClick={()=>setStateOpen(true)}>查看初始状态</Button><StartSession world={world} openingId={opening.id} characterId={characterId}/></div></div>{!characterId&&<p className={styles.startError}>此世界尚未配置可扮演角色。</p>}
-    <h3>{opening.name}</h3>{opening.component?<WorldComponentView key={opening.id} world={world} entry={opening.component} title={opening.name}/>:<WorldDocumentRenderer showStyleWarning={false} title={opening.name} content={opening.content}/>}
-  </div>{stateOpen&&<Modal title="开局初始状态" size="editor" onClose={()=>setStateOpen(false)}><OpeningState key={opening.id} openingName={opening.name} state={data.stateDefinition??undefined} override={opening.initial_state}/></Modal>}</>:<p>这个世界没有开局。</p>;
+    <SectionContent key={section} {...props} openingIndex={openingIndex} setOpeningIndex={setOpeningIndex}/>
+    <WorldComponentCache world={world} active={active}/>
+  </div>;
+});
+function SectionContent({section,world,characterId,onSaved,openingIndex,setOpeningIndex}:DetailContentProps&{openingIndex:number;setOpeningIndex:Dispatch<SetStateAction<number>>}){
+  const [stateOpen,setStateOpen]=useState(false);
+  const data=world,opening=data.openings[openingIndex];
+  if(section==='会话')return <SessionSection worldId={world.id}/>;
+  if(section==='世界书')return <LoreList entries={data.lorebook?.entries??[]}/>;
+  if(section==='世界状态')return <WorldState state={data.stateDefinition??undefined}/>;
+  if(section==='开局')return opening?<>
+    <div className={styles.openingToolbar}><div className={styles.openingNav}><IconButton inset disabled={openingIndex===0} onClick={()=>setOpeningIndex(i=>i-1)} aria-label="上一个开局"><ChevronLeft size={15}/></IconButton><span aria-label={'第 '+(openingIndex+1)+' 个开局，共 '+data.openings.length+' 个'}>{openingIndex+1}/{data.openings.length}</span><IconButton inset disabled={openingIndex===data.openings.length-1} onClick={()=>setOpeningIndex(i=>i+1)} aria-label="下一个开局"><ChevronRight size={15}/></IconButton></div><div className={styles.openingActions}><Button size="compact" onClick={()=>setStateOpen(true)}>查看初始状态</Button><StartSession world={world} openingId={opening.id} characterId={characterId}/></div></div>{!characterId&&<p className={styles.startError}>此世界尚未配置可扮演角色。</p>}
+    <h3>{opening.name}</h3>{!opening.component&&<WorldDocumentRenderer showStyleWarning={false} title={opening.name} content={opening.content}/>}
+    {stateOpen&&<Modal title="开局初始状态" size="editor" onClose={()=>setStateOpen(false)}><OpeningState key={opening.id} openingName={opening.name} state={data.stateDefinition??undefined} override={opening.initial_state}/></Modal>}</>:<p>这个世界没有开局。</p>;
   if(section==='运行配置')return <WorldConfig world={world} onSaved={onSaved}/>;
-  return typeof data.description==='string'?<WorldDocumentRenderer showStyleWarning={false} title="世界介绍" content={data.description}/>:data.description?<WorldComponentView world={world} entry={data.description.component} title="世界介绍"/>:<p>这个世界还没有介绍。</p>;
+  return typeof data.description==='string'?<WorldDocumentRenderer showStyleWarning={false} title="世界介绍" content={data.description}/>:data.description?null:<p>这个世界还没有介绍。</p>;
 }
 
 function StartSession({world,openingId,characterId}:{world:WorldDetail;openingId:string;characterId?:string}){
@@ -426,7 +444,7 @@ function WorldDetailView({world,onSaved}:{world:WorldDetail;onSaved:(world:World
           {sections.map(({name,icon:Icon})=><button key={name} data-world-section={name} className={[styles.tab,section===name?styles.tabActive:''].join(' ')} onClick={event=>chooseSection(name,event.currentTarget)} aria-current={section===name?'page':undefined}><Icon size={17} strokeWidth={1.8}/><span>{name}</span></button>)}
         </nav>
         <article ref={content} className={styles.content} data-world-content tabIndex={0} aria-label={section+'详情'} onKeyDown={scrollContentWithKeyboard} onWheel={contentWheel} onScroll={contentScroll} onTouchStart={contentTouchStart} onTouchMove={contentTouchMove}>
-          <div className={styles.contentInner} data-full-width={section==='会话'}><SectionContent key={section} section={section} world={world} onSaved={onSaved} characterId={world.characters[selectedRole]?.id}/></div>
+          <div className={styles.contentInner} data-full-width={section==='会话'}><WorldDetailContent section={section} world={world} onSaved={onSaved} characterId={world.characters[selectedRole]?.id}/></div>
         </article>
       </div>
     </div>

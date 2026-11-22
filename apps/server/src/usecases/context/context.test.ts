@@ -13,7 +13,7 @@ import { readSummary, sourceHash } from './stages/compact/saved-summary.js';
 import { summaryNarrative, summaryRequest } from './stages/compact/summary-request.js';
 import { compactHistory as compactCandidateHistory, type Summarize } from './stages/compact/index.js';
 import { createCandidateEvaluator } from './candidate.js';
-import { captureNarrativeContext, type NarrativeSnapshot } from './capture.js';
+import { captureContext, type ContextSnapshot } from './capture.js';
 import { compileNarrativeContext } from './stages/assemble/index.js';
 import * as assembly from './stages/assemble/index.js';
 import { estimateInputTokens } from './lib/estimate.js';
@@ -47,17 +47,16 @@ function append(id: string, role: 'user' | 'assistant', content: string) {
   });
 }
 function capture(inputText = 'Current input') {
-  const previousTipEntryId = services.sessions.require('session').tipEntryId;
   append('current-user', 'user', inputText);
-  return captureNarrativeContext(services, { sessionId: 'session', userEntryId: 'current-user', previousTipEntryId, inputText });
+  return captureContext(services, 'session');
 }
 
-function planContext(snapshot: NarrativeSnapshot, selectedModel: typeof model, state: Pick<Services['state'], 'evaluateWhen'>) {
+function planContext(snapshot: ContextSnapshot, selectedModel: typeof model, state: Pick<Services['state'], 'evaluateWhen'>) {
   return planHistoryContext({
     historyEntries: snapshot.historyEntries, contextStrategy: snapshot.preset.config.contextStrategy,
   }, selectedModel, createCandidateEvaluator(snapshot, selectedModel, state));
 }
-function compactHistory(snapshot: NarrativeSnapshot, selectedModel: typeof model,
+function compactHistory(snapshot: ContextSnapshot, selectedModel: typeof model,
   state: Pick<Services['state'], 'evaluateWhen'>, summarize: Summarize, signal: AbortSignal) {
   return compactCandidateHistory({
     historyEntries: snapshot.historyEntries, contextStrategy: snapshot.preset.config.contextStrategy,
@@ -92,7 +91,7 @@ describe('compiled context composition', () => {
   });
 });
 
-describe('synchronous narrative snapshot', () => {
+describe('synchronous session snapshot', () => {
   it('supports an empty pre-submit tip without repeating the saved input or applying an opening', () => {
     const snapshot = capture();
     const compiled = compileNarrativeContext(snapshot, model);
@@ -103,7 +102,7 @@ describe('synchronous narrative snapshot', () => {
     expect(snapshot.materials.variables['history.summary']).toEqual({ type: 'text', value: '' });
   });
 
-  it('reads message state at the original tip and captures objects independent of later edits', () => {
+  it('reads message state at the actual tip and captures objects independent of later edits', () => {
     append('prior', 'assistant', 'Previous answer');
     services.sessions.setEntryState('session', 'prior', [{ key: 'coins', value: 5 }]);
     const snapshot = capture();
@@ -194,19 +193,19 @@ describe('synchronous narrative snapshot', () => {
   });
 
   it('does not fall back to defaults when a bound model reference is missing', () => {
-    const snapshot = capture();
+    capture();
     const missing = { ...services, models: { require: () => { throw new Error('MODEL_CONFIG_NOT_FOUND'); } } };
-    expect(() => captureNarrativeContext(missing, {
-      sessionId: 'session', userEntryId: 'current-user', previousTipEntryId: null, inputText: snapshot.inputText,
-    })).toThrow('MODEL_CONFIG_NOT_FOUND');
+    expect(() => captureContext(missing, 'session')).toThrow('MODEL_CONFIG_NOT_FOUND');
   });
 
-  it('does not accidentally remove a different appended message from the snapshot', () => {
+  it('keeps an answered user in chronological history instead of moving it after the assistant', () => {
     append('current-user', 'user', 'Current input');
     append('other', 'assistant', 'Other append');
-    expect(() => captureNarrativeContext(services, {
-      sessionId: 'session', userEntryId: 'current-user', previousTipEntryId: null, inputText: 'Current input',
-    })).toThrow('TIP_CONFLICT');
+    const snapshot = captureContext(services, 'session');
+    expect(snapshot.inputEntryId).toBeNull();
+    expect(snapshot.inputText).toBe('');
+    expect(compileNarrativeContext(snapshot, model).messages.slice(0, -1).map(message => message.content))
+      .toEqual(['Current input', 'Other append']);
   });
 });
 
@@ -318,7 +317,7 @@ describe('core narrative compilation', () => {
     const snapshot = capture();
     snapshot.preset.config.modelParameters = { temperature: 0.4, thinkingEnabled: true, thinkingLevel: 'high' };
     const compiled = compileNarrativeContext(snapshot, { contextWindow: 6000, maxTokens: 4096 });
-    expect(compiled).toMatchObject({ maxTokens: 4096, inputBudget: 880, temperature: 0.4, thinkingEnabled: true, thinkingLevel: 'high' });
+    expect(compiled).toMatchObject({ maxTokens: 4096, inputBudget: 880, modelParameters: { temperature: 0.4, thinkingEnabled: true, thinkingLevel: 'high' } });
     expect(() => compileNarrativeContext(snapshot, { contextWindow: 6000, maxTokens: 1000 })).toThrow('INVALID_MODEL_BUDGET');
     expect(() => compileNarrativeContext(snapshot, { contextWindow: 4096, maxTokens: 4096 })).toThrow('INVALID_MODEL_BUDGET');
   });
@@ -383,8 +382,19 @@ describe('context selection policies', () => {
         payload: { message: { role: 'assistant', content: content!, timestamp: 0 } } });
     }
     const captured = captureBudgeted();
-    expect(historyBoundaries(captured.historyEntries)).toEqual([0, 3]);
+    expect(historyBoundaries(captured.historyEntries)).toEqual([0, 3, 4]);
     expect(planContext(captured, model, services.state).compiled.messages.slice(0, -1).map(item => item.content)).toEqual(['Current input']);
+  });
+
+  it('protects the entire trailing user run instead of keeping only its last user message', () => {
+    configure('sliding_window', 200);
+    services.sessions.appendEntry('session', {
+      id: 'same-run-prefix', runId: 'run-current-user', type: 'message', role: 'assistant',
+      payload: { message: { role: 'assistant', content: 'x'.repeat(1200), timestamp: 0 } },
+    });
+    const captured = captureBudgeted();
+    expect(() => planContext(captured, model, services.state)).toThrow('CONTEXT_BUDGET_EXCEEDED');
+    expect(services.sessions.getHistory('session').map(entry => entry.id)).toEqual(['same-run-prefix', 'current-user']);
   });
 
   it('protects five historical runs including an initial assistant and user-only/hidden-output runs', () => {
@@ -418,6 +428,40 @@ describe('context selection policies', () => {
     expect(readSummary([...entries, { ...compact, extData: { summary: { ...metadata, coveredThroughEntryId: 'other' } } }], entries)).toBeNull();
     expect(readSummary([...entries, { ...compact, extData: {} }], entries)).toBeNull();
     expect(planContext(captureBudgeted(), model, services.state).compiled.messages.slice(0, -1).map(message => message.content)).toEqual(['Saved summary', 'Current input']);
+  });
+
+  it('falls back to the latest valid summary and retains the edited uncovered suffix once', () => {
+    append('old', 'assistant', 'Covered old story');
+    const firstSource = services.sessions.getHistory('session');
+    services.sessions.appendEntry('session', {
+      id: 'first-summary', type: 'compaction', role: null, runId: 'run-old', payload: { summary: 'Valid older summary' },
+      extData: { summary: { coveredThroughEntryId: 'old', sourceHash: sourceHash(firstSource) } },
+    });
+    append('recent', 'assistant', 'Original recent story');
+    const secondSource = services.sessions.getHistory('session');
+    services.sessions.appendEntry('session', {
+      id: 'second-summary', type: 'compaction', role: null, runId: 'run-recent', payload: { summary: 'Stale newer summary' },
+      extData: { summary: { coveredThroughEntryId: 'recent', sourceHash: sourceHash(secondSource) } },
+    });
+    services.sessions.updateEntry('session', 'recent', {
+      payload: { message: { role: 'assistant', content: 'Edited recent story', timestamp: 100 } },
+    });
+    const compiled = planContext(captureBudgeted(), model, services.state).compiled;
+    expect(compiled.messages.slice(0, -1).map(message => message.content))
+      .toEqual(['Valid older summary', 'Edited recent story', 'Current input']);
+  });
+
+  it('does not let a stored summary consume the pending user run', () => {
+    append('old', 'assistant', 'Old story');
+    captureBudgeted();
+    const entries = services.sessions.getHistory('session');
+    services.sessions.appendEntry('session', {
+      id: 'too-wide-summary', type: 'compaction', role: null, runId: 'run-current-user',
+      payload: { summary: 'Includes pending user' },
+      extData: { summary: { coveredThroughEntryId: 'current-user', sourceHash: sourceHash(entries) } },
+    });
+    const compiled = planContext(captureContext(services, 'session'), model, services.state).compiled;
+    expect(compiled.messages.slice(0, -1).map(message => message.content)).toEqual(['Old story', 'Current input']);
   });
 
   it.each(['{{history.messages}}', '{{history.summary}}{{history.summary}}{{history.messages}}'])('rejects missing or duplicate rolling-summary placement: %s', prompt => {

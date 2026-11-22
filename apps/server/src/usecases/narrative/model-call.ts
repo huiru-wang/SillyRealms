@@ -91,6 +91,7 @@ export async function callModel(modelClient: Pick<ModelClient, 'stream'>, select
   else if (result.failed) stopReason = failureReason(result.error, result.attempted);
   else if (result.stopReason) stopReason = modelFailureReason(result.stopReason);
   else if (result.snapshot.tool_calls.length || result.finishReason === 'tool_calls') stopReason = 'tool_execution_unsupported';
+  else if (result.finishReason === 'length') stopReason = 'output_limit_reached';
   else if (result.finishReason !== 'stop') stopReason = 'output_incomplete';
   else if (!result.snapshot.content.trim()) stopReason = 'model_output_invalid';
   return { ...result, rawContent, stopReason, publishedDelta: result.receivedDelta };

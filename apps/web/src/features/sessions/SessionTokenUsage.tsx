@@ -1,20 +1,21 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { api } from '../../api';
-import type { Usage } from '../../../../../packages/sr-sdk/src/stage-contract';
+import {SessionUsagePopover} from './SessionUsagePopover';
 import {
   cacheHitRate, compactTokens as compact, contextSegments, contextSummary,
   cumulativeSegments, fullTokens as full, usagePercent as percent, type RecordedUsage,
 } from './usage';
 
-export function SessionTokenUsage({ sessionId, refreshKey, latestUsage }: {
-  sessionId: string; refreshKey: number; latestUsage?: Usage | null;
+export function SessionTokenUsage({ sessionId, refreshKey }: {
+  sessionId: string; refreshKey: number;
 }) {
   const [usage, setUsage] = useState<RecordedUsage | null>(null);
   const [loading, setLoading] = useState(true), [error, setError] = useState(false);
   const [expanded, setExpanded] = useState(false), [retry, setRetry] = useState(0);
   const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width:760px)').matches);
   const root = useRef<HTMLElement>(null), measure = useRef<HTMLSpanElement>(null);
+  const trigger=useRef<HTMLButtonElement>(null),panelId=useId();
   const [compactHeader, setCompactHeader] = useState(mobile);
 
   useEffect(() => {
@@ -70,12 +71,12 @@ export function SessionTokenUsage({ sessionId, refreshKey, latestUsage }: {
   }, [summary, mobile]);
 
   return <section ref={root} className={'host-usage' + (compactHeader ? ' is-compact' : '') + (mobile ? ' is-mobile' : '') + (mobile && expanded ? ' is-mobile-expanded' : '')} aria-label="Token 用量统计">
-    <button className="host-usage-toggle" type="button" aria-expanded={expanded} aria-label={'用量：' + summary} title={summary} onClick={() => setExpanded(value => !value)}>
+    <button ref={trigger} className="host-usage-toggle" type="button" aria-expanded={expanded} aria-controls={expanded?panelId:undefined} aria-label={'用量：' + summary} title={summary} onClick={() => setExpanded(value => !value)}>
       <span className="host-usage-toggle-copy"><span className="host-usage-toggle-title">用量</span><span className="host-usage-toggle-summary" hidden={compactHeader}>{summary}</span></span>
       {compactHeader && <span className="host-usage-toggle-icon">{expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}</span>}
     </button>
     <span className="host-usage-measure-box" aria-hidden="true"><span ref={measure} className="host-usage-measure host-usage-toggle-copy"><span>用量</span><span>{summary}</span></span></span>
-    {expanded && <div className="host-usage-content">
+    {expanded && <SessionUsagePopover id={panelId} anchor={trigger} onClose={()=>setExpanded(false)}>
       {error && <div className="host-usage-error" role="status">{usage ? '刷新失败，当前显示上次统计' : '统计暂不可用'} <button type="button" onClick={() => setRetry(value => value + 1)} aria-label="重试读取 Token 用量"><RefreshCw size={13} /></button></div>}
       {loading && !usage ? <div className="host-usage-loading" role="status">正在读取用量…</div> : usage && <>
         <section className="host-usage-context" aria-label="最近上下文组成">
@@ -107,10 +108,8 @@ export function SessionTokenUsage({ sessionId, refreshKey, latestUsage }: {
             {hitRate !== null && <span className="host-usage-cache-hit">缓存命中：{percent(hitRate)}</span>}
           </div>
           {usage.unknownUsageRequestCount > 0 && <div className="host-usage-caption incomplete">有 {usage.unknownUsageRequestCount} 次已记录模型请求未取得用量，累计值不完整。</div>}
-          <p className="host-usage-caption">统计基于 {usage.recordedRequestCount} 次已保存调用，未保存的调用可能未计入。</p>
         </section>
       </>}
-      {latestUsage !== undefined && <p className="host-usage-caption">最近一轮：{latestUsage === null ? '模型未返回完整用量' : full(latestUsage.total_tokens) + ' Tokens'}。本轮用量不重复加入累计。</p>}
-    </div>}
+    </SessionUsagePopover>}
   </section>;
 }

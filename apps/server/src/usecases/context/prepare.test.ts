@@ -52,13 +52,11 @@ function appendHistory(id: string, content: string) {
   });
 }
 function input(onProgress?: (progress: ContextProgress) => void): PrepareContextInput {
-  const previousTipEntryId = services.sessions.require('session').tipEntryId;
-  const user = services.sessions.appendEntry('session', {
+  services.sessions.appendEntry('session', {
     id: 'current', runId: 'current-run', type: 'message', role: 'user',
     payload: { message: { role: 'user', content: 'Current input', timestamp: 2 } },
   });
-  return { kind: 'narrative', sessionId: 'session', runId: user.runId, userEntryId: user.id,
-    previousTipEntryId, inputText: 'Current input', signal: new AbortController().signal,
+  return { sessionId: 'session', signal: new AbortController().signal,
     ...(onProgress ? { onProgress } : {}),
   };
 }
@@ -72,6 +70,55 @@ function seedCompaction() {
 }
 
 describe('public context preparation', () => {
+  it('builds an empty session without saving a user or inventing an input turn', async () => {
+    const preset = services.presets.require('preset');
+    preset.config.nodes.find(node => node.id === 'userInput')!.prompt = 'User says: {{input.text}}';
+    services.presets.update('preset', { config: preset.config });
+    const prepared = await prepareContext(dependencies, { sessionId: 'session', signal: new AbortController().signal });
+    expect(prepared).toMatchObject({ ok: true, parentEntryId: null });
+    if (!prepared.ok) throw new Error(prepared.failure.code);
+    expect(prepared.request.messages.filter(message => message.role === 'user')).toEqual([]);
+    expect(prepared.diagnostics.nodes.find(node => node.id === 'userInput')).toMatchObject({ included: false });
+    expect(services.sessions.getHistory('session')).toEqual([]);
+    expect(summarize).not.toHaveBeenCalled();
+  });
+
+  it.each(['Answer', ''])('keeps an answered user before the latest assistant (%j) without replaying the input node', async content => {
+    input();
+    services.sessions.appendEntry('session', {
+      id: 'answer', runId: 'current-run', type: 'message', role: 'assistant',
+      payload: { message: { role: 'assistant', content, reasoning_content: 'Hidden reasoning', timestamp: 3 } },
+    });
+    const preset = services.presets.require('preset');
+    preset.config.nodes.find(node => node.id === 'userInput')!.prompt = 'User says: {{input.text}}';
+    services.presets.update('preset', { config: preset.config });
+    const prepared = await prepareContext(dependencies, { sessionId: 'session', signal: new AbortController().signal });
+    expect(prepared).toMatchObject({ ok: true, parentEntryId: 'answer' });
+    if (!prepared.ok) throw new Error(prepared.failure.code);
+    expect(prepared.request.messages.filter(message => message.role !== 'system').map(message => [message.role, message.content]))
+      .toEqual([['user', 'Current input'], ...(content ? [['assistant', content]] : [])]);
+    expect(prepared.diagnostics.nodes.find(node => node.id === 'userInput')).toMatchObject({ included: false });
+    expect(services.sessions.getHistory('session')).toHaveLength(2);
+  });
+
+  it('reads effective state at the actual tip, including a user state followed by compaction', async () => {
+    const request = input();
+    services.sessions.setEntryState('session', 'current', [{ key: 'coins', value: 12 }]);
+    services.sessions.appendEntry('session', {
+      id: 'trailing-summary', runId: 'current-run', type: 'compaction', role: null,
+      payload: { summary: 'Unverified summary must not hide history' },
+    });
+    const views = vi.spyOn(services.state, 'getViews');
+    const prepared = await prepareContext(dependencies, request);
+    expect(prepared).toMatchObject({ ok: true, parentEntryId: 'trailing-summary' });
+    expect(views).toHaveBeenCalledWith({ sessionId: 'session', worldId: 'world', entryId: 'trailing-summary' });
+    expect(views.mock.results[0]!.value.message).toEqual({ coins: 12 });
+    if (!prepared.ok) throw new Error(prepared.failure.code);
+    expect(prepared.request.messages.filter(message => message.role === 'user').map(message => message.content))
+      .toEqual(['Current input']);
+    expect(prepared.request.messages.some(message => message.content.includes('Unverified summary'))).toBe(false);
+  });
+
   it('captures sources synchronously before the first await and keeps that frozen view', async () => {
     appendHistory('old', 'Original history');
     const request = input();
@@ -99,7 +146,7 @@ describe('public context preparation', () => {
     expect(contents).toContain('Original history');
     expect(contents).toContain('Original persona');
     expect(contents).not.toMatch(/Changed history|Changed persona/);
-    expect(prepared.request).toMatchObject({ credentialRef: 'original-reference', temperature: 1 });
+    expect(prepared.request).toMatchObject({ credentialRef: 'original-reference', modelParameters: { temperature: 1 } });
     expect(dependencies.modelClient.resolve).toHaveBeenCalledWith('provider', 'model');
     expect(prepared.parentEntryId).toBe('current');
     expect(prepared.summary).toBeUndefined();
@@ -147,7 +194,7 @@ describe('public context preparation', () => {
     ]);
     expect(savedWhenNotified).toBe(true);
     expect(prepared.summary).toEqual({ entryId: prepared.parentEntryId, metrics });
-    expect(services.sessions.getEntry('session', prepared.parentEntryId)).toMatchObject({
+    expect(services.sessions.getEntry('session', prepared.summary!.entryId)).toMatchObject({
       type: 'compaction', parentId: 'current', metrics, payload: { summary: 'Short summary' },
     });
     expect(prepared.request.messages.some(message => message.content === 'Short summary')).toBe(true);
@@ -173,4 +220,67 @@ describe('public context preparation', () => {
     expect(JSON.stringify(prepared.diagnostics)).not.toMatch(/PRIVATE_LORE_CONTENT|Original persona|Current input|Short summary/);
   });
 
+  it('reuses a trailing committed summary on repeated builds without another user or summary write', async () => {
+    seedCompaction();
+    const request = input();
+    const first = await prepareContext(dependencies, request);
+    expect(first.ok).toBe(true);
+    expect(first.summary).toBeDefined();
+    const entries = services.sessions.getHistory('session');
+    const second = await prepareContext(dependencies, request);
+    expect(second).toMatchObject({ ok: true, parentEntryId: first.parentEntryId });
+    expect(second.summary).toBeUndefined();
+    if (!second.ok) throw new Error(second.failure.code);
+    const text = second.request.messages.map(message => message.content).join('\n');
+    expect(text.match(/Current input/g)).toHaveLength(1);
+    expect(text.match(/Short summary/g)).toHaveLength(1);
+    expect(text).not.toContain('Old story');
+    expect(summarize).toHaveBeenCalledOnce();
+    expect(services.sessions.getHistory('session')).toEqual(entries);
+  });
+
+  it('appends optimization summaries to the actual tip and derives their run from stored history', async () => {
+    seedCompaction();
+    const prepared = await prepareContext(dependencies, { sessionId: 'session', signal: new AbortController().signal });
+    expect(prepared.ok).toBe(true);
+    expect(prepared.summary).toBeDefined();
+    expect(services.sessions.getEntry('session', prepared.summary!.entryId)).toMatchObject({
+      parentId: 'old-7', runId: 'old-7-run', type: 'compaction',
+    });
+    if (!prepared.ok) throw new Error(prepared.failure.code);
+    expect(prepared.request.messages.filter(message => message.role === 'user')).toEqual([]);
+    expect(prepared.request.messages.filter(message => message.role === 'assistant').map(message => message.content))
+      .toEqual(['Recent 3', 'Recent 4', 'Recent 5', 'Recent 6', 'Recent 7']);
+  });
+
+  it('saves a new summary after an existing trailing compaction instead of trying to append to the user', async () => {
+    seedCompaction();
+    const request = input();
+    services.sessions.appendEntry('session', {
+      id: 'unverified-summary', runId: 'current-run', type: 'compaction', role: null, payload: { summary: 'Unverified' },
+    });
+    const prepared = await prepareContext(dependencies, request);
+    expect(prepared.ok).toBe(true);
+    expect(prepared.summary).toBeDefined();
+    expect(services.sessions.getEntry('session', prepared.summary!.entryId)).toMatchObject({
+      parentId: 'unverified-summary', runId: 'current-run', type: 'compaction',
+    });
+  });
+
+  it.each(['tip', 'body'])('rejects a stale summary when the %s changes during the model await', async change => {
+    seedCompaction();
+    const request = input();
+    summarize.mockImplementationOnce(async () => {
+      if (change === 'tip') appendHistory('new-tail', 'New tail');
+      else services.sessions.updateEntry('session', 'old-0', {
+        payload: { message: { role: 'assistant', content: 'Edited during summary', timestamp: 1 } },
+      });
+      return { ok: true, text: 'Obsolete summary', metrics };
+    });
+    const prepared = await prepareContext(dependencies, request);
+    expect(prepared).toMatchObject({ ok: false, failure: { code: 'TIP_CONFLICT' } });
+    expect(prepared.summary).toBeUndefined();
+    expect(services.sessions.getHistory('session').filter(entry => entry.type === 'compaction')).toEqual([]);
+    expect(services.sessions.require('session').tipEntryId).toBe(change === 'tip' ? 'new-tail' : 'current');
+  });
 });

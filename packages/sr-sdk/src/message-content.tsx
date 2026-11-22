@@ -42,7 +42,6 @@ export const MessageContent = React.memo(function MessageContent({message,runId}
     const spans=protectedRanges(message.content);
     const fallback=failed?[]:matches.filter(item=>item.replacement.type==='component'&&!selected.includes(item)&&canShowLiteralPlaceholder(item,spans)&&!instructions.some(range=>item.start<range.end&&item.end>range.start)&&!selected.some(other=>item.start<other.end&&item.end>other.start));
     const blocked=[...selected,...fallback,...instructions];
-    const markers=failed?[]:roleplayMarkers(message.content,blocked,nonce.current);
     // Tags which were not recognized as valid user instructions are literal text,
     // except inside Markdown code or existing HTML where the renderer handles them.
     const literalTags=Array.from(message.content.matchAll(/<\/?sr_instruction>/g)).filter(match=>{
@@ -54,6 +53,7 @@ export const MessageContent = React.memo(function MessageContent({message,runId}
     // Markdown escapes are left to marked, and code/HTML regions stay literal.
     const htmlContainers=spans.filter(span=>span.type==='syntax'&&span.containerStart!==undefined&&span.containerEnd!==undefined&&message.content[span.start]==='<').map(span=>({start:span.containerStart!,end:span.containerEnd!}));
     const displayEscapes:Array<{at:number;end:number;text:string}>=[];
+    const composerQuotes=new Set<number>();
     if(message.role==='user'){
       for(let index=0;index<message.content.length;index++){
         if(message.content[index]!=='\\')continue;
@@ -61,10 +61,15 @@ export const MessageContent = React.memo(function MessageContent({message,runId}
         const count=end-index,next=message.content[end];
         const unprotected=(finish:number)=>!blocked.some(range=>index<range.end&&finish>range.start)&&!spans.some(span=>(span.type==='code'||span.type==='html')&&index<span.end&&finish>span.start)&&!htmlContainers.some(range=>index<range.end&&finish>range.start);
         if(count===1&&(index===0||message.content[index-1]==='\n')&&(end===message.content.length||next==='\n')&&unprotected(end))displayEscapes.push({at:index,end,text:''});
-        else if(count%2===1&&(next==='“'||next==='”')&&unprotected(end+1))displayEscapes.push({at:end-1,end:end+1,text:next==='“'?'&#8220;':'&#8221;'});
+        else if(count%2===1&&(next==='“'||next==='”')&&unprotected(end+1)){
+          displayEscapes.push({at:end-1,end:end+1,text:next==='“'?'&#8220;':'&#8221;'});
+          // The Composer doubles typed backslashes before adding its quote escape.
+          if(count%4===1)composerQuotes.add(end);
+        }
         index=end-1;
       }
     }
+    const markers=failed?[]:roleplayMarkers(message.content,blocked,nonce.current,composerQuotes);
     const plain=(start:number,end:number)=>{
       const changes=[...displayEscapes.filter(item=>item.at>=start&&item.end<=end),...markers.filter(item=>item.at>=start&&(item.at<end||(end===message.content.length&&item.at===end))).map(item=>({at:item.at,end:item.at,text:item.text})),...literalTags.filter(item=>item.index!>=start&&item.index!+item[0].length<=end).map(item=>({at:item.index!,end:item.index!+item[0].length,text:escapeHtml(item[0])}))].sort((a,b)=>a.at-b.at||a.end-b.end);
       let result='',position=start;for(const change of changes){if(change.at<position)continue;result+=message.content.slice(position,change.at)+change.text;position=change.end;}return result+message.content.slice(position,end);

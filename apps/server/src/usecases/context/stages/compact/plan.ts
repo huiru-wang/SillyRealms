@@ -20,13 +20,17 @@ export type ContextPlan = {
 /** Pure selection over captured inputs. Every candidate re-evaluates keyword-dependent materials. */
 export function planContext(input: CompactInput, model: Pick<ModelInfo, 'contextWindow' | 'maxTokens'>, evaluateCandidate: CandidateEvaluator): ContextPlan {
   const messages = input.historyEntries.filter(entry => entry.type === 'message');
+  const last = messages.at(-1);
+  // An unanswered user protects its entire run, regardless of the caller or trailing summaries.
+  const pendingRunId = last?.role === 'user' ? last.runId : null;
+  const protectedStart = pendingRunId === null ? messages.length : messages.findIndex(entry => entry.runId === pendingRunId);
   const rolling = input.contextStrategy.strategy === 'rolling_summary';
-  const previous = rolling ? readSummary(input.historyEntries, messages) : null;
+  const previous = rolling ? readSummary(input.historyEntries, messages, protectedStart) : null;
   const covered = previous?.coveredCount ?? 0;
   const compiled = evaluateCandidate(messages.slice(covered), previous?.text ?? '');
   const { inputBudget, target } = contextBudget(input, model);
   if (compiled.estimatedInputTokens < inputBudget) return { compiled };
-  const boundaries = historyBoundaries(messages);
+  const boundaries = historyBoundaries(messages).filter(count => count <= protectedStart);
   if (!rolling) {
     let fallback: CompiledNarrativeContext | undefined;
     for (const count of boundaries) {
@@ -39,7 +43,7 @@ export function planContext(input: CompactInput, model: Pick<ModelInfo, 'context
   }
 
   const candidates = boundaries.filter(count => count > covered &&
-    new Set(messages.slice(count).map(entry => entry.runId)).size >= 5);
+    new Set(messages.slice(count).filter(entry => entry.runId !== pendingRunId).map(entry => entry.runId)).size >= 5);
   if (!candidates.length) {
     if (compiled.estimatedInputTokens <= inputBudget) return { compiled };
     throw new AppError('SUMMARY_CAPACITY_EXCEEDED');

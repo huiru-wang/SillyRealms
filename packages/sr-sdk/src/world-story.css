@@ -134,7 +134,17 @@
 .sr-story .sr-story-content > .sr-thinking { margin: 0; }
 .sr-story .sr-suggestions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; box-sizing: border-box; width: 100%; margin: 16px 0 0; }
 .sr-story .sr-reasoning { margin: 0 0 12px; min-width: 0; }
-.sr-story .sr-reasoning summary { box-sizing: border-box; min-height: var(--touch-target, 40px); padding: 8px 0; color: var(--_story-muted); font-size: 13px; line-height: 24px; cursor: pointer; list-style-position: inside; }
+.sr-story .sr-reasoning summary {
+  box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: fit-content;
+  min-height: var(--touch-target, 40px); padding: 8px 0; color: var(--_story-muted);
+  font-size: 13px; line-height: 24px; cursor: pointer; list-style: none;
+}
+.sr-story .sr-reasoning summary::-webkit-details-marker { display: none; }
+.sr-story .sr-reasoning summary::after {
+  content: ''; width: 6px; height: 6px; border: solid currentColor; border-width: 1.5px 1.5px 0 0;
+  transform: rotate(45deg);
+}
+.sr-story .sr-reasoning[open] > summary::after { transform: rotate(135deg); }
 .sr-story .sr-reasoning-content { box-sizing: border-box; height: 192px; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; padding: 12px 16px; border: 1px solid var(--_story-line); border-radius: 12px; background: var(--_story-surface); color: var(--_story-muted); font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sr-story .sr-processing { margin: 16px 0 0; }
 .sr-story .sr-processing pre { white-space: pre-wrap; overflow-wrap: anywhere; }

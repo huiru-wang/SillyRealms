@@ -1,1 +1,2 @@
 *{box-sizing:border-box}html,body{margin:0;background:transparent;color:var(--text);font:15px/1.7 system-ui,sans-serif}#root{display:flow-root;min-width:0;overflow-wrap:anywhere}img,video,audio{max-width:100%}a{color:var(--accent)}pre{white-space:pre-wrap}button,input,select,textarea{font:inherit}*:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+html[data-preview-inactive] *,html[data-preview-inactive] *::before,html[data-preview-inactive] *::after{animation-play-state:paused!important}

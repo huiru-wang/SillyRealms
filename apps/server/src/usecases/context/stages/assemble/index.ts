@@ -1,7 +1,7 @@
 import { resolvePostprocessPrompts } from '../../../../modules/presets/service.js';
 import { AppError } from '../../../../errors.js';
-import type { ModelInfo, ModelMessage, ModelReasoningLevel } from '../../../../infrastructure/model/client.js';
-import type { NarrativeSnapshot } from '../../capture.js';
+import type { ModelInfo, ModelMessage, ModelParameters } from '../../../../infrastructure/model/client.js';
+import type { ContextSnapshot } from '../../capture.js';
 import type { ContextDiagnostics, ContextNodeDiagnostic } from '../../diagnostics.js';
 import { contextBudget } from '../../lib/budget.js';
 import { estimateInputTokens } from '../../lib/estimate.js';
@@ -19,9 +19,7 @@ const messageOverhead = 16;
 export type CompiledNarrativeContext = {
   messages: ModelMessage[];
   maxTokens: number;
-  temperature?: number;
-  thinkingEnabled: boolean;
-  thinkingLevel?: ModelReasoningLevel;
+  modelParameters: ModelParameters;
   estimatedInputTokens: number;
   inputBudget: number;
   activeRoots: string[];
@@ -34,7 +32,7 @@ export type CompiledNarrativeContext = {
 };
 
 /** Pure compilation of the selected history; budget enforcement belongs to context preparation. */
-export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick<ModelInfo, 'contextWindow' | 'maxTokens'>): CompiledNarrativeContext {
+export function compileNarrativeContext(snapshot: ContextSnapshot, model: Pick<ModelInfo, 'contextWindow' | 'maxTokens'>): CompiledNarrativeContext {
   const config = snapshot.preset.config, messages: ModelMessage[] = [];
   const nodes: ContextNodeDiagnostic[] = [], composition = emptyComposition();
   let inputCount = 0, historyCount = 0, summaryCount = 0;
@@ -54,7 +52,7 @@ export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick
       pendingComposition[category] += byteLength(value);
     };
     const flush = () => {
-      if (pending.trim()) {
+      if (pending.trim() && (node.id !== 'userInput' || snapshot.inputEntryId !== null)) {
         messages.push({ role: node.role === 'auto' ? 'system' : node.role, content: pending, timestamp: 0 });
         composition.systemBytes += pendingComposition.systemBytes + messageOverhead;
         composition.summaryBytes += pendingComposition.summaryBytes;
@@ -144,8 +142,6 @@ export function compileNarrativeContext(snapshot: NarrativeSnapshot, model: Pick
       nodes, characters: snapshot.materials.selection.characters, lore: snapshot.materials.selection.lore,
       activeRoots: [...snapshot.materials.activeRoots], messageCount: messages.length, estimatedInputTokens, inputBudget,
     },
-    ...(config.modelParameters.temperature === undefined ? {} : { temperature: config.modelParameters.temperature }),
-    thinkingEnabled: config.modelParameters.thinkingEnabled,
-    ...(config.modelParameters.thinkingLevel === undefined ? {} : { thinkingLevel: config.modelParameters.thinkingLevel }),
+    modelParameters: config.modelParameters,
   };
 }

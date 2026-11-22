@@ -18,6 +18,17 @@ export function projectHistory(entries: readonly SessionEntry[]): NarrativeHisto
   return entries.map(narrativeMessage).filter((item): item is NarrativeHistoryMessage => item !== null);
 }
 
+/** Only a trailing user turn moves to input.text; never reorder an answered user message. */
+export function projectContextMessages(entries: readonly SessionEntry[]) {
+  const history = projectHistory(entries);
+  const last = [...entries].reverse().find(entry => entry.type === 'message');
+  const input = last?.role === 'user' ? narrativeMessage(last) : null;
+  return {
+    history: input ? history.filter(message => message.id !== input.id) : history,
+    inputText: input?.text ?? '', inputEntryId: input?.id ?? null,
+  };
+}
+
 /** Legal prefix lengths: never split a run, including a run interleaved by manual appends. */
 export function historyBoundaries(entries: readonly SessionEntry[]): number[] {
   const last = new Map<string, number>();

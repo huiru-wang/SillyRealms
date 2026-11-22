@@ -16,8 +16,8 @@ Web 已接入管理、作者预览与文本叙事运行页，见 [运行接入](
 | `src/usecases/narrative/index.ts` | 提交校验、取得锁、保存用户、调用唯一上下文入口、停止与关闭 |
 | `src/usecases/narrative/execute.ts` | 等待上下文结果、主模型及后处理、助手与状态保存、通知和总 usage/终态 |
 | `src/usecases/context/index.ts` | prepareContext 唯一公开入口及显式公开类型 |
-| `src/usecases/context/capture.ts` | 首次异步等待前通过公开 Service 冻结本轮输入快照 |
-| `src/usecases/context/narrative.ts` | 场景阶段编排、成功摘要保存、准备结果与已提交回执 |
+| `src/usecases/context/capture.ts` | 首次异步等待前通过公开 Service 冻结 session 当前消息、实际 tip 状态及配置 |
+| `src/usecases/context/prepare.ts` | 会话上下文阶段编排、成功摘要保存、准备结果与已提交回执 |
 | `src/usecases/context/candidate.ts` | 将历史投影、材料选择和真实消息编译组合为候选评估函数 |
 | `src/usecases/context/stages/history/`、`materials/` | 干净历史投影、完整 run 边界、候选材料激活 |
 | `src/usecases/context/stages/model-notes/` | 条目旁注来源与选择，正文和旁注分离 |
@@ -40,7 +40,7 @@ Web 已接入管理、作者预览与文本叙事运行页，见 [运行接入](
 
 1. HTTP 检查来源、真实会话和可选访问权限。用例检查输入非空白、expectedTipEntryId、同会话并发和停机状态；拒绝的请求不追加消息。
 2. 首次 await 前占用当前会话，生成 runId、userEntryId、assistantEntryId。用户消息立即追加到请求指定的前驱；写入失败则不受理、不调用模型。
-3. 用户保存后调用 prepareContext；其同步部分在首次异步等待前捕获本轮领域快照。历史排除且只排除本轮新用户消息，message 状态从原 tip 读取。上下文准备失败作为本轮执行错误处理，已经保存的用户消息保留。
+3. 用户保存后仅传 sessionId 及执行控制参数调用 prepareContext；其同步部分在首次异步等待前捕获 session 当前领域快照。Context 自行识别末尾用户消息并映射 input.text，message 状态从实际 tip 读取；普通发送保存的用户 state=null，继续继承此前状态。上下文准备失败作为本轮执行错误处理，已经保存的用户消息保留。
 4. 返回 202 及受理标识、已保存的 userMessage，发布携带同一用户消息的 run.created；客户端可按 HTTP 响应立即展示，SSE 按消息 ID 确认或补偿。后续上下文准备包括模型预算、候选评估、顺序检查和可选一次摘要。context 编排器独立保存成功摘要并回传准备结果、后续父节点和摘要回执；外层取得可用请求后调用正文模型。摘要进度必须在 run.created 后，保存成功后才发布 run.summarized。尚未取得模型配置时 provider/model 为 null。
 5. 模型 content 经流式分离后映射为 run.delta，能力块保持隐藏；公开 reasoning 和工具参数继续独立累积。最终模型快照重新分离，干净 snapshot 权威替换公开内容，不要求与之前 delta 拼接完全一致。没有增量时也可输出最终快照。
 6. 模型结束、错误、输出不完整或停止都进入保存步骤。仅正常 stop、无工具请求且干净正文有效时执行后处理，分别记录能力结果并准备 message 状态候选。助手正文、output、state 和 metrics 同步事务保存；部分助手保存公开内容但不生成 output。parentId 为成功 compaction ID，没有摘要时为 userEntryId；完全没有公开内容时不造空助手。
@@ -48,7 +48,7 @@ Web 已接入管理、作者预览与文本叙事运行页，见 [运行接入](
 
 同会话同时只允许一轮，冲突返回 RUN_ALREADY_ACTIVE/409，不排队；不同会话独立执行。services.ts 装配的 RuntimeCache 在全应用共享，用户保存前加锁，覆盖摘要、正文、后处理和结算；失败/取消/关闭均释放。会话编辑、删除、手工追加、正文/扩展/计量/结束结果写入返回 SESSION_WRITE_LOCKED/409；session/message 状态写入及该世界任意 run 活跃时的 global 状态写入返回 STATE_WRITE_LOCKED/409，空 PATCH 和同值也不例外。内部本轮持有者令牌只授权消息、摘要和结束结果落库，不向外部事件订阅者传播。结算完成、通知之前解锁，finally 按对象身份幂等释放，避免覆盖新 run。active Map 仅保留停止/查询所需的执行句柄；读取、SSE、stop 不受写锁影响。不提供多进程锁或可恢复任务存储。
 
-run.completed 要求模型正常 done、finishReason=stop、无工具请求、正文非空且助手写入成功。length/deferred 或缺少终态按 output_incomplete 结束；工具请求按 tool_execution_unsupported 结束；只有 reasoning 的正常结果仍保留但不视为完整正文回答。SDK 最终结果可以修正增量，明确的 snapshot 使用替换语义。模型消息 finish 与 run 持久化成功分开：生成正常而保存失败，最终仍为 run.stopped。
+run.completed 要求模型正常 done、finishReason=stop、无工具请求、正文非空且助手写入成功。叙事正文请求因 length 截断时按 output_limit_reached 结束，舞台提示调高当前预设的「最大输出长度」。deferred 或缺少终态仍按 output_incomplete 结束；工具请求按 tool_execution_unsupported 结束；只有 reasoning 的正常结果仍保留但不视为完整正文回答。SDK 最终结果可以修正增量，明确的 snapshot 使用替换语义。模型消息 finish 与 run 持久化成功分开：生成正常而保存失败，最终仍为 run.stopped。
 
 请求通过输入、权限、会话、tip 校验并完成用户保存后，上下文、模型配置、凭据或供应商失败均不删除用户。外部追加使 tip 改变时，助手写入返回 TIP_CONFLICT，不覆盖新消息；会话被删除后也不会重新创建它。
 
@@ -92,7 +92,7 @@ entry.role 与 payload.message.role 一致。同轮已有消息共享 runId；re
 | 助手写入失败或 tip 冲突 | 保留用户，savedMessageIds 不包含预分配助手 ID，不宣称已保存 |
 | 只有空白正文和 reasoning、没有工具请求 | 不创建助手消息 |
 
-失败或停止的部分消息是正式可读记录，下一轮只读取其可见正文。只有 reasoning/tool_calls 而没有正文的助手记录不生成伪空模型历史，记录及真实前驱/tip 仍保留，状态从真实 pre-submit tip 读取。正文计量随助手保存，完全没有可保存助手时没有历史指标载体；实时 run.usage 仍按规则发布，这些指标不是完整账单。session.usage 不累加。
+失败或停止的部分消息是正式可读记录，下一轮只读取其可见正文。只有 reasoning/tool_calls 而没有正文的助手记录不生成伪空模型历史，记录及真实前驱/tip 仍保留，状态从捕获时真实 tip 的有效视图读取。正文计量随助手保存，完全没有可保存助手时没有历史指标载体；实时 run.usage 仍按规则发布，这些指标不是完整账单。session.usage 不累加。
 
 内部 usage 为 `{inputTokens,outputTokens,totalTokens,cacheReadTokens,cacheWriteTokens}` 或 null，SSE run.usage 映射为 snake_case。输入总量包含缓存：inputTokens=input+cacheRead+cacheWrite；cache 字段是输入细分，reasoning 已计入输出时不再次相加。没有 SDK 调用尝试时总量为真实零；尝试后无可信上报、字段无效或总量口径不一致时为 null，不把 SDK 初始零值当作已上报零。每个 accepted run 只发布一次结算总量，不带 messageId/requestId，也不在停止后等待或补发迟到统计。总量为成功保存摘要的调用用量加正文调用用量，任一参与统计的调用 usage 未知则总量为 null。失败/中断摘要既不保存记录也不计量；只有失败摘要而无正文调用时总量为零，允许与供应商实际消耗存在误差。
 
@@ -100,21 +100,21 @@ entry.role 与 payload.message.role 一致。同轮已有消息共享 runId；re
 
 所有配置来自当前会话的 worldId、userCharacterId、presetId 和 apiModelConfigId，不因应用默认项更新而切换。快照在凭据或模型异步等待前完成，本轮不受后续配置或消息内容编辑影响。
 
-只接受合法的 user/assistant 历史消息，payload.message 的角色须与 entry.role 一致，content 为文本、timestamp 为有效非负数。兼容原来的纯正文 payload；reasoning/tool_calls 不进入正文投影、材料关键词扫描或模型提示词。compaction 独立于普通正文投影；rolling_summary 校验最新摘要的覆盖边界与 sourceHash 后复用，旧摘要没有合法元数据或来源被修改时忽略摘要并回到完整原文。原 tip 为 null 或没有继承消息快照时，message 视图为空；叙事提交不重复初始化 opening，新会话已由创建用例保存首条消息及状态。
+只接受合法的 user/assistant 历史消息，payload.message 的角色须与 entry.role 一致，content 为文本、timestamp 为有效非负数。兼容原来的纯正文 payload；reasoning/tool_calls 不进入正文投影、材料关键词扫描或模型提示词。compaction 独立于普通正文投影；rolling_summary 从新到旧查找覆盖边界与 sourceHash 有效的摘要，忽略无合法元数据、来源被修改或覆盖受保护末轮的摘要；无有效摘要时回到完整原文。实际 tip 为 null 或没有继承消息快照时，message 视图为空；叙事提交不重复初始化 opening，新会话已由创建用例保存首条消息及状态。
 
 角色与世界书保留 load.mode、keywords、keyword_logic、exclude_keywords、when 及 order 语义。角色通过 load.mode=never 禁用；世界书条目还支持 enabled=false。角色卡协议没有角色 enabled 字段，导入不会保留该字段。匹配区分大小写，扫描本次保留的历史叙事、有效摘要与当前输入；每个裁剪候选重新激活材料，不假定 token 估算随裁剪单调递减。用户系统指令块不用于触发关键词。when 通过 StateService 对已捕获的 global/session/message 视图进行受限 AST 求值，不执行任意 JavaScript，也不写状态。
 
-预设节点按原顺序编译。history.messages 展开为原角色消息，自定义文本节点保留位置和角色；input.text 只在 userInput 节点插入一次。模板只识别固定变量与转义，不执行对象路径，不再次扫描已替换数据。
+预设节点按原顺序编译。history.messages 展开为原角色消息，自定义文本节点保留位置和角色；最新普通消息为 user 时，该消息从 history.messages 的投影中移至 input.text，只在 userInput 节点插入一次；尾部 compaction 不改变这一判定。最新普通消息为 assistant（包括无可见正文的部分输出）或会话为空时，input.text 为空，userInput 节点不产生消息，即使节点包含包装文字；之前的用户消息仍留在历史原位置。模板只识别固定变量与转义，不执行对象路径，不再次扫描已替换数据。
 
 worldState/actionSuggestions 为默认后处理能力，通过 PresetService.resolvePostprocessPrompts 读取非空配置或补默认提示词，忽略旧 enabled，不修改已存预设和 revision。编译提供最终激活状态与固定协议；固定协议覆盖旧提示词中的数组状态更新、强制非空标签及固定三条限制，并明确状态更新不设固定条数上限。worldState 在有激活 message 根时参与，建议按默认能力参与。不增加 capabilities HTTP 或提交响应字段；自定义模板仍可读取 state.entries，缺少值明确标为未设置，不用 initial 补值。
 
 ### 唯一上下文入口
 
-调用方只使用 context/index.ts 的 prepareContext(dependencies, input) 和显式公开类型，当前 input.kind 为 narrative，不读取内部 capture、candidate、lib 或 stages。准备结果包含最终模型请求、最终激活状态根、后续 parentEntryId、已提交摘要回执和准备失败信息；摘要草稿不会交给外层叙事保存。context 场景编排器经公开 Service 完成摘要持久化，外层负责主调用、run 事件及终态。
+调用方只使用 context/index.ts 的 prepareContext(dependencies, input) 和显式公开类型，不读取内部 capture、candidate、lib 或 stages。业务输入只有 sessionId；signal、可选 writePermit/onProgress 属于执行控制。入口不接收 kind、runId、userEntryId、previousTipEntryId 或 inputText，不判断调用来源，也不保存用户消息。准备结果包含最终模型请求、最终激活状态根、后续 parentEntryId、已提交摘要回执和准备失败信息；摘要草稿不会交给外层叙事保存。context 编排器经公开 Service 完成摘要持久化，外层负责主调用、run 事件及终态。
 
 compact 阶段通过候选评估函数重复选择材料、组装最终消息和估算，不把阶段固定为各执行一次的流水线。每个候选都从捕获的干净输入重建；真实摘要复核失败时仍返回成功摘要草稿，保存后将摘要回执与失败一起交还，避免丢失已成功摘要的父链和计量。摘要端口不依赖叙事模型调用适配、正文分离或 SSE。
 
-PreparedContext 以 ok 判别，成功返回 request 和独立的 diagnostics，失败返回 failure.code；两种结果都有 parentEntryId 和可选 summary:{entryId,metrics}。request 包含 credentialRef，不包含 API key。本轮摘要与正文的凭据读取在 narrative 闭包内复用，不进入上下文返回值或数据库。
+PreparedContext 以 ok 判别，成功返回 request 和独立的 diagnostics，失败返回 failure.code；两种结果都有 parentEntryId 和可选 summary:{entryId,metrics}。parentEntryId 表示捕获的实际 tip 或本次新保存摘要的 ID；空会话或尚未捕获成功时为 null。读取构建使用同一快照，摘要持久化前同步复核实际 tip 与原文指纹；发生变化返回 TIP_CONFLICT，不写入过期摘要。request 包含 credentialRef，不包含 API key。本轮摘要与正文的凭据读取在 narrative 闭包内复用，不进入上下文返回值或数据库。
 
 narrative/index.ts 先排入执行微任务，再同步调用 prepareContext；入口在首次 await 前捕获快照，后续准备发生在 run.created 之后。内部进度 summary_started 在凭据就绪、摘要实际调用前发出，summary_saved 在成功保存后发出；外层映射到既有 run.summarizing/run.summarized。
 
@@ -137,30 +137,30 @@ model-notes 构建按 entryId 关联的独立内存数据，历史正文始终�
 
 ### 自动裁剪与滚动摘要
 
-按 entries.runId 划分完整轮次，首条开场 assistant 和只有用户的失败轮次均正常计数。当前提交不进入历史整理范围，始终保留。仅有 reasoning/tool_calls 的记录不成为模型正文，但仍参与完整轮次边界；交错 runId 不允许被拆开。
+按 entries.runId 划分完整轮次，首条开场 assistant 和只有用户的失败轮次均正常计数。优化阶段接收全部有效 entries。若最新普通消息为 user，则保护其整个 run（包括该 run 更早的条目），不允许滑窗裁剪或摘要覆盖；不依赖调用方提供“当前输入”。最新普通消息为 assistant 或会话为空时，不虚构待回复输入。仅有 reasoning/tool_calls 的记录不成为模型正文，但仍参与完整轮次边界；交错 runId 不允许被拆开。
 
 - sliding_window：从最旧完整 run 开始移除模型输入中的历史，选择符合软目标的最长连续后缀；达不到软目标则使用符合硬预算的最长候选。允许移除全部旧历史，不删除或改写数据库条目，不生成摘要，也不复用旧摘要替代原文。
-- rolling_summary：复用有效旧摘要及未覆盖原文，保护最近 5 个历史 run；选择更早的完整前缀，必要时与旧摘要合并生成一份摘要。摘要输入排除玩家指令区段，不携带 reasoning/tool_calls。每轮最多一次摘要，不为单独重写旧摘要发起调用；无可压缩前缀且超限时报 summary_capacity_exceeded。
-- history.summary 单独承载摘要，history.messages 只承载未覆盖原文。rolling_summary 要求启用的非后处理模板中恰好出现一次 history.summary，否则 invalid_context；不修改已有预设文档。后处理提示词不能引用 input.text、history.messages 或 history.summary，编译拒绝这类引用，防止当前输入、历史消息或摘要重复注入。摘要与保留原文重新参与材料激活。
+- rolling_summary：复用有效旧摘要及未覆盖原文，保护最近 5 个历史 run，末尾受保护的用户 run 另计；选择更早的完整前缀，必要时与旧摘要合并生成一份摘要。摘要输入排除玩家指令区段，不携带 reasoning/tool_calls。每次构建最多一次摘要，不为单独重写旧摘要发起调用；无可压缩前缀且超限时报 summary_capacity_exceeded。
+- history.summary 单独承载摘要，history.messages 只承载未覆盖原文，移至 input.text 的末尾用户消息不重复出现。rolling_summary 要求启用的非后处理模板中恰好出现一次 history.summary，否则 invalid_context；不修改已有预设文档。后处理提示词不能引用 input.text、history.messages 或 history.summary，编译拒绝这类引用，防止当前输入、历史消息或摘要重复注入。摘要与保留原文重新参与材料激活。
 - 摘要和正文共用本轮模型与凭据。摘要只接受正常 stop、非空正文且无工具请求的最终快照；允许最终快照修正之前增量。摘要失败/截断/中断不保存任何摘要记录及指标，不生成空 compaction。
 - compact 使用真实摘要复核最终候选，同时保留成功摘要草稿，即使最终预算或编译失败也不能丢失草稿。context 编排器独立保存成功摘要后才发布 run.summarized，返回实际 parentEntryId 与计量回执。不超过硬预算即可继续；仍超限直接 summary_capacity_exceeded 结束，保留用户、完整摘要及其 metrics。不再次摘要、不额外裁剪、不切换策略。
 
-成功摘要保存为同一个 run 内的 entry：
+成功摘要追加到捕获的实际 tip 后，归属该 tip 的 run；普通发送时仍与 user/assistant 同 run：
 
 ```ts
 {
-  type: 'compaction', role: null, parentId: userEntryId, runId,
+  type: 'compaction', role: null, parentId: capturedTip.id, runId: capturedTip.runId,
   payload: { summary: '完整摘要正文' }, state: null,
   extData: { summary: { coveredThroughEntryId, sourceHash } },
   metrics: { requests: [{ requestId, provider, modelId, usage, durationMs, firstTextMs? }] }
 }
 ```
 
-sourceHash 为覆盖前缀内全部 message 的 id/seq/runId/role/content 规范化 JSON 的 SHA-256，排除 state、metrics、时间戳、compaction 和动态模型旁注；覆盖到完整 run 边界。仅用于下次读取时识别历史编辑，不是请求指纹或恢复机制。首次存储 summary 时，coverage 是全部覆盖范围而非仅本次新增前缀。状态仍从真实 tip 的前驱继承，不从摘要重建。
+sourceHash 为覆盖前缀内全部 message 的 id/seq/runId/role/content 规范化 JSON 的 SHA-256，排除 state、metrics、时间戳、compaction 和动态模型旁注；覆盖到完整 run 边界。用于摘要复用时识别历史编辑，保存前也比较完整捕获消息的同规则指纹；不是请求指纹或恢复机制。首次存储 summary 时，coverage 是全部覆盖范围而非仅本次新增前缀。状态仍读取实际 tip 的有效继承视图，不从摘要重建。
 
-成功摘要的 usage 可以为 null；失败或中断摘要无记录、无计量。正文 metrics 仍属于 assistant，user.metrics 为 null，不重复计数。HTTP 通用追加禁止 compaction，通用编辑禁止修改摘要 payload/extData 或在普通消息伪造 summary 元数据。摘要只经 context 场景编排器调用 SessionService 保存，compact 阶段不写库。
+成功摘要的 usage 可以为 null；失败或中断摘要无记录、无计量。正文 metrics 仍属于 assistant，user.metrics 为 null，不重复计数。HTTP 通用追加禁止 compaction，通用编辑禁止修改摘要 payload/extData 或在普通消息伪造 summary 元数据。摘要只经 context 编排器调用 SessionService 保存，compact 阶段不写库。
 
-物理顺序为 user → 可选 compaction → 可选 assistant，各自分配 seq，父链和 tip 原子推进。savedMessageIds 仅列 message，实际 tipEntryId 可能是 compaction；五轮分页与 afterSeq 返回的完整分组包含摘要记录。摘要正文不作为聊天 delta 推送。
+普通发送的物理顺序为 user → 可选 compaction → 可选 assistant；独立上下文构建也允许在 assistant 或既有 compaction 后保存新摘要，各自分配 seq，父链和 tip 原子推进。savedMessageIds 仅列 message，实际 tipEntryId 可能是 compaction；五轮分页与 afterSeq 返回的完整分组包含摘要记录。摘要正文不作为聊天 delta 推送。
 
 ### 预算和生成参数
 

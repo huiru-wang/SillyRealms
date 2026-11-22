@@ -47,6 +47,9 @@ export const narrativeConfigSchema = z.object({
   }).strict(),
   modelParameters: z.object({
     temperature: z.number().min(0).max(2).optional(),
+    topP: z.number().min(0).max(1).optional(),
+    frequencyPenalty: z.number().min(-2).max(2).optional(),
+    presencePenalty: z.number().min(-2).max(2).optional(),
     thinkingEnabled: z.boolean().default(false),
     thinkingLevel: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
   }).strict(),

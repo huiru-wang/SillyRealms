@@ -1,3 +1,4 @@
+import type { SamplingDraft, SamplingKey } from './sampling';
 export type PresetThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type ContextStrategy = 'rolling_summary' | 'sliding_window';
 export type PresetRole = 'system' | 'user' | 'assistant' | 'auto';
@@ -9,14 +10,13 @@ export type PresetNode = {
   prompt: string;
   enabled: boolean;
 };
-export type WebPreset = {
+export type WebPreset = SamplingDraft & {
   id: string;
   name: string;
   description: string;
   contextStrategy: ContextStrategy;
   maxContextTokens: number;
   maxOutputTokens: number;
-  temperature: number | undefined;
   thinkingEnabled: boolean;
   thinkingLevel?: PresetThinkingLevel;
   summaryPrompt: string;
@@ -27,6 +27,6 @@ export type WebPreset = {
 export type PresetSummary={id:string;type:'narrative';name:string;description:string|null;revision:number;createdAt:number;updatedAt:number};
 export type PresetInput={
   type:'narrative';name:string;description:string|null;
-  config:{schemaVersion:1;nodes:PresetNode[];contextStrategy:{strategy:ContextStrategy;maxContextTokens:number;maxOutputTokens:number;summaryPrompt:string};modelParameters:{temperature?:number;thinkingEnabled:boolean;thinkingLevel?:PresetThinkingLevel}};
+  config:{schemaVersion:1;nodes:PresetNode[];contextStrategy:{strategy:ContextStrategy;maxContextTokens:number;maxOutputTokens:number;summaryPrompt:string};modelParameters:Partial<Record<SamplingKey, number>> & {thinkingEnabled:boolean;thinkingLevel?:PresetThinkingLevel}};
 };
 export type PresetDetail=PresetSummary & PresetInput;

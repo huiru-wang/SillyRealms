@@ -61,7 +61,7 @@ Web 通过 HTTP 和 SSE 对接 Server。当前挂载五个管理入口：
 
 预览 CSP 限制 connect-src/form-action/frame-src/object-src 为 none；脚本只在预览来源执行，图片/音频允许世界资源来源、HTTPS 和许可的数据来源，字体允许世界资源来源。保留 sandbox 与消息来源/窗口/nonce 校验。宿主只接受 world.state.read、global scope，并按请求路径投影 data.item；不暴露完整状态、会话、模型或写 API。世界包资源 CORS 允许素材读取，不开放业务 API 跨域访问。
 
-素材使用 `/api/v1/worlds/:id/resources/`；SDK 将 `sr-asset://assets/...` 转换为保留 assets/ 前缀的资源 URL。组件源码从 /components 按需读取，path 优先，编译缓存按源码内容失效。切换/离开预览销毁 iframe、连接和挂起请求；错误局部展示，可重试。
+素材使用 `/api/v1/worlds/:id/resources/`；SDK 将 `sr-asset://assets/...` 转换为保留 assets/ 前缀的资源 URL。组件源码从 /components 按需读取，path 优先，当前详情共享源码请求及结果，编译缓存按源码内容失效。详情内最多保留 10 个作者组件预览实例（介绍及各开局独立计数），超出时按首次打开顺序淘汰；重访不调整顺序。切换 Tab/开局仅隐藏缓存实例，保留交互状态和当前开局选择；淘汰、重试或离开详情才销毁对应 iframe、连接和状态请求。离开详情同时取消共享源码请求。管理字段更新不重建预览，组件声明变化会重建。隐藏时暂停 HTML 音视频和 CSS 动画，不承诺暂停作者计时器或 Web Audio；音视频不会在切回时自动播放。错误局部展示，重试刷新源码并只重建该实例。完整缓存与状态新鲜度约束见[世界组件](../design/world-components.md#详情切换与缓存)。
 
 ## 本轮验证边界
 

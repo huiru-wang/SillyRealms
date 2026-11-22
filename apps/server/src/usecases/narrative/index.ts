@@ -75,7 +75,7 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
       request.onStarted();
       const result = await collectModel(dependencies.modelClient, request.model, request.messages, {
         apiKey, signal: request.signal, maxTokens: request.maxTokens,
-        temperature: request.temperature, thinkingEnabled: request.thinkingEnabled, thinkingLevel: request.thinkingLevel,
+        ...request.modelParameters,
         onDiagnostic(event) {
           log('model.' + event.type, { purpose: 'summary', provider: request.model.providerId,
             model: request.model.modelId, source: event.source, raw: event.data });
@@ -108,8 +108,7 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
       sessions: dependencies.sessions, worlds: dependencies.worlds, presets: dependencies.presets,
       models: dependencies.models, state: dependencies.state, modelClient: dependencies.modelClient, summarize,
     }, {
-      kind: 'narrative', sessionId, runId, userEntryId, inputText: value.input.text, writePermit,
-      previousTipEntryId: expectedTipEntryId, signal: run.controller.signal,
+      sessionId, writePermit, signal: run.controller.signal,
       onProgress(progress) {
         const fields = { sessionId, runId, provider, model, timestamp: Date.now() };
         if (progress.type === 'summary_started') {

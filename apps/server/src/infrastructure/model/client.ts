@@ -66,10 +66,20 @@ export type ModelEvent =
   | { type: 'done'; snapshot: ModelSnapshot; finishReason: ModelFinishReason; usage: ModelUsage | null }
   | { type: 'error'; snapshot: ModelSnapshot; stopReason: ModelStopReason; usage: ModelUsage | null };
 export type ModelDiagnostic =
-  | { type: 'request'; source: 'provider_payload'; data: unknown }
+  | { type: 'request'; source: 'provider_payload' | 'sampling_omitted'; data: unknown }
   | { type: 'response'; source: 'sdk_message' | 'sdk_error' | 'adapter_error'; data: unknown };
-export type ModelOptions = {
-  apiKey: string; signal: AbortSignal; maxTokens: number; temperature?: number; thinkingEnabled?: boolean; thinkingLevel?: ModelReasoningLevel;
+export type SamplingParameters = {
+  temperature?: number;
+  topP?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+};
+export type ModelParameters = SamplingParameters & {
+  thinkingEnabled: boolean;
+  thinkingLevel?: ModelReasoningLevel;
+};
+export type ModelOptions = Partial<ModelParameters> & {
+  apiKey: string; signal: AbortSignal; maxTokens: number;
   /** Sanitized original provider payload / final SDK message, never deltas or business events. */
   onDiagnostic?: (event: ModelDiagnostic) => void;
 };

@@ -8,7 +8,7 @@ const overlaps=(a:Range,b:Range)=>a.start<b.end&&a.end>b.start;
 
 /** Mark only source ranges which survived author replacements. Markers are random,
  * are never author-controlled attributes, and are consumed after sanitization. */
-export function roleplayMarkers(source:string,blocked:Range[],nonce:string){
+export function roleplayMarkers(source:string,blocked:Range[],nonce:string,composerQuotes:ReadonlySet<number> = new Set()){
   const protectedSpans=protectedRanges(source),literalMask=roleplayLiteralMask(source);
   const insertions:Insertion[]=[];
   let index=0;
@@ -25,14 +25,19 @@ export function roleplayMarkers(source:string,blocked:Range[],nonce:string){
     return overlaps(item,range);
   });
   const escaped=(at:number)=>{let count=0;while(at>0&&source[--at]==='\\')count++;return count%2===1;};
-  let opening=-1,closing='';
+  let opening=-1,closing='',composerPair=false;
   for(let at=0;at<source.length;at++){
     const char=source[at];
     if(char==='\n'&&/^\n[\t \r]*\n/.test(source.slice(at))){opening=-1;continue;}
-    if(char!=='“'&&char!=='”'&&char!=='"'||escaped(at))continue;
+    if(char!=='“'&&char!=='”'&&char!=='"')continue;
+    const encoded=composerQuotes.has(at);
+    if(!encoded&&escaped(at))continue;
+    // Inside a dedicated speech block the Composer also escapes its inner quotes.
+    if(opening>=0&&encoded!==composerPair)continue;
     if(unsafe({start:at,end:at+1})){opening=-1;continue;}
-    if(opening<0){if(char!=='”'){opening=at;closing=char==='“'?'”':'"';}continue;}
-    if(char!==closing){if(char==='“'&&closing==='”')opening=at;continue;}
+    const start=encoded?at-1:at;
+    if(opening<0){if(char!=='”'){opening=start;composerPair=encoded;closing=char==='“'?'”':'"';}continue;}
+    if(char!==closing){if(char==='“'&&closing==='”')opening=start;continue;}
     const range={start:opening,end:at+1};opening=-1;
     if(unsafe(range))continue;
     const marker=`SRRP${nonce}S${index++}X`;

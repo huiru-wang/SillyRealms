@@ -1,7 +1,8 @@
 import { AppError } from '../../errors.js';
-import { captureNarrativeContext } from './capture.js';
+import { captureContext } from './capture.js';
 import { createCandidateEvaluator } from './candidate.js';
 import { compactHistory } from './stages/compact/index.js';
+import { sourceHash } from './stages/compact/saved-summary.js';
 import type { ContextDependencies, ContextFailure, ContextProgress, PrepareContextInput, PreparedContext, SummaryReceipt } from './types.js';
 
 function failure(error: unknown): ContextFailure {
@@ -15,13 +16,14 @@ const assertRunning = (signal: AbortSignal) => {
 
 /** Capture before the first await; all stages and summary persistence stay behind this entry. */
 export async function prepareContext(dependencies: ContextDependencies, input: PrepareContextInput): Promise<PreparedContext> {
-  const receipt: { parentEntryId: string; summary?: SummaryReceipt } = { parentEntryId: input.userEntryId };
+  const receipt: { parentEntryId: string | null; summary?: SummaryReceipt } = { parentEntryId: null };
   const notify = (progress: ContextProgress) => {
     try { input.onProgress?.(progress); } catch { /* Progress transport cannot erase a committed summary. */ }
   };
   try {
-    const snapshot = captureNarrativeContext(dependencies, input);
-    // The caller can schedule run.created before asynchronous preparation while capture remains synchronous.
+    const snapshot = captureContext(dependencies, input.sessionId);
+    receipt.parentEntryId = snapshot.session.tipEntryId;
+    // All later work uses this snapshot, even if a caller does not hold a narrative run lock.
     await Promise.resolve();
     assertRunning(input.signal);
     const model = dependencies.modelClient.resolve(snapshot.modelConfig.providerId, snapshot.modelConfig.modelId);
@@ -32,9 +34,7 @@ export async function prepareContext(dependencies: ContextDependencies, input: P
       dependencies.modelClient.assertMessageOrder(model, request.messages);
       return dependencies.summarize({
         ...request, model, credentialRef: snapshot.modelConfig.credentialRef, signal: input.signal,
-        temperature: snapshot.preset.config.modelParameters.temperature,
-        thinkingEnabled: snapshot.preset.config.modelParameters.thinkingEnabled,
-        thinkingLevel: snapshot.preset.config.modelParameters.thinkingLevel,
+        modelParameters: snapshot.preset.config.modelParameters,
         onStarted: () => notify({ type: 'summary_started' }),
       });
     }, input.signal);
@@ -43,8 +43,13 @@ export async function prepareContext(dependencies: ContextDependencies, input: P
       const draft = result.summaryDraft;
       let entry;
       try {
+        const tip = snapshot.historyEntries.at(-1);
+        if (!tip || dependencies.sessions.require(input.sessionId).tipEntryId !== tip.id ||
+          sourceHash(dependencies.sessions.getHistory(input.sessionId)) !== sourceHash(snapshot.historyEntries)) {
+          throw new AppError('TIP_CONFLICT');
+        }
         entry = dependencies.sessions.appendEntry(input.sessionId, {
-          parentId: input.userEntryId, runId: input.runId, type: 'compaction', role: null,
+          parentId: tip.id, runId: tip.runId, type: 'compaction', role: null,
           payload: { summary: draft.text }, state: null, metrics: draft.metrics,
           extData: { summary: { coveredThroughEntryId: draft.coveredThroughEntryId, sourceHash: draft.sourceHash } },
         }, input.writePermit);

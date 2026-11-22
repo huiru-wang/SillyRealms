@@ -135,12 +135,18 @@ test('capability failures do not turn completed narrative into a failed run pres
   assert.match(runNotice({...run, status: 'unknown'}), /未确定/);
 });
 
+test('only an explicit output limit prompts a preset length adjustment', () => {
+  const run = {runId: 'run', status: 'stopped', messages: []};
+  assert.match(runNotice({...run, stopReason: 'output_limit_reached'}), /调高当前预设的「最大输出长度」/);
+  assert.equal(runNotice({...run, stopReason: 'output_incomplete'}), '模型输出未完整结束。');
+});
+
 test('stream gaps and reasoning-only messages remain visible without fabricated narrative text', () => {
   assert.equal(streamNotice({streamIncomplete: false}), null);
   assert.match(streamNotice({streamIncomplete: true}), /尚未完整同步/);
   const message = {id: 'assistant', runId: 'run', role: 'assistant', content: '', reasoning_content: 'thinking',
     timestamp: 1, saved: false};
-  assert.match(messageNotice(message, 'running'), /尚未收到正文/);
+  assert.equal(messageNotice(message, 'running'), null);
   assert.match(messageNotice({...message, saved: true}, 'stopped'), /已保存/);
   assert.equal(messageNotice({...message, content: '正文'}, 'completed'), null);
   assert.equal(message.content, '');

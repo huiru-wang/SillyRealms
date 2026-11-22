@@ -81,6 +81,7 @@ function palette(mode:ThemeMode,overrides:Partial<Record<BaseToken,string>>={}){
   'selection-bg':mix(base.accent,base.canvas,.22),'selection-fg':base.text,'selection-border':base.accent,
   'danger':danger,'danger-bg':mix(danger,base.surface,.12),'danger-action-bg':danger,'danger-action-fg':readable(base.canvas,danger),
   'success':success,'success-bg':mix(success,base.surface,.12),'warning':warning,'warning-bg':mix(warning,base.surface,.12),
+  'connection-online':readable('#34b253',base.canvas,3),'connection-offline':readable('#d74242',base.canvas,3),
   'info':info,'info-bg':mix(info,base.surface,.12),
   'glass-bg':mode==='dark'?'rgba(35,32,44,0.88)':'rgba(244,240,248,0.92)',
   'glass-border':base['stroke-strong'],'glass-fallback':base['sidebar-bg'],
@@ -104,6 +105,7 @@ const pairs: Array<[ColorToken,ColorToken,number]> = [
  ['action-primary-fg','action-primary-bg',4.5],['action-primary-fg','action-primary-hover',4.5],['action-primary-fg','action-primary-pressed',4.5],
  ['action-secondary-fg','action-secondary-bg',4.5],['action-secondary-fg','action-secondary-hover',4.5],['selection-fg','selection-bg',4.5],
  ['danger','surface',4.5],['danger','danger-bg',4.5],['danger-action-fg','danger-action-bg',4.5],['success','success-bg',4.5],['warning','warning-bg',4.5],['info','info-bg',4.5],
+ ['connection-online','canvas',3],['connection-offline','canvas',3],
  ['reading-text','reading-surface',4.5],['reading-muted','reading-surface',4.5],['reading-speech','reading-surface',4.5],['focus','canvas',3],['focus','surface',3],['control-border','canvas',3],
 ];
 export function resolveTheme(input:unknown):ResolvedTheme {

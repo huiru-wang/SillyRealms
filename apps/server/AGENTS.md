@@ -59,15 +59,15 @@
 
 ## 上下文整理
 
-- 上下文独立于 narrative，外部只经 usecases/context/index.ts 使用 prepareContext 和显式公开类型。用户保存后、首次异步等待前同步捕获本轮世界、预设、模型配置、历史和原 tip 状态；prepareContext 完成准备并返回最终请求、激活状态根、后续 parentEntryId、已保存摘要回执及准备失败信息。外层 narrative 保留用户保存、会话运行锁、主模型、后处理和最终结算。
-- context/narrative.ts 组合阶段并经公开 SessionService 保存成功摘要；stages/compact 完成纯计划、旧摘要复用、必要摘要调用和最终候选复核，不写库、不认识 EventHub/SSE 或 run 终态。摘要通过窄端口调用；上下文进度 summary_started/summary_saved 由外层映射到 run.summarizing/run.summarized。PreparedContext 使用 ok/request 或 ok/failure.code，均携带 parentEntryId 及可选摘要回执；凭据字节只在本轮 narrative 闭包内复用，不进入返回值。模型流收集、取消和原始调用指标归 infrastructure/model/collect.ts，不能依赖业务模块或叙事输出分离。
+- 上下文独立于 narrative，外部只经 usecases/context/index.ts 使用 prepareContext 和显式公开类型。业务输入只有 sessionId，signal/permit/progress 仅用于执行控制；不接收调用类型、runId、userEntryId、previousTipEntryId 或输入文本，也不保存用户消息。首次异步等待前同步捕获 session 的世界、预设、模型配置、完整历史和实际 tip 状态；prepareContext 完成准备并返回最终请求、激活状态根、后续 parentEntryId、已保存摘要回执及准备失败信息。外层 narrative 保留用户保存、会话运行锁、主模型、后处理和最终结算。
+- context/prepare.ts 组合阶段并经公开 SessionService 保存成功摘要；stages/compact 完成纯计划、旧摘要复用、必要摘要调用和最终候选复核，不写库、不认识 EventHub/SSE 或 run 终态。摘要通过窄端口调用；上下文进度 summary_started/summary_saved 由外层映射到 run.summarizing/run.summarized。PreparedContext 使用 ok/request 或 ok/failure.code，均携带 parentEntryId（捕获的实际 tip 或新摘要 ID；空会话/捕获前失败为 null）及可选摘要回执；凭据字节只在本轮 narrative 闭包内复用，不进入返回值。模型流收集、取消和原始调用指标归 infrastructure/model/collect.ts，不能依赖业务模块或叙事输出分离。
 - 每个压缩候选重新投影干净历史、激活材料、选择保留条目的旁注、组装实际模型消息并估算。不得假定估算随裁剪单调下降，不沿用初始候选的 activeRoots，不在估算后偷偷追加旁注。candidate.ts 组合场景候选评估，assemble 产出可直接调用模型的消息；lib 仅放模板、估算、预算计算。
-- 输入硬预算 min(preset.maxContextTokens, model.contextWindow-maxOutputTokens-1024)，软目标 60%。sliding_window 只裁剪完整 run；rolling_summary 保护最近 5 个历史 run，当前用户始终保留，每轮最多一次摘要。history.summary 恰好注入一次，history.messages 保持原角色。默认后处理提示词通过 PresetService 解析；固定协议覆盖旧数组/强制标签/固定条数要求，禁止引用 input.text、history.messages 或 history.summary。
+- 输入硬预算 min(preset.maxContextTokens, model.contextWindow-maxOutputTokens-1024)，软目标 60%。sliding_window 只裁剪完整 run；rolling_summary 保护最近 5 个历史 run，末尾普通消息为 user 时额外保护该完整 run，每次构建最多一次摘要。候选包含完整 entries，按自身消息顺序映射变量：仅尾部普通 user 移至 input.text；assistant 尾部（含空正文）或空会话保持原历史顺序，input.text 为空且 userInput 节点不输出包装文字。末尾 compaction 不作为普通消息判定。history.summary 恰好注入一次，history.messages 保持原角色。默认后处理提示词通过 PresetService 解析；固定协议覆盖旧数组/强制标签/固定条数要求，禁止引用 input.text、history.messages 或 history.summary。
 - model-notes 为按 entryId 关联的本次内存旁注，不修改正文或数据库。通用来源可服务 user/assistant；叙事内置来源先取最近两条有可见正文的 assistant，再读取已保存 output，没有 output 不向更早条目补足。状态只取 stateUpdate.updates 中 status=success 的行，并仅回填 path/value/reason；建议只取有效 items。partial_success 的有效项保留，行状态和失败诊断不进入旁注，各来源失败独立跳过。历史正文后空一行，依次直接追加 state_update JSONL 块和单行 action_suggestions 数组块。省略无有效项的块、外层标签与解释文字，JSON 字符串中的标签继续转义。
 - 材料关键词和摘要只使用干净正文及适用摘要，旁注不参与激活和摘要；最终 assemble 才渲染到保留消息并计入输入预算。裁剪/摘要覆盖的条目旁注随之移除，不重复拼接，不重执行状态更新，不新增 notes 表、持久化 schema 或 contextEligible。正文编辑保留原 output，旁注表示当时的处理记录，不宣称已按新正文重算。
-- 仅摘要正常 stop、非空且无工具请求时产生摘要草稿；context 编排器独立追加 compaction，state=null，与 user/assistant 同 run，保存完整文本、覆盖边界、sourceHash 和 metrics。最终候选超限或编译失败不能丢失成功摘要草稿；保存成功后回传父 entry 和计量回执，即使准备最终失败也保留摘要。失败/取消摘要不保存、不计量；成功摘要未知 usage 为 null。
+- 仅摘要正常 stop、非空且无工具请求时产生摘要草稿；context 编排器在捕获的实际 tip 后追加 compaction，state=null，runId 从该 tip 派生；保存前同步复核 tip 和完整捕获原文指纹，变化返回 TIP_CONFLICT，不提交过期摘要。普通发送时仍与 user/assistant 同 run，保存完整文本、覆盖边界、sourceHash 和 metrics。最终候选超限或编译失败不能丢失成功摘要草稿；保存成功后回传父 entry 和计量回执，即使准备最终失败也保留摘要。失败/取消摘要不保存、不计量；成功摘要未知 usage 为 null。
 - run.summarized 只在实际保存成功后发布；失败、取消或保存失败不能伪造完成通知。仍超限 summary_capacity_exceeded 结束并保留用户、摘要和用量，不重试或继续裁剪。上下文不决定 run 终态；savedMessageIds 只列 message，tip 可指向 compaction。执行句柄 active Map 负责停止与查询；锁权限由同一 RuntimeCache 管理，覆盖用户保存到最终结算，取消与异常释放，在能力通知、usage 和终态前释放。
-- saved-summary 校验覆盖完整 run 边界及原文 id/seq/runId/role/content 的 sourceHash，排除动态旁注、state、metrics。后续历史编辑或旧元数据无效时回退原文，不新增异步编辑锁/版本恢复。HTTP 禁止创建 compaction 或伪造 summary 元数据。
+- saved-summary 从新到旧选择最新有效摘要，拒绝覆盖末尾受保护 user run 的摘要；校验覆盖完整 run 边界及原文 id/seq/runId/role/content 的 sourceHash，排除动态旁注、state、metrics。后续历史编辑或旧元数据无效时尝试更早有效摘要，无可用摘要则回退原文，不新增异步编辑锁/版本恢复。HTTP 禁止创建 compaction 或伪造 summary 元数据。
 - ESLint 强制 context 唯一出口、公开类型出口及生产代码无其他 usecase/EventHub 反向依赖；内部阶段测试位于 context。不得为迁移放宽现有模块、SDK、SQL 或数据库属主规则。
 ## 叙事后处理
 

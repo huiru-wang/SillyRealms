@@ -31,8 +31,8 @@
  --workspace-list-width:240px;--workspace-gap:16px;
 }
 @media(max-width:760px){
- :root{--page-inset:16px;--page-header-top:calc(12px + env(safe-area-inset-top));--page-header-height:44px;
- --page-title-size:24px;--page-title-line:32px;--control-height:44px;--control-compact-height:44px;--touch-target:44px;
- --input-font:16px;--panel-padding:16px;--overlay-padding:16px}
+ /* Compact geometry follows the shared scale; pointer type does not enlarge controls (§3.2, §3.5). */
+ :root{--page-inset:12px;--page-header-top:calc(8px + env(safe-area-inset-top));--page-header-gap:12px;
+ --control-gap:4px;--section-gap:12px;--item-padding:8px;
+ --input-font:16px;--panel-padding:12px;--overlay-padding:12px}
 }
-@media(pointer:coarse){:root{--touch-target:44px;--control-height:44px;--control-compact-height:44px}}

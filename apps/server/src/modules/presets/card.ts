@@ -1,3 +1,4 @@
+import { decodeParameters, encodedParametersSchema, encodeParameters } from './model-parameters.js';
 import { z } from 'zod';
 import { presetValueSchema } from './schema.js';
 import type { PresetValue } from './types.js';
@@ -13,7 +14,7 @@ export type PresetDocument = {
     max_output_tokens: number;
     summary_prompt: string;
   };
-  model_parameters: { temperature?: number; thinking_enabled: boolean; thinking_level?: PresetValue['config']['modelParameters']['thinkingLevel'] };
+  model_parameters: ReturnType<typeof encodeParameters>;
 };
 
 const documentSchema = z.object({
@@ -26,11 +27,7 @@ const documentSchema = z.object({
     max_output_tokens: z.unknown(),
     summary_prompt: z.unknown(),
   }).strict(),
-  model_parameters: z.object({
-    temperature: z.unknown().optional(),
-    thinking_enabled: z.unknown().optional(),
-    thinking_level: z.unknown().optional(),
-  }).strict(),
+  model_parameters: encodedParametersSchema,
 }).strict();
 
 export function parsePresetDocument(input: unknown): PresetValue {
@@ -48,11 +45,7 @@ export function parsePresetDocument(input: unknown): PresetValue {
         maxOutputTokens: value.context_strategy.max_output_tokens,
         summaryPrompt: value.context_strategy.summary_prompt,
       },
-      modelParameters: {
-        ...(Object.hasOwn(value.model_parameters, 'temperature') ? { temperature: value.model_parameters.temperature } : {}),
-        thinkingEnabled: value.model_parameters.thinking_enabled,
-        ...(Object.hasOwn(value.model_parameters, 'thinking_level') ? { thinkingLevel: value.model_parameters.thinking_level } : {}),
-      },
+      modelParameters: decodeParameters(value.model_parameters),
     },
   });
 }
@@ -69,10 +62,6 @@ export function toPresetDocument(value: PresetValue): PresetDocument {
       max_output_tokens: config.contextStrategy.maxOutputTokens,
       summary_prompt: config.contextStrategy.summaryPrompt,
     },
-    model_parameters: {
-      ...(config.modelParameters.temperature === undefined ? {} : { temperature: config.modelParameters.temperature }),
-      thinking_enabled: config.modelParameters.thinkingEnabled,
-      ...(config.modelParameters.thinkingLevel === undefined ? {} : { thinking_level: config.modelParameters.thinkingLevel }),
-    },
+    model_parameters: encodeParameters(config.modelParameters),
   };
 }

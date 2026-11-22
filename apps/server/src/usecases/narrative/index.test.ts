@@ -233,7 +233,7 @@ describe('unified narrative events and independent persistence', () => {
   it.each([
     { name: 'provider failure', events: [text('半段'), failure('provider_error', '半段后续')], body: '半段后续', reason: 'provider_error', knownUsage: usage },
     { name: 'missing terminal', events: [text('半段')], body: '半段', reason: 'output_incomplete', knownUsage: null },
-    { name: 'length limit', events: [text('半段'), done('半段后续', { finishReason: 'length' })], body: '半段后续', reason: 'output_incomplete', knownUsage: usage },
+    { name: 'length limit', events: [text('半段'), done('半段后续', { finishReason: 'length' })], body: '半段后续', reason: 'output_limit_reached', knownUsage: usage },
     { name: 'deferred completion', events: [done('待续', { finishReason: 'deferred' })], body: '待续', reason: 'output_incomplete', knownUsage: usage },
     { name: 'provider abort', events: [failure('aborted', '已收到')], body: '已收到', reason: 'provider_aborted', knownUsage: usage },
     { name: 'provider context overflow', events: [failure('context_window_exceeded', '部分', { usage: null })], body: '部分', reason: 'provider_context_window_exceeded', knownUsage: null },
@@ -252,10 +252,14 @@ describe('unified narrative events and independent persistence', () => {
     expect(runUsage(accepted.runId)).toEqual(wireUsage(knownUsage));
   });
 
-  it('keeps public reasoning without making it an empty history turn or a successful visible answer', async () => {
-    script([done('', { snapshot: snapshot('', { reasoning_content: '已公开的思考' }) })]);
+  it.each([
+    ['stop', 'model_output_invalid'], ['length', 'output_limit_reached'],
+  ] as const)('preserves reasoning-only output and its outcome for finish reason %s', async (finishReason, reason) => {
+    script([done('', { finishReason, snapshot: snapshot('', { reasoning_content: '已公开的思考' }) })]);
     const first = submit('第一轮');
-    expect(await first.finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'model_output_invalid' } });
+    expect(await first.finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: reason } });
+    expect(narrative.list('session').items.find(run => run.runId === first.accepted.runId))
+      .toMatchObject({ status: 'stopped', stopReason: reason });
     expect(history()[1]!.payload.message).toMatchObject(snapshot('', { reasoning_content: '已公开的思考' }));
     script([done('下一轮正文')]);
     expect((await submit('下一轮').finished).event).toBe('run.completed');

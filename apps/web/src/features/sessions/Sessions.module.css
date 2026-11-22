@@ -4,13 +4,13 @@
 .listIntro span+span{font-size:12px;font-weight:400;color:var(--text-muted)}
 .list{width:100%;min-width:0;border-top:1px solid var(--stroke)}
 
-.detail{--session-toolbar-height:74px;--composer-glass-bg:var(--glass-bg);--composer-glass-edge:var(--glass-border);--composer-glass-shadow:var(--glass-shadow);height:var(--session-viewport-height,100dvh);min-width:0;display:flex;flex-direction:column;position:relative;overflow:hidden}
-.topbar{height:74px;min-height:74px;padding:0 34px;display:flex;align-items:center;justify-content:space-between;gap:20px;border-bottom:1px solid var(--stroke);z-index:1}
-.identity{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.detail{--session-toolbar-height:var(--space-12);--composer-glass-bg:var(--glass-bg);--composer-glass-edge:var(--glass-border);--composer-glass-shadow:var(--glass-shadow);height:var(--session-viewport-height,100dvh);min-width:0;display:flex;flex-direction:column;position:relative;overflow:hidden}
+/* One title line and compact actions share a fixed toolbar; the stage receives the freed space. */
+.topbar{height:var(--session-toolbar-height);min-height:var(--session-toolbar-height);flex:none;padding:0 var(--page-inset);display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);border-bottom:1px solid var(--stroke);z-index:1}
+.identity{flex:1;min-width:0}
 .identity h1{font-size:16px;font-weight:600;line-height:22px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.identity>span{font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.topActions{display:flex;align-items:center;gap:16px;flex-shrink:0}
-.contextButton{display:flex;align-items:center;gap:10px;min-height:40px;padding:0 6px;border-radius:8px;color:var(--text-muted);font-size:12px}
+.topActions{display:flex;align-items:center;gap:var(--control-gap);flex-shrink:0}
+.contextButton{display:flex;align-items:center;gap:var(--control-gap);min-height:var(--control-compact-height);padding:0 var(--space-1);border-radius:8px;color:var(--text-muted);font-size:12px}
 .contextButton:hover,.iconButton:hover{background:var(--surface-hover);color:var(--text)}
 .contextBar,.contextDetailBar{display:flex;overflow:hidden;border-radius:9px;height:7px;width:128px;background:var(--surface-hover)}
 .contextBar i,.contextDetailBar i{display:block;height:100%}
@@ -19,10 +19,9 @@
 .contextBar i:last-child,.contextDetailBar i:last-child{width:46%;background:var(--usage-history)}
 .divider{height:22px;width:1px;background:var(--stroke)}
 .status{display:inline-flex;align-items:center;gap:7px;color:var(--text-muted);font-size:12px;white-space:nowrap}
-.status i{width:7px;height:7px;border-radius:50%;background:var(--text-muted)}
-.status[data-active="true"] i{background:var(--accent)}
-.status[data-error="true"] i{background:var(--danger)}
-.iconButton{display:grid;place-items:center;width:40px;height:40px;border-radius:8px;color:var(--text-secondary)}
+.status i{width:7px;height:7px;border-radius:50%;background:var(--connection-offline)}
+.status[data-connected="true"] i{background:var(--connection-online)}
+.iconButton{display:grid;place-items:center;width:var(--touch-target);height:var(--touch-target);border-radius:8px;color:var(--text-secondary)}
 .mobileBack{display:none}
 
 /* The stage extends behind the glass; the Host reports its real occluded height. */
@@ -87,23 +86,20 @@
 }
 @media(max-width:1080px){
   .listPage,:global([data-collapsed="true"]) .listPage{padding-top:var(--page-header-top)}
-  .topbar{padding-inline:24px}
 }
 @media(max-width:760px){
   .listPage,:global([data-collapsed="true"]) .listPage{padding-top:var(--page-header-top)}
 
   .listIntro{margin-bottom:12px}
-  .topbar{height:68px;min-height:68px;padding:0 12px;gap:6px}
-  .mobileBack{display:grid;place-items:center;width:44px;height:44px;flex:none;border-radius:var(--radius-sm);color:var(--text-secondary)}
+  .topbar{gap:var(--space-1)}
+  .mobileBack{display:grid;place-items:center;width:var(--touch-target);height:var(--touch-target);flex:none;border-radius:var(--radius-sm);color:var(--text-secondary)}
   .identity{flex:1;min-width:0}
   .identity h1{font-size:15px}
-  .topActions{gap:3px}
   .contextButton{gap:0;padding:0 5px}
   .contextLabel,.divider{display:none}
   .contextBar{width:48px;height:6px}
   .status{font-size:11px;gap:5px}
-  .contextButton,.iconButton{min-width:44px;min-height:44px}
-  .detail{--session-toolbar-height:68px}
+  .contextButton{min-width:var(--touch-target)}
   .composerArea{padding:8px 12px max(12px,env(safe-area-inset-bottom))}
   .composer{gap:3px;padding:5px;border-radius:22px}
   .editor :global(.sr-composer-editor){font-size:16px;max-height:min(168px,var(--composer-editor-room,168px),max(44px,calc((var(--session-viewport-height,100dvh) - var(--session-toolbar-height)) * .34)))}

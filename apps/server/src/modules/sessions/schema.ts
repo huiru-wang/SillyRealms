@@ -87,7 +87,7 @@ export const narrativeStopReasonSchema = z.enum([
   'cancelled', 'server_shutdown', 'provider_aborted', 'provider_error',
   'provider_context_window_exceeded', 'model_not_found', 'model_capability_unsupported',
   'credential_not_configured', 'credential_unavailable', 'context_budget_exceeded',
-  'invalid_context', 'output_incomplete', 'model_output_invalid', 'tool_execution_unsupported',
+  'invalid_context', 'output_limit_reached', 'output_incomplete', 'model_output_invalid', 'tool_execution_unsupported',
   'summary_capacity_exceeded', 'summary_failed',
   'message_persist_failed', 'tip_conflict', 'session_deleted', 'internal_error',
 ]);

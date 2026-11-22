@@ -2,7 +2,7 @@
 .sr-page-header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:0 var(--space-3);min-height:var(--page-header-height);margin:0 0 var(--page-header-gap);flex:none}
 .sr-page-title{min-width:0;display:flex;align-items:center;min-height:var(--page-header-height)}
 .sr-page-title h1{margin:0;font-size:var(--page-title-size);line-height:var(--page-title-line);font-weight:var(--weight-strong);letter-spacing:normal;overflow-wrap:anywhere}
-.sr-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:var(--space-2);min-width:0}
+.sr-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:var(--control-gap);min-width:0}
 .sr-page-description{grid-column:1/-1;margin:var(--space-2) 0 0;color:var(--text-muted);font-size:var(--font-14);line-height:var(--line-body)}
 .sr-button{--button-bg:var(--action-secondary-bg);--button-fg:var(--action-secondary-fg);--button-hover:var(--action-secondary-hover);--button-pressed:var(--action-secondary-pressed);--button-border:var(--control-border);display:inline-flex;justify-content:center;align-items:center;gap:var(--control-gap);min-height:var(--control-height);min-width:0;padding:var(--space-1) var(--control-padding);border:1px solid var(--button-border);border-radius:var(--radius-control);background:var(--button-bg);color:var(--button-fg);font:var(--weight-regular) var(--control-font)/var(--line-label) var(--font-ui);text-decoration:none;cursor:pointer;transition:background var(--motion-fast),border-color var(--motion-fast),color var(--motion-fast);vertical-align:middle}
 .sr-button[data-variant="primary"]{--button-bg:var(--action-primary-bg);--button-fg:var(--action-primary-fg);--button-hover:var(--action-primary-hover);--button-pressed:var(--action-primary-pressed);--button-border:transparent;font-weight:var(--weight-strong)}
@@ -20,6 +20,8 @@
 .sr-button[aria-busy="true"]{color:var(--text-secondary)}
 @media(hover:hover){.sr-button:not(:disabled):hover{background:var(--button-hover);color:var(--button-fg)}}
 .sr-button:not(:disabled):active{background:var(--button-pressed)}
+/* Inset visual feedback leaves the full icon target and focus outline intact. */
+.sr-button.sr-icon-button[data-inset="true"]{padding:var(--space-1);border:0;background-clip:content-box}
 .sr-button:focus-visible,.sr-input:focus-visible,.sr-switch:focus-visible{outline:2px solid var(--focus);outline-offset:3px}
 /* Restored pointer focus is not a selected state; keyboard interaction clears this marker. */
 :is(button,a)[data-pointer-focus]:focus-visible{outline:none}
@@ -47,3 +49,6 @@
 .sr-switch:disabled{cursor:not-allowed}
 .sr-switch:disabled .sr-switch-track{background:var(--surface);border-color:var(--stroke)}
 .sr-switch:disabled .sr-switch-track>span{background:var(--text-disabled)}
+
+.sr-range{width:100%;min-width:0;height:var(--touch-target);margin:0;accent-color:var(--action-primary-bg);cursor:pointer}
+.sr-range:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:var(--radius-control)}

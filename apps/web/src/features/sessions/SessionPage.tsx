@@ -45,13 +45,15 @@ function SessionView({workspace,reload}:{workspace:SessionWorkspace;reload:()=>v
   };
   const stop=async()=>{if(!activeRun)return;try{await command('narrative.stop',{runId:activeRun});}catch(reason){setNotice(reason instanceof Error?reason.message:'停止请求失败');}};
   const error=notice||view.notice;
+  const title=session?.title||session?.worldName||'会话';
+  const titleHint=session?.worldName&&session.worldName!==title?title+' · '+session.worldName:title;
   return <section ref={layout.detail} className={styles.detail} data-session-detail={stage.sessionId}>
     <header className={styles.topbar} data-session-toolbar>
       <Link to="/sessions" className={styles.mobileBack} aria-label="返回会话列表"><ArrowLeft size={20}/></Link>
-      <div className={styles.identity}><h1 title={session?.title??''}>{session?.title||session?.worldName||'会话'}</h1><span>{session?.worldName??'正在读取会话'}</span></div>
+      <div className={styles.identity}><h1 title={titleHint}>{title}</h1></div>
       <div className={styles.topActions}>
-        <SessionTokenUsage sessionId={stage.sessionId} refreshKey={view.usageRevision} latestUsage={view.latestUsage}/>
-        <span className={styles.status} data-active={!!activeRun} data-error={!stage.connected} role="status" title={label}><i/><span>{label}</span></span>
+        <SessionTokenUsage sessionId={stage.sessionId} refreshKey={view.usageRevision}/>
+        <span className={styles.status} data-connected={stage.connected} role="status" title={label}><i aria-hidden="true"/><span>{label}</span></span>
         <button className={styles.iconButton} disabled={!session} aria-label="会话设置" onClick={()=>setSettingsOpen(true)}><Settings2 size={18}/></button>
       </div>
     </header>

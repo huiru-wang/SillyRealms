@@ -149,8 +149,7 @@ describe('create a ready session', () => {
     const context = await prepareContext({
       ...services, modelClient: { resolve: () => model, assertMessageOrder: vi.fn() }, summarize,
     }, {
-      kind: 'narrative', sessionId: 'session', runId: user.runId, inputText: '进门',
-      userEntryId: user.id, previousTipEntryId: result.entry.id, signal: new AbortController().signal,
+      sessionId: 'session', signal: new AbortController().signal,
     });
     expect(context.ok).toBe(true);
     if (!context.ok) throw new Error(context.failure.code);

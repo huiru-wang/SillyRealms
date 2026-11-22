@@ -1,3 +1,4 @@
+import { samplingError, samplingFields, samplingValues } from './sampling.ts';
 import type { WebPreset, PresetDetail, PresetInput } from './types.js';
 
 const systemIds = ['main', 'personaInfo', 'characterInfo', 'worldInfo', 'chatHistory', 'userInput'];
@@ -11,9 +12,7 @@ export function fromServer(raw: PresetDetail): WebPreset {
     contextStrategy: raw.config.contextStrategy.strategy,
     maxContextTokens: raw.config.contextStrategy.maxContextTokens,
     maxOutputTokens: raw.config.contextStrategy.maxOutputTokens,
-    temperature: raw.config.modelParameters.temperature,
-    thinkingEnabled: raw.config.modelParameters.thinkingEnabled,
-    thinkingLevel: raw.config.modelParameters.thinkingLevel,
+    ...raw.config.modelParameters,
     summaryPrompt: raw.config.contextStrategy.summaryPrompt,
     nodes: structuredClone(raw.config.nodes),
     revision: raw.revision,
@@ -25,7 +24,10 @@ export function getPresetValidationError(preset: WebPreset): string | null {
   if (!preset.name.trim()) return '请输入预设名称。';
   if (!['rolling_summary', 'sliding_window'].includes(preset.contextStrategy)) return '请选择上下文策略。';
   if (!Number.isSafeInteger(preset.maxContextTokens) || preset.maxContextTokens < 2 || !Number.isSafeInteger(preset.maxOutputTokens) || preset.maxOutputTokens < 1) return '请输入有效的上下文和输出预算。';
-  if (preset.temperature !== undefined && (!Number.isFinite(preset.temperature) || preset.temperature < 0 || preset.temperature > 2)) return '温度必须在 0 到 2 之间。';
+  for (const field of samplingFields) {
+    const error = samplingError(field, preset[field.key]);
+    if (error) return error;
+  }
   if (typeof preset.thinkingEnabled !== 'boolean') return '请选择是否开启深度思考。';
   if (preset.thinkingLevel !== undefined && !['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(preset.thinkingLevel)) return '请选择有效的思考深度。';
   const ids = new Set<string>();
@@ -52,7 +54,7 @@ export function presetInput(preset: WebPreset):PresetInput {
     config:{
       schemaVersion:1,nodes:preset.nodes.map(({id,name,kind,role,enabled,prompt})=>({id,name,kind,role,enabled,prompt})),
       contextStrategy:{strategy:preset.contextStrategy,maxContextTokens:preset.maxContextTokens,maxOutputTokens:preset.maxOutputTokens,summaryPrompt:preset.summaryPrompt},
-      modelParameters:{...(preset.temperature===undefined?{}:{temperature:preset.temperature}),thinkingEnabled:preset.thinkingEnabled,...(preset.thinkingLevel===undefined?{}:{thinkingLevel:preset.thinkingLevel})},
+      modelParameters:{...samplingValues(preset),thinkingEnabled:preset.thinkingEnabled,...(preset.thinkingLevel===undefined?{}:{thinkingLevel:preset.thinkingLevel})},
     },
   };
 }

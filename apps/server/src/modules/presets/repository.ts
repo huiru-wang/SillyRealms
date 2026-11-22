@@ -1,3 +1,4 @@
+import { encodeParameters } from './model-parameters.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { encodeJson } from '../../infrastructure/database/connection.js';
 import type { PresetValue } from './types.js';
@@ -11,7 +12,7 @@ type StoredConfig = {
     max_output_tokens: number;
     summary_prompt: string;
   };
-  model_parameters: { temperature?: number; thinking_enabled: boolean; thinking_level?: PresetValue['config']['modelParameters']['thinkingLevel'] };
+  model_parameters: ReturnType<typeof encodeParameters>;
 };
 
 export type StoredPreset = {
@@ -37,11 +38,7 @@ function storedConfig(config: PresetValue['config']): StoredConfig {
       max_output_tokens: config.contextStrategy.maxOutputTokens,
       summary_prompt: config.contextStrategy.summaryPrompt,
     },
-    model_parameters: {
-      ...(config.modelParameters.temperature === undefined ? {} : { temperature: config.modelParameters.temperature }),
-      thinking_enabled: config.modelParameters.thinkingEnabled,
-      ...(config.modelParameters.thinkingLevel === undefined ? {} : { thinking_level: config.modelParameters.thinkingLevel }),
-    },
+    model_parameters: encodeParameters(config.modelParameters),
   };
 }
 
