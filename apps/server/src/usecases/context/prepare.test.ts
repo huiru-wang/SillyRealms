@@ -8,7 +8,7 @@ import type { ModelInfo } from '../../infrastructure/model/client.js';
 import type { EntryMetrics } from '../../modules/sessions/service.js';
 import { createServices, type Services } from '../../services.js';
 import { memoryCredentials } from '../../testing/credentials.js';
-import { narrativePreset } from '../../testing/fixtures.js';
+import { narrativePreset, withEmptyModelNotes } from '../../testing/fixtures.js';
 import { prepareContext, type ContextDependencies, type ContextProgress, type PrepareContextInput } from './index.js';
 
 const model: ModelInfo = {
@@ -96,7 +96,7 @@ describe('public context preparation', () => {
     expect(prepared).toMatchObject({ ok: true, parentEntryId: 'answer' });
     if (!prepared.ok) throw new Error(prepared.failure.code);
     expect(prepared.request.messages.filter(message => message.role !== 'system').map(message => [message.role, message.content]))
-      .toEqual([['user', 'Current input'], ...(content ? [['assistant', content]] : [])]);
+      .toEqual([['user', 'Current input'], ...(content ? [['assistant', withEmptyModelNotes(content)]] : [])]);
     expect(prepared.diagnostics.nodes.find(node => node.id === 'userInput')).toMatchObject({ included: false });
     expect(services.sessions.getHistory('session')).toHaveLength(2);
   });
@@ -250,7 +250,7 @@ describe('public context preparation', () => {
     if (!prepared.ok) throw new Error(prepared.failure.code);
     expect(prepared.request.messages.filter(message => message.role === 'user')).toEqual([]);
     expect(prepared.request.messages.filter(message => message.role === 'assistant').map(message => message.content))
-      .toEqual(['Recent 3', 'Recent 4', 'Recent 5', 'Recent 6', 'Recent 7']);
+      .toEqual(['Recent 3', 'Recent 4', 'Recent 5', withEmptyModelNotes('Recent 6'), withEmptyModelNotes('Recent 7')]);
   });
 
   it('saves a new summary after an existing trailing compaction instead of trying to append to the user', async () => {

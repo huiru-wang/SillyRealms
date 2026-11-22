@@ -59,6 +59,14 @@ describe('create a ready session', () => {
       state: [{ key: 'coins', value: 20 }, { key: 'energy', value: 5 }, { key: 'bag', value: { gold: 5 } }],
       metrics: null, extData: { narrative: { status: 'completed', finishedAt: result.entry.timestamp } } });
     expect(services.worlds.require('world')).toEqual(globalBefore);
+    expect(services.sessions.getEntry('session', result.entry.id)?.extData.output).toEqual({
+      stateUpdate: { status: 'success', updates: [
+        { status: 'success', path: 'coins', value: 20 },
+        { status: 'success', path: 'energy', value: 5 },
+        { status: 'success', path: 'bag', value: { gold: 5 } },
+      ] },
+      actionSuggestions: { status: 'no_suggestions', items: [] },
+    });
     expect(order).toEqual(['commit', 'event']);
     expect(received).toEqual([{ event: 'session.created', data: { sessionId: 'session', tipEntryId: result.entry.id, timestamp: result.entry.timestamp, entry: result.entry } }]);
     expect(foreign).not.toHaveBeenCalled();
@@ -81,6 +89,9 @@ describe('create a ready session', () => {
     expect(result.item.title).toBeNull();
     expect(result.item.state).toEqual({});
     expect(result.entry.state).toEqual([]);
+    expect(result.entry.extData.output).toEqual({
+      stateUpdate: { status: 'no_updates', updates: [] }, actionSuggestions: { status: 'no_suggestions', items: [] },
+    });
   });
 
   it.each([
@@ -101,7 +112,12 @@ describe('create a ready session', () => {
     expect(services.sessions.get('session')).toBeNull();
   });
 
-  it.each([{ unknown: 1 }, { coins: 999 }, { bag: { surprise: true } }, { 'bag.gold': 1 }] as JsonObject[])('rejects invalid initial overrides: %j', initialState => {
+  it('allows opening overrides without rules for the new fields', () => {
+    services.worlds.update('world', { openings: [{ id: 'start', name: 'Start', content: 'Hi', initial_state: { bag: { surprise: true } } }] });
+    expect(usecases.createSession(input).entry.state).toContainEqual({ key: 'bag', value: { surprise: true } });
+  });
+
+  it.each([{ unknown: 1 }, { coins: 999 }, { 'bag.gold': 1 }] as JsonObject[])('rejects invalid initial overrides: %j', initialState => {
     services.worlds.update('world', { openings: [{ id: 'start', name: 'Start', content: 'Hi', initial_state: initialState }] });
     const publish = vi.spyOn(events, 'publish');
     expect(() => usecases.createSession(input)).toThrow();
@@ -155,7 +171,11 @@ describe('create a ready session', () => {
     if (!context.ok) throw new Error(context.failure.code);
     expect(context.parentEntryId).toBe(user.id);
     expect(context.request.messages.filter(message => message.role === 'assistant'))
-      .toEqual([{ content: '掌柜，欢迎回来。掌柜！', role: 'assistant', timestamp: result.entry.timestamp }]);
+      .toEqual([{ role: 'assistant', timestamp: result.entry.timestamp, content: [
+        '掌柜，欢迎回来。掌柜！', '', '<state_update>',
+        '{"path":"coins","value":20}', '{"path":"energy","value":5}', '{"path":"bag","value":{"gold":5}}',
+        '</state_update>', '<action_suggestions>[]</action_suggestions>',
+      ].join('\n') }]);
     expect(context.request.activeRoots).toEqual(['coins', 'bag']);
     const instructions = context.request.messages.at(-1)!.content;
     expect(instructions).toContain('value: 20');

@@ -39,3 +39,20 @@ test('summary is required only for rolling summary and zero temperature is retai
  draft.contextStrategy='rolling_summary';assert.equal(getPresetValidationError(draft),'压缩提示词不能为空。');
  draft.summaryPrompt='Summarize';assert.equal(getPresetValidationError(draft),null);
 });
+
+test('range edits preserve exact values, explicit zero and missing fields through save and copy', () => {
+ const draft = fromServer(detail());
+ Object.assign(draft, { temperature: '0.735', topP: '1', frequencyPenalty: '-2', presencePenalty: 0 });
+ assert.equal(getPresetValidationError(draft), null);
+ assert.deepEqual(presetInput(draft).config.modelParameters, {
+   thinkingEnabled: false, temperature: 0.735, topP: 1, frequencyPenalty: -2, presencePenalty: 0,
+ });
+ for (const incomplete of ['', '-', '3', '0x1', 'Infinity']) {
+   draft.frequencyPenalty = incomplete;
+   assert.match(getPresetValidationError(draft), /频率惩罚/);
+   assert.throws(() => presetInput(draft));
+ }
+ draft.frequencyPenalty = undefined;
+ assert.equal(getPresetValidationError(draft), null);
+ assert.equal(Object.hasOwn(presetInput(draft).config.modelParameters, 'frequencyPenalty'), false);
+});

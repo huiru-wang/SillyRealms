@@ -83,6 +83,24 @@ describe('typed preset persistence', () => {
     expect(() => presets.update(saved.id, { config: { ...saved.config, contextStrategy: { ...saved.config.contextStrategy, strategy: 'rolling_summary' } } })).toThrow();
   });
 
+  it('preserves numeric overrides in storage and portable files, and can clear them', () => {
+    const input = preset();
+    const parameters = { temperature: 0.735, topP: 0, frequencyPenalty: -2, presencePenalty: 2, thinkingEnabled: false };
+    input.config.modelParameters = parameters;
+    const saved = presets.create(input);
+    expect(presets.require(saved.id).config.modelParameters).toEqual(parameters);
+    const document = presets.toDocument(saved);
+    expect(document.model_parameters).toEqual({
+      temperature: 0.735, top_p: 0, frequency_penalty: -2, presence_penalty: 2, thinking_enabled: false,
+    });
+    expect(presets.importDocument(document).config.modelParameters).toEqual(parameters);
+    for (const patch of [{ top_p: 1.1 }, { presence_penalty: -3 }, { frequency_penalty: null }, { top_p: '1' }]) {
+      expect(() => presets.importDocument({ ...document, model_parameters: { ...document.model_parameters, ...patch } })).toThrow();
+    }
+    presets.update(saved.id, { config: { ...saved.config, modelParameters: { thinkingEnabled: false } } });
+    expect(presets.toDocument(presets.require(saved.id)).model_parameters).toEqual({ thinking_enabled: false });
+  });
+
   it.each(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const)('persists and imports/exports the %s thinking depth', level => {
     const input = preset();
     input.config.modelParameters = { thinkingEnabled: true, thinkingLevel: level };
@@ -225,13 +243,13 @@ describe('model configurations and application defaults', () => {
 });
 
 describe('default postprocess prompt resolution', () => {
-  it('uses JSONL state blocks and optional suggestions in fresh defaults', () => {
+  it('distinguishes read-only context from writable message state in fresh defaults', () => {
     const config = presets.ensureDefault().config;
     const resolved = resolvePostprocessPrompts(config);
-    expect(resolved.worldState).toContain('JSONL');
-    expect(resolved.worldState).toContain('{{state.entries}}');
-    expect(resolved.worldState).toContain('<state_update></state_update>');
-    expect(resolved.worldState).not.toContain('最多100项');
+    expect(resolved.worldState).toContain('【全局状态｜只读】\n{{state.global}}');
+    expect(resolved.worldState).toContain('【会话状态｜只读】\n{{state.session}}');
+    expect(resolved.worldState).toContain('【消息状态｜可更新】\n{{state.message}}');
+    expect(resolved.worldState).toContain('本轮没有可更新的消息状态时，省略 state_update');
     expect(resolved.actionSuggestions).toContain('优先生成三个');
     expect(resolved.actionSuggestions).toContain('空标签、空数组或省略标签');
     expect(resolved.actionSuggestions).not.toContain('必须输出');
@@ -249,11 +267,24 @@ describe('default postprocess prompt resolution', () => {
     const stored = presets.update(current.id, { config }, current.revision)!;
     const before = structuredClone(stored);
     expect(resolvePostprocessPrompts(stored.config)).toEqual({
-      worldState: '  Custom worldState {{state.entries}}  ',
-      actionSuggestions: '  Custom actionSuggestions {{state.entries}}  ',
+      worldState: '  Custom worldState {{state.message}}  ',
+      actionSuggestions: '  Custom actionSuggestions {{state.message}}  ',
     });
     expect(presets.require(stored.id)).toEqual(before);
     expect(stored).toEqual(before);
+  });
+
+  it('normalizes legacy references, preserves literals and round-trips valid field paths', () => {
+    const document = presets.toDocument(preset());
+    const node = document.config_json.nodes[0]!;
+    node.prompt = String.raw`{{ state.entries }} literal \{{state.entries}} slash \\{{state.entries}}`;
+    const imported = presets.importDocument(document);
+    expect(presets.toDocument(imported).config_json.nodes[0]!.prompt)
+      .toBe(String.raw`{{state.message}} literal \{{state.entries}} slash \\{{state.message}}`);
+    node.prompt = '{{state.session.人设.姓名}}';
+    expect(presets.toDocument(presets.importDocument(document)).config_json.nodes[0]!.prompt).toBe(node.prompt);
+    node.prompt = '{{state.session.人设..姓名}}';
+    expect(() => presets.importDocument(document)).toThrow('状态变量路径无效');
   });
 
   it('fills missing or blank capability prompts and leaves the provided config untouched', () => {

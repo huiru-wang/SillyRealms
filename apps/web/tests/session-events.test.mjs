@@ -21,7 +21,7 @@ test('one session connection dispatches explicit namespaces and survives broken 
  source.emit('open','');
  source.emit('state.changed',{path:'',scope:'message',value:{coins:8}});
  assert.deepEqual(seen[0].data,{path:'',scope:'message',value:{coins:8}});
- source.emit('run.completed',{sessionId:'s',runId:'r',savedMessageIds:['u','a'],tipEntryId:'a'});
+ source.emit('run.completed',{sessionId:'s',runId:'r',assistantEntryId:'a',savedMessageIds:['u','a'],tipEntryId:'a'});
  assert.equal(seen.length,2);assert.equal(source.closed,false);
  source.emit('error','');source.emit('open','');
  assert.equal(connections.at(-1).generation,2);assert.equal(connections.at(-1).connected,true);
@@ -38,4 +38,14 @@ test('malformed, foreign-session and unsupported events cannot poison later vali
  source.emit('state.changed',{path:'',scope:'invalid',value:{}});
  source.emit('action_suggestions.created',{sessionId:'s',runId:'r',messageId:'a',items:['向前']});
  assert.equal(seen.length,1);assert.equal(seen[0].event,'action_suggestions.created');
+});
+
+test('deletion and created events validate execution identity and the committed receipt',()=>{
+ const source=new Source(),seen=[],channel=createSessionEventChannel({sessionId:'s',createSource:()=>source});
+ channel.subscribe('*',event=>seen.push(event));channel.connect();
+ const data={sessionId:'s',runId:'r',assistantEntryId:'new-a',messageId:'old-a',tipEntryId:'summary'};
+ source.emit('message.deleted',data);source.emit('message.deleted',{...data,assistantEntryId:undefined});
+ source.emit('run.created',{sessionId:'s',runId:'r',assistantEntryId:'new-a',messages:[{id:'u'}],tipEntryId:'summary',deletedMessageIds:['old-a']});
+ source.emit('run.created',{sessionId:'s',runId:'r',assistantEntryId:'new-a',messages:[{id:'u'}]});
+ assert.deepEqual(seen.map(event=>event.event),['message.deleted','run.created']);channel.dispose();
 });

@@ -591,3 +591,31 @@ describe('server-owned narrative output', () => {
     expect(save(empty).extData.output).toEqual(empty);
   });
 });
+
+describe('generic entry deletion', () => {
+  it('reconnects direct successors, inherits message state and does not clear the round outcome', () => {
+    create();
+    append('session','user',{role:'user',state:[{key:'coins',value:5}]});
+    append('session','assistant',{state:[{key:'coins',value:3}],metrics:metrics('old')});
+    append('session','summary',{type:'compaction',role:null,payload:{summary:'S'}});
+    sessions.setNarrativeOutcome('session','user',{status:'completed',finishedAt:12});
+    expect(sessions.deleteEntry('session','assistant','summary')).toMatchObject({entry:{id:'assistant'},tipEntryId:'summary'});
+    expect(sessions.getEntry('session','summary')!.parentId).toBe('user');
+    expect(services.state.getCurrentMessage('session')).toEqual({coins:5});
+    expect(sessions.getNarrativeOutcome(sessions.getEntry('session','user')!)).toEqual({status:'completed',finishedAt:12});
+    expect(sessions.recordedUsage('session').recordedRequestCount).toBe(0);
+    expect(sessions.deleteEntry('session','summary','summary').tipEntryId).toBe('user');
+    expect(sessions.deleteEntry('session','user','user').tipEntryId).toBeNull();
+    expect(sessions.getHistory('session')).toEqual([]);
+  });
+  it('rejects mismatched tips, foreign entries and writes without the exact active permit', () => {
+    create();create('other');append('session','a');append('other','foreign');
+    expect(()=>sessions.deleteEntry('session','a',null)).toThrow('TIP_CONFLICT');
+    expect(()=>sessions.deleteEntry('session','foreign','a')).toThrow('ENTRY_NOT_FOUND');
+    const permit=services.cache.acquireRun({sessionId:'session',worldId:'world',runId:'run'});
+    expect(()=>sessions.deleteEntry('session','a','a')).toThrow('SESSION_WRITE_LOCKED');
+    expect(sessions.getEntry('session','a')).not.toBeNull();
+    expect(sessions.deleteEntry('session','a','a',permit).tipEntryId).toBeNull();
+    services.cache.releaseRun(permit);
+  });
+});

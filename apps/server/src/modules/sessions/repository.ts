@@ -210,13 +210,29 @@ export class SessionRepository {
     return row ? { seq: Number(row.seq), metrics: readStoredMetrics(JSON.parse(String(row.metrics_json))) } : null;
   }
 
-  setNarrativeOutcome(sessionId: string, entryId: string, outcome: NarrativeOutcome): EntryRow {
+  deleteEntry(sessionId: string, entryId: string, expectedTipEntryId: string | null) {
+    return transaction(this.#db, () => {
+      const session = this.#requireSession(sessionId);
+      if (session.tip_entry_id !== expectedTipEntryId) throw new AppError('TIP_CONFLICT');
+      const entry = this.#requireEntry(sessionId, entryId), now = Date.now();
+      this.#db.prepare('UPDATE entries SET parent_id=?,updated_at=? WHERE session_id=? AND parent_id=?')
+        .run(entry.parent_id, now, sessionId, entryId);
+      this.#db.prepare('DELETE FROM entries WHERE session_id=? AND id=?').run(sessionId, entryId);
+      const tipEntryId = session.tip_entry_id === entryId ? entry.parent_id : session.tip_entry_id;
+      this.#db.prepare('UPDATE sessions SET tip_entry_id=?,updated_at=? WHERE id=?').run(tipEntryId, now, sessionId);
+      return { entry, tipEntryId };
+    });
+  }
+
+  setNarrativeOutcome(sessionId: string, entryId: string, outcome: NarrativeOutcome | null): EntryRow {
     return transaction(this.#db, () => {
       const current = this.#requireEntry(sessionId, entryId);
       const first = this.#db.prepare('SELECT id FROM entries WHERE session_id=? AND run_id=? ORDER BY seq LIMIT 1').get(sessionId, current.run_id);
       if (current.type !== 'message' || first?.id !== current.id) throw new AppError('INVALID_REQUEST', '结束结果只能保存在该 run 的首条消息');
+      const ext = { ...current.ext_data };
+      if (outcome === null) delete ext.narrative; else ext.narrative = outcome;
       this.#db.prepare('UPDATE entries SET ext_data=?,updated_at=? WHERE session_id=? AND id=?')
-        .run(encodeJson({ ...current.ext_data, narrative: outcome }, 'object'), Date.now(), sessionId, entryId);
+        .run(encodeJson(ext, 'object'), Date.now(), sessionId, entryId);
       return this.#requireEntry(sessionId, entryId);
     });
   }

@@ -3,6 +3,22 @@ import { cardToWorld, parseCard } from './parser.js';
 import { worldCardFixture } from './test-fixtures.js';
 
 describe('world card protocol', () => {
+  it('accepts optional and partial rule maps and rejects malformed entries at import', () => {
+    const raw = worldCardFixture();
+    const parse = (fields: object) => parseCard({ ...raw, data: { ...raw.data,
+      state: { schema_version: 2, scopes: { message: { bag: {
+        type: 'json', initial: { items: [], gold: 5 }, description: 'Bag', ...fields,
+      } } } },
+      openings: [{ ...raw.data.openings[0], initial_state: { bag: { items: [{ extra: 1 }] } } }],
+    } });
+    for (const fields of [{}, { rules: {} }, { rules: { 'bag.gold': 'Gold' } }]) {
+      expect(parse(fields).data.state?.scopes.message?.bag).toMatchObject(fields);
+    }
+    for (const rules of [null, [], 'text', { bag: 1 }, { bag: ' ' }, { 'other.gold': 'Gold' }, { 'bag.items[0]': 'Item' }]) {
+      expect(() => parse({ rules })).toThrow('INVALID_WORLD_CARD');
+    }
+  });
+
   it('accepts cards without spec, drops the retired legacy marker and preserves author keys', () => {
     const raw = worldCardFixture();
     const card = parseCard({ ...raw, spec: 'world_card' });

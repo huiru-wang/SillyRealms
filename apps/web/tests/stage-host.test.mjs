@@ -25,3 +25,13 @@ test('malformed command cannot prevent a later valid state command',async()=>{
   await dispatchStageCommand(command,'state.write',{updates:[{scope:'message',path:'coins',value:null}]});
   assert.equal(calls.length,1);assert.equal(calls[0].input.updates[0].value,null);
 });
+
+test('regenerate and stop commands require explicit message identity without host session/tip overrides',async()=>{
+ const seen=[],command=async(method,input)=>{seen.push({method,input});return {};};
+ await dispatchStageCommand(command,'narrative.regenerate',{userEntryId:'u',assistantEntryId:'a'});
+ await dispatchStageCommand(command,'narrative.regenerate',{userEntryId:'u',assistantEntryId:null});
+ await dispatchStageCommand(command,'narrative.stop',{runId:'r',assistantEntryId:'a'});
+ await assert.rejects(dispatchStageCommand(command,'narrative.stop',{runId:'r'}));
+ await assert.rejects(dispatchStageCommand(command,'narrative.regenerate',{userEntryId:'u',assistantEntryId:'a',expectedTipEntryId:'foreign'}));
+ assert.equal(seen.length,3);
+});

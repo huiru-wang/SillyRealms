@@ -6,7 +6,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { AppError } from '../../errors.js';
 import { openDatabase } from '../../infrastructure/database/connection.js';
 import { createServices, type Services } from '../../services.js';
-import { narrativePreset } from '../../testing/fixtures.js';
+import { narrativePreset, withEmptyModelNotes } from '../../testing/fixtures.js';
 import { planContext as planHistoryContext } from './stages/compact/plan.js';
 import { historyBoundaries } from './stages/history/index.js';
 import { readSummary, sourceHash } from './stages/compact/saved-summary.js';
@@ -17,8 +17,8 @@ import { captureContext, type ContextSnapshot } from './capture.js';
 import { compileNarrativeContext } from './stages/assemble/index.js';
 import * as assembly from './stages/assemble/index.js';
 import { estimateInputTokens } from './lib/estimate.js';
-import { parsePromptTemplate } from './lib/template.js';
-import { systemVariableNames } from './stages/materials/index.js';
+import { parsePromptTemplate } from '../../lib/prompt-template.js';
+import { systemVariableNames } from '../../modules/presets/service.js';
 
 let db: DatabaseSync, services: Services, dataRoot: string;
 const model = { contextWindow: 64000, maxTokens: 8192 };
@@ -64,6 +64,42 @@ function compactHistory(snapshot: ContextSnapshot, selectedModel: typeof model,
 }
 
 describe('compiled context composition', () => {
+  it('rechecks visible roots for every candidate without rescanning material or rereading inherited state', () => {
+    const token = '{{state.message.coins}}';
+    services.worlds.update('world', {
+      characters: [{ id: 'player', name: 'Player', player_selectable: true, prompt: '角色=' + token }],
+      stateDefinition: { schema_version: 2, scopes: { message: {
+        coins: { type: 'string', initial: '', description: 'Coins', rules: { coins: 'Coins' },
+          load: { mode: 'on_mention', keywords: ['gate'] } },
+      } } },
+    });
+    append('prior', 'assistant', 'gate');
+    const value = '{{user}}' + '金'.repeat(2048);
+    services.sessions.setEntryState('session', 'prior', [{ key: 'coins', value }]);
+    const snapshot = capture(token);
+    snapshot.preset.config.nodes[0]!.prompt = '{{persona.prompt}}；预设=' + token;
+    snapshot.preset.config.nodes.push({ id: 'actionSuggestions', name: 'Actions', kind: 'postprocess',
+      role: 'system', enabled: true, prompt: '建议=' + token + '。' });
+    services.sessions.setEntryState('session', 'prior', [{ key: 'coins', value: 'new value' }]);
+    const evaluate = createCandidateEvaluator(snapshot, model, services.state);
+    const full = evaluate(snapshot.historyEntries, '');
+    const trimmed = evaluate(snapshot.historyEntries.slice(1), '');
+    expect(full.messages[0]!.content).toBe('角色=' + value + '；预设=' + value);
+    expect(full.messages.at(-1)!.content).toContain('建议=' + value + '。');
+    expect(trimmed.messages[0]!.content).toBe('角色=；预设=');
+    expect(trimmed.messages.at(-1)!.content).toContain('建议=。');
+    expect(trimmed.messages.at(-2)!.content).toBe(token);
+    expect(trimmed.activeRoots).toEqual([]);
+    const next = captureContext(services, 'session');
+    next.preset.config.nodes[0]!.prompt = token;
+    expect(compileNarrativeContext(next, model).messages[0]!.content).toBe('new value');
+    expect(full.estimatedInputTokens).toBeGreaterThan(trimmed.estimatedInputTokens);
+    for (const compiled of [full, trimmed]) {
+      expect(Object.values(compiled.context.contextComposition).reduce((sum, size) => sum + size, 0))
+        .toBe(compiled.messages.reduce((sum, item) => sum + Buffer.byteLength(item.content) + 16, 0));
+    }
+  });
+
   it('counts emitted UTF-8 text by source, including framing, without counting skipped nodes', () => {
     append('prior', 'assistant', '历史🙂');
     const snapshot = capture('输入');
@@ -76,14 +112,14 @@ describe('compiled context composition', () => {
       enabled: false, prompt: 'This node is disabled.',
     });
     const compiled = compileNarrativeContext(snapshot, model);
-    expect(compiled.messages.slice(0, -1).map(message => message.content)).toEqual(['规则角色', '摘要', '历史🙂', '问题：输入']);
+    expect(compiled.messages.slice(0, -1).map(message => message.content)).toEqual(['规则角色', '摘要', withEmptyModelNotes('历史🙂'), '问题：输入']);
     const bytes = (value: string) => Buffer.byteLength(value, 'utf8');
     expect(compiled.context).toEqual({
       apiModelConfigId: 'model', contextWindowTokens: model.contextWindow,
       contextComposition: {
         systemBytes: bytes('规则角色问题：') + bytes(compiled.messages.at(-1)!.content) + 4 * 16,
         summaryBytes: bytes('摘要'),
-        historyBytes: bytes('历史🙂输入') + 16,
+        historyBytes: bytes(withEmptyModelNotes('历史🙂') + '输入') + 16,
       },
     });
     expect(Object.values(compiled.context.contextComposition).reduce((total, count) => total + count, 0))
@@ -155,7 +191,7 @@ describe('synchronous session snapshot', () => {
     ]);
     expect(compiled.messages.slice(0, -1)).toEqual([
       { role: 'user', content: 'Previous input', timestamp: 100 },
-      { role: 'assistant', content: 'Visible harbor', timestamp: 100 },
+      { role: 'assistant', content: withEmptyModelNotes('Visible harbor'), timestamp: 100 },
       { role: 'user', content: 'Current input', timestamp: 0 },
     ]);
     expect(snapshot.materials.variables['world.lore']).toEqual({ type: 'text', value: 'Visible lore' });
@@ -205,7 +241,7 @@ describe('synchronous session snapshot', () => {
     expect(snapshot.inputEntryId).toBeNull();
     expect(snapshot.inputText).toBe('');
     expect(compileNarrativeContext(snapshot, model).messages.slice(0, -1).map(message => message.content))
-      .toEqual(['Current input', 'Other append']);
+      .toEqual(['Current input', withEmptyModelNotes('Other append')]);
   });
 });
 
@@ -220,7 +256,7 @@ describe('core narrative compilation', () => {
     append('a0', 'assistant', 'Past answer');
     const compiled = compileNarrativeContext(capture(), model);
     expect(compiled.messages.slice(0, -1).map(item => [item.role, item.content])).toEqual([
-      ['system', 'Main'], ['system', 'Before\n'], ['user', 'Past input'], ['assistant', 'Past answer'],
+      ['system', 'Main'], ['system', 'Before\n'], ['user', 'Past input'], ['assistant', withEmptyModelNotes('Past answer')],
       ['system', '\nAfter'], ['assistant', 'A custom example'], ['user', 'Current input'],
     ]);
     expect(compiled.messages.filter(item => item.content === 'Current input')).toHaveLength(1);
@@ -238,6 +274,32 @@ describe('core narrative compilation', () => {
     expect(compiled.diagnostics.messageCount).toBe(compiled.messages.length);
     expect(JSON.stringify(compiled.diagnostics)).not.toMatch(/Past input|Past answer|A custom example|Current input/);
 
+  });
+
+  it('renders read-only scopes in the world state node and custom prompts without authorizing state updates', () => {
+    const field = (key: string) => ({ type: 'number', initial: 0, description: key, rules: { [key]: 'Rule' } });
+    services.worlds.update('world', { stateDefinition: { schema_version: 2, scopes: {
+      global: { day: field('day') }, session: { reputation: field('reputation') },
+    } } });
+    const config = services.presets.require('preset').config;
+    config.nodes.push({ id: 'custom', name: 'Profile', kind: 'text', role: 'system', enabled: true,
+      prompt: 'Profile {{state.session}}' });
+    services.presets.update('preset', { config });
+    const snapshot = capture();
+    const compiled = compileNarrativeContext(snapshot, model);
+    expect(compiled.activeRoots).toEqual([]);
+    expect(compiled.messages.find(item => item.content.startsWith('Profile'))?.content).toContain('value: 3');
+    const last = compiled.messages.at(-1)!.content;
+    expect(last).toContain('value: 2');
+    expect(last).toContain('value: 3');
+    expect(last).toContain('本轮没有可写状态');
+    expect(compiled.diagnostics.nodes.find(node => node.id === 'worldState')?.included).toBe(true);
+
+    snapshot.preset.config.nodes.push({ id: 'worldState', name: 'World', kind: 'postprocess',
+      role: 'system', enabled: true, prompt: 'Global only {{state.global}}' });
+    const customized = compileNarrativeContext(snapshot, model).messages.at(-1)!.content;
+    expect(customized).toContain('Global only');
+    expect(customized).not.toContain('value: 3');
   });
 
   it('compiles over-budget candidates without trimming or rejecting them before context policy runs', () => {
@@ -349,7 +411,7 @@ describe('context selection policies', () => {
     append('recent', 'assistant', 'Recent');
     const selected = planContext(captureBudgeted(), model, services.state);
     expect(selected.summary).toBeUndefined();
-    expect(selected.compiled.messages.slice(0, -1).map(message => message.content)).toEqual(['Recent', 'Current input']);
+    expect(selected.compiled.messages.slice(0, -1).map(message => message.content)).toEqual([withEmptyModelNotes('Recent'), 'Current input']);
     expect(services.sessions.getHistory('session')).toHaveLength(4);
   });
 
@@ -363,7 +425,7 @@ describe('context selection policies', () => {
     append('old', 'assistant', 'x'.repeat(1200));
     append('kept', 'assistant', 'suppress ' + 's'.repeat(180));
     const selected = planContext(captureBudgeted(), model, services.state);
-    expect(selected.compiled.messages.slice(0, -1).map(message => message.content)).toEqual(['suppress ' + 's'.repeat(180), 'Current input']);
+    expect(selected.compiled.messages.slice(0, -1).map(message => message.content)).toEqual([withEmptyModelNotes('suppress ' + 's'.repeat(180)), 'Current input']);
     expect(selected.compiled.estimatedInputTokens).toBeGreaterThan(selected.compiled.inputBudget * 0.6);
     expect(selected.compiled.estimatedInputTokens).toBeLessThanOrEqual(selected.compiled.inputBudget);
   });
@@ -414,7 +476,7 @@ describe('context selection policies', () => {
     services.sessions.appendEntry('session', { id: 'compact', type: 'compaction', role: null, runId: 'compact-run',
       payload: { summary: 'Saved summary' }, extData: { summary: { coveredThroughEntryId: 'old', sourceHash: sourceHash(entries) } } });
     const selected = planContext(captureBudgeted(), model, services.state);
-    expect(selected.compiled.messages.slice(0, -1).map(message => message.content)).toEqual(['Original story', 'Current input']);
+    expect(selected.compiled.messages.slice(0, -1).map(message => message.content)).toEqual([withEmptyModelNotes('Original story'), 'Current input']);
   });
 
   it('reuses only a summary with a valid complete boundary and unchanged covered source', () => {
@@ -448,7 +510,7 @@ describe('context selection policies', () => {
     });
     const compiled = planContext(captureBudgeted(), model, services.state).compiled;
     expect(compiled.messages.slice(0, -1).map(message => message.content))
-      .toEqual(['Valid older summary', 'Edited recent story', 'Current input']);
+      .toEqual(['Valid older summary', withEmptyModelNotes('Edited recent story'), 'Current input']);
   });
 
   it('does not let a stored summary consume the pending user run', () => {
@@ -461,7 +523,7 @@ describe('context selection policies', () => {
       extData: { summary: { coveredThroughEntryId: 'current-user', sourceHash: sourceHash(entries) } },
     });
     const compiled = planContext(captureContext(services, 'session'), model, services.state).compiled;
-    expect(compiled.messages.slice(0, -1).map(message => message.content)).toEqual(['Old story', 'Current input']);
+    expect(compiled.messages.slice(0, -1).map(message => message.content)).toEqual([withEmptyModelNotes('Old story'), 'Current input']);
   });
 
   it.each(['{{history.messages}}', '{{history.summary}}{{history.summary}}{{history.messages}}'])('rejects missing or duplicate rolling-summary placement: %s', prompt => {
@@ -512,7 +574,7 @@ describe('model-only notes in context candidates', () => {
     const snapshot = capture();
     snapshot.preset.config.contextStrategy.strategy = 'sliding_window';
     snapshot.preset.config.contextStrategy.maxContextTokens = compileNarrativeContext(snapshot, model).estimatedInputTokens + 10;
-    expect(planContext(snapshot, model, services.state).compiled.messages.some(message => message.content === 'Older body')).toBe(true);
+    expect(planContext(snapshot, model, services.state).compiled.messages.some(message => message.content === withEmptyModelNotes('Older body'))).toBe(true);
     snapshot.modelNotes = new Map([['old', [{ source: 'example', content: 'large-note-marker ' + 'x'.repeat(6000) }]]]);
     const selected = planContext(snapshot, model, services.state).compiled;
     expect(selected.messages.some(message => message.content.includes('Older body'))).toBe(false);

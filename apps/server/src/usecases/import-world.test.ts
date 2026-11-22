@@ -38,6 +38,14 @@ async function names(directory: string) {
 }
 
 describe('import world use case', () => {
+  it('retains valid, invalid, custom and unfinished author placeholders verbatim', async () => {
+    const card = worldCardFixture();
+    const prompt = '{{state.session.人设.姓名}} {{state.bad.姓名}} {{ weather.today }} {{unfinished';
+    Object.assign(card.data.characters[0]!, { prompt });
+    const world = await importWorld({ format: 'json', bytes: json(card) });
+    expect(services.worlds.require(world.id).characters[0]).toMatchObject({ prompt });
+  });
+
   it('imports a no-spec JSON card, retains exact source bytes and applies current settings defaults', async () => {
     const preset = services.presets.create(narrativePreset());
     const model = services.models.create({ name: 'Model', providerId: 'test', modelId: 'test', credentialRef: 'keychain' });

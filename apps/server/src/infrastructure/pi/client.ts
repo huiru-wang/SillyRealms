@@ -1,3 +1,4 @@
+import { resolveSampling } from './sampling.js';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
 import type {
@@ -190,10 +191,14 @@ export class PiClient implements ModelClient {
     if (options.signal.aborted) cancel();
     try {
       if (options.signal.aborted) throw new AppError('RUN_STOPPED');
+      const sampling = resolveSampling(selected, options, reasoning, options.apiKey);
+      if (Object.keys(sampling.omitted).length) {
+        emitModelDiagnostic(options, { type: 'sampling', source: 'sampling_omitted', data: sampling.omitted });
+      }
       attempted = true;
       iterator = this.sdk.streamSimple(selected, context, {
         apiKey: options.apiKey, signal: options.signal, maxTokens: options.maxTokens,
-        temperature: options.temperature,
+        ...sampling.options,
         reasoning,
         maxRetries: 0,
         onPayload: payload => {

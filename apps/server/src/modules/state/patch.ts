@@ -1,17 +1,18 @@
 import { isDeepStrictEqual } from 'node:util';
 import {
-  isSafeStateKey, STATE_MAX_DEPTH, StateValidationError, validateStateDefinition, validateStateJson,
+  StateValidationError, validateStateDefinition, validateStateJson,
   validateStateValue, type StateScope,
 } from '@sillyrealms/sdk/state-validation';
 import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
 import type { PreparedStatePatch, StateUpdate } from './types.js';
+import { statePathParts } from '../../lib/state-path.js';
 
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 export function parseStatePath(path: string, scope: StateScope): string[] {
   if (typeof path !== 'string') throw new StateValidationError('INVALID_STATE_PATH', scope);
-  const parts = path.split('.');
-  if (parts.length > STATE_MAX_DEPTH || parts.some(part => !isSafeStateKey(part))) {
+  const parts = statePathParts(path);
+  if (!parts) {
     throw new StateValidationError('INVALID_STATE_PATH', scope, path);
   }
   return parts;
@@ -52,7 +53,7 @@ export function prepareStatePatch(
 
   const definition = definitionFor(state, scope, root);
   if (definition === undefined) return missing();
-  validateStateDefinition(root, definition, scope);
+  validateStateDefinition(root, definition, scope, 'stored');
   validateStateJson(update.value, 0, scope, update.path);
   let replacement: JsonValue;
   if (nested.length === 0) {
@@ -64,7 +65,6 @@ export function prepareStatePatch(
     for (const part of nested.slice(0, -1)) target = target[part] as JsonObject;
     target[nested[nested.length - 1]!] = structuredClone(update.value);
   }
-  // Type, range, JSON bounds and rules coverage apply to this root only.
   validateStateValue(definition, replacement, root, scope);
   if (isDeepStrictEqual(current, update.value)) return unchanged;
   return { snapshot: { ...snapshot, [root]: replacement }, changed: true };

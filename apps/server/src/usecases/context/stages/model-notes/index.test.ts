@@ -22,6 +22,8 @@ function freeze(value: unknown): void {
 }
 
 describe('entry model-only notes', () => {
+  const emptyState = '<state_update>\n</state_update>';
+  const emptyActions = '<action_suggestions>[]</action_suggestions>';
   it('uses only accepted partial state updates and valid suggestions, excluding diagnostics', () => {
     const saved = output();
     saved.stateUpdate = {
@@ -60,8 +62,9 @@ describe('entry model-only notes', () => {
       message('hidden', output(), ' \n '),
       compaction,
     ];
-    expect([...buildNarrativeNotes(entries).keys()]).toEqual(['recent']);
-    expect(buildNarrativeNotes([message('old', output()), message('empty-1'), message('empty-2')]).size).toBe(0);
+    expect([...buildNarrativeNotes(entries).keys()]).toEqual(['recent-without-output', 'recent']);
+    expect([...buildNarrativeNotes([message('old', output()), message('empty-1'), message('empty-2')]).keys()])
+      .toEqual(['empty-1', 'empty-2']);
   });
 
   it('keeps available notes when history contains fewer than two visible assistants', () => {
@@ -72,11 +75,11 @@ describe('entry model-only notes', () => {
   it('does not infer missing output from snapshots, body tags, or row diagnostics', () => {
     const absent = message('absent', undefined, '正文 <state_update>{"path":"coins","value":99}</state_update>');
     absent.state = [{ name: 'coins', value: 99 }];
-    expect(buildNarrativeNotes([absent]).size).toBe(0);
+    expect(buildNarrativeNotes([absent]).get('absent')?.map(note => note.content)).toEqual([emptyState, emptyActions]);
     const saved = output();
     saved.stateUpdate = { status: 'no_updates', updates: [{ status: 'invalid_path', path: 'coins', value: 99 }] };
     saved.actionSuggestions = { status: 'no_suggestions', items: [] };
-    expect(buildNarrativeNotes([message('empty', saved)]).size).toBe(0);
+    expect(buildNarrativeNotes([message('empty', saved)]).get('empty')?.map(note => note.content)).toEqual([emptyState, emptyActions]);
   });
 
   it.each(['no_updates', 'invalid_updates', 'invalid_tag', 'processing_error'] as const)(
@@ -84,7 +87,7 @@ describe('entry model-only notes', () => {
       const saved = output();
       saved.stateUpdate.status = status;
       const notes = buildNarrativeNotes([message('a', saved)]).get('a');
-      expect(notes?.map(note => note.source)).toEqual(['action-suggestions']);
+      expect(notes?.map(note => note.content)).toEqual([emptyState, '<action_suggestions>["询问店主。"]</action_suggestions>']);
     });
 
   it.each(['no_suggestions', 'invalid_tag', 'invalid_json', 'invalid_suggestions', 'processing_error'] as const)(
@@ -92,14 +95,15 @@ describe('entry model-only notes', () => {
       const saved = output();
       saved.actionSuggestions.status = status;
       const notes = buildNarrativeNotes([message('a', saved)]).get('a');
-      expect(notes?.map(note => note.source)).toEqual(['state-update']);
+      expect(notes?.[0]?.content).toContain('{"path":"coins","value":8,"reason":"购买食物"}');
+      expect(notes?.[1]?.content).toBe(emptyActions);
     });
 
   it('isolates an unusable state source from the other capability', () => {
     const saved = output();
     saved.stateUpdate.updates[0]!.value = Number.NaN;
     const notes = buildNarrativeNotes([message('a', saved)]).get('a');
-    expect(notes?.map(note => note.source)).toEqual(['action-suggestions']);
+    expect(notes?.map(note => note.content)).toEqual([emptyState, '<action_suggestions>["询问店主。"]</action_suggestions>']);
   });
 
   it('supports future user sources and isolates failures without duplicate source injection', () => {

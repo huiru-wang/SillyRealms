@@ -6,6 +6,7 @@ import type {
 
 export type RunEventFields = {
   runId: string;
+  assistantEntryId: string;
   sessionId: string;
   provider: string | null;
   model: string | null;
@@ -40,7 +41,7 @@ type SavedRun = RunEventFields & {
 
 /** Events produced by the narrative execution. */
 export type NarrativeEvent =
-  | { event: 'run.created'; data: RunEventFields & { messages: [SavedUserMessage] } }
+  | { event: 'run.created'; data: RunEventFields & { messages: [SavedUserMessage]; tipEntryId: string | null; deletedMessageIds: string[] } }
   | { event: 'run.summarizing'; data: RunEventFields }
   | { event: 'run.summarized'; data: RunEventFields & { entryId: string } }
   | { event: 'run.delta'; data: RunEventFields & { messageId: string; messages: [AssistantDeltaMessage] } }
@@ -70,3 +71,5 @@ export type ReservedNarrativeEvent =
       delta: { tool_call_id: string; name: string; status: string; content: string; is_error: boolean };
     }];
   } };
+
+export type MessageDeletedEvent = { event: 'message.deleted'; data: { sessionId: string; runId: string; assistantEntryId: string; messageId: string; tipEntryId: string | null } };

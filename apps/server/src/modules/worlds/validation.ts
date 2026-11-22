@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { parseExpressionAt, type AnyNode } from 'acorn';
-import lodash from 'lodash';
+import { validateWhen } from '@sillyrealms/sdk/when-expression';
 import { parseSRAssetUri } from '@sillyrealms/sdk/assets';
 import {
   isSafeStateKey, validateStateJson, validateStateSchema, validateStateValue,
@@ -8,62 +7,6 @@ import {
 } from '@sillyrealms/sdk/state-validation';
 import { AppError } from '../../errors.js';
 
-const blocked = new Set(['__proto__', 'constructor', 'prototype']);
-const operators = new Set(['===', '!==', '<', '<=', '>', '>=', '+', '-', '*', '/', '%']);
-const logical = new Set(['&&', '||', '??']);
-function unsupported(): never { throw new Error('Unsupported when expression'); }
-
-/** Validate the bounded author expression grammar; this module never evaluates expressions. */
-export function validateWhen(input: string): void {
-  if (Buffer.byteLength(input) > 4096) unsupported();
-  const root = parseExpressionAt(input, 0, { ecmaVersion: 'latest' });
-  if (input.slice(root.end).trim()) unsupported();
-  let count = 0;
-  const validate = (node: AnyNode): void => {
-    if (++count > 256) unsupported();
-    switch (node.type) {
-      case 'Literal':
-        if (!(node.value === null || ['string', 'number', 'boolean'].includes(typeof node.value))) unsupported();
-        break;
-      case 'UnaryExpression':
-        if (!['!', '+', '-'].includes(node.operator)) unsupported();
-        validate(node.argument); break;
-      case 'BinaryExpression':
-        if (!operators.has(node.operator)) unsupported();
-        validate(node.left); validate(node.right); break;
-      case 'LogicalExpression':
-        if (!logical.has(node.operator)) unsupported();
-        validate(node.left); validate(node.right); break;
-      case 'ConditionalExpression':
-        validate(node.test); validate(node.consequent); validate(node.alternate); break;
-      case 'CallExpression': {
-        if (node.optional || node.callee.type !== 'Identifier' || node.callee.name !== 'getState' ||
-          node.arguments.length < 1 || node.arguments.length > 2) unsupported();
-        const path = node.arguments[0]!;
-        let parts: string[];
-        if (path.type === 'Literal' && typeof path.value === 'string') parts = lodash.toPath(path.value);
-        else if (path.type === 'ArrayExpression') {
-          parts = path.elements.map(element => {
-            if (element?.type !== 'Literal' || typeof element.value !== 'string') unsupported();
-            return element.value;
-          });
-        } else unsupported();
-        if (!parts.length || parts.length > 32 || parts.some(part => !part || blocked.has(part))) unsupported();
-        const options = node.arguments[1];
-        if (options) {
-          if (options.type !== 'ObjectExpression' || options.properties.length !== 1) unsupported();
-          const property = options.properties[0]!;
-          if (property.type !== 'Property' || property.computed || property.key.type !== 'Identifier' ||
-            property.key.name !== 'scope' || property.value.type !== 'Literal' ||
-            typeof property.value.value !== 'string' || !['global', 'session', 'message'].includes(property.value.value)) unsupported();
-        }
-        break;
-      }
-      default: unsupported();
-    }
-  };
-  validate(root);
-}
 
 const atomicStateSchema = z.custom<StateSchema>((value) => value !== null && typeof value === 'object');
 const nonblank=z.string().refine(v=>v.trim().length>0,'Expected nonempty text');
@@ -144,7 +87,7 @@ function location(parts: PropertyKey[]): string {
   return parts.reduce<string>((path, part) => path + (typeof part === 'number' ? '[' + part + ']' : '.' + String(part)), '$');
 }
 
-function validateDefinition(value: unknown): asserts value is StateSchema {
+export function validateWorldStateDefinition(value: unknown): asserts value is StateSchema {
   try {
     validateStateSchema(value);
     for (const scope of ['global', 'session', 'message'] as const) {
@@ -165,7 +108,7 @@ export function validateCard(raw: unknown): WorldCard {
   }
   depth(raw, 0);
   const rawState = (raw as { data?: { state?: unknown } } | null)?.data?.state;
-  if (rawState !== undefined) validateDefinition(rawState);
+  if (rawState !== undefined) validateWorldStateDefinition(rawState);
   const openings = (raw as { data?: { openings?: unknown } } | null)?.data?.openings;
   if (Array.isArray(openings)) openings.forEach((opening, index) => {
     if (opening && typeof opening === 'object' && 'initial_state' in opening) {

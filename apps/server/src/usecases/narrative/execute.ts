@@ -19,7 +19,7 @@ function addUsage(left: ModelUsage | null, right: ModelUsage | null): ModelUsage
 /** User-first execution, optional single summary, then narrative and one settlement. */
 export async function executeNarrative(dependencies: NarrativeDependencies, execution: NarrativeExecution): Promise<NarrativeSettlement> {
   const { sessions, modelClient, events } = dependencies;
-  const { sessionId, runId, userEntryId, assistantEntryId, userMessage, provider, model, prepared, getApiKey, signal, log, writePermit } = execution;
+  const { sessionId, runId, userEntryId, assistantEntryId, userMessage, tipEntryId: acceptedTipEntryId, deletedMessageIds, provider, model, prepared, getApiKey, signal, log, writePermit } = execution;
   let snapshot: ModelSnapshot = { role: 'assistant', content: '', reasoning_content: '', tool_calls: [] };
   let usage: ModelUsage | null = zeroUsage(), summaryUsage: ModelUsage | null = zeroUsage();
   let attempted = false, receivedTerminal = false, publishedDelta = false;
@@ -28,9 +28,9 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
   let parentId = userEntryId;
   let rawContent = '', activeRoots: string[] = [];
   let committedState: StateEvent | null = null, committedSuggestions: string[] = [];
-  const fields = (): RunEventFields => ({ runId, sessionId, provider, model, timestamp: Date.now() });
+  const fields = (): RunEventFields => ({ runId, assistantEntryId, sessionId, provider, model, timestamp: Date.now() });
   const publish = (event: NarrativeEvent) => events.publish(sessionId, event);
-  publish({ event: 'run.created', data: { ...fields(), messages: [{ ...userMessage }] } });
+  publish({ event: 'run.created', data: { ...fields(), messages: [{ ...userMessage }], tipEntryId: acceptedTipEntryId, deletedMessageIds } });
   try {
     assertRunning(signal);
     const context = await prepared;
@@ -134,8 +134,8 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
   // Outcome belongs to the durable user entry, even if no assistant could be saved.
   try {
     sessions.setNarrativeOutcome(sessionId, userEntryId, stopReason === undefined
-      ? { status: 'completed', finishedAt: Date.now() }
-      : { status: 'stopped', stopReason, finishedAt: Date.now() }, writePermit);
+      ? { status: 'completed', assistantEntryId, finishedAt: Date.now() }
+      : { status: 'stopped', assistantEntryId, stopReason, finishedAt: Date.now() }, writePermit);
   } catch {
     // Keep saved messages; a missing outcome remains unknown after restart.
     if (stopReason !== 'session_deleted') stopReason = 'message_persist_failed';

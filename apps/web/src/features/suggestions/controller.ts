@@ -19,7 +19,7 @@ function savedSuggestions(run: StoredRun | null): Suggestions | null {
 /** Current suggestions are a projection, not another persisted history store. */
 export function createSuggestionsController(sessionId: string) {
   let snapshot: SuggestionsSnapshot = {currentRunId: null, suggestions: null, revision: 0};
-  let disposed = false;
+  let disposed = false, assistantEntryId: string | null = null;
   const listeners = new Set<() => void>();
   const update = (runId: string | null, suggestions: Suggestions | null) => {
     snapshot = {currentRunId: runId, suggestions, revision: snapshot.revision + 1};
@@ -32,19 +32,25 @@ export function createSuggestionsController(sessionId: string) {
     checkpoint: () => snapshot.revision,
     restore(run: StoredRun | null, checkpoint: number) {
       if (disposed || checkpoint !== snapshot.revision) return false;
+      assistantEntryId = run?.assistantEntryId ?? null;
       update(run?.runId ?? null, savedSuggestions(run));
       return true;
     },
     accept(event: SessionEvent) {
       if (disposed || !('sessionId' in event.data) || event.data.sessionId !== sessionId) return;
-      if (event.event === 'run.created') {
+      if (event.event === 'message.deleted') {
+        assistantEntryId = event.data.assistantEntryId; update(event.data.runId, null);
+      } else if (event.event === 'run.created') {
+        assistantEntryId = event.data.assistantEntryId;
         update(event.data.runId, null);
       } else if (event.event === 'action_suggestions.created') {
         if (snapshot.currentRunId !== null && snapshot.currentRunId !== event.data.runId) return;
+        if (assistantEntryId && assistantEntryId !== event.data.messageId) return;
         const items = event.data.items.filter(item => typeof item === 'string' && !!item.trim());
         if (items.length) update(event.data.runId, {runId: event.data.runId, messageId: event.data.messageId, items: [...items]});
       }
     },
+    begin(runId: string, executionId: string) { if (!disposed) { assistantEntryId = executionId; update(runId, null); } },
     clear() { if (!disposed) update(null, null); },
     dispose() { disposed = true; listeners.clear(); },
   };

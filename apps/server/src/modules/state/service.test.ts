@@ -165,13 +165,11 @@ describe('read-only field preparation with state v2 definitions', () => {
     });
   });
 
-  it('validates only the affected root type, range and complete rules coverage', () => {
+  it('checks type and range without requiring rules for replacement fields or array elements', () => {
     expect(() => state.prepareGlobalPatch('world', { path: 'count', value: 11 })).toThrow('STATE_OUT_OF_RANGE');
     expect(() => state.prepareSessionPatch('one', { path: 'count', value: 'invalid' })).toThrow('INVALID_STATE_VALUE');
-    expect(() => state.prepareMessagePatch('one', 'child', { path: 'profile', value: { coins: 9, unruled: true } }))
-      .toThrow('STATE_RULE_MISSING: message.profile.unruled');
-    expect(() => state.prepareGlobalPatch('world', { path: 'profile.items', value: [{ name: 'key', extra: true }] }))
-      .toThrow('STATE_RULE_MISSING: global.profile.items[].extra');
+    expect(state.prepareMessagePatch('one', 'child', { path: 'profile', value: { coins: 9, unruled: true } }).changed).toBe(true);
+    expect(state.prepareGlobalPatch('world', { path: 'profile.items', value: [{ name: 'key', extra: true }] }).changed).toBe(true);
     expect(state.getGlobal('world')).toEqual({ count: 1, profile: profile.initial });
     expect(sessions.getEntryState('one', 'child')).toBeNull();
   });
@@ -249,25 +247,23 @@ describe('read-only field preparation with state v2 definitions', () => {
         { path: 'count', value: 5 },
       ]);
       expect(prepared.results.map(result => result.status)).toEqual([
-        'success', 'invalid_value', 'invalid_value', 'success', 'invalid_path', 'success',
+        'success', 'invalid_value', 'success', 'success', 'invalid_path', 'success',
       ]);
       expect(prepared.results[1]).toMatchObject({ path: 'count', errorCode: 'STATE_OUT_OF_RANGE' });
-      expect(prepared.results[2]).toMatchObject({
-        path: 'profile', errorCode: 'STATE_RULE_MISSING', statePath: 'profile.unruled', rulePath: 'profile.unruled',
-      });
       expect(prepared.results[4]).toMatchObject({ path: 'untouched', errorCode: 'STATE_ROOT_NOT_ACTIVE' });
       expect(prepared.updates).toEqual([
         { path: 'count', value: 3, reason: 'Received coins' },
+        { path: 'profile', value: { coins: 7, unruled: true } },
         { path: 'profile.coins', value: 7 },
         { path: 'count', value: 5 },
       ]);
       expect(prepared).toMatchObject({ changed: true, snapshot: [
         { key: 'count', value: 5, authorHint: { visible: true } },
-        { key: 'profile', value: { ...profile.initial, coins: 7 } },
+        { key: 'profile', value: { coins: 7, unruled: true } },
         { key: 'untouched', value: { private: true }, extra: 'retain' },
       ] });
       expect(prepared.change).toEqual({ event: 'state.changed', data: { scope: 'message', path: '', value: {
-        count: 5, profile: { ...profile.initial, coins: 7 }, untouched: { private: true },
+        count: 5, profile: { coins: 7, unruled: true }, untouched: { private: true },
       } } });
       expect(sessions.getEntryState('one', 'root')).toEqual(inherited);
       expect(sessions.getEntryState('one', 'child')).toBeNull();

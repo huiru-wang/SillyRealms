@@ -1,8 +1,10 @@
-import { readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { access, readFile, writeFile } from 'node:fs/promises';
 import { posix as path } from 'node:path';
 import { isIP } from 'node:net';
 
-const managed = '# Managed by SillyRealms deploy/start.sh.';
+const managed = '# Managed by SillyRealms.';
 const environmentKeys = Object.freeze({
   webOrigin: 'WEB_ORIGIN',
   stageOrigin: 'STAGE_ORIGIN',
@@ -218,4 +220,31 @@ export function renderSystemd(config, { nodePath, loaderPath }) {
     'WantedBy=multi-user.target',
     '',
   ].join('\n');
+}
+
+// Only validated, interpolation-free values are emitted for the deployment shell.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const config = await loadConfig({ projectDir: process.cwd(), configDir: process.env.SR_CONFIG_DIR });
+  const nginx = await renderNginx(config);
+  const unit = renderSystemd(config, {
+    nodePath: process.execPath, loaderPath: config.projectDir + '/apps/server/node_modules/tsx/dist/loader.mjs',
+  });
+  for (const path of [config.webTlsCert, config.webTlsKey, config.stageTlsCert, config.stageTlsKey, config.tlsCaFile].filter(Boolean)) {
+    await access(path, constants.R_OK);
+  }
+  const saved = Object.fromEntries(CONFIG_KEYS.map(key => [key, config[key]]));
+  const json = JSON.stringify(saved, null, 2) + '\n';
+  const directory = process.argv[2];
+  if (directory) {
+    await writeFile(directory + '/deploy.json', json);
+    await writeFile(directory + '/server.env', renderEnvironment(config));
+    await writeFile(directory + '/sillyrealms.service', unit);
+    await writeFile(directory + '/sillyrealms.conf', nginx);
+    for (const [key, variable] of Object.entries(environmentKeys)) {
+      console.log(variable + '=' + (config[key] ?? ''));
+    }
+    console.log('CONFIG_DIR=' + config.configDir);
+  } else {
+    process.stdout.write(json);
+  }
 }

@@ -92,7 +92,7 @@ class EncryptedCredentialStore {
 }
 
 /**
- * The 32-byte master key is provisioned once outside the data directory by start.sh.
+ * The 32-byte master key is provisioned once outside the data directory by deploy.sh.
  * Missing, insecure or invalid keys fail closed; this never generates or replaces a key.
  * @returns {Promise<import('../apps/server/src/modules/credentials/service.js').CredentialStore>}
  */

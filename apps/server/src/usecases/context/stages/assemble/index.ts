@@ -1,12 +1,12 @@
-import { resolvePostprocessPrompts } from '../../../../modules/presets/service.js';
+import { resolvePostprocessPrompts, systemVariableNames } from '../../../../modules/presets/service.js';
 import { AppError } from '../../../../errors.js';
 import type { ModelInfo, ModelMessage, ModelParameters } from '../../../../infrastructure/model/client.js';
 import type { ContextSnapshot } from '../../capture.js';
 import type { ContextDiagnostics, ContextNodeDiagnostic } from '../../diagnostics.js';
 import { contextBudget } from '../../lib/budget.js';
 import { estimateInputTokens } from '../../lib/estimate.js';
-import { parsePromptTemplate } from '../../lib/template.js';
-import { systemVariableNames } from '../materials/index.js';
+import { parsePromptTemplate } from '../../../../lib/prompt-template.js';
+import { readStateVariable } from '../../lib/state-variable.js';
 import { renderModelNotes } from '../model-notes/index.js';
 import { postprocessProtocol } from './protocol.js';
 
@@ -63,6 +63,10 @@ export function compileNarrativeContext(snapshot: ContextSnapshot, model: Pick<M
     };
     for (const segment of parsePromptTemplate(node.prompt, systemVariableNames)) {
       if (segment.type === 'text') { append(segment.value, 'systemBytes'); continue; }
+      if (segment.type === 'state') {
+        append(readStateVariable(segment, snapshot.views, snapshot.materials.visibleRoots), 'systemBytes');
+        continue;
+      }
       if (segment.name === 'history.summary') summaryCount++;
       if (segment.name === 'input.text') {
         inputCount++;
@@ -100,6 +104,7 @@ export function compileNarrativeContext(snapshot: ContextSnapshot, model: Pick<M
   const defaults = resolvePostprocessPrompts({ ...config, nodes: [] });
   const render = (prompt: string): string => parsePromptTemplate(prompt, systemVariableNames).map(segment => {
     if (segment.type === 'text') return segment.value;
+    if (segment.type === 'state') return readStateVariable(segment, snapshot.views, snapshot.materials.visibleRoots);
     const variable = snapshot.materials.variables[segment.name];
     // Postprocessing instructions cannot duplicate the current input or historical message sequence.
     if (segment.name === 'input.text' || segment.name === 'history.messages' || segment.name === 'history.summary' || variable.type !== 'text') {
@@ -108,7 +113,9 @@ export function compileNarrativeContext(snapshot: ContextSnapshot, model: Pick<M
     return variable.value;
   }).join('');
   const capabilityIndex = messages.length;
-  const hasState = snapshot.materials.activeRoots.length > 0;
+  const hasWritableState = snapshot.materials.activeRoots.length > 0;
+  const variables = snapshot.materials.variables;
+  const hasState = hasWritableState || variables['state.global'].value.length > 0 || variables['state.session'].value.length > 0;
   const renderCapability = (id: keyof typeof prompts, name: string, included: boolean): string => {
     const configured = config.nodes.find(node => node.id === id);
     const diagnostic: ContextNodeDiagnostic = {
@@ -126,7 +133,7 @@ export function compileNarrativeContext(snapshot: ContextSnapshot, model: Pick<M
   nodes.push({ id: 'postprocessProtocol', name: '能力输出协议', kind: 'protocol', role: 'system', enabled: true,
     included: true, reason: 'included', source: 'platform', messageIndexes: [capabilityIndex] });
   const capabilityContent = [
-    ...(hasState ? [statePrompt] : []), actionPrompt, postprocessProtocol(hasState),
+    ...(hasState ? [statePrompt] : []), actionPrompt, postprocessProtocol(hasWritableState),
   ].join('\n\n');
   messages.push({ role: 'system', timestamp: 0, content: capabilityContent });
   composition.systemBytes += byteLength(capabilityContent) + messageOverhead;

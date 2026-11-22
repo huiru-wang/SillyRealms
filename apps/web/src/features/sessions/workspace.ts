@@ -33,6 +33,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
   const channel=dependencies.channel??createSessionEventChannel({sessionId});
   const history=createHistoryController({sessionId,request});
   const suggestions=createSuggestionsController(sessionId);
+  const appliedDeletions=new Set<string>();
   let snapshot:WorkspaceSnapshot;
   const updateTip=(value:string|null)=>{tip=value;tipRevision++;if(session)session={...session,tipEntryId:value};};
   let sessionRequest:Promise<Session>|null=null;
@@ -48,6 +49,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
   };
   const narrative=createNarrativeController({sessionId,request,getSession:refreshSession,
     onTipChanged:updateTip,
+    onAccepted:accepted=>{for(const id of accepted.deletedMessageIds)appliedDeletions.add(id);history.acceptExecution(accepted);suggestions.begin(accepted.runId,accepted.assistantEntryId);if(accepted.deletedMessageIds.length){usageRevision++;void state?.read().catch(()=>{});}},
     onTerminal:()=>{if(disposed)return;usageRevision++;void synchronize();},
   });
   let historySource: ReturnType<typeof history.getSnapshot>['runs'] | undefined;
@@ -62,12 +64,12 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
       else{
         const saved=runs[index]!,persistedIds=new Set(saved.messages.map(message=>message.id));
         const extra=ns.run.messages.filter(message=>!persistedIds.has(message.id));
-        const settled=['completed','stopped'].includes(saved.status);
+        const settled=['completed','stopped'].includes(saved.status)&&saved.assistantEntryId===ns.run.assistantEntryId;
         runs[index]=settled?saved:{...ns.run,messages:[...saved.messages,...extra]};
       }
     }
     return {session,config,world,loading,error,worldError,notice:notice??ns.error,sending:ns.sending,stopping:ns.stopping,usageRevision,latestUsage:ns.usage,
-      stage:{sessionId,connected,activeRunId:ns.activeRunId,runs,streamIncomplete:ns.incomplete,suggestions:suggestions.getSnapshot().suggestions,
+      stage:{sessionId,connected,activeRunId:ns.activeRunId,activeAssistantEntryId:ns.activeRunId?ns.run?.assistantEntryId??null:null,sending:ns.sending,runs,streamIncomplete:ns.incomplete,suggestions:suggestions.getSnapshot().suggestions,
         history:{loading:hs.loading,loadingMore:hs.loadingMore,hasMore:hs.hasMore,error:hs.error},state:ss?.values??emptyState(),stateLoading:ss?.loading??true,stateError:ss?.error??null}};
   }
   function publish(){if(disposed)return;snapshot=project();for(const listener of listeners){try{listener();}catch{/* Display observers are isolated. */}}}
@@ -75,14 +77,24 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
   subscriptions.push(history.subscribe(publish),narrative.subscribe(publish),suggestions.subscribe(publish));
   subscriptions.push(channel.subscribe('*',event=>{
     if(disposed)return;
-    try{if(event.event.startsWith('run.'))narrative.accept(event as NarrativeEvent);}catch{notice='叙事事件处理失败，请重新同步会话';}
+    try{
+      if(event.event.startsWith('run.') && narrative.accept(event as NarrativeEvent)===false)return;
+      if(event.event==='message.deleted'){
+        if(appliedDeletions.has(event.data.messageId))return;
+        appliedDeletions.add(event.data.messageId);
+        narrative.acceptDeletion(event.data);
+        history.acceptExecution({...event.data,deletedMessageIds:[event.data.messageId]});
+        updateTip(event.data.tipEntryId);suggestions.clear();usageRevision++;
+      }
+    }catch{notice='叙事事件处理失败，请重新同步会话';}
     try{suggestions.accept(event);}catch{notice='行动建议暂时不可用';}
     try{if(event.event==='state.changed')state?.accept(event);}catch{notice='状态同步暂时不可用';}
     publish();
     for(const listener of eventListeners){try{listener(event);}catch{/* A frame listener cannot block business consumers. */}}
   }));
-  let synchronization:Promise<void>|null=null,repeat=false;
-  function synchronize():Promise<void>{
+  let synchronization:Promise<void>|null=null,repeat=false,resetHistory=false;
+  function synchronize(reset = false):Promise<void>{
+    resetHistory ||= reset;
     if(disposed)return Promise.resolve();
     if(synchronization){repeat=true;return synchronization;}
     synchronization=(async()=>{
@@ -91,7 +103,8 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
         const checkpoint=suggestions.checkpoint(),narrativeCheckpoint=narrative.checkpoint();
         try{
           await refreshSession();
-          if(!history.getSnapshot().runs.length)await history.loadRecent();else await history.catchUp();
+          const reset=resetHistory;resetHistory=false;
+          if(reset||!history.getSnapshot().runs.length)await history.loadRecent(reset);else await history.catchUp();
           if(disposed)return;
           const current=history.getSnapshot();
           const latest=current.runs.at(-1)??null;
@@ -110,7 +123,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
   }
   subscriptions.push(channel.subscribeConnection(value=>{
     if(disposed)return;connected=value.connected;narrative.setConnected(connected);publish();
-    if(connected&&started){usageRevision++;void synchronize();}
+    if(connected&&started){usageRevision++;void synchronize(true);}
   }));
   async function loadWorld(){
     if(!session||disposed)return;worldError=null;publish();
@@ -136,9 +149,14 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
         try{result=await narrative.send((input as {text:string}).text);}
         catch(reason){await synchronize();throw reason;}
         break;
-      case 'narrative.stop':result=await narrative.stop((input as {runId:string}).runId);break;
+      case 'narrative.regenerate':
+        if(!connected)throw Error('连接恢复后才能重新生成');
+        try{result=await narrative.regenerate(input as StageCommandMap['narrative.regenerate']['input']);}
+        catch(reason){await synchronize(true);throw reason;}
+        break;
+      case 'narrative.stop':{const value=input as StageCommandMap['narrative.stop']['input'];result=await narrative.stop(value.runId,value.assistantEntryId);break;}
       case 'history.loadMore':await history.loadOlder();break;
-      case 'history.refresh':await synchronize();break;
+      case 'history.refresh':await synchronize(true);break;
       case 'history.query':result=await history.query(input as StageCommandMap['history.query']['input']);break;
       case 'state.read':if(!state)throw Error('会话状态尚未就绪');result=await state.read();break;
       case 'state.write':if(!state)throw Error('会话状态尚未就绪');result=await state.write((input as StageCommandMap['state.write']['input']).updates);break;
@@ -147,7 +165,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
     publish();return result as StageCommandMap[K]['output'];
   }
   return {
-    start,command,refresh:synchronize,reloadWorld:loadWorld,
+    start,command,refresh:()=>synchronize(true),reloadWorld:loadWorld,
     getSnapshot:()=>snapshot,
     subscribe:(listener:()=>void)=>{listeners.add(listener);return()=>{listeners.delete(listener);};},
     subscribeEvents:(listener:(event:SessionEvent)=>void)=>{eventListeners.add(listener);return()=>{eventListeners.delete(listener);};},

@@ -18,12 +18,12 @@ import type { PromptValue } from './PromptEditorDialog';
 import styles from './Presets.module.css';
 
 const THINKING_LEVELS: { value: PresetThinkingLevel; label: string }[] = [
-  { value: 'minimal', label: '极低 · minimal' },
-  { value: 'low', label: '低 · low' },
-  { value: 'medium', label: '中等 · medium' },
-  { value: 'high', label: '高 · high' },
-  { value: 'xhigh', label: '更高 · xhigh' },
-  { value: 'max', label: '最高 · max' },
+  { value: 'minimal', label: '极低' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中等' },
+  { value: 'high', label: '高' },
+  { value: 'xhigh', label: '更高' },
+  { value: 'max', label: '最高' },
 ];
 const STRATEGIES: { id: ContextStrategy; label: string; hint: string }[] = [
   { id: 'rolling_summary', label: '滚动摘要', hint: '整理较早对话，保留最近内容。' },

@@ -151,3 +151,12 @@ test('stream gaps and reasoning-only messages remain visible without fabricated 
   assert.equal(messageNotice({...message, content: '正文'}, 'completed'), null);
   assert.equal(message.content, '');
 });
+
+test('frame regeneration is a command proxy and never removes a message optimistically',async()=>{
+ const calls=[],runtime=new StageRuntime(async(method,input)=>{calls.push({method,input});return {runId:'run',assistantEntryId:'next'};});
+ runtime.acceptSnapshot(snapshot());
+ await runtime.session.regenerate({userEntryId:'user',assistantEntryId:'assistant'});
+ await runtime.session.stop('run','next');
+ assert.deepEqual(calls,[{method:'narrative.regenerate',input:{userEntryId:'user',assistantEntryId:'assistant'}},{method:'narrative.stop',input:{runId:'run',assistantEntryId:'next'}}]);
+ assert.equal(runtime.getSnapshot().runs[0].messages[0].id,'assistant');
+});

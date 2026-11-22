@@ -72,3 +72,9 @@ test('mobile drill-in starts at the third container level and desktop stays expa
   assert.deepEqual([0, 1, 2, 3].map(depth => shouldEnterStateDetail(true, depth)), [false, false, true, true]);
   assert.equal(shouldEnterStateDetail(false, 8), false);
 });
+test('JSON roots without rules keep their description and expose unannotated children', () => {
+  const field = {type: 'json', initial: {gold: 1}, description: '背包'};
+  const root = describeWorldState(schema({message: {bag: field}}))[0].nodes[0];
+  assert.equal(root.description, '背包');
+  assert.equal(root.children[0].description, '');
+});

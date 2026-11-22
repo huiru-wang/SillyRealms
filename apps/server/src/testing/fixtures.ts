@@ -18,3 +18,7 @@ export function narrativePreset(name = 'Story'): CreatePresetInput {
     },
   };
 }
+
+export function withEmptyModelNotes(body: string): string {
+  return body + '\n\n<state_update>\n</state_update>\n<action_suggestions>[]</action_suggestions>';
+}

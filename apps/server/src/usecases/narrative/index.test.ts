@@ -12,7 +12,7 @@ import type {
 } from '../../infrastructure/model/client.js';
 import { createServices, type Services } from '../../services.js';
 import { memoryCredentials } from '../../testing/credentials.js';
-import { narrativePreset } from '../../testing/fixtures.js';
+import { narrativePreset, withEmptyModelNotes } from '../../testing/fixtures.js';
 import type { NarrativeEvent, NarrativeTerminalEvent } from './events.js';
 import { createNarrativeUsecases, type NarrativeUsecases, type SubmitInput } from './index.js';
 
@@ -148,7 +148,7 @@ function assertLifecycle(runId: string) {
     expect(allKeys(event)).not.toContain('errorMessage');
     expect(JSON.parse(JSON.stringify(event))).toEqual(event);
     if (event.event === 'run.usage') {
-      expect(Object.keys(event.data).sort()).toEqual(['model', 'provider', 'runId', 'sessionId', 'timestamp', 'usage']);
+      expect(Object.keys(event.data).sort()).toEqual(['assistantEntryId', 'model', 'provider', 'runId', 'sessionId', 'timestamp', 'usage']);
       if (event.data.usage !== null) expect(Object.keys(event.data.usage).sort()).toEqual([
         'cache_read_tokens', 'cache_write_tokens', 'input_tokens', 'output_tokens', 'total_tokens',
       ]);
@@ -161,7 +161,7 @@ function assertLifecycle(runId: string) {
       expect(event.data.messages[0].role).toBe('assistant');
     } else if (event.event === 'run.stopped') {
       expect(Object.keys(event.data).sort()).toEqual([
-        'model', 'provider', 'runId', 'savedMessageIds', 'sessionId', 'stop_reason', 'timestamp', 'tipEntryId',
+        'assistantEntryId', 'model', 'provider', 'runId', 'savedMessageIds', 'sessionId', 'stop_reason', 'timestamp', 'tipEntryId',
       ]);
     }
   }
@@ -323,7 +323,7 @@ describe('unified narrative events and independent persistence', () => {
     const { accepted, finished } = submit('继续');
     expect(await finished).toMatchObject({ event: 'run.completed', data: { tipEntryId: accepted.assistantEntryId } });
     expect(stream.mock.calls[1]![1].slice(0, -1).map(message => [message.role, message.content])).toEqual([
-      ['user', '上一轮输入'], ['assistant', '之前的半截故事'], ['user', '继续'],
+      ['user', '上一轮输入'], ['assistant', withEmptyModelNotes('之前的半截故事')], ['user', '继续'],
     ]);
   });
 
@@ -420,7 +420,7 @@ describe('pre-request and persistence failures', () => {
       events.subscribe('session', event => {
         if (event.event !== 'run.delta' || stopped) return;
         stopped = true;
-        if (ending === 'cancelled') narrative.stop('session', accepted.runId);
+        if (ending === 'cancelled') narrative.stop('session', accepted.runId, accepted.assistantEntryId);
         if (ending === 'server_shutdown') void narrative.shutdown();
       });
       expect(await finished).toMatchObject({ event: 'run.stopped', data: {
@@ -481,14 +481,14 @@ describe('cancellation, shutdown and observer isolation', () => {
       sessionId: 'session', input: { text: '重复' }, expectedTipEntryId: first.accepted.userEntryId,
     })).toThrow('RUN_ALREADY_ACTIVE');
     expect((await submit('另一个会话', 'second').finished).event).toBe('run.completed');
-    narrative.stop('session', first.accepted.runId);
+    narrative.stop('session', first.accepted.runId, first.accepted.assistantEntryId);
     expect(await first.finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
     held.resolve();
   });
 
   it('stops before execution without attempting a model request', async () => {
     const { accepted, finished } = submit();
-    narrative.stop('session', accepted.runId);
+    narrative.stop('session', accepted.runId, accepted.assistantEntryId);
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
     expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
     expect(stream).not.toHaveBeenCalled();
@@ -498,7 +498,7 @@ describe('cancellation, shutdown and observer isolation', () => {
     let runId = '';
     stream.mockImplementation(async function* () {
       // Mirrors an SDK invocation that synchronously triggers shutdown/stop before the async yield is delivered.
-      narrative.stop('session', runId);
+      narrative.stop('session', runId, request.accepted.assistantEntryId);
       yield { type: 'request_started' };
       yield done('late');
     });
@@ -521,7 +521,7 @@ describe('cancellation, shutdown and observer isolation', () => {
     });
     const request = submit();
     await waiting.promise;
-    narrative.stop('session', request.accepted.runId);
+    narrative.stop('session', request.accepted.runId, request.accepted.assistantEntryId);
     expect(await request.finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
     expect(runUsage(request.accepted.runId)).toEqual(wireUsage(zeroUsage));
     const settled = structuredClone(seen);
@@ -544,7 +544,7 @@ describe('cancellation, shutdown and observer isolation', () => {
     events.subscribe('session', event => {
       if (event.event === 'run.delta' && !stopped) {
         stopped = true;
-        narrative.stop('session', accepted.runId);
+        narrative.stop('session', accepted.runId, accepted.assistantEntryId);
       }
     });
     expect(await finished).toMatchObject({ event: 'run.stopped', data: {
@@ -557,7 +557,7 @@ describe('cancellation, shutdown and observer isolation', () => {
     expect(finalMessage()).toMatchObject({ snapshot: snapshot('半段', { reasoning_content: '公开思考' }) });
     expect(finalMessage()).not.toHaveProperty('finish_reason');
     expect(runUsage(accepted.runId)).toBeNull();
-    expect(() => narrative.stop('session', accepted.runId)).toThrow('RUN_NOT_FOUND');
+    expect(() => narrative.stop('session', accepted.runId, accepted.assistantEntryId)).toThrow('RUN_NOT_FOUND');
   });
 
   it('cancels a hung credential lookup without waiting for or using its late secret', async () => {
@@ -565,8 +565,8 @@ describe('cancellation, shutdown and observer isolation', () => {
     const get = vi.spyOn(services.credentials, 'get').mockReturnValue(held.promise);
     const { accepted, finished } = submit();
     await vi.waitFor(() => expect(get).toHaveBeenCalledOnce());
-    expect(() => narrative.stop('session', 'different-run')).toThrow('RUN_NOT_FOUND');
-    narrative.stop('session', accepted.runId);
+    expect(() => narrative.stop('session', 'different-run', accepted.assistantEntryId)).toThrow('RUN_NOT_FOUND');
+    narrative.stop('session', accepted.runId, accepted.assistantEntryId);
     expect(await finished).toMatchObject({ event: 'run.stopped', data: {
       stop_reason: 'cancelled', savedMessageIds: [accepted.userEntryId], tipEntryId: accepted.userEntryId,
     } });
@@ -578,7 +578,7 @@ describe('cancellation, shutdown and observer isolation', () => {
 
   it('retains the first cancellation reason if shutdown follows user cancellation', async () => {
     const { accepted, finished } = submit();
-    narrative.stop('session', accepted.runId);
+    narrative.stop('session', accepted.runId, accepted.assistantEntryId);
     await narrative.shutdown();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
   });
@@ -641,7 +641,7 @@ describe('cancellation, shutdown and observer isolation', () => {
     const { accepted, finished } = submit();
     events.subscribe('session', event => {
       if (event.event === 'run.delta' && (event as Extract<NarrativeEvent, { event: 'run.delta' }>).data.messages[0].snapshot) {
-        narrative.stop('session', accepted.runId);
+        narrative.stop('session', accepted.runId, accepted.assistantEntryId);
       }
     });
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
@@ -668,7 +668,7 @@ describe('cancellation, shutdown and observer isolation', () => {
     events.subscribe('session', event => {
       if (event.data.runId !== firstRunId) return;
       if (event.event === 'run.usage') {
-        try { narrative.stop('session', firstRunId); }
+        try { narrative.stop('session', firstRunId, first.accepted.assistantEntryId); }
         catch (error) { noActiveAtUsage = error instanceof AppError && error.code === 'RUN_NOT_FOUND'; }
       }
       if (event.event === 'run.completed') void submit('紧接下一轮').finished.then(next.resolve);
@@ -721,7 +721,7 @@ describe('queryable narrative results', () => {
     let observed: unknown;
     events.subscribe('session', event => {
       if (event.event === 'run.delta' && !stopped) {
-        stopped = true; narrative.stop('session', accepted.runId);
+        stopped = true; narrative.stop('session', accepted.runId, accepted.assistantEntryId);
       }
       if (event.event === 'run.stopped') observed = narrative.list('session').items.find(item => item.runId === accepted.runId)!;
     });
@@ -794,7 +794,7 @@ describe('run diagnostic logs', () => {
 
   it('logs accepted creation before an immediate stop and includes the actual stopped result', async () => {
     const { accepted, finished } = submit('立即停止');
-    narrative.stop('session', accepted.runId);
+    narrative.stop('session', accepted.runId, accepted.assistantEntryId);
     const terminalEvent = await finished;
     const logs = readLogs(accepted.runId);
     expect(logs.slice(0, 2).map(item => item.event)).toEqual(['run.created', 'run.stop_requested']);

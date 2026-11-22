@@ -1,6 +1,9 @@
+import { systemVariableNames } from '../../../../modules/presets/service.js';
 import { narrativeForActivation } from '@sillyrealms/roleplay';
 import { validateStateSchema } from '@sillyrealms/sdk/state-validation';
 import { AppError } from '../../../../errors.js';
+import { parsePromptTemplate } from '../../../../lib/prompt-template.js';
+import { readStateVariable, type VisibleRoots } from '../../lib/state-variable.js';
 import type { StateService, StateViews } from '../../../../modules/state/service.js';
 import type { World, WorldCard } from '../../../../modules/worlds/service.js';
 import type { NarrativeHistoryMessage } from '../history/index.js';
@@ -14,15 +17,12 @@ export type MaterialSources = {
   history: readonly NarrativeHistoryMessage[];
   summary?: string;
 };
-export const systemVariableNames = [
-  'user', 'persona.prompt', 'characters.prompts', 'world.lore',
-  'history.summary', 'history.messages', 'input.text', 'state.entries',
-] as const;
 export type SystemVariableName = typeof systemVariableNames[number];
 export type PromptVariable = { type: 'text'; value: string } | { type: 'messages'; value: readonly NarrativeHistoryMessage[] };
 export type NarrativeMaterials = {
   variables: Record<SystemVariableName, PromptVariable>;
   activeRoots: string[];
+  visibleRoots: VisibleRoots;
   diagnostics: { id: string; reason: string; path: string }[];
   selection: { characters: ContextMaterialDiagnostic[]; lore: ContextMaterialDiagnostic[] };
 };
@@ -118,38 +118,59 @@ export function selectNarrativeMaterials(input: MaterialSources, conditions: Con
     .sort((a, b) => (a.entry.load?.order ?? 0) - (b.entry.load?.order ?? 0) || a.index - b.index);
   const definition = world.stateDefinition;
   if (definition !== null) {
-    try { validateStateSchema(definition); }
+    try { validateStateSchema(definition, 'stored'); }
     catch { throw new AppError('INVALID_NARRATIVE_STATE'); }
   }
-  const definitions = definition?.scopes.message ?? {};
-  const activeRoots = Object.entries(definitions)
-    .filter(([name, value]) => active({ id: name, load: value.load }, 'state.message.' + name)).map(([name]) => name);
-  const entries = activeRoots.map(name => {
-    const value = definitions[name]!;
-    const rules = Object.entries(value.rules).sort(([left], [right]) => compareRulePaths(left, right));
-    return [
-      '- ' + materialText(name, '  ') + ':',
-      '    - value: ' + (Object.hasOwn(views.message, name) ? encoded(views.message[name]) : '未设置（当前快照无此状态）'),
-      '    - type: ' + value.type,
-      ...(value.min === undefined ? [] : ['    - min: ' + encoded(value.min)]),
-      ...(value.max === undefined ? [] : ['    - max: ' + encoded(value.max)]),
-      '    - description: ' + materialText(render(value.description), '        '),
-      '    - rules:',
-      ...rules.map(([path, rule]) => '        - ' + materialText(path, '            ') +
-        (path.includes('[]') ? '（元素规则，非直接更新路径）' : '') + ': ' + materialText(render(rule), '            ')),
-    ].join('\n');
-  }).join('\n');
+  const scopes = definition?.scopes;
+  function stateMaterial(scope: keyof StateViews) {
+    const definitions = scopes?.[scope] ?? {};
+    const roots = Object.keys(definitions).filter(name =>
+      active({ id: name, load: definitions[name]!.load }, 'state.' + scope + '.' + name));
+    const snapshot = views[scope];
+    const entries = roots.map(name => {
+      const field = definitions[name]!;
+      const lines = [
+        '- ' + materialText(name, '  ') + ':',
+        '    - value: ' + (Object.hasOwn(snapshot, name) ? encoded(snapshot[name]) : '未设置（当前快照无此状态）'),
+        '    - type: ' + field.type,
+        ...(field.min === undefined ? [] : ['    - min: ' + encoded(field.min)]),
+        ...(field.max === undefined ? [] : ['    - max: ' + encoded(field.max)]),
+        '    - description: ' + materialText(render(field.description), '        '),
+      ];
+      if (scope === 'message' && field.rules) {
+        const rules = Object.entries(field.rules).sort(([a], [b]) => compareRulePaths(a, b));
+        if (rules.length) lines.push('    - rules:');
+        for (const [path, rule] of rules) {
+          lines.push('        - ' + materialText(path, '            ') +
+            (path.includes('[]') ? '（元素规则，非直接更新路径）' : '') + ': ' + materialText(render(rule), '            '));
+        }
+      }
+      return lines.join('\n');
+    });
+    return { roots, variable: text(entries.join('\n')) };
+  }
+  const message = stateMaterial('message');
+  const session = stateMaterial('session');
+  const global = stateMaterial('global');
+  const visibleRoots = { message: new Set(message.roots), session: new Set(session.roots), global: new Set(global.roots) };
+  const authorPrompt = (prompt: string) => prose(parsePromptTemplate(prompt, ['user'], 'author').map(segment => {
+    if (segment.type === 'text') return segment.value;
+    if (segment.type === 'variable') return playerName;
+    return readStateVariable(segment, views, visibleRoots);
+  }).join(''));
   return {
     variables: {
       user: text(playerName),
-      'persona.prompt': text(playerActive ? prose(render(player.prompt ?? '')) : ''),
-      'characters.prompts': text(selected.map(({ character }) => prose(render(character.prompt ?? ''))).filter(Boolean).join('\n\n')),
-      'world.lore': text(lore.map(({ entry }) => prose(render(entry.content))).join('\n\n')),
+      'persona.prompt': text(playerActive ? authorPrompt(player.prompt ?? '') : ''),
+      'characters.prompts': text(selected.map(({ character }) => authorPrompt(character.prompt ?? '')).filter(Boolean).join('\n\n')),
+      'world.lore': text(lore.map(({ entry }) => authorPrompt(entry.content)).join('\n\n')),
       'history.summary': text(input.summary ?? ''),
       'history.messages': { type: 'messages', value: history },
       'input.text': text(inputText),
-      'state.entries': text(entries),
+      'state.message': message.variable,
+      'state.session': session.variable,
+      'state.global': global.variable,
     },
-    activeRoots, diagnostics, selection,
+    activeRoots: message.roots, visibleRoots, diagnostics, selection,
   };
 }

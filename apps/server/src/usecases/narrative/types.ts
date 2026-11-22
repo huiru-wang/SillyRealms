@@ -5,11 +5,11 @@ import type { CredentialService } from '../../modules/credentials/service.js';
 import type { ModelService } from '../../modules/models/service.js';
 import type { PresetService } from '../../modules/presets/service.js';
 import type { SessionService } from '../../modules/sessions/service.js';
-import type { StateService } from '../../modules/state/service.js';
+import type { StateService, StateEvent } from '../../modules/state/service.js';
 import type { WorldService } from '../../modules/worlds/service.js';
 import type { EventHub } from '../../infrastructure/events/event-hub.js';
 import type { ModelClient } from '../../infrastructure/model/client.js';
-import type { SavedUserMessage } from './events.js';
+import type { SavedUserMessage, MessageDeletedEvent } from './events.js';
 import type { PreparedContext, SummaryModelRequest } from '../context/index.js';
 
 export type SubmitInput = {
@@ -24,6 +24,8 @@ export type AcceptedNarrative = {
   /** Reserved at acceptance; terminal events identify whether this entry was actually saved. */
   assistantEntryId: string;
   userMessage: SavedUserMessage;
+  tipEntryId: string | null;
+  deletedMessageIds: string[];
 };
 
 export type NarrativeDependencies = {
@@ -48,10 +50,20 @@ export type NarrativeExecution = {
   userEntryId: string;
   assistantEntryId: string;
   userMessage: SavedUserMessage;
+  tipEntryId: string | null;
+  deletedMessageIds: string[];
   provider: string | null;
   model: string | null;
   prepared: Promise<PreparedContext>;
   getApiKey: (credentialRef: SummaryModelRequest['credentialRef']) => Promise<string>;
   signal: AbortSignal;
   log: RunLogger;
+};
+
+export type RegenerateInput = { sessionId: string; userEntryId: string; assistantEntryId: string | null; expectedTipEntryId: string };
+export type ReadyNarrative = Pick<AcceptedNarrative, 'userMessage' | 'tipEntryId' | 'deletedMessageIds'> & {
+  notifications: Array<MessageDeletedEvent | StateEvent>;
+};
+export type ActiveNarrative = {
+  runId: string; assistantEntryId: string; controller: AbortController; completion: Promise<void>; log: RunLogger;
 };

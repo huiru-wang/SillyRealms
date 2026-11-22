@@ -5,6 +5,7 @@ import {trimTrailingEmptyRoleplayLines} from '@sillyrealms/roleplay';
 import {RoleplayComposer} from './composer/RoleplayComposer';
 import {SessionTokenUsage} from './SessionTokenUsage';
 import {SessionConfiguration} from './SessionConfiguration';
+import {ComposerMoreMenu} from './ComposerMoreMenu';
 import {StageHost} from '../../stage-host/StageHost';
 import {createSessionWorkspace,type SessionWorkspace} from './workspace';
 import {useSessionLayout} from './use-session-layout';
@@ -35,6 +36,15 @@ function SessionView({workspace,reload}:{workspace:SessionWorkspace;reload:()=>v
   }:null,[view.world,view.config]);
   const activeRun=stage.activeRunId,active=stage.runs.find(run=>run.runId===activeRun);
   const busy=!!activeRun||view.sending;
+  const latestRun=stage.runs.at(-1),latestUser=latestRun?.messages.find(message=>message.role==='user');
+  const latestReply=latestRun?.messages.at(-1);
+  const canRegenerate=!!latestUser&&!!session&&!busy&&stage.connected&&!stage.history.loading&&!stage.history.error;
+  const regenerate=async()=>{
+    if(!canRegenerate||!latestUser)return;
+    setNotice('');
+    try{await command('narrative.regenerate',{userEntryId:latestUser.id,assistantEntryId:latestReply?.role==='assistant'?latestReply.id:null});}
+    catch(reason){setNotice(reason instanceof Error?reason.message:'重新生成失败');}
+  };
   const label=!stage.connected?'连接中':activeRun?(active?.phase==='summarizing'?'整理上下文':active?.phase==='preparing'?'准备中':view.stopping?'停止中':'生成中'):'已连接';
   const submit=async(value?:string)=>{
     if(busy||view.loading||!stage.connected||!session)return;
@@ -43,7 +53,7 @@ function SessionView({workspace,reload}:{workspace:SessionWorkspace;reload:()=>v
     try{await command('narrative.send',{text});if(revision.current===currentRevision)updateDraft('');}
     catch(reason){setNotice(reason instanceof Error?reason.message:'发送失败');}
   };
-  const stop=async()=>{if(!activeRun)return;try{await command('narrative.stop',{runId:activeRun});}catch(reason){setNotice(reason instanceof Error?reason.message:'停止请求失败');}};
+  const stop=async()=>{if(!activeRun||!view.stage.activeAssistantEntryId)return;try{await command('narrative.stop',{runId:activeRun,assistantEntryId:view.stage.activeAssistantEntryId});}catch(reason){setNotice(reason instanceof Error?reason.message:'停止请求失败');}};
   const error=notice||view.notice;
   const title=session?.title||session?.worldName||'会话';
   const titleHint=session?.worldName&&session.worldName!==title?title+' · '+session.worldName:title;
@@ -67,6 +77,7 @@ function SessionView({workspace,reload}:{workspace:SessionWorkspace;reload:()=>v
       {error&&<div className={styles.previewError} role="alert">{error}<button type="button" aria-label="关闭通知" onClick={()=>{setNotice('');workspace.clearNotice();}}>×</button></div>}
       {expanded?<form className={styles.composer} aria-label="消息输入" onSubmit={event=>{event.preventDefault();void submit();}}>
         <button type="button" className={styles.collapse} aria-label="收起输入框" onClick={()=>setExpanded(false)}><ChevronDown size={19}/></button>
+        <ComposerMoreMenu canRegenerate={canRegenerate} onRegenerate={()=>void regenerate()}/>
         <div ref={layout.composer} className={styles.editor}><RoleplayComposer value={draft} disabled={false} onChange={updateDraft} onSubmit={text=>void submit(text)}/></div>
         {activeRun?<button className={styles.send} type="button" aria-label="停止生成" disabled={view.stopping} onClick={()=>void stop()}><Square size={16}/></button>:
           <button className={styles.send} type="submit" aria-label="发送消息" disabled={view.loading||!session||!stage.connected||view.sending||!draft.trim()||draft.length>100000}><Send size={18}/></button>}

@@ -9,7 +9,7 @@ import { EventHub } from '../../infrastructure/events/event-hub.js';
 import type { ModelClient, ModelEvent, ModelInfo, ModelUsage } from '../../infrastructure/model/client.js';
 import { createServices, type Services } from '../../services.js';
 import { memoryCredentials } from '../../testing/credentials.js';
-import { narrativePreset } from '../../testing/fixtures.js';
+import { narrativePreset, withEmptyModelNotes } from '../../testing/fixtures.js';
 import { createNarrativeUsecases, type NarrativeUsecases } from './index.js';
 import type { NarrativeEvent, NarrativeTerminalEvent } from './events.js';
 import { createAppendEntry } from '../append-entry.js';
@@ -72,16 +72,16 @@ const summaries = () => services.sessions.getHistory('session').filter(entry => 
 const total = () => seen.filter(event => event.event === 'run.usage').at(-1)?.data.usage;
 
 describe('summary execution and accounting', () => {
-  it('forwards the saved thinking depth through both summary and main narrative requests', async () => {
+  it('forwards the saved sampling parameters and thinking depth through both summary and main narrative requests', async () => {
     const preset = services.presets.require('preset');
     services.presets.update(preset.id, { config: {
-      ...preset.config, modelParameters: { thinkingEnabled: true, thinkingLevel: 'xhigh' },
+      ...preset.config, modelParameters: { temperature: 0.735, topP: 0.94, frequencyPenalty: -0.5, presencePenalty: 0, thinkingEnabled: true, thinkingLevel: 'xhigh' },
     } });
     seed();
     expect(await submit().finished).toMatchObject({ event: 'run.completed' });
     expect(stream).toHaveBeenCalledTimes(2);
     for (const [, , request] of stream.mock.calls) {
-      expect(request).toMatchObject({ thinkingEnabled: true, thinkingLevel: 'xhigh' });
+      expect(request).toMatchObject({ temperature: 0.735, topP: 0.94, frequencyPenalty: -0.5, presencePenalty: 0, thinkingEnabled: true, thinkingLevel: 'xhigh' });
     }
   });
 
@@ -116,7 +116,7 @@ describe('summary execution and accounting', () => {
     expect(summaryInput.messages).toHaveLength(3);
     expect(JSON.stringify(summaryInput)).not.toContain('Current input');
     const generation = stream.mock.calls[1]![1].slice(0, -1).map(message => message.content);
-    expect(generation).toEqual(['summary', 'Recent 3', 'Recent 4', 'Recent 5', 'Recent 6', 'Recent 7', 'Current input']);
+    expect(generation).toEqual(['summary', 'Recent 3', 'Recent 4', 'Recent 5', withEmptyModelNotes('Recent 6'), withEmptyModelNotes('Recent 7'), 'Current input']);
     expect(total()).toMatchObject({ total_tokens: 50 });
     expect(services.sessions.recordedUsage('session')).toMatchObject({ recordedRequestCount: 2, knownUsage: { totalTokens: 50 } });
     expect(narrative.list('session', {}).items[0]?.entries.map(entry => entry.type)).toEqual(['message', 'compaction', 'message']);
@@ -213,7 +213,7 @@ describe('summary execution and accounting', () => {
     const { accepted, finished } = submit();
     await waiting;
     expect(() => submit()).toThrow('RUN_ALREADY_ACTIVE');
-    narrative.stop('session', accepted.runId);
+    narrative.stop('session', accepted.runId, accepted.assistantEntryId);
     expect(await finished).toMatchObject({ data: { stop_reason: 'cancelled' } });
     expect(summaries()).toEqual([]);
     expect(total()).toMatchObject({ total_tokens: 0 });
@@ -230,7 +230,7 @@ describe('summary execution and accounting', () => {
       if (event.event === 'run.summarized') {
         try { narrative.submit({ sessionId: 'session', input: { text: 'Other' }, expectedTipEntryId: services.sessions.require('session').tipEntryId }); }
         catch (error) { refused = error instanceof AppError && error.code === 'RUN_ALREADY_ACTIVE'; }
-        narrative.stop('session', event.data.runId as string);
+        narrative.stop('session', event.data.runId as string, event.data.assistantEntryId as string);
       }
     });
     expect(await submit().finished).toMatchObject({ data: { stop_reason: 'cancelled' } });

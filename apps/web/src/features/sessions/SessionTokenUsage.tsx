@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { api } from '../../api';
 import {SessionUsagePopover} from './SessionUsagePopover';
@@ -13,17 +13,7 @@ export function SessionTokenUsage({ sessionId, refreshKey }: {
   const [usage, setUsage] = useState<RecordedUsage | null>(null);
   const [loading, setLoading] = useState(true), [error, setError] = useState(false);
   const [expanded, setExpanded] = useState(false), [retry, setRetry] = useState(0);
-  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width:760px)').matches);
-  const root = useRef<HTMLElement>(null), measure = useRef<HTMLSpanElement>(null);
   const trigger=useRef<HTMLButtonElement>(null),panelId=useId();
-  const [compactHeader, setCompactHeader] = useState(mobile);
-
-  useEffect(() => {
-    const query = window.matchMedia('(max-width:760px)');
-    const update = () => setMobile(query.matches);
-    query.addEventListener('change', update);
-    return () => query.removeEventListener('change', update);
-  }, []);
   useEffect(() => { setUsage(null); setExpanded(false); }, [sessionId]);
   useEffect(() => {
     const controller = new AbortController();
@@ -45,37 +35,11 @@ export function SessionTokenUsage({ sessionId, refreshKey }: {
   const cumulative = usage?.knownUsage;
   const cumulativeParts = useMemo(() => cumulative ? cumulativeSegments(cumulative) : [], [cumulative]);
   const hitRate = usage ? cacheHitRate(usage) : null;
-  const summary = loading && !usage ? '正在读取 Token 用量' : usage
-    ? (error ? '刷新失败 · ' : '') + '累计 ' + full(usage.knownUsage.totalTokens) + ' · 上下文 ' + contextSummary(usage.latestContext)
-    : 'Token 统计暂不可用';
 
-  useLayoutEffect(() => {
-    const element = root.current, probe = measure.current;
-    const toolbar = element?.closest<HTMLElement>('[data-session-toolbar]'), actions = element?.parentElement;
-    if (!element || !probe || !toolbar || !actions) return;
-    // Measure the complete label separately so a compact header never feeds back into its own width.
-    const update = () => {
-      const style = getComputedStyle(toolbar), actionStyle = getComputedStyle(actions);
-      const otherActions = Array.from(actions.children).filter(child => child !== element);
-      const otherWidth = otherActions.reduce((sum, child) => sum + child.getBoundingClientRect().width, 0);
-      const available = toolbar.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
-        - Math.min(180, toolbar.clientWidth * .25) - (parseFloat(style.columnGap) || 0)
-        - otherWidth - (parseFloat(actionStyle.columnGap) || 0) * otherActions.length;
-      setCompactHeader(mobile || probe.getBoundingClientRect().width + 2 > available);
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(toolbar); observer.observe(probe);
-    for (const child of actions.children) if (child !== element) observer.observe(child);
-    return () => observer.disconnect();
-  }, [summary, mobile]);
-
-  return <section ref={root} className={'host-usage' + (compactHeader ? ' is-compact' : '') + (mobile ? ' is-mobile' : '') + (mobile && expanded ? ' is-mobile-expanded' : '')} aria-label="Token 用量统计">
-    <button ref={trigger} className="host-usage-toggle" type="button" aria-expanded={expanded} aria-controls={expanded?panelId:undefined} aria-label={'用量：' + summary} title={summary} onClick={() => setExpanded(value => !value)}>
-      <span className="host-usage-toggle-copy"><span className="host-usage-toggle-title">用量</span><span className="host-usage-toggle-summary" hidden={compactHeader}>{summary}</span></span>
-      {compactHeader && <span className="host-usage-toggle-icon">{expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}</span>}
+  return <section className="host-usage" aria-label="Token 用量统计">
+    <button ref={trigger} className="host-usage-toggle" type="button" aria-expanded={expanded} aria-controls={expanded?panelId:undefined} onClick={() => setExpanded(value => !value)}>
+      用量{expanded ? <ChevronUp size={15} aria-hidden="true" /> : <ChevronDown size={15} aria-hidden="true" />}
     </button>
-    <span className="host-usage-measure-box" aria-hidden="true"><span ref={measure} className="host-usage-measure host-usage-toggle-copy"><span>用量</span><span>{summary}</span></span></span>
     {expanded && <SessionUsagePopover id={panelId} anchor={trigger} onClose={()=>setExpanded(false)}>
       {error && <div className="host-usage-error" role="status">{usage ? '刷新失败，当前显示上次统计' : '统计暂不可用'} <button type="button" onClick={() => setRetry(value => value + 1)} aria-label="重试读取 Token 用量"><RefreshCw size={13} /></button></div>}
       {loading && !usage ? <div className="host-usage-loading" role="status">正在读取用量…</div> : usage && <>

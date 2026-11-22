@@ -7,6 +7,7 @@
     ".": "./src/stage/index.tsx",
     "./assets": "./src/asset-url.ts",
     "./state-validation": "./src/state-validation.ts",
+    "./when-expression": "./src/when-expression.ts",
     "./world-story.css": "./src/world-story.css",
     "./world-document": "./src/world-document/WorldDocumentRenderer.tsx"
   },
@@ -16,10 +17,13 @@
   },
   "dependencies": {
     "@sillyrealms/roleplay": "workspace:*",
+    "acorn": "8.19.0",
+    "lodash": "4.18.1",
     "dompurify": "3.2.6",
     "marked": "15.0.12"
   },
   "devDependencies": {
+    "@types/lodash": "4.17.27",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3"
   }

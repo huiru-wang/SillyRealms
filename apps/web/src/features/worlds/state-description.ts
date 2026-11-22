@@ -12,7 +12,8 @@ export type StateDescriptionGroup = {scope: StateScope; nodes: StateDescriptionN
 /** Called after schema validation. Rules describe templates, never individual array values. */
 function describeRoot(name: string, definition: StateDefinition): StateDescriptionNode {
   const root: StateDescriptionNode = {
-    key: name, path: name, description: definition.type === 'json' ? definition.rules[name] : definition.description,
+    key: name, path: name, description: definition.type === 'json' && definition.rules && Object.hasOwn(definition.rules, name)
+      ? definition.rules[name] : definition.description,
     container: definition.type === 'json', children: [],
   };
   if (definition.type !== 'json') return root;
@@ -21,7 +22,7 @@ function describeRoot(name: string, definition: StateDefinition): StateDescripti
     const path = parent.path + (key === '[]' ? key : '.' + key);
     let node = nodes.get(path);
     if (!node) {
-      node = {key, path, description: definition.rules[path] ?? '', container: false, children: []};
+      node = {key, path, description: definition.rules?.[path] ?? '', container: false, children: []};
       nodes.set(path, node);
       parent.children.push(node);
     }
@@ -29,7 +30,7 @@ function describeRoot(name: string, definition: StateDefinition): StateDescripti
     return node;
   };
   // Include declared future fields even when their parents are null or their arrays are empty.
-  for (const path of Object.keys(definition.rules)) {
+  for (const path of Object.keys(definition.rules ?? {})) {
     let parent = root;
     for (const key of (path.match(/[^.[\]]+|\[\]/g) ?? []).slice(1)) parent = child(parent, key);
   }

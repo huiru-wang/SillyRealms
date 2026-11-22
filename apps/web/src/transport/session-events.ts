@@ -4,9 +4,9 @@ import type {SessionEvent} from '../../../../packages/sr-sdk/src/stage-contract.
 export const SESSION_EVENT_NAMES = [
   'session.created', 'run.created', 'run.summarizing', 'run.summarized',
   'run.delta', 'run.usage', 'run.completed', 'run.stopped',
-  'state.changed', 'action_suggestions.created',
+  'state.changed', 'action_suggestions.created', 'message.deleted',
 ] as const;
-export type SessionEventNamespace = 'session' | 'run' | 'state' | 'action_suggestions' | '*';
+export type SessionEventNamespace = 'session' | 'message' | 'run' | 'state' | 'action_suggestions' | '*';
 export type SessionConnection = {
   sessionId: string;
   status: 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed';
@@ -31,9 +31,12 @@ function wireEvent(name: typeof SESSION_EVENT_NAMES[number], value: unknown, ses
     if (!['global', 'session', 'message'].includes(String(data.scope)) || typeof data.path !== 'string' || !Object.hasOwn(data, 'value')) return null;
   } else {
     if (data.sessionId !== sessionId) return null;
-    if (name.startsWith('run.') || name === 'action_suggestions.created') {
+    if (name.startsWith('run.') || name === 'action_suggestions.created' || name === 'message.deleted') {
       if (typeof data.runId !== 'string' || !data.runId) return null;
     }
+    if ((name.startsWith('run.') || name === 'message.deleted') && (typeof data.assistantEntryId !== 'string' || !data.assistantEntryId)) return null;
+    if (name === 'message.deleted' && (typeof data.messageId !== 'string' || !(data.tipEntryId === null || typeof data.tipEntryId === 'string'))) return null;
+    if (name === 'run.created' && (!Array.isArray(data.deletedMessageIds) || !data.deletedMessageIds.every(id => typeof id === 'string') || !(data.tipEntryId === null || typeof data.tipEntryId === 'string'))) return null;
     if (name === 'run.created' && (!Array.isArray(data.messages) || data.messages.length !== 1)) return null;
     if (name === 'run.delta' && (typeof data.messageId !== 'string' || !Array.isArray(data.messages) || data.messages.length !== 1)) return null;
     if (name === 'action_suggestions.created' && (typeof data.messageId !== 'string' || !Array.isArray(data.items))) return null;

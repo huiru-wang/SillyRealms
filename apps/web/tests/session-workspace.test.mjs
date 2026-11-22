@@ -5,9 +5,9 @@ import {createSessionWorkspace} from '../src/features/sessions/workspace.ts';
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
 const entry=(id,seq,runId,role='assistant')=>({id,sessionId:'s',parentId:null,runId,seq,type:'message',role,timestamp:seq,
  payload:{message:{role,content:role==='user'?'Go':'Saved answer'}},state:null,extData:{},metrics:null,createdAt:seq,updatedAt:seq});
-const run=(id,entries,status='completed')=>({runId:id,entries,status,firstSeq:entries[0].seq,lastSeq:entries.at(-1).seq,
+const run=(id,entries,status='completed')=>({runId:id,assistantEntryId:id+'-a',entries,status,firstSeq:entries[0].seq,lastSeq:entries.at(-1).seq,
  ...(status==='completed'?{finishedAt:10}:{}),...(status==='stopped'?{finishedAt:10,stopReason:'summary_capacity_exceeded'}:{})});
-const fields=(runId='r')=>({sessionId:'s',runId,provider:'test',model:'model',timestamp:10});
+const fields=(runId='r')=>({sessionId:'s',runId,assistantEntryId:runId+'-a',provider:'test',model:'model',timestamp:10});
 function eventPort(){
  const events=new Set(),connections=new Set();let generation=0,closed=false;
  return {
@@ -78,7 +78,7 @@ test('events before POST and cursor reconciliation produce one saved answer with
  };
  const sending=workspace.command('narrative.send',{text:'Go'});await nextTurn();
  server.runs.push(run('r',[entry('r-u',2,'r','user')],'running'));server.active='r';server.tip='r-u';
- channel.emit({event:'run.created',data:{...fields(),messages:[{id:'r-u',role:'user',content:'Go',timestamp:2}]}});
+ channel.emit({event:'run.created',data:{...fields(),tipEntryId:'r-u',deletedMessageIds:[],messages:[{id:'r-u',role:'user',content:'Go',timestamp:2}]}});
  channel.emit({event:'run.delta',data:{...fields(),messageId:'r-a',messages:[{role:'assistant',delta:{content:'Draft'}}]}});
  channel.emit({event:'run.delta',data:{...fields(),messageId:'r-a',messages:[{role:'assistant',delta:{},snapshot:{role:'assistant',content:'Saved answer',reasoning_content:'',tool_calls:[]},finish_reason:'stop'}]}});
  const assistant=entry('r-a',3,'r');assistant.extData.output={actionSuggestions:{status:'success',items:['继续观察']}};
@@ -86,7 +86,7 @@ test('events before POST and cursor reconciliation produce one saved answer with
  channel.emit({event:'action_suggestions.created',data:{sessionId:'s',runId:'r',messageId:'r-a',items:['继续观察']}});
  channel.emit({event:'run.completed',data:{...fields(),savedMessageIds:['r-u','r-a'],tipEntryId:'r-a'}});
  await nextTurn();
- post.resolve({runId:'r',userEntryId:'r-u',assistantEntryId:'r-a',userMessage:{id:'r-u',role:'user',content:'Go',timestamp:2}});await sending;await nextTurn();
+ post.resolve({runId:'r',userEntryId:'r-u',assistantEntryId:'r-a',tipEntryId:'r-u',deletedMessageIds:[],userMessage:{id:'r-u',role:'user',content:'Go',timestamp:2}});await sending;await nextTurn();
  const view=workspace.getSnapshot();
  assert.equal(view.stage.activeRunId,null);assert.equal(view.stage.runs.at(-1).status,'completed');
  assert.deepEqual(view.stage.runs.at(-1).messages.map(message=>[message.id,message.saved]),[['r-u',true],['r-a',true]]);
@@ -107,7 +107,7 @@ test('HTTP acceptance reaches the stage before SSE and history without duplicati
  await workspace.command('narrative.send',{text:'Go'});
  const userIds=()=>workspace.getSnapshot().stage.runs.at(-1).messages.map(message=>message.id);
  assert.deepEqual(userIds(),['r-u']);
- channel.emit({event:'run.created',data:{...fields(),messages:[userMessage]}});
+ channel.emit({event:'run.created',data:{...fields(),tipEntryId:'r-u',deletedMessageIds:[],messages:[userMessage]}});
  assert.deepEqual(userIds(),['r-u']);
  await workspace.refresh();
  assert.deepEqual(userIds(),['r-u']);
@@ -124,7 +124,7 @@ test('reconnecting after a user-only stop reconciles the running seq through one
  assert.equal(stage.activeRunId,null);
  assert.equal(stage.runs.at(-1).status,'stopped');
  assert.deepEqual(stage.runs.at(-1).messages.map(message=>message.id),['r-u']);
- assert.deepEqual(calls.map(call=>call.path).filter(path=>path.includes('/narrative/')),['v1/sessions/s/narrative/runs?afterSeq=1']);
+ assert.deepEqual(calls.map(call=>call.path).filter(path=>path.includes('/narrative/')),['v1/sessions/s/narrative/runs']);
 });
 test('closing an active composition only disposes transports and pending reads, never requests stop',async()=>{
  const {workspace,channel,calls}=setup(true);await workspace.start();
@@ -145,4 +145,34 @@ test('changing the model refreshes usage while other session settings keep the c
  assert.equal(workspace.getSnapshot().usageRevision,initial.usageRevision+1);
  workspace.updateSession({...workspace.getSnapshot().session,title:'Another title'});
  assert.deepEqual(revisions,[initial.usageRevision,initial.usageRevision+1,initial.usageRevision+1]);
+});
+
+test('regeneration deletes the old projection before streaming, retains summary tip and clears suggestions',async()=>{
+ const {workspace,server,channel}=setup(true);server.active=null;server.tip='r-a';
+ server.runs[1]=run('r',[entry('r-u',2,'r','user'),entry('r-a',3,'r')]);
+ server.runs[1].entries[1].extData.output={actionSuggestions:{status:'success',items:['Old action']}};
+ await workspace.start();assert.equal(workspace.getSnapshot().stage.suggestions.messageId,'r-a');
+ channel.emit({event:'message.deleted',data:{sessionId:'s',runId:'r',assistantEntryId:'new-a',messageId:'r-a',tipEntryId:'summary'}});
+ assert.deepEqual(workspace.getSnapshot().stage.runs.at(-1).messages.map(message=>message.id),['r-u']);
+ assert.equal(workspace.getSnapshot().stage.activeAssistantEntryId,'new-a');
+ channel.emit({event:'run.created',data:{...fields(),assistantEntryId:'new-a',messages:[{id:'r-u',role:'user',content:'Go',timestamp:2}],tipEntryId:'summary',deletedMessageIds:['r-a']}});
+ assert.equal(workspace.getSnapshot().session.tipEntryId,'summary');
+ assert.deepEqual(workspace.getSnapshot().stage.runs.at(-1).messages.map(message=>message.id),['r-u']);
+ assert.equal(workspace.getSnapshot().stage.suggestions,null);
+ channel.emit({event:'run.completed',data:{...fields(),savedMessageIds:['r-u','r-a'],tipEntryId:'r-a'}});
+ assert.equal(workspace.getSnapshot().stage.activeAssistantEntryId,'new-a');
+ channel.emit({event:'run.delta',data:{...fields(),assistantEntryId:'new-a',messageId:'new-a',messages:[{role:'assistant',delta:{content:'New'}}]}});
+ assert.deepEqual(workspace.getSnapshot().stage.runs.at(-1).messages.map(message=>message.id),['r-u','new-a']);
+ workspace.dispose();
+});
+
+test('reconnect replaces a deleted assistant even when lastSeq shrank and the regeneration event was lost',async()=>{
+ const {workspace,server,channel}=setup(true);server.active=null;server.tip='r-a';
+ server.runs[1]=run('r',[entry('r-u',2,'r','user'),entry('r-a',3,'r')]);
+ await workspace.start();channel.disconnect();
+ server.runs[1]={...run('r',[entry('r-u',2,'r','user')],'stopped'),assistantEntryId:'new-a'};server.tip='r-u';
+ channel.connect();await nextTurn();
+ assert.deepEqual(workspace.getSnapshot().stage.runs.at(-1).messages.map(message=>message.id),['r-u']);
+ assert.equal(workspace.getSnapshot().stage.activeRunId,null);assert.equal(workspace.getSnapshot().session.tipEntryId,'r-u');
+ workspace.dispose();
 });

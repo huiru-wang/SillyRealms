@@ -38,7 +38,7 @@ async function collect(events: AsyncIterable<ModelEvent>): Promise<ModelEvent[]>
   return result;
 }
 function options(controller = new AbortController()) {
-  return { apiKey: 'secret-test-key', signal: controller.signal, maxTokens: 512, temperature: 0.7, thinkingEnabled: true };
+  return { apiKey: 'secret-test-key', signal: controller.signal, maxTokens: 512, thinkingEnabled: true };
 }
 function selected(client: PiClient): ModelInfo { return client.resolve('test', 'story'); }
 function snapshot(content = '', reasoning_content = '', tool_calls: ModelSnapshot['tool_calls'] = []): ModelSnapshot {
@@ -92,7 +92,7 @@ describe('PiClient SDK boundary', () => {
     expect(captured?.context.messages.map(value => value.role)).toEqual(messages.map(value => value.role));
     expect(captured?.context.tools).toBeUndefined();
     expect(captured?.options).toMatchObject({
-      apiKey: 'secret-test-key', maxRetries: 0, maxTokens: 512, temperature: 0.7, reasoning: 'medium',
+      apiKey: 'secret-test-key', maxRetries: 0, maxTokens: 512, reasoning: 'medium',
     });
     expect(result).toEqual([
       started,

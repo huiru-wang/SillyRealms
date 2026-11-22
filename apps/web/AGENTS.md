@@ -6,6 +6,7 @@
 - API 使用 /api/v1、驼峰 CRUD 结构、data.item 单项和 items/hasMore/nextCursor 分页。预设文件协议仅用于导入导出，不渗透编辑器状态。
 - 列表读取摘要；详情按需加载。分页错误可重试，切换查询时取消过期请求；不使用详情 N+1 或把第一页当完整选择目录。
 - 预设草稿与已保存基线分离，导航保留草稿；保存提交 expectedRevision，冲突时保留草稿并明确提示，重新读取需确认丢弃修改。
+- 预设采样项在模型默认与自定义之间切换。滑动步长只影响拖动与键盘操作，精确输入和导入值保持原精度；未完成输入留在草稿，保存与复制均校验。模型适配由 Server 负责。
 - 模型密钥只在输入时提交，不读取、存入 localStorage 或模拟连通性；默认值通过 ManagementData 统一同步。设置允许 null，PATCH 只提交变化字段。
 - 模型目录读取 Server 的 provider 分组，先选 provider 再选 SDK 模型，切 provider 清空模型；不手填目录标识或自行推断 SDK 能力。选中模型以紧凑参数区展示上下文/输出/推理/有效思考档位/协议/输入/缓存，缺失数据明确未提供。保留旧配置目录缺项时的既有值，禁止加载或重试覆盖编辑草稿。
 - 不保留初始化向导、setup 入口或依赖默认模型/凭据的准入判断。应用可直接进入管理页；默认数据只由 Server 启动时幂等补齐。
@@ -29,12 +30,15 @@
 
 ## 会话运行与 Stage SDK
 
-- Server 是唯一业务契约：提交 input.text + expectedTipEntryId，返回 runId/userEntryId/assistantEntryId 与已保存的 userMessage；HTTP 成功即展示用户消息，run.created 按消息 ID 确认或补偿，保留更晚的运行状态和助手输出。叙事路径 /sessions/:id/narrative，状态路径 /state/global|session|message。不恢复旧路径或伪造请求去重、能力开关和旧运行状态。用量面板复用 V1 UI 和粒度，只读取 Server 已记录用量及 latestContext；系统/摘要/历史组成按实际编译字节和约定消息开销计算，不冒充逐类计费 Token。模型配置变化后刷新 usage，未知数据保留未知。
+- Server 是唯一业务契约：提交 input.text + expectedTipEntryId，返回 runId/userEntryId/assistantEntryId、真实 tipEntryId、deletedMessageIds 与已保存的 userMessage；HTTP 成功即展示用户消息，run.created 按消息 ID 确认或补偿，保留更晚的运行状态和助手输出。叙事路径 /sessions/:id/narrative，状态路径 /state/global|session|message。不恢复旧路径或伪造请求去重、能力开关和旧运行状态。用量面板复用 V1 UI 和粒度，只读取 Server 已记录用量及 latestContext；系统/摘要/历史组成按实际编译字节和约定消息开销计算，不冒充逐类计费 Token。模型配置变化后刷新 usage，未知数据保留未知。
 - history 只维护已保存 entries 与分页；narrative 只维护活跃运行和临时输出；workspace 组合展示投影。run.delta.snapshot 整体替换临时消息，只有查询确认的 entries 才接管为保存消息。compaction 不渲染为气泡，但其 seq 与真实 tip 必须保留。
-- session-events 保持一条会话 SSE，显式注册当前事件并按订阅分发；一个监听者失败不影响其他消费者。断线只标记不连续，不重发生成。先建立连接再分页补查历史，覆盖原活跃轮次的末条 seq；读取代次防止迟到响应覆盖新事件。
+- session-events 保持一条会话 SSE，显式注册当前事件并按订阅分发；一个监听者失败不影响其他消费者。断线只标记不连续，不重发生成。先建立连接再替换最近历史页，普通终态补查覆盖原活跃轮次的末条 seq；读取代次防止迟到响应覆盖新事件。
 - state feature 负责三作用域读写与消息数组归一化。path:"" 替换整个 scope，null 保留普通值；PATCH success 可能是忽略，写后通过补读/真实事件同步，禁止按提交值乐观造状态。真实 tip 变化后再确认 message 状态。
 - suggestions 独立消费 action_suggestions.created，run.created 清空；恢复只取最新 run 的有效完成结果，无建议不回找更早轮次。读取 actionSuggestions 的整体 status/items，不依赖逐项 results；history 向 Stage 透传 output，状态诊断使用每项带 status 的 stateUpdate.updates。旧格式由服务端读取投影归一化，前端不另做兼容。
-- stage-host 校验 origin/source/nonce、消息大小与命令白名单；session/world/tip 绑定由可信页面提供。frame 无直接业务 HTTP 权限。作者预览保持只读 global；会话 stage 通过受限命令提供 send/stop/history/state 写入。
+- stage-host 校验 origin/source/nonce、消息大小与命令白名单；session/world/tip 绑定由可信页面提供。frame 无直接业务 HTTP 权限。作者预览保持只读 global；会话 stage 通过受限命令提供 send/regenerate/stop/history/state 写入。
 - V2 frame 与作者类型共用 SDK 根入口。getRuns 使用 narrative/runs 的原生分页契约。StageRuntime 只接收不可变投影、转发命令和原生事件；官方 WorldStory 保留展示/滚动，不能再独立拉取和归并运行。messageRender 匹配在 frame 的有界 Worker 中执行。
-- 不提供重新生成、失败重试、历史回退和生成中编辑。设置生成中禁用业务配置修改，字号等阅读外观可独立调整。移动会话页隐藏主导航底栏，保留返回会话列表入口。
+- 会话输入框收起按钮右侧的“更多操作”向上展开“重新生成”，仅允许最新用户轮次重新生成，或没有 AI 时重试；只有开局时禁用，提交中、生成中、离线或历史未同步时禁用。不提供历史回退和生成中编辑。设置生成中禁用业务配置修改，字号等阅读外观可独立调整。移动会话页隐藏主导航底栏，保留返回会话列表入口。
 - 验证使用函数级注入端口、typecheck 和两个静态构建，不启动真实服务/浏览器/模型或读取 Keychain。集成说明见 ../../docs/runtime/web-runtime.md。
+
+- 同轮重新生成用 assistantEntryId 区分执行，stop 必须传递该身份。HTTP/SSE 的删除回执幂等应用，收到删除确认才移除旧消息；迟到回执/旧终态不得回退 tip、复活旧消息或停止新执行。run.created 使用真实 tipEntryId，不能推断为 userEntryId。
+- history 在删除/新执行时使旧读取失效，允许同轮 seq 变小。重连和显式刷新替换最新 1–5 轮及分页缓存，普通终态仍可重叠 seq 补查；不自动重新提交。suggestions 按新助手 ID 清理/隔离，生成失败不恢复旧回复。

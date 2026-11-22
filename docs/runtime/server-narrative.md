@@ -6,14 +6,16 @@ Server 在现有会话上提供按预设整理上下文、可选一次摘要调�
 
 Web 已接入管理、作者预览与文本叙事运行页，见 [运行接入](web-runtime.md)。原 Server/Web 保持独立。Server 处理正文尾部的状态 JSONL 与行动建议数组；不提供 Agent/tool loop、修复重试、重启恢复、执行状态表或事件回放。
 
-会话创建由独立 create-session 用例完成开局选择、{{user}} 替换、session/message 初始状态和首条 assistant 消息的一次事务保存，只发 session.created。首条消息是普通 run 分组的一部分，不分类；其正文参与后续历史，状态被后继继承，不执行模型。
+会话创建由独立 create-session 用例完成开局选择、{{user}} 替换、session/message 初始状态和首条 assistant 消息的一次事务保存，只发 session.created。首条消息是普通 run 分组的一部分，不分类；其正文参与后续历史，状态被后继继承。服务端按应用开局覆盖后的 message 快照逐根写入 extData.output.stateUpdate.updates，每行保存成功状态、根路径及完整值。有更新时状态为 success，空快照为 no_updates。行动建议保存为 no_suggestions 和空数组，模型请求计数为零。
 
 状态 HTTP 独立提供三个 scope 的 GET/PATCH/PUT。叙事后处理只更新本轮激活且已存在的 message 路径，不向模型开放 global/session 写入；公共 PATCH 的缺失路径忽略语义保持不变。state.changed 保持 `{path,scope,value}` 契约，在成功提交实际变化后发布；message 事件表示当前 tip 的有效继承视图。叙事有变化时保存完整助手状态快照，无变化时继续 null 继承；内部 getViews/evaluateWhen 服务于叙事上下文。具体写入与读取语义见 [状态接口](server-http.md#状态接口)。Web 的 state feature 与 Stage SDK 按这些路径和事件语义接入，写后读取权威状态，不乐观推导被忽略的值。
 
 | 位置 | 职责 |
 | --- | --- |
 | `src/infrastructure/cache/index.ts` | 全应用共享内存写锁、持有者校验与解锁 |
-| `src/usecases/narrative/index.ts` | 提交校验、取得锁、保存用户、调用唯一上下文入口、停止与关闭 |
+| `src/usecases/narrative/index.ts` | 普通提交/重新生成准入、运行锁和执行身份、查询、停止与关闭 |
+| `src/usecases/narrative/start.ts` | 用户就绪后的公共生命周期、唯一上下文入口、通知与释放锁 |
+| `src/usecases/narrative/regenerate.ts` | 最新目标校验、删除及清除终态事务、提交后删除与状态回执 |
 | `src/usecases/narrative/execute.ts` | 等待上下文结果、主模型及后处理、助手与状态保存、通知和总 usage/终态 |
 | `src/usecases/context/index.ts` | prepareContext 唯一公开入口及显式公开类型 |
 | `src/usecases/context/capture.ts` | 首次异步等待前通过公开 Service 冻结 session 当前消息、实际 tip 状态及配置 |
@@ -34,7 +36,22 @@ Web 已接入管理、作者预览与文本叙事运行页，见 [运行接入](
 
 业务模块只通过 `service.ts` 提供能力；叙事用例不读取 Repository、存储行或 SQL，不接收数据库连接；装配注入同步 TransactionRunner，事务仅覆盖收尾读取、候选计算和助手保存，不包含模型/网络等待。用例、路由和编译器依赖自有 ModelClient/ModelInfo/ModelMessage，不接触 SDK Model、StopReason 或具体 PiClient；只在装配入口选择 PiClient 实现。pi 不依赖业务模块、会话、entry、EventHub 或 HTTP。装配方为叙事与 SSE 注入同一个 EventHub。context 生产代码不依赖 narrative、其他 usecase 或事件传输，只通过进度通知交由外层映射 run 事件；外部代码和类型只能从 context/index.ts 导入。
 
-主叙事与滚动摘要请求均携带预设的 temperature、thinkingEnabled 和可选 thinkingLevel。标准深度为 minimal、low、medium、high、xhigh、max；未指定时保持既有默认行为。pi 适配层依据当前模型的实际支持档位应用显式选择，不支持所选深度时仅忽略该选择并沿用原有默认深度，保持已开启的思考行为；关闭思考或模型不支持思考时不传 reasoning 参数。
+主叙事与滚动摘要请求均携带本轮接受时捕获的 modelParameters，包含可选温度、Top P、频率惩罚、存在惩罚，以及 thinkingEnabled 和可选 thinkingLevel。标准深度为 minimal、low、medium、high、xhigh、max；未指定时保持既有默认行为。pi 适配层依据当前模型的实际支持档位应用显式选择，不支持所选深度时仅忽略该选择并沿用原有默认深度，保持已开启的思考行为；关闭思考或模型不支持思考时不传 reasoning 参数。
+
+### 采样参数发送规则
+
+PiClient 按目录中的精确服务商、接口、端点、模型与思考模式决定用户覆盖。每一项单独校验，超出该路由范围、模式固定或能力未知时忽略该项，并通过开发日志的 sampling_omitted 记录原因。没有设置的键保留 SDK 和模型默认行为；不探测、不重试、不改写预设。实际 SDK payload 继续由只读诊断记录。
+
+| 当前已验证的路由 | 可发送的用户覆盖 |
+|---|---|
+| OpenRouter 的 openai/gpt-4o-mini，Chat Completions | 四项均支持，包含显式 0。[路由端点能力](https://openrouter.ai/api/v1/models/openai/gpt-4o-mini/endpoints) |
+| DeepSeek 官方 V4 Pro | 非思考模式可调温度及 (0,1] 的 Top P。思考时四项覆盖均省略。[参数说明](https://api-docs.deepseek.com/api/create-chat-completion/) |
+| DeepSeek 官方 Flash | 非思考模式可调温度；思考模式可调 [0.95,1] 的 Top P。[模式说明](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/) |
+| OpenAI 官方 Responses，API Key | 目录内 GPT-4o、4o mini、4.1、4.1 mini、4.1 nano 支持温度和 Top P；GPT-5.2／5.4 仅在有效 effort 为 none 时使用这两项。[模型参数兼容性](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.4) |
+| Google 原生 Gemini 2.5 Flash、Flash-Lite、Pro | 当前 Pi 原生调用通道传递具名温度。 |
+| Anthropic 原生 Haiku／Sonnet／Opus 4.5、Sonnet／Opus 4.6 | 固定 SDK 使用的旧版协议在关闭思考时可传 [0,1] 的温度。已登记的快照 ID 见适配器。 |
+
+pi-ai 1.5.0 的 OpenAI 兼容适配器在模型及思考档位默认值之后合并请求的 samplingParams。原生适配器按已实现的具名选项传递。升级 SDK、改变 API 版本或路由端点时，需复核映射和最终请求体。
 
 ## 提交与结束
 
@@ -104,9 +121,11 @@ entry.role 与 payload.message.role 一致。同轮已有消息共享 runId；re
 
 角色与世界书保留 load.mode、keywords、keyword_logic、exclude_keywords、when 及 order 语义。角色通过 load.mode=never 禁用；世界书条目还支持 enabled=false。角色卡协议没有角色 enabled 字段，导入不会保留该字段。匹配区分大小写，扫描本次保留的历史叙事、有效摘要与当前输入；每个裁剪候选重新激活材料，不假定 token 估算随裁剪单调递减。用户系统指令块不用于触发关键词。when 通过 StateService 对已捕获的 global/session/message 视图进行受限 AST 求值，不执行任意 JavaScript，也不写状态。
 
-预设节点按原顺序编译。history.messages 展开为原角色消息，自定义文本节点保留位置和角色；最新普通消息为 user 时，该消息从 history.messages 的投影中移至 input.text，只在 userInput 节点插入一次；尾部 compaction 不改变这一判定。最新普通消息为 assistant（包括无可见正文的部分输出）或会话为空时，input.text 为空，userInput 节点不产生消息，即使节点包含包装文字；之前的用户消息仍留在历史原位置。模板只识别固定变量与转义，不执行对象路径，不再次扫描已替换数据。
+预设节点按原顺序编译。history.messages 展开为原角色消息，自定义文本节点保留位置和角色；最新普通消息为 user 时，该消息从 history.messages 的投影中移至 input.text，只在 userInput 节点插入一次；尾部 compaction 不改变这一判定。最新普通消息为 assistant（包括无可见正文的部分输出）或会话为空时，input.text 为空，userInput 节点不产生消息，即使节点包含包装文字；之前的用户消息仍留在历史原位置。预设模板支持固定变量、状态字段路径与原有转义，未知变量和非法路径仍报错。
 
-worldState/actionSuggestions 为默认后处理能力，通过 PresetService.resolvePostprocessPrompts 读取非空配置或补默认提示词，忽略旧 enabled，不修改已存预设和 revision。编译提供最终激活状态与固定协议；固定协议覆盖旧提示词中的数组状态更新、强制非空标签及固定三条限制，并明确状态更新不设固定条数上限。worldState 在有激活 message 根时参与，建议按默认能力参与。不增加 capabilities HTTP 或提交响应字段；自定义模板仍可读取 state.entries，缺少值明确标为未设置，不用 initial 补值。
+预设节点和已选中的玩家/NPC prompt、世界书 content 支持 `{{state.<global|session|message>.<路径>}}`：从本轮捕获视图逐段读对象自有属性，只能读取当前裁剪候选按 load 激活的根，不增加写授权。字符串原样填入（作者素材保留原有正文转义），其余值输出紧凑 JSON；缺值或不可见根留空。世界卡导入不检查变量；作者素材中非法的闭合 state 路径留空，不支持的自定义变量和未闭合正文原样保留。只扫描源字段，输入、历史、替换结果和最终消息均不再扫描；状态规则、开局、摘要提示不新增插值。
+
+worldState/actionSuggestions 为默认后处理能力，通过 PresetService.resolvePostprocessPrompts 读取非空配置或补默认提示词，忽略旧 enabled，不修改已存预设和 revision。编译提供最终激活状态与固定协议；固定协议覆盖旧提示词中的数组状态更新、强制非空标签及固定三条限制，并明确状态更新不设固定条数上限。worldState 在任一作用域有激活根时参与。预设节点按模板引用展开 `{{state.global}}`、`{{state.session}}`、`{{state.message}}`，三组分别应用世界卡的加载条件，缺失的快照值标为未设置。前两组提供只读背景，只有已激活的 message 根进入本轮允许写入的路径，与是否有 rules 无关；仅当有规则条目时才输出规则段，组装时不重复校验其格式或要求覆盖。已有预设或导入文件中的 `{{state.entries}}` 在读取时转换为 `{{state.message}}`，保留自定义文本和转义字面量。
 
 ### 唯一上下文入口
 
@@ -131,7 +150,7 @@ model-notes 构建按 entryId 关联的独立内存数据，历史正文始终�
 | 主模型 | 干净正文及最终保留条目的旁注 |
 | 输入预算 | 实际发送的最终消息，包含旁注 |
 
-只有候选最终保留的 entry 才渲染旁注；滑窗删除或被摘要覆盖后，旁注随条目一起移除。每次渲染从干净正文开始，不重复追加。主模型历史中的正文与第一个数据块用一个空行分隔。状态块内每行一个 JSON 对象，建议数组与其起止标签同在一行；两块之间用一个换行分隔。只输出有有效记录的块，省略外层标签和解释文字。JSON 字符串中的保留标签继续转义。
+只有候选最终保留的 entry 才渲染旁注；滑窗删除或被摘要覆盖后，旁注随条目一起移除。每次渲染从干净正文开始，不重复追加。主模型历史中的正文与第一个数据块用一个空行分隔。状态块内每行一个 JSON 对象，建议数组与其起止标签同在一行；两块之间用一个换行分隔。每条入选消息都包含两个块。没有有效状态行时，状态块起止标签之间只有换行；没有有效建议时，建议块内容为 []。旧条目没有 output 时使用相同的空块。JSON 字符串中的保留标签继续转义。
 
 正文编辑保留已保存 output；旁注表示当时的处理记录，不表示依据编辑后的正文重新校验。旁注不回写历史、不重执行更新、不触发状态事件，也不进入公开聊天、摘要或关键词。无需 notes 表、持久化 schema、contextEligible 或历史重建 API；原文 sourceHash 不包含动态旁注。
 
@@ -164,7 +183,7 @@ sourceHash 为覆盖前缀内全部 message 的 id/seq/runId/role/content 规范
 
 ### 预算和生成参数
 
-读取预设 maxContextTokens、maxOutputTokens、temperature、thinkingEnabled。请求中的 maxOutputTokens 必须为正且不超过模型目录 maxTokens；本地输入预算为：
+读取预设 maxContextTokens、maxOutputTokens 及 modelParameters。请求中的 maxOutputTokens 必须为正且不超过模型目录 maxTokens；本地输入预算为：
 
 ```text
 B = min(preset.maxContextTokens, model.contextWindow - preset.maxOutputTokens - 1024)
@@ -177,7 +196,7 @@ T = floor(B * 60%)
 
 maxOutputTokens 交给 pi 既有预算映射，供应商实际输出参数可能因 thinking/context 调整；这不是对供应商总输出参数的精确保证，上下文整理按上述输入预算执行。thinkingEnabled 开启且目录模型支持 reasoning 时请求 medium；关闭时沿用 pi 的默认映射，能否完全关闭取决于 SDK 对该模型的能力描述。
 
-摘要输出上限 S=min(2048, model.maxTokens)，摘要输入上限 min(floor(model.contextWindow*75%), model.contextWindow-S-1024)。它是独立辅助调用预算，可以大于主叙事 maxContextTokens；超出时不发起调用、不分块重试。temperature/thinkingEnabled 沿用本轮预设。
+摘要输出上限 S=min(2048, model.maxTokens)，摘要输入上限 min(floor(model.contextWindow*75%), model.contextWindow-S-1024)。它是独立辅助调用预算，可以大于主叙事 maxContextTokens；超出时不发起调用、不分块重试。采样与思考配置沿用本轮预设。
 
 ## 叙事后处理与能力结果
 
@@ -294,3 +313,13 @@ POST 或 SSE 断开不取消叙事；只有显式 stop 或服务正常关闭触�
 日志属于独立观测通道，不新增 SSE 事件、数据库字段、日志 HTTP 或文件生命周期。context 只返回诊断数据，仍不依赖叙事、EventHub 或日志实现。Pi 的原始数据只进入可选诊断钩子，不进入业务 ModelEvent、公开消息或 entry。
 
 API Key、鉴权 header、明确凭据字段及模型错误中的已知密钥值先脱敏；普通业务 secret/token 字段保留。诊断副本不会改写模型请求、SDK 终态或能力结果；序列化、写入和异步观察者失败均独立兜底，不改变运行终态、状态提交或建议处理。
+
+## 最新 AI 回复重新生成
+
+重新生成沿用原用户消息和逻辑 runId，每次分配新的 assistantEntryId。Narrative 先校验最新用户轮次、指定 AI 与实际 tip，再持有执行锁完成删除和旧 extData.narrative 清除事务。Session.deleteEntry 仅提供通用删除、后继衔接和 tip 维护，不了解重新生成、不发布事件。首条开局 AI 和历史消息不属于此入口的合法目标。
+
+事务提交后发送 message.deleted，必要时发送继承视图的 state.changed，再进入与普通发送相同的 start/prepareContext/execute。Context 只读取删除后的 session 当前状态；保留 compaction，但受影响摘要须通过既有 sourceHash 校验才可使用。旧 AI 的 output 不重放，session/global 状态不回退，message 状态按剩余父链继承。
+
+新执行继续使用 run.created/summarizing/summarized/delta/usage/completed/stopped，不加 mode 或 attemptId。run 事件、活跃查询和新终态均带 assistantEntryId，stop 必须匹配该 ID 和 runId。用户消息按原 messageId 去重。删除成功后任何准备或模型失败均不恢复旧回复；部分公开输出保存，无输出只保留用户并允许显式重试。
+
+recordedUsage 保持现存 entries.metrics 求和：被删除 AI 的请求不再计入，保留摘要的计量保留，新输出独立记录。本数值不代表不可回退的历史账单，不新增账本或 schema。没有输出/持久化失败的计量边界与普通生成相同。删除可降低 lastSeq 或使新条目复用 seq；重连需以完整最近轮次替换客户端缓存。

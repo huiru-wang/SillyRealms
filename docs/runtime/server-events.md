@@ -38,7 +38,8 @@ entry 是已保存的完整首条消息，包含 runId、seq、替换 {{user}} �
 
 | 字段 | 含义 |
 | --- | --- |
-| runId、sessionId | 本轮与会话身份 |
+| runId、sessionId | 逻辑轮次与会话身份 |
+| assistantEntryId | 本次执行预分配的新 AI 消息身份；同轮重新生成时变化 |
 | provider、model | 配置中的 providerId、modelId；准备失败而无法取得配置时为 null |
 | timestamp | 生成该事件时的服务端 Unix 毫秒时间；不是事件序号或去重键 |
 
@@ -46,11 +47,11 @@ run.created 中用户消息的 timestamp 是其保存时的消息时间。messag
 
 | event | 特有 data 字段 | 含义 |
 | --- | --- | --- |
-| run.created | messages: [{id,role:"user",content,timestamp}] | 已受理且用户消息已保存；客户端清空上一轮建议，不保证模型调用已开始 |
+| run.created | messages: [{id,role:"user",content,timestamp}]、tipEntryId、deletedMessageIds | 已受理且用户消息已保存；客户端清空上一轮建议，不保证模型调用已开始 |
 | run.summarizing | 无额外字段 | 摘要输入校验通过，准备发起摘要调用 |
 | run.summarized | entryId | 完整摘要及其 metrics 已保存，entryId 为 compaction ID |
 | run.delta | messageId、messages（固定一个元素） | 同一条助手消息的正文、公开 reasoning 或工具调用增量，以及最终公开快照 |
-| run.usage | usage | 本轮总用量快照，每个已受理 run 仅发布一次，不带 messageId/requestId |
+| run.usage | usage | 本轮总用量快照，每次已受理执行仅发布一次，不带 messageId/requestId |
 | run.completed | savedMessageIds、tipEntryId | 正文主流程成功并完成持久化结算；不代表每个能力均成功 |
 | run.stopped | savedMessageIds、tipEntryId、stop_reason | 取消或失败已经结算；只使用原因码，不含 error、errorCode 或 errorMessage |
 
@@ -58,7 +59,13 @@ run.created 中用户消息的 timestamp 是其保存时的消息时间。messag
 
 摘要由独立 context 模块准备，进度经外层叙事适配到现有事件；context 和 compact 不直接依赖 EventHub 或 SSE。run.summarized 仅由实际已保存摘要回执触发，最终上下文准备失败时仍携带已保存摘要的用量和父链。模型旁注只用于主模型输入，不新增事件，也不进入公开聊天增量。
 
-摘要事件共用 runId/sessionId/provider/model/timestamp；不发布 run.phase、generating，不含 data.phase。摘要内部流不发 run.delta。正常顺序为 run.created → 可选摘要事件 → 干净正文 run.delta/最终 snapshot → 持久化及释放执行锁 → state.changed（有变化）→ action_suggestions.created（有有效建议）→ run.usage → 唯一终态。摘要失败或取消没有 summarized；成功摘要落库后预算仍超限，summarized 后直接 usage → stopped(summary_capacity_exceeded)，没有正文调用。
+摘要事件共用 runId/assistantEntryId/sessionId/provider/model/timestamp；不发布 run.phase、generating，不含 data.phase。摘要内部流不发 run.delta。正常顺序为 run.created → 可选摘要事件 → 干净正文 run.delta/最终 snapshot → 持久化及释放执行锁 → state.changed（有变化）→ action_suggestions.created（有有效建议）→ run.usage → 唯一终态。摘要失败或取消没有 summarized；成功摘要落库后预算仍超限，summarized 后直接 usage → stopped(summary_capacity_exceeded)，没有正文调用。
+
+### 删除通知与重新生成
+
+`message.deleted` 的 data 为 `{sessionId,runId,assistantEntryId,messageId,tipEntryId}`。messageId 是已删除的旧 AI，assistantEntryId 是将生成的新 AI。只有删除事务成功提交后才发送；不代表新输出成功。实际继承消息状态变化时，紧接着发送标准 state.changed（scope=message、path=""），随后使用正常 run.created。删除通知阶段仍持有本次执行锁。
+
+run.created 和 202 都携带删除后的真实 tipEntryId 与 deletedMessageIds；普通发送和用户无回复重试的删除列表为空。重发的原用户消息按 id 去重。按新 assistantEntryId 隔离本次增量、用量、终态和停止请求；同 runId 可以先后产生多个执行，不能用 runId 永久标记已完成。重复删除回执不回退更新后的 tip。重连读取完整最近轮次，不靠 afterSeq 推断删除。
 
 ### 增量与定稿
 
@@ -102,7 +109,7 @@ finish_reason 描述一次模型输出结束，不代表数据库保存成功或
 
 ### 一次运行的总 usage
 
-每个已受理的叙事 run 在消息保存及首条 user entry 的结束结果结算后发布一次 run.usage，随后发布唯一 run.completed 或 run.stopped。运行占位在发布结算事件前释放；终态后不再发送本轮增量或用量。SSE 连接继续存在。
+每次已受理的叙事执行在消息保存及首条 user entry 的结束结果结算后发布一次 run.usage，随后发布唯一 run.completed 或 run.stopped。运行占位在发布结算事件前释放；终态后不再发送本轮增量或用量。SSE 连接继续存在。
 
 usage 为以下对象或 null：
 
@@ -132,7 +139,7 @@ savedMessageIds 表达本轮结算确认保存的消息，tipEntryId 是结算�
 
 ```text
 event: run.stopped
-data: {"runId":"r-1","sessionId":"s-1","provider":"deepseek","model":"deepseek-flash","timestamp":1763520101000,"stop_reason":"provider_error","savedMessageIds":["m-1","m-2"],"tipEntryId":"m-2"}
+data: {"assistantEntryId":"m-2","runId":"r-1","sessionId":"s-1","provider":"deepseek","model":"deepseek-flash","timestamp":1763520101000,"stop_reason":"provider_error","savedMessageIds":["m-1","m-2"],"tipEntryId":"m-2"}
 
 ```
 
@@ -198,4 +205,4 @@ state.changed 与 action_suggestions.created 独立发布；每条能力通知�
 
 事件传输仍为 `/api/v1/sessions/:id/events`，没有 narrative/events、SSE id 或回放。轮次查询位于 narrative/runs：客户端重连后按已有 seq 补查新增 entries，若末轮曾在运行则覆盖其末条 seq；退出后重新进入则读取最新 5 轮。未落库的断线分片无需补齐，现有最终 snapshot 保持替换语义。
 
-每个 run 首条 entry 的 extData.narrative 保存 `{status,finishedAt,stopReason?}`，正常完成为 completed，其他结算为 stopped，stopReason 与本事件契约相同；写入失败不回滚已存消息。metrics.requests 改为 provider/modelId/requestId/usage/时间信息，不再存 status。助手 extData.output 单独保存后处理结果；终态仅代表正文主流程结果，能力诊断通过 runs 分页读取。
+每个 run 首条 entry 的 extData.narrative 保存 `{status,assistantEntryId?,finishedAt,stopReason?}`，正常完成为 completed，其他结算为 stopped，stopReason 与本事件契约相同；写入失败不回滚已存消息。metrics.requests 改为 provider/modelId/requestId/usage/时间信息，不再存 status。助手 extData.output 单独保存后处理结果；终态仅代表正文主流程结果，能力诊断通过 runs 分页读取。

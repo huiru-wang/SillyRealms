@@ -10,6 +10,7 @@ import { presetValueSchema } from './schema.js';
 import type { CreatePresetInput, Preset, PresetListOptions, PresetPage, PresetSummary, UpdatePresetInput } from './types.js';
 
 export type { CreatePresetInput, Preset, PresetListOptions, PresetPage, PresetSummary, UpdatePresetInput } from './types.js';
+export { systemVariableNames } from './schema.js';
 export type { NarrativePresetConfig, PresetNode } from './schema.js';
 export type { PresetDocument } from './card.js';
 export { resolvePostprocessPrompts } from './postprocess.js';

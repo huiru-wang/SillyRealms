@@ -66,7 +66,8 @@ export type ModelEvent =
   | { type: 'done'; snapshot: ModelSnapshot; finishReason: ModelFinishReason; usage: ModelUsage | null }
   | { type: 'error'; snapshot: ModelSnapshot; stopReason: ModelStopReason; usage: ModelUsage | null };
 export type ModelDiagnostic =
-  | { type: 'request'; source: 'provider_payload' | 'sampling_omitted'; data: unknown }
+  | { type: 'sampling'; source: 'sampling_omitted'; data: unknown }
+  | { type: 'request'; source: 'provider_payload'; data: unknown }
   | { type: 'response'; source: 'sdk_message' | 'sdk_error' | 'adapter_error'; data: unknown };
 export type SamplingParameters = {
   temperature?: number;
@@ -80,7 +81,7 @@ export type ModelParameters = SamplingParameters & {
 };
 export type ModelOptions = Partial<ModelParameters> & {
   apiKey: string; signal: AbortSignal; maxTokens: number;
-  /** Sanitized original provider payload / final SDK message, never deltas or business events. */
+  /** Sanitized sampling decisions, provider payload and final SDK message, never deltas or business events. */
   onDiagnostic?: (event: ModelDiagnostic) => void;
 };
 export interface ModelClient {

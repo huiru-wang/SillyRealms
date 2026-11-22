@@ -288,6 +288,13 @@
 
 /* Metadata stays secondary; expanding one entry never grows to document length (§2.2, §3.6). */
 .loreTitle{flex:1;min-width:0;overflow-wrap:anywhere}
+.loreTitle :global(.sr-badge){margin-inline-start:var(--space-2);vertical-align:middle}
+.loreCondition{display:grid;gap:var(--space-1);margin:0 0 var(--space-4);padding-bottom:var(--space-3);border-bottom:1px solid var(--stroke);font-size:var(--font-13);overflow-wrap:anywhere}
+.loreCondition dt,.loreCondition li>span{color:var(--text-muted)}
+.loreCondition dt:not(:first-child){margin-top:var(--space-2)}
+.loreCondition dd,.loreCondition ul,.loreCondition pre{margin:0}
+.loreCondition ul{padding-inline-start:var(--space-4);list-style:disc}
+.loreCondition pre{white-space:pre-wrap}
 .loreMetadata{display:grid;grid-template-columns:56px 92px 48px;align-items:center;gap:16px;flex:none;font-size:13px;font-weight:400;color:var(--text-muted);white-space:nowrap;text-align:left}
 .loreMetadata [data-enabled="true"]{color:var(--text-secondary)}
 .loreContent:focus-visible{outline:2px solid var(--focus);outline-offset:2px}

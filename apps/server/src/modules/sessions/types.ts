@@ -31,3 +31,5 @@ export type NarrativeOutcome = z.infer<typeof narrativeOutcomeSchema>;
 export type EntryRunListOptions = z.input<typeof entryRunListSchema>;
 export type EntryRun = { runId: string; firstSeq: number; lastSeq: number; entries: SessionEntry[] };
 export type EntryRunPage = { items: EntryRun[]; hasMore: boolean; nextBeforeSeq: number | null; nextAfterSeq: number | null };
+
+export type DeletedEntry = { entry: SessionEntry; tipEntryId: string | null };

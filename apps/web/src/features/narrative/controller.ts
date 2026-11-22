@@ -1,5 +1,5 @@
 import type {
-  AcceptedRun, MessageDelta, MessageSnapshot, NarrativeEvent, StageMessage,
+  AcceptedRun, RegenerateRequest, MessageDeletedEvent, MessageDelta, MessageSnapshot, NarrativeEvent, StageMessage,
   StageRun, StoredRun, Usage,
 } from '../../../../../packages/sr-sdk/src/stage-contract.ts';
 import type {HttpRequest} from '../../transport/http.ts';
@@ -20,6 +20,7 @@ export type NarrativeOptions = {
   sessionId: string;
   request: HttpRequest;
   getSession: () => Promise<{tipEntryId: string | null}>;
+  onAccepted?: (accepted: AcceptedRun) => void;
   onTipChanged?: (tipEntryId: string | null) => void;
   onTerminal?: (event: TerminalEvent) => void;
 };
@@ -50,7 +51,7 @@ export function createNarrativeController(options: NarrativeOptions) {
   const {sessionId, request} = options;
   const base = 'v1/sessions/' + encodeURIComponent(sessionId) + '/narrative/runs';
   const listeners = new Set<() => void>(), pending = new Set<AbortController>();
-  const settled = new Set<string>();
+  const settled = new Set<string>(), receipts = new Set<string>();
   let disposed = false, eventRevision = 0, continuous = false;
   let snapshot: NarrativeSnapshot = {
     run: null, activeRunId: null, drafts: [], sending: false, stopping: false,
@@ -82,20 +83,53 @@ export function createNarrativeController(options: NarrativeOptions) {
   // A paged read can finish after a newer live event. Only reconcile its matching revision.
   const reconcile = (stored: StoredRun | undefined, checkpoint: number) => {
     if (disposed || checkpoint !== eventRevision || !stored) return;
-    const current = snapshot.run?.runId === stored.runId ? snapshot.run : null;
+    const current = snapshot.run?.runId === stored.runId && snapshot.run.assistantEntryId === stored.assistantEntryId ? snapshot.run : null;
     if (current && terminal(current.status) && !terminal(stored.status) && stored.status !== 'unknown') return;
     const active = stored.status === 'running' || stored.status === 'stopping';
     if (!current) continuous = false;
     const saved = new Set(stored.entries.map(entry => entry.id));
-    if (terminal(stored.status)) settled.add(stored.runId);
+    if (terminal(stored.status) && stored.assistantEntryId) settled.add(stored.assistantEntryId);
     const run = current && terminal(current.status) && stored.status === 'unknown' ? current : {
-      runId: stored.runId, status: stored.status, messages: [], finishedAt: stored.finishedAt, stopReason: stored.stopReason,
+      runId: stored.runId, assistantEntryId: stored.assistantEntryId, status: stored.status, messages: [], finishedAt: stored.finishedAt, stopReason: stored.stopReason,
       ...(active && current?.phase ? {phase: current.phase} : {}),
     };
-    emit({run, activeRunId: active ? stored.runId : null, stopping: stored.status === 'stopping',
+    emit({run, ...(!current ? {usage: undefined} : {}), activeRunId: active ? stored.runId : null, stopping: stored.status === 'stopping',
       drafts: active && current ? snapshot.drafts.filter(message => !saved.has(message.id)) : [],
       incomplete: active && !continuous});
   };
+
+  const acknowledge = (accepted: AcceptedRun) => {
+    if (receipts.has(accepted.assistantEntryId)) return;
+    receipts.add(accepted.assistantEntryId);
+    callback(() => options.onAccepted?.(accepted));
+  };
+  async function submit(text?: string, regeneration?: RegenerateRequest): Promise<AcceptedRun> {
+    if (disposed) throw new Error('叙事客户端已关闭');
+    if (!regeneration && !text?.trim()) throw new Error('输入不能为空');
+    if (snapshot.sending || snapshot.activeRunId) throw new Error('当前会话仍在生成');
+    emit({sending: true, error: null});
+    try {
+      const session = await options.getSession();
+      const revision = eventRevision;
+      const accepted = await call<AcceptedRun>(base + (regeneration ? '/regenerate' : ''), {
+        method: 'POST', body: JSON.stringify({...regeneration, ...(regeneration ? {} : {input: {text}}), expectedTipEntryId: session.tipEntryId}),
+      });
+      if (revision === eventRevision && !settled.has(accepted.assistantEntryId)) {
+        acknowledge(accepted);
+        continuous = false;
+        emit({run: {runId: accepted.runId, assistantEntryId: accepted.assistantEntryId, status: 'running', phase: 'preparing', messages: []},
+          activeRunId: accepted.runId, drafts: [{...accepted.userMessage, runId: accepted.runId, saved: true}], incomplete: false, usage: undefined});
+        callback(() => options.onTipChanged?.(accepted.tipEntryId));
+      } else if (snapshot.run?.assistantEntryId === accepted.assistantEntryId && !settled.has(accepted.assistantEntryId)) {
+        acknowledge(accepted);
+        emit({drafts: withUserMessage(accepted.runId, accepted.userMessage)});
+      }
+      return accepted;
+    } catch (error) {
+      if (!disposed) emit({error: errorText(error)});
+      throw error;
+    } finally { if (!disposed) emit({sending: false}); }
+  }
 
   return {
     getSnapshot: () => snapshot,
@@ -109,24 +143,32 @@ export function createNarrativeController(options: NarrativeOptions) {
         if (snapshot.activeRunId) emit({incomplete: true});
       }
     },
+    acceptDeletion(data: MessageDeletedEvent['data']) {
+      if (disposed || data.sessionId !== sessionId) return;
+      eventRevision++; continuous = false;
+      emit({run: {runId: data.runId, assistantEntryId: data.assistantEntryId, status: 'running', phase: 'preparing', messages: []},
+        activeRunId: data.runId, stopping: false, usage: undefined, incomplete: false,
+        drafts: snapshot.drafts.filter(message => message.runId === data.runId && message.id !== data.messageId)});
+    },
     accept(event: NarrativeEvent) {
       if (disposed || event.data.sessionId !== sessionId) return;
-      const id = event.data.runId;
-      if (settled.has(id) && !['run.completed', 'run.stopped', 'run.usage'].includes(event.event)) return;
+      const id = event.data.runId, execution = event.data.assistantEntryId;
+      if (settled.has(execution) && !['run.completed', 'run.stopped', 'run.usage'].includes(event.event)) return false;
       // A delayed event for a previously completed run must not replace a newer run.
-      if (snapshot.run && snapshot.run.runId !== id && event.event !== 'run.created') return;
+      if (snapshot.run && snapshot.run.assistantEntryId !== execution && event.event !== 'run.created') return false;
       eventRevision++;
       if (event.event === 'run.created') {
-        const current = snapshot.run?.runId === id ? snapshot.run : null;
+        const current = snapshot.run?.assistantEntryId === execution ? snapshot.run : null;
+        acknowledge({runId: id, assistantEntryId: execution, userEntryId: event.data.messages[0].id, userMessage: event.data.messages[0], tipEntryId: event.data.tipEntryId, deletedMessageIds: event.data.deletedMessageIds});
         continuous = true;
         emit({...(current ? {} : {
-          run: {runId: id, status: 'running', phase: 'preparing', messages: []},
+          run: {runId: id, assistantEntryId: execution, status: 'running', phase: 'preparing', messages: []},
           activeRunId: id, stopping: false, usage: undefined,
-        }), drafts: withUserMessage(id, event.data.messages[0]), incomplete: false, error: null});
-        if (!current) callback(() => options.onTipChanged?.(event.data.messages[0].id));
+        }), drafts: current ? withUserMessage(id, event.data.messages[0]) : [{...event.data.messages[0], runId: id, saved: true}], incomplete: false, error: null});
+        if (!current) callback(() => options.onTipChanged?.(event.data.tipEntryId));
         return;
       }
-      const run = snapshot.run ?? {runId: id, status: 'running' as const, messages: []};
+      const run = snapshot.run ?? {runId: id, assistantEntryId: execution, status: 'running' as const, messages: []};
       if (event.event === 'run.summarizing') {
         emit({run: {...run, phase: 'summarizing'}, activeRunId: id});
       } else if (event.event === 'run.summarized') {
@@ -155,8 +197,8 @@ export function createNarrativeController(options: NarrativeOptions) {
       } else if (event.event === 'run.usage') {
         emit({usage: event.data.usage === null ? null : {...event.data.usage}});
       } else {
-        settled.add(id);
-        emit({run: {runId: id, status: event.event === 'run.completed' ? 'completed' : 'stopped',
+        settled.add(execution);
+        emit({run: {runId: id, assistantEntryId: execution, status: event.event === 'run.completed' ? 'completed' : 'stopped',
           messages: [], finishedAt: event.data.timestamp,
           ...(event.event === 'run.stopped' ? {stopReason: event.data.stop_reason} : {})},
           drafts: snapshot.drafts.filter(message => event.data.savedMessageIds.includes(message.id)),
@@ -165,43 +207,17 @@ export function createNarrativeController(options: NarrativeOptions) {
         callback(() => options.onTerminal?.(event));
       }
     },
-    async send(text: string): Promise<AcceptedRun> {
-      if (disposed) throw new Error('叙事客户端已关闭');
-      if (!text.trim()) throw new Error('输入不能为空');
-      if (snapshot.sending || snapshot.activeRunId) throw new Error('当前会话仍在生成');
-      emit({sending: true, error: null});
-      try {
-        const session = await options.getSession();
-        if (disposed) throw new DOMException('Narrative controller disposed', 'AbortError');
-        const revision = eventRevision;
-        const accepted = await call<AcceptedRun>(base, {
-          method: 'POST', body: JSON.stringify({input: {text}, expectedTipEntryId: session.tipEntryId}),
-        });
-        // The complete SSE lifecycle can precede the POST response.
-        if (revision === eventRevision && !settled.has(accepted.runId)) {
-          continuous = false;
-          emit({run: {runId: accepted.runId, status: 'running', phase: 'preparing', messages: []},
-            activeRunId: accepted.runId, drafts: withUserMessage(accepted.runId, accepted.userMessage), incomplete: false, usage: undefined});
-          callback(() => options.onTipChanged?.(accepted.userEntryId));
-        } else if (snapshot.run?.runId === accepted.runId && !settled.has(accepted.runId)) {
-          // Confirm the user without replacing newer stream output or run state.
-          emit({drafts: withUserMessage(accepted.runId, accepted.userMessage)});
-        }
-        return accepted;
-      } catch (error) {
-        if (!disposed) emit({error: errorText(error)});
-        throw error; // Never resubmit an uncertain request.
-      } finally { if (!disposed) emit({sending: false}); }
-    },
-    async stop(runId = snapshot.activeRunId) {
-      if (!runId || runId !== snapshot.activeRunId) throw new Error('当前没有可停止的生成');
+    send: (text: string) => submit(text),
+    regenerate: (input: RegenerateRequest) => submit(undefined, input),
+    async stop(runId = snapshot.activeRunId, assistantEntryId = snapshot.run?.assistantEntryId) {
+      if (!runId || runId !== snapshot.activeRunId || !assistantEntryId || assistantEntryId !== snapshot.run?.assistantEntryId) throw new Error('当前没有可停止的生成');
       emit({stopping: true, error: null});
       try {
-        const result = await call<{runId: string; stopping: true}>(base + '/' + encodeURIComponent(runId) + '/stop', {method: 'POST'});
-        if (snapshot.activeRunId === runId && snapshot.run) emit({run: {...snapshot.run, status: 'stopping'}});
+        const result = await call<{runId: string; assistantEntryId: string; stopping: true}>(base + '/' + encodeURIComponent(runId) + '/stop', {method: 'POST', body: JSON.stringify({assistantEntryId})});
+        if (snapshot.activeRunId === runId && snapshot.run?.assistantEntryId === assistantEntryId && snapshot.run) emit({run: {...snapshot.run, status: 'stopping'}});
         return result;
       } catch (error) {
-        if (!disposed && snapshot.activeRunId === runId) emit({stopping: false, error: errorText(error)});
+        if (!disposed && snapshot.activeRunId === runId && snapshot.run?.assistantEntryId === assistantEntryId) emit({stopping: false, error: errorText(error)});
         throw error;
       }
     },

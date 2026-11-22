@@ -31,7 +31,11 @@
 .composerArea{position:absolute;z-index:2;inset:auto 0 0;min-width:0;padding:10px 24px max(20px,env(safe-area-inset-bottom));pointer-events:none}
 .composer,.expand,.stopCollapsed{border:1px solid var(--composer-glass-edge);background:var(--composer-glass-bg);box-shadow:var(--composer-glass-shadow);-webkit-backdrop-filter:blur(16px) saturate(150%);backdrop-filter:blur(16px) saturate(150%);pointer-events:auto}
 
-.composer{width:100%;max-width:760px;min-width:0;margin:0 auto;display:grid;grid-template-columns:44px minmax(0,1fr) 44px;align-items:end;gap:5px;padding:7px;border-radius:24px;transition:border-color var(--motion-fast),box-shadow var(--motion-fast)}
+.composer{width:100%;max-width:600px;min-width:0;margin:0 auto;display:grid;grid-template-columns:repeat(2,var(--touch-target)) minmax(0,1fr) 44px;align-items:end;gap:var(--space-1);padding:7px;border-radius:24px;transition:border-color var(--motion-fast),box-shadow var(--motion-fast)}
+.moreActions{position:relative;align-self:stretch;display:flex;align-items:flex-end}
+.moreMenu{position:absolute;bottom:calc(100% + var(--space-3));left:0;z-index:var(--z-popover);min-width:140px;padding:var(--space-1);border:1px solid var(--stroke-strong);border-radius:var(--radius-control);background:var(--surface-raised);box-shadow:var(--shadow-popover)}
+.moreMenu button{width:100%;justify-content:flex-start}
+.moreMenu button[aria-disabled="true"]{opacity:.5;cursor:default}
 .composer:focus-within{border-color:var(--focus);box-shadow:var(--composer-glass-shadow),0 0 0 1px color-mix(in srgb,var(--focus) 35%,transparent)}
 .editor{min-width:0;align-self:stretch}
 .editor :global(.sr-roleplay-composer){min-width:0;width:100%}
@@ -46,6 +50,7 @@
 .editor :global(.sr-composer-instruction){color:var(--text-secondary)}
 .editor :global(.sr-composer-error){margin:4px 5px;font-size:12px;line-height:1.6;color:var(--text-secondary)}
 .collapse,.send,.expand,.stopCollapsed{display:grid;place-items:center;width:44px;height:44px;min-width:44px;min-height:44px;flex:none;padding:0;border-radius:17px;color:var(--text-secondary)}
+.collapse{width:var(--touch-target);min-width:var(--touch-target)}
 .collapse:hover{background:color-mix(in srgb,var(--text) 7%,transparent);color:var(--text)}
 .send{background:var(--selection-bg);color:var(--text)}
 .send:not(:disabled):hover{background:var(--surface-active)}
@@ -101,7 +106,7 @@
   .status{font-size:11px;gap:5px}
   .contextButton{min-width:var(--touch-target)}
   .composerArea{padding:8px 12px max(12px,env(safe-area-inset-bottom))}
-  .composer{gap:3px;padding:5px;border-radius:22px}
+  .composer{padding:5px;border-radius:22px}
   .editor :global(.sr-composer-editor){font-size:16px;max-height:min(168px,var(--composer-editor-room,168px),max(44px,calc((var(--session-viewport-height,100dvh) - var(--session-toolbar-height)) * .34)))}
   .editor :global(.sr-composer-placeholder){font-size:16px}
 }

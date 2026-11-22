@@ -24,7 +24,9 @@ const textVariables = [
   ['characters.prompts', '已加载角色'],
   ['world.lore', '已激活世界书'],
   ['history.summary', '已有摘要'],
-  ['state.entries', '已激活状态与字段规则'],
+  ['state.global', '全局状态（只读）'],
+  ['state.session', '会话状态（只读）'],
+  ['state.message', '消息状态与更新规则'],
 ] as const;
 
 export function PromptEditorDialog({title, initialValue, metadata = false, description, nodeId, onRestore, onApply, onClose}: Props) {
@@ -122,10 +124,11 @@ export function PromptEditorDialog({title, initialValue, metadata = false, descr
       </label>
       <div className={styles.promptMeta}><span>保留换行与原文格式</span><span>{Array.from(value.prompt).length.toLocaleString()} 字符</span></div>
       {nodeId && <details className={styles.variableHelp}>
-        <summary>系统变量</summary>
+        <summary>系统变量与状态字段</summary>
         <div className={styles.variableList}>{variables.map(([name, label]) => <button key={name} type="button" disabled={restoring} onClick={() => insertVariable(name)} aria-label={'插入变量：' + name}>
           <span>{label}</span><code>{'{{' + name + '}}'}</code>
         </button>)}</div>
+        <p>整组状态含字段说明。只需某个值时，可手写 <code>{'{{state.session.人设.姓名}}'}</code>。支持 global、session、message；字段未加载或不存在时留空，填入的值不会再次解析。</p>
         <p>点击变量插入光标处。变量内容在每轮生成时填入。{nodeId === 'chatHistory' ? '历史消息变量需保留一次，并保留原有消息角色。' : nodeId === 'userInput' ? '本轮输入变量需保留一次，可在前后添加说明。' : ''}</p>
       </details>}
     </form>

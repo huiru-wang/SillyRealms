@@ -139,7 +139,7 @@ test('invalid persisted JSON never falls back to an empty config', async t => {
 test('Nginx keeps Web, API streaming and isolated Stage routes separate', async () => {
   const text = await renderNginx(normalize());
   const [main, stage] = text.split('# Isolated Stage:');
-  assert.ok(text.startsWith('# Managed by SillyRealms deploy/start.sh.\n'));
+  assert.ok(text.startsWith('# Managed by SillyRealms.\n'));
   assert.doesNotMatch(text, /@@[A-Z_]+@@/);
   assert.match(main, /root \/var\/www\/sillyrealms\/current\/web;/);
   assert.match(stage, /root \/var\/www\/sillyrealms\/current\/stage;/);
@@ -184,7 +184,7 @@ test('systemd directly owns one Node process, preserves root access, and gets st
     loaderPath: '/root/SillyRealms/node_modules/.pnpm/tsx@4.23.15/node_modules/tsx/dist/loader.mjs',
   };
   const unit = renderSystemd(config, options);
-  assert.ok(unit.startsWith('# Managed by SillyRealms deploy/start.sh.\n'));
+  assert.ok(unit.startsWith('# Managed by SillyRealms.\n'));
   assert.ok(unit.includes('ExecStart=' + options.nodePath + ' --import ' + options.loaderPath + ' /root/SillyRealms/deploy/server.mjs\n'));
   assert.match(unit, /User=root\nWorkingDirectory=\/root\/SillyRealms\n/);
   assert.match(unit, /EnvironmentFile=\/etc\/sillyrealms\/server\.env\n/);
@@ -198,7 +198,7 @@ test('systemd directly owns one Node process, preserves root access, and gets st
     }
   }
   const env = renderEnvironment(config);
-  assert.match(env, /^# Managed by SillyRealms deploy\/start\.sh\./);
+  assert.match(env, /^# Managed by SillyRealms\./);
   for (const line of [
     'NODE_ENV=production', 'SERVER_PORT=3001', 'SERVER_DATA_ROOT=/root/SillyRealms/data',
     'SERVER_WEB_ORIGIN=' + base.webOrigin, 'SERVER_STAGE_ORIGIN=' + base.stageOrigin,

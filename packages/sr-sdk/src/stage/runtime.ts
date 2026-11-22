@@ -1,12 +1,13 @@
 import type {
-  AcceptedRun, RunPage, RunQuery, SessionEvent, StageCommand, StageSnapshot,
+  AcceptedRun, RegenerateRequest, RunPage, RunQuery, SessionEvent, StageCommand, StageSnapshot,
   StateChangedEvent, StateScope, StateSnapshot, StateValue, StateWrite, StateWriteResult,
 } from '../stage-contract.js';
 
 export interface SRSessionAPI {
   setDraft(text: string): Promise<void>;
   send(text: string): Promise<AcceptedRun>;
-  stop(runId: string): Promise<{runId: string; stopping: true}>;
+  regenerate(input: RegenerateRequest): Promise<AcceptedRun>;
+  stop(runId: string, assistantEntryId: string): Promise<{runId: string; assistantEntryId: string; stopping: true}>;
   /** Server returns items/entries; querying never changes the displayed history. */
   getRuns(options?: RunQuery): Promise<RunPage>;
   subscribe(listener: (event: SessionEvent) => void): () => void;
@@ -23,7 +24,7 @@ export interface SRStateAPI {
 
 export function emptyStageSnapshot(): StageSnapshot {
   return {
-    sessionId: '', connected: false, activeRunId: null, runs: [], suggestions: null,
+    sessionId: '', connected: false, activeRunId: null, activeAssistantEntryId: null, sending: false, runs: [], suggestions: null,
     history: {loading: true, loadingMore: false, hasMore: false, error: null},
     state: {global: {}, session: {}, message: {}}, stateLoading: true, stateError: null,
   };
@@ -70,7 +71,8 @@ export class StageRuntime {
     this.session = Object.freeze({
       setDraft: (text: string) => command('composer.setDraft', {text}),
       send: (text: string) => command('narrative.send', {text}),
-      stop: (runId: string) => command('narrative.stop', {runId}),
+      regenerate: (input: RegenerateRequest) => command('narrative.regenerate', input),
+      stop: (runId: string, assistantEntryId: string) => command('narrative.stop', {runId, assistantEntryId}),
       getRuns: (options: RunQuery = {}) => command('history.query', options),
       subscribe,
     });

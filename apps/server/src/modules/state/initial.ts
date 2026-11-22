@@ -5,7 +5,7 @@ import type { JsonObject, JsonValue } from '../../infrastructure/database/connec
 export function prepareInitialSnapshots(definition: JsonValue | null, overrides: unknown) {
   let schema: StateSchema = { schema_version: 2, scopes: {} };
   if (definition !== null) {
-    validateStateSchema(definition);
+    validateStateSchema(definition, 'stored');
     schema = definition;
   }
   const session: JsonObject = Object.fromEntries(Object.entries(schema.scopes.session ?? {})

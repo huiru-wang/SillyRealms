@@ -10,7 +10,7 @@ import type { ModelClient, ModelEvent, ModelInfo, ModelUsage } from '../../infra
 import type { NarrativeOutput } from '../../modules/sessions/service.js';
 import { createServices, type Services } from '../../services.js';
 import { memoryCredentials } from '../../testing/credentials.js';
-import { narrativePreset } from '../../testing/fixtures.js';
+import { narrativePreset, withEmptyModelNotes } from '../../testing/fixtures.js';
 import { createNarrativeUsecases, type AcceptedNarrative, type NarrativeUsecases } from './index.js';
 import type { NarrativeTerminalEvent } from './events.js';
 import * as suggestions from './postprocess/action-suggestions.js';
@@ -252,7 +252,7 @@ describe('narrative postprocessing integration', () => {
   it('cancels after final snapshot without executing capabilities and preserves only clean partial content', async () => {
     hub.subscribe('session', event => {
       if (event.event === 'run.delta' && (event.data.messages as { snapshot?: unknown }[])[0]?.snapshot) {
-        narrative.stop('session', event.data.runId as string);
+        narrative.stop('session', event.data.runId as string, event.data.assistantEntryId as string);
       }
     });
     const { accepted, finished } = submit();
@@ -314,7 +314,7 @@ describe('narrative postprocessing integration', () => {
     const second = submit(); await second.finished;
     const history = stream.mock.calls[1]![1].filter(message => message.role === 'assistant');
     expect(history).toHaveLength(2);
-    expect(history[0]!.content).toBe('Opening');
+    expect(history[0]!.content).toBe(withEmptyModelNotes('Opening'));
     expect(history[1]!.content).toBe([
       body, '', stateBlock('{"path":"coins","value":8,"reason":"购买热汤"}'), actions(),
     ].join('\n'));

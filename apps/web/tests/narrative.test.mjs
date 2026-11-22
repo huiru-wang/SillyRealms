@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import {setImmediate as nextTurn} from 'node:timers/promises';
 import {createNarrativeController,appendMessageDelta} from '../src/features/narrative/controller.ts';
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
-const fields=(runId='r')=>({sessionId:'s',runId,provider:'test',model:'model',timestamp:10});
-const created=(runId='r')=>({event:'run.created',data:{...fields(runId),messages:[{id:runId+'-u',role:'user',content:'Input',timestamp:1}]}});
-const accepted=(runId='r')=>({runId,userEntryId:runId+'-u',assistantEntryId:runId+'-a',userMessage:created(runId).data.messages[0]});
+const fields=(runId='r')=>({sessionId:'s',runId,assistantEntryId:runId+'-a',provider:'test',model:'model',timestamp:10});
+const created=(runId='r')=>({event:'run.created',data:{...fields(runId),tipEntryId:runId+'-u',deletedMessageIds:[],messages:[{id:runId+'-u',role:'user',content:'Input',timestamp:1}]}});
+const accepted=(runId='r')=>({runId,userEntryId:runId+'-u',assistantEntryId:runId+'-a',tipEntryId:runId+'-u',deletedMessageIds:[],userMessage:created(runId).data.messages[0]});
 const delta=(content,extra={},runId='r')=>({event:'run.delta',data:{...fields(runId),messageId:runId+'-a',messages:[{role:'assistant',delta:{content},...extra}]}});
 const completed=(runId='r')=>({event:'run.completed',data:{...fields(runId),savedMessageIds:[runId+'-u',runId+'-a'],tipEntryId:runId+'-a'}});
 const entry=(id,role,seq,runId='r')=>({id,sessionId:'s',parentId:null,runId,seq,type:'message',role,timestamp:seq,payload:{message:{role,content:role==='user'?'Input':'Saved'}},state:null,extData:{},metrics:null,createdAt:seq,updatedAt:seq});
-const stored=(status='running',assistant=false,runId='r')=>({runId,status,firstSeq:1,lastSeq:assistant?2:1,entries:[entry(runId+'-u','user',1,runId),...(assistant?[entry(runId+'-a','assistant',2,runId)]:[])],...(status==='stopped'?{stopReason:'provider_error'}:{})});
+const stored=(status='running',assistant=false,runId='r')=>({runId,assistantEntryId:runId+'-a',status,firstSeq:1,lastSeq:assistant?2:1,entries:[entry(runId+'-u','user',1,runId),...(assistant?[entry(runId+'-a','assistant',2,runId)]:[])],...(status==='stopped'?{stopReason:'provider_error'}:{})});
 const finalSnapshot={role:'assistant',content:'Corrected',reasoning_content:'',tool_calls:[]};
 
 test('HTTP acceptance displays the saved user immediately and run.created only confirms it',async()=>{
@@ -147,4 +147,43 @@ test('stop only requests cancellation and late stop responses cannot revive a te
  stop.resolve({runId:'r',stopping:true});await stopping;await nextTurn();
  assert.equal(client.getSnapshot().activeRunId,null);assert.equal(client.getSnapshot().stopping,false);
  assert.equal(client.getSnapshot().run.status,'stopped');
+});
+
+test('regeneration uses a new execution in the same round and ignores old terminal/stop traffic',async()=>{
+ const post=deferred(),receipts=[],calls=[];
+ const client=createNarrativeController({sessionId:'s',getSession:async()=>({tipEntryId:'r-a'}),onAccepted:value=>receipts.push(value),request:async(path,init)=>{calls.push({path,body:JSON.parse(init.body)});return post.promise;}});
+ client.accept(created());client.accept(completed());
+ const pending=client.regenerate({userEntryId:'r-u',assistantEntryId:'r-a'});await nextTurn();
+ assert.deepEqual(calls[0],{path:'v1/sessions/s/narrative/runs/regenerate',body:{userEntryId:'r-u',assistantEntryId:'r-a',expectedTipEntryId:'r-a'}});
+ const receipt={...accepted(),assistantEntryId:'new-a',deletedMessageIds:['r-a'],tipEntryId:'summary'};
+ client.accept({event:'run.created',data:{...created().data,assistantEntryId:'new-a',tipEntryId:'summary',deletedMessageIds:['r-a']}});
+ client.accept({event:'run.delta',data:{...delta('New').data,assistantEntryId:'new-a',messageId:'new-a'}});
+ client.accept(completed());
+ assert.equal(client.getSnapshot().run.assistantEntryId,'new-a');assert.equal(client.getSnapshot().run.status,'running');
+ await assert.rejects(client.stop('r','r-a'),/没有可停止/);
+ post.resolve(receipt);await pending;
+ assert.equal(receipts.filter(item=>item.assistantEntryId==='new-a').length,1);
+ assert.deepEqual(client.getSnapshot().drafts.map(item=>item.id),['r-u','new-a']);
+ client.accept({event:'run.completed',data:{...completed().data,assistantEntryId:'new-a',savedMessageIds:['r-u','new-a'],tipEntryId:'new-a'}});
+ assert.equal(client.getSnapshot().activeRunId,null);
+});
+
+test('completed regeneration before its HTTP response stays settled and never reapplies deletion',async()=>{
+ const post=deferred(),receipts=[];
+ const client=createNarrativeController({sessionId:'s',getSession:async()=>({tipEntryId:'r-a'}),onAccepted:value=>receipts.push(value),request:()=>post.promise});
+ client.accept(created());client.accept(completed());
+ const pending=client.regenerate({userEntryId:'r-u',assistantEntryId:'r-a'});await nextTurn();
+ client.accept({event:'run.created',data:{...created().data,assistantEntryId:'new-a',deletedMessageIds:['r-a']}});
+ client.accept({event:'run.completed',data:{...completed().data,assistantEntryId:'new-a',savedMessageIds:['r-u','new-a'],tipEntryId:'new-a'}});
+ post.resolve({...accepted(),assistantEntryId:'new-a',deletedMessageIds:['r-a']});await pending;
+ assert.equal(client.getSnapshot().run.status,'completed');assert.equal(client.getSnapshot().activeRunId,null);
+ assert.equal(receipts.filter(item=>item.assistantEntryId==='new-a').length,1);
+});
+
+test('reconnect to a new execution of the same round drops old transient output and usage',()=>{
+ const client=createNarrativeController({sessionId:'s',getSession:async()=>({tipEntryId:null}),request:assert.fail});
+ client.accept(created());client.accept(delta('Old'));client.accept(completed());
+ client.reconcile({...stored('running'),assistantEntryId:'new-a'},client.checkpoint());
+ assert.deepEqual(client.getSnapshot().drafts,[]);assert.equal(client.getSnapshot().run.assistantEntryId,'new-a');
+ assert.equal(client.getSnapshot().incomplete,true);assert.equal(client.getSnapshot().usage,undefined);
 });

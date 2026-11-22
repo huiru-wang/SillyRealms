@@ -90,7 +90,9 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 
 预设详情返回 `{id,revision,type,name,description,config,createdAt,updatedAt}`；列表仅返回去掉 config 的摘要，不读取每个预设的配置正文。当前只支持 type=narrative；config 为 `{schemaVersion:1,nodes,contextStrategy,modelParameters}`。CRUD 不再接受 config_json/context_strategy/model_parameters 顶层字段。
 
-modelParameters 包含可选 temperature、thinkingEnabled 开关及可选 thinkingLevel（minimal、low、medium、high、xhigh、max）。思考深度不指定时保留默认行为；关闭思考或模型不支持思考时不传思考参数。模型支持思考但不支持所选深度时，仅忽略该深度选择并沿用既有默认深度，保持思考开关语义。便携文档及内部存储分别对应 model_parameters.thinking_enabled / thinking_level，旧记录缺少深度时无需迁移。
+modelParameters 包含可选有限数值 temperature（0–2）、topP（0–1）、frequencyPenalty 与 presencePenalty（各 −2–2），以及 thinkingEnabled 开关及可选 thinkingLevel（minimal、low、medium、high、xhigh、max）。思考深度不指定时保留默认行为；关闭思考或模型不支持思考时不传思考参数。模型支持思考但不支持所选深度时，仅忽略该深度选择并沿用既有默认深度，保持思考开关语义。便携文档及内部存储分别对应 model_parameters.thinking_enabled / thinking_level，旧记录缺少深度时无需迁移。
+
+采样区间包含端点。省略键表示使用模型默认，显式 0 是有效值。便携文件与 SQLite JSON 的 model_parameters 使用 temperature、top_p、frequency_penalty、presence_penalty；旧记录及文件省略新增项即可读取。保存完整 config 时移除对应键即可恢复默认。
 
 创建接收 `{name,description,type,config}`（可提供 id）。PATCH 接收修改字段及必填 expectedRevision，成功后 revision 加一；版本过期返回 PRESET_REVISION_CONFLICT/409，保持服务端内容不变。温度可省略，表示未指定；summaryPrompt 只有 rolling_summary 策略要求非空。
 
@@ -206,17 +208,17 @@ create-session 用例在同一个同步事务中校验选择、计算初始快�
 - session 按 stateDefinition.scopes.session 各字段 initial 初始化，缺省为 {}。
 - message 按 message 定义 initial 初始化，再应用 opening.initial_state：仅允许已声明根、整项替换、不深度合并，校验完整根值；未覆盖根保留默认值。所有字段均初始化，load/when 不决定字段是否存在。结果保存为 [{key,value}]，无定义时为 []。
 - 正文取 opening.content，一次性将所有精确的 {{user}} 替换为所选玩家角色名称；不修改世界原文，不执行组件或其他模板表达式。
-- 第一条消息 parentId=null、seq=1、type=message、role=assistant，payload.message 使用字符串 content 与 timestamp，metrics=null。分配独立 runId，首条 extData.narrative 保存 completed+finishedAt，不保存 kind、origin 或开局身份元数据。
+- 第一条消息 parentId=null、seq=1、type=message、role=assistant，payload.message 使用字符串 content 与 timestamp，metrics=null。分配独立 runId，首条 extData.narrative 保存 completed+finishedAt，extData.output 记录初始化后的 message 根更新和空建议数组，不保存 kind、origin 或开局身份元数据。
 
 成功返回 201，`data:{item:SessionView,entry:SessionEntry}`，item.tipEntryId 已指向返回消息。提交后仅发布一次 session.created，不发布 run.* 或 state.changed。会话创建时一般还没有 SSE 订阅，首次展示使用响应或已保存历史，不依赖事件。重复 id 返回冲突，不重复创建；不提供后台任务或自动重试。已有会话不自动补开场、重置状态。
 
-本期只做线性追加。parentId 可省略，默认当前 tip；显式值不匹配时返回 TIP_CONFLICT。追加只核对本会话当前 tip 与最大 seq。新条目、seq 与 tip 的原子更新归 SessionRepository；没有 setTip 或分支切换接口。
+消息保持线性父链，重新生成支持删除最新回复。parentId 可省略，默认当前 tip；显式值不匹配时返回 TIP_CONFLICT。追加只核对本会话当前 tip 与最大 seq。新条目、seq 与 tip 的原子更新归 SessionRepository；没有 setTip 或分支切换接口。
 
 SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt/updatedAt，payload 与状态内容保持原键。HTTP 追加条目不接受 metrics，也不提供编辑计量的 HTTP 路由；计量由进程内 SessionService 写入。runId 仅关联同组已保存消息，不区分创建时的首条消息与模型生成；轮次列表组合 entries 与本组首条 entry 的 extData.narrative；缺少结束结果且无活跃运行时状态为 unknown。
 
 会话范围的读取、修改、状态及 SSE 入口先确认真实会话，再执行可选访问检查；拒绝与不存在统一返回 SESSION_NOT_FOUND。异步检查结束后先检查停机，再确认会话仍存在。配置了访问检查时，会话列表只返回获准条目。
 
-## 叙事提交与停止
+## 叙事提交、重新生成与停止
 
 `POST /sessions/:id/narrative/runs` 正文为：
 
@@ -229,11 +231,15 @@ SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt
 
 `expectedTipEntryId` 必填；没有历史时为 null，有历史时传最后读取的 tip。输入必须有非空白内容，保存原始文本。请求不接受模型或预设覆盖、requestId、工具列表、prepare 参数。会话存在性、权限、输入、tip 与同会话并发校验失败时，使用 HTTP 错误包络且不追加用户消息；同会话已有运行返回 RUN_ALREADY_ACTIVE/409，tip 过期返回 TIP_CONFLICT/409。
 
-受理时先独立保存用户消息，再准备上下文和模型请求。202 的 data 为 `{runId,userEntryId,assistantEntryId,userMessage}`，userMessage 为已保存的 `{id,role:'user',content,timestamp}`，与 run.created 中的用户消息一致。客户端收到响应即可展示用户消息，run.created 按消息 ID 确认或补偿。此时 userEntryId 已持久化，assistantEntryId 仅预分配；202 不代表生成成功。上下文按预设自动裁剪或执行至多一次摘要；一次摘要后仍超限通过 stop_reason=summary_capacity_exceeded 结束，保留已保存用户、摘要与摘要 metrics，摘要失败为 summary_failed。失败/中断摘要不保存记录或计量；成功摘要未知 usage 为 null。之后的配置、历史、预算、凭据或模型错误通过 `run.stopped` 的 stop_reason 返回，保留用户消息；SSE 不返回 error 对象或 errorCode/errorMessage。
+受理时先独立保存用户消息，再准备上下文和模型请求。202 的 data 为 `{runId,userEntryId,assistantEntryId,userMessage,tipEntryId,deletedMessageIds}`，tipEntryId 为受理后的真实 tip，普通发送 deletedMessageIds=[]；userMessage 为已保存的 `{id,role:'user',content,timestamp}`，与 run.created 中的用户消息一致。客户端收到响应即可展示用户消息，run.created 按消息 ID 确认或补偿。此时 userEntryId 已持久化，assistantEntryId 仅预分配；202 不代表生成成功。上下文按预设自动裁剪或执行至多一次摘要；一次摘要后仍超限通过 stop_reason=summary_capacity_exceeded 结束，保留已保存用户、摘要与摘要 metrics，摘要失败为 summary_failed。失败/中断摘要不保存记录或计量；成功摘要未知 usage 为 null。之后的配置、历史、预算、凭据或模型错误通过 `run.stopped` 的 stop_reason 返回，保留用户消息；SSE 不返回 error 对象或 errorCode/errorMessage。
 
 助手正常完成、失败或停止时独立保存完整或部分公开快照，包含分离能力数据块后的干净 content、公开 reasoning_content 与 tool_calls；只有公开 reasoning 或工具请求时也保留，完全没有公开内容时只保留用户。SDK 最终快照采用替换语义。助手写入失败不回滚用户；运行期间外部追加由写锁拦截，持久化仍保留 tip 一致性校验。终态 savedMessageIds 与 tipEntryId 表达实际保存结果；后续模型历史以可见正文为底稿，由独立 context 为选中的保留条目追加只读模型旁注；不把 reasoning/工具请求当作提示词正文。内容与计量见 [叙事执行](server-narrative.md)。
 
-`POST /sessions/:id/narrative/runs/:runId/stop` 返回 `data:{runId,stopping:true}`。仅匹配该会话当前内存运行；不匹配或已结束返回 RUN_NOT_FOUND/404。返回值表示已请求停止，最终以 `run.stopped` 及其 stop_reason 为准；保存失败优先于普通取消。断开 POST 或 SSE 都不会代替显式 stop。
+`POST /sessions/:id/narrative/runs/:runId/stop` 正文必填 `{assistantEntryId}`，返回 `data:{runId,assistantEntryId,stopping:true}`。同时匹配当前 runId 和 assistantEntryId，旧执行的停止请求不能取消同轮新生成；不匹配或已结束返回 RUN_NOT_FOUND/404。返回值表示已请求停止，最终以 `run.stopped` 及其 stop_reason 为准；保存失败优先于普通取消。断开 POST 或 SSE 都不会代替显式 stop。
+
+`POST /sessions/:id/narrative/runs/regenerate` 正文为 `{userEntryId,assistantEntryId,expectedTipEntryId}`。userEntryId 是最新轮次首条用户消息；assistantEntryId 是要删除的最新 AI，没有 AI 时显式传 null 表示重试；expectedTipEntryId 必须是当前非空 tip，可指向 compaction。开局、历史轮次、错配 AI 或用户后存在其他普通消息返回 INVALID_REGENERATION_TARGET/409；活跃运行、旧 tip 沿用 RUN_ALREADY_ACTIVE/TIP_CONFLICT。
+
+受理前取得会话写锁，在一个事务内删除旧 AI、衔接直接后继、修正 tip 并清除旧结束结果。保留原用户、runId 和摘要，为新输出分配新 assistantEntryId；202 使用普通受理结构，tipEntryId 是提交删除后的实际 tip，deletedMessageIds 为已删 ID（普通发送/无 AI 重试为 []）。提交后发布 message.deleted 与实际 message 状态变化，再使用正常 run.created/增量/用量/终态。准备或生成失败不恢复旧 AI；部分输出按普通发送规则保存，无输出则可对同一用户重试。用量仍汇总现存 entries，不保留已删 AI 的计量。没有额外的通用消息删除 HTTP 入口。
 
 客户端应先连接 `/sessions/:id/events` 再提交；事件可能早于 POST 响应，按 runId/messageId 关联。断线后重新读取 entries 或 narrative/runs 判断已保存内容，不自动重发提交。没有事件回放、重启续跑、自动重试或请求去重接口；Web 按这些约束接入会话运行，详见 [Web 运行接入](web-runtime.md)。
 
@@ -249,20 +255,20 @@ SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt
 | cursor | 按游标指定的首条 seq 向前倒序查询，不受之后追加的消息影响 |
 | afterSeq | 按每轮最后已保存 entry.seq 升序返回 seq 大于该位置的轮次，最多 5 轮 |
 
-返回 `data:{items,hasMore,nextCursor,nextAfterSeq,activeRunId}`。每个 item 为 `{runId,firstSeq,lastSeq,entries,status,finishedAt?,stopReason?}`，entries 按 seq 升序，包含该轮所有已保存条目，单轮不被拆页。cursor 绑定会话；cursor 与 afterSeq 不可同时传。前向查询按最后 seq 排序，以免非连续 runId 分组导致遗漏；不是按 run 创建位置筛选。
+返回 `data:{items,hasMore,nextCursor,nextAfterSeq,activeRunId}`。每个 item 为 `{runId,firstSeq,lastSeq,entries,status,assistantEntryId?,finishedAt?,stopReason?}`，entries 按 seq 升序，包含该轮所有已保存条目，单轮不被拆页。cursor 绑定会话；cursor 与 afterSeq 不可同时传。前向查询按最后 seq 排序，以免非连续 runId 分组导致遗漏；不是按 run 创建位置筛选。
 
 向前翻页使用 nextCursor；增量补查使用 nextAfterSeq，hasMore=true 时继续补查。nextAfterSeq 是本页最大 lastSeq，不是事件序号；空页为 null，客户端保持原检查点。浏览历史页面的 nextAfterSeq 不应覆盖客户端已知的较大检查点。activeRunId 是查询时该会话仍活跃的轮次，不受分页范围限制。
 
 列表项的 status 为 completed/stopped（来自已保存结果），running/stopping（来自匹配的内存运行），或 unknown（无活跃运行且没有有效结束结果）。实时生成的正文来自会话 SSE 的 run.delta。
 
-重连时先建立原 SSE，再用页面最新已保存 seq 补查，按 runId 替换完整轮次；若末轮尚在运行，afterSeq 回退一条以包含该轮，读取仅改变终态的更新。页面无数据时重新读取最新一页。断线期间尚未保存的分片不回放、不保证显示完整；已有最终 snapshot 采用整体替换，终态后补查 runs。不为此增加分片落库或恢复系统。
+客户端初次打开、重连或显式同步时读取最新一页并替换原分页缓存（最多 5 轮）。删除可使 lastSeq 变小，新消息可复用 seq，afterSeq 不能证明旧条目仍存在。普通终态补查可从活跃轮次末 seq 前一位置重叠读取，以观察仅更新结束结果的情况。读取代次防止删除前的旧响应回填消息；断线期间未保存的分片不回放，等待最终 snapshot 或持久历史。
 
 每个 run 首条 entry 的 extData.narrative 仅由服务内部写入，不限定 user/assistant 角色：
 
 ```ts
 type NarrativeOutcome =
-  | { status: 'completed'; finishedAt: number }
-  | { status: 'stopped'; stopReason: NarrativeStopReason; finishedAt: number };
+  | { status: 'completed'; assistantEntryId?: string; finishedAt: number }
+  | { status: 'stopped'; assistantEntryId?: string; stopReason: NarrativeStopReason; finishedAt: number };
 ```
 
 finishedAt 为结算 Unix 毫秒；stopReason 与当前 SSE 的原因类型一致，例如 cancelled、provider_error、output_incomplete、message_persist_failed。创建用户时仍为 extData:{}；先保存已有助手内容，再记录用户结束结果，最后发布终态。没有助手输出也会记录结果。写入仅替换 narrative 字段，保留其他扩展；通用 POST/PATCH entry 不能传 narrative/output，通用 extData 替换会保留服务端已存 narrative/output；正文编辑不重新执行或回滚能力结果。结果写入失败不回滚已有消息，刷新后可能 unknown；不持久化 running 或执行恢复日志，不新增表。
@@ -332,7 +338,7 @@ run.completed 表示正文主流程完成，不等同于能力全部成功。能
 
 新写入严格校验上述结构。旧已保存 output 仅在 SessionService 读取投影时归一化：按旧 results 顺序将成功行与旧 updates 配对，保留重复 path 及各自 value/reason，失败行保留失败；缺少可信成功载荷时以 processing_error 记录，不能虚构已应用更新。旧行动建议只移除 results。读取及正文编辑不为此重写原存储，不新增数据库迁移。
 
-公开与持久化正文保持干净。context 在本轮历史中先选最近两条有可见正文的 assistant，再从已保存 output 构建条目级 model-only notes；状态只取 updates 中 status=success 的 path/value/reason，建议只取有效 items，状态行诊断不进入模型。没有 output 不回找旧条目，最终未保留的消息不注入旁注。旁注只进入主模型输入与实际输入估算，不进入摘要、关键词激活或 HTTP 返回字段，不回写正文或重执行状态更新。正文编辑保留当时结果，旁注不表示已按编辑正文重算。不持久化 blockIndex、line、contextEligible 或 notes，不新增接口和表。
+公开与持久化正文保持干净。context 在本轮历史中先选最近两条有可见正文的 assistant，再从已保存 output 构建条目级 model-only notes；状态只取 updates 中 status=success 的 path/value/reason，建议只取有效 items，状态行诊断不进入模型。入选条目没有 output 时使用空状态块和空建议数组，最终未保留的消息不注入旁注。旁注只进入主模型输入与实际输入估算，不进入摘要、关键词激活或 HTTP 返回字段，不回写正文或重执行状态更新。正文编辑保留当时结果，旁注不表示已按编辑正文重算。不持久化 blockIndex、line、contextEligible 或 notes，不新增接口和表。
 
 建议创建事件为 action_suggestions.created，仅发布本轮已保存的有效非空建议；run.created 驱动清空上一轮建议，首次恢复只认最新 run 的实际完成结果。详见 [会话事件](server-events.md#行动建议创建) 与 [叙事执行](server-narrative.md#叙事后处理与能力结果)。
 
@@ -385,7 +391,7 @@ PATCH 正文必须且只能包含 updates，数组每项必须且只能包含字
 
 path 支持根名及对象点分路径，例如 `inventory.keys`。目标根、中间节点或末级字段不存在时，成功忽略且不创建节点；快照中的根没有对应 state 定义时也成功忽略。非法路径仍返回字段错误；不接受原型相关危险键、数组索引或 rules 中的 `[]` 模板路径。数组通过已有路径整体替换；value 是完整新值，null 是值而非删除操作。
 
-字段实际存在时，使用共享 `state-validation` 定义、类型及 rules 校验能力，检查受影响根的声明和更新后完整根值；不扫描或校验同 scope 的其他根。检查包含根类型、number 根的 min/max、安全 JSON、大小/深度以及 rules 路径覆盖。rules 是自然语言说明，校验其存在性和覆盖，不执行说明中的业务条件；SDK 字段写不受根的 load 激活条件限制。
+字段实际存在时，使用共享 `state-validation` 检查受影响根的声明和更新后完整根值；不扫描同 scope 的其他根。检查包含根类型、number 根的 min/max、安全 JSON、大小和深度。可选的 rules 仅为给模型的自然语言说明，不决定字段能否更新；SDK 字段写不受根的 load 激活条件限制。
 
 缺失路径以及新值与当前值相同的成功项都不写数据库。message PATCH 从指定条目的有效继承状态计算；实际变更时将结果保存为该条目的独立快照，不改前驱。成功忽略及未变化项保持该条目原有的 null 继承状态。
 

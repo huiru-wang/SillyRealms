@@ -24,8 +24,8 @@ a{color:inherit}.page a,.business-form a,.world-actions a{color:var(--accent)}bu
 .host-usage{position:relative}.host-usage-toggle{border:0;background:transparent;color:var(--text-muted);display:flex;align-items:center;gap:var(--space-2);cursor:pointer}.host-usage-layer{position:fixed;inset:0;z-index:var(--z-popover)}.host-usage-content{position:fixed;background:var(--surface);color:var(--text);border:1px solid var(--stroke-strong);border-radius:var(--radius-md);padding:var(--overlay-padding);overflow:auto;overscroll-behavior:contain;box-shadow:var(--drop-shadow)}.host-usage-content:focus{outline:none}.host-usage-heading{display:flex;justify-content:space-between;gap:var(--space-3);font-size:var(--font-13)}.host-usage-caption,.host-usage-legend,.host-usage-no-breakdown{font-size:var(--font-12);color:var(--text-muted);margin:var(--space-2) 0;line-height:1.6}.host-usage-legend{display:flex;gap:var(--space-3);flex-wrap:wrap}.host-usage-bar{height:18px;display:flex;border-radius:var(--radius-xs);overflow:hidden;margin-top:var(--space-3);background:var(--canvas)}.host-usage-segment{display:flex;align-items:center;justify-content:center;min-width:0;overflow:hidden;font-size:10px;line-height:1;white-space:nowrap;background:var(--accent);color:var(--canvas)}.host-usage-segment.summary,.host-usage-segment.history{color:var(--usage-ink)}.host-usage-cumulative{margin-top:var(--space-5)}
 @media(max-width:760px){.model-item{align-items:stretch;flex-direction:column}.model-glyph{display:none}}
 .modal-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:var(--control-gap);margin-top:var(--form-gap)}.editor-form>label{display:grid;gap:var(--field-gap);font-size:var(--font-14)}
-.host-usage-toggle-copy{display:flex;gap:var(--space-2);align-items:center;white-space:nowrap}.host-usage-toggle-summary{white-space:nowrap}.host-usage-toggle-summary[hidden]{display:none}.host-usage-measure{position:absolute;visibility:hidden;pointer-events:none;width:max-content;inset:0 auto auto 0}.host-usage-toggle{min-height:var(--touch-target);padding:0}.host-usage.is-compact .host-usage-toggle{min-width:var(--touch-target);justify-content:center}.host-usage-toggle-icon{display:flex;align-items:center}.host-usage-content{font-size:var(--font-13)}
-@media(max-width:760px){.host-usage-toggle-summary{display:none}.host-usage-toggle{min-width:var(--touch-target);justify-content:center}.host-usage-toggle-copy{font-size:var(--font-12)}}
+.host-usage-toggle{min-height:var(--touch-target);min-width:var(--touch-target);justify-content:center;padding:0;white-space:nowrap}.host-usage-content{font-size:var(--font-13)}
+@media(max-width:760px){.host-usage-toggle{font-size:var(--font-12)}}
 
 
 .host-usage-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}
@@ -43,7 +43,6 @@ a{color:inherit}.page a,.business-form a,.world-actions a{color:var(--accent)}bu
 .host-usage-legend.cumulative>span{flex:none;white-space:nowrap}
 .host-usage-cache-hit{margin-left:auto;color:var(--text-secondary)}
 
-.host-usage-measure-box{position:absolute;width:0;height:0;overflow:hidden;pointer-events:none}
 
 
 .notice{color:var(--danger);background:var(--danger-bg);border-color:var(--danger)}

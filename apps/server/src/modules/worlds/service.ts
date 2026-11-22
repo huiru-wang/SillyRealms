@@ -8,7 +8,7 @@ import type { ModelReader } from '../models/service.js';
 import type { PresetReader } from '../presets/service.js';
 import { assertWorldId, exportFilename, WORLD_JSON_LIMIT, WORLD_ZIP_LIMIT, WorldFileStore, type OriginalFormat, type PackageFile, type ImportFileStage, type WorldDownload, type WorldOriginal, type WorldPaths } from './files.js';
 import { cardToWorld, worldToCard } from './parser.js';
-import { openingSchema } from './validation.js';
+import { openingSchema, validateWorldStateDefinition } from './validation.js';
 import { readComponents } from './assets.js';
 import { buildWorldPackage, readImportPackage } from './archive.js';
 import { WorldRepository, type WorldContentRow, type WorldRow } from './repository.js';
@@ -201,6 +201,7 @@ export class WorldService {
     const changes = Object.entries(patch).filter(([, value]) => value !== undefined);
     if (!changes.length) return current;
     const next = normalizeContent({ ...current, ...Object.fromEntries(changes) });
+    if (patch.stateDefinition != null) validateWorldStateDefinition(patch.stateDefinition);
     const tags = patch.tags === undefined ? undefined : tagsFrom(patch.tags);
     this.checkReferences(next);
     return toWorld(this.#repository.update(id, toContentRow(next), tags));

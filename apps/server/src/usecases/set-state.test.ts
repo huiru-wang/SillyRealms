@@ -195,18 +195,14 @@ describe('independent state field writes', () => {
     expect(listener).not.toHaveBeenCalled();
   });
 
-  it('returns rule diagnostics while leaving storage and subsequent fields consistent', () => {
+  it('persists complete replacement objects including fields without rule text', () => {
     setState.setSession('one', { coins: 1, profile: { name: 'Alice', score: 0 } });
     const result = setState.patchSession('one', [
       { path: 'profile', value: { name: 'Bob', score: 1, unknown: true } },
       { path: 'coins', value: 2 },
     ]);
-    expect(result[0]).toMatchObject({
-      success: false, errorCode: 'STATE_RULE_MISSING', stateScope: 'session',
-      statePath: 'profile.unknown', rulePath: 'profile.unknown',
-    });
-    expect(result[1]?.success).toBe(true);
-    expect(services.state.requireSession('one')).toEqual({ coins: 2, profile: { name: 'Alice', score: 0 } });
+    expect(result.map(item => item.success)).toEqual([true, true]);
+    expect(services.state.requireSession('one')).toEqual({ coins: 2, profile: { name: 'Bob', score: 1, unknown: true } });
   });
 
   it('rejects absent owners and foreign messages even for an empty update list', () => {

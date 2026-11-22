@@ -88,7 +88,14 @@ describe('world definitions and tags', () => {
     worlds.setState(original.id, { coins: 99 });
     expect(worlds.getState(original.id)).toEqual({ coins: 99 });
     time.mockReturnValue(2000);
-    const updated = worlds.update(original.id, { name: '新雾港', tags: ['new'], stateDefinition: { initial: 0 } })!;
+    const coins = { type: 'number', initial: 0, description: '余额' };
+    expect(() => worlds.update(original.id, { tags: ['invalid'], stateDefinition: {
+      schema_version: 2, scopes: { global: { coins: { ...coins, rules: { coins: 123 } } } },
+    } })).toThrow('INVALID_WORLD_CARD');
+    expect(worlds.require(original.id).tags).toEqual(['old']);
+    const updated = worlds.update(original.id, { name: '新雾港', tags: ['new'], stateDefinition: {
+      schema_version: 2, scopes: { global: { coins } },
+    } })!;
     expect(updated.name).toBe('新雾港');
     expect(updated.tags).toEqual(['new']);
     expect(updated.state).toEqual({ coins: 99 });

@@ -1,4 +1,4 @@
-import type {Entry, StoredRun, RunPage, RunQuery, StageMessage, StageRun, ToolCall} from '../../../../../packages/sr-sdk/src/stage-contract.ts';
+import type {AcceptedRun, Entry, StoredRun, RunPage, RunQuery, StageMessage, StageRun, ToolCall} from '../../../../../packages/sr-sdk/src/stage-contract.ts';
 import type {HttpRequest} from '../../transport/http.ts';
 
 export type HistorySnapshot = {
@@ -30,7 +30,7 @@ function entryMessage(entry: Entry): StageMessage | null {
 }
 
 export function projectRun(run: StoredRun): StageRun {
-  return {runId: run.runId, status: run.status,
+  return {runId: run.runId, assistantEntryId: run.assistantEntryId, status: run.status,
     messages: run.entries.flatMap(entry => { const message = entryMessage(entry); return message ? [message] : []; }),
     ...(run.stopReason === undefined ? {} : {stopReason: run.stopReason}),
     ...(run.finishedAt === undefined ? {} : {finishedAt: run.finishedAt})};
@@ -40,7 +40,7 @@ export function projectRun(run: StoredRun): StageRun {
 export function createHistoryController({sessionId, request}: Options) {
   const runs = new Map<string, StoredRun>();
   const listeners = new Set<() => void>(), pending = new Set<AbortController>();
-  let disposed = false, initialized = false, recentVersion = 0, olderVersion = 0;
+  let disposed = false, initialized = false, recentVersion = 0, olderVersion = 0, epoch = 0;
   let snapshot: HistorySnapshot = {
     runs: [], activeRunId: null, afterSeq: 0,
     nextCursor: null, hasMore: false, loading: false, loadingMore: false, error: null,
@@ -84,16 +84,31 @@ export function createHistoryController({sessionId, request}: Options) {
     getSnapshot: () => snapshot,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     query,
-    async loadRecent() {
+    acceptExecution(accepted: Pick<AcceptedRun, 'runId' | 'assistantEntryId' | 'deletedMessageIds'>) {
+      const previous = runs.get(accepted.runId);
+      if (previous?.assistantEntryId === accepted.assistantEntryId && !accepted.deletedMessageIds.some(id => previous.entries.some(entry => entry.id === id))) return;
+      epoch++; recentVersion++; olderVersion++;
+      if (previous) {
+        const entries = previous.entries.filter(entry => !accepted.deletedMessageIds.includes(entry.id));
+        runs.set(previous.runId, {...previous, entries, assistantEntryId: accepted.assistantEntryId,
+          status: 'running', finishedAt: undefined, stopReason: undefined, lastSeq: entries.at(-1)?.seq ?? previous.firstSeq});
+      }
+      const ordered = [...runs.values()].sort((a,b) => a.firstSeq-b.firstSeq);
+      emit({runs: ordered, activeRunId: accepted.runId, afterSeq: ordered.at(-1)?.lastSeq ?? 0, loading: false, loadingMore: false});
+    },
+    async loadRecent(reset = false) {
+      if (reset) { epoch++; olderVersion++; }
+
       const version = ++recentVersion;
       emit({loading: true, error: null});
       try {
         const page = await query();
         if (version !== recentVersion || disposed) return page;
+        if (reset) { runs.clear(); initialized = false; }
         const ordered = ingestPage(page);
         const pagination = initialized ? {} : {nextCursor: page.nextCursor, hasMore: page.hasMore};
         initialized = true;
-        emit({...pagination, runs: ordered, loading: false, activeRunId: activeFrom(page), afterSeq: Math.max(snapshot.afterSeq, page.nextAfterSeq ?? 0)});
+        emit({...pagination, runs: ordered, loading: false, activeRunId: activeFrom(page), afterSeq: reset ? page.nextAfterSeq ?? 0 : Math.max(snapshot.afterSeq, page.nextAfterSeq ?? 0)});
         return page;
       } catch (error) {
         if (!disposed && version === recentVersion) emit({loading: false, error: errorText(error)});
@@ -117,6 +132,7 @@ export function createHistoryController({sessionId, request}: Options) {
     },
     /** All forward pages are consumed; an empty page never resets the checkpoint. */
     async catchUp() {
+      const checkpoint = epoch;
       // A run may acquire only a terminal outcome, without appending another seq.
       const latest = snapshot.runs.at(-1);
       let afterSeq = latest && !terminal(latest.status)
@@ -125,6 +141,7 @@ export function createHistoryController({sessionId, request}: Options) {
       try {
         while (!disposed) {
           const page = await query({afterSeq}); last = page;
+          if (checkpoint !== epoch || disposed) return page;
           const ordered = ingestPage(page);
           const next = page.nextAfterSeq;
           emit({runs: ordered, activeRunId: activeFrom(page), afterSeq: Math.max(snapshot.afterSeq, next ?? afterSeq), error: null});
@@ -134,7 +151,7 @@ export function createHistoryController({sessionId, request}: Options) {
         }
         return last;
       } catch (error) {
-        if (!disposed) emit({error: errorText(error)});
+        if (!disposed && checkpoint === epoch) emit({error: errorText(error)});
         throw error;
       }
     },

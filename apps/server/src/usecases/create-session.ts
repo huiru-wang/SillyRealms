@@ -22,7 +22,7 @@ export type SessionCreatedEvent = {
 /** One local transaction: ready session, initialized state and its first saved message. */
 export function createSessionUsecase({ worlds, sessions, state, transaction, events }: {
   worlds: Pick<WorldService, 'require' | 'requireOpening'>;
-  sessions: Pick<SessionService, 'create' | 'require' | 'appendEntry' | 'setNarrativeOutcome'>;
+  sessions: Pick<SessionService, 'create' | 'require' | 'appendNarrativeAssistant' | 'setNarrativeOutcome'>;
   state: Pick<StateService, 'prepareInitialSnapshots'>;
   transaction: TransactionRunner;
   events: EventHub;
@@ -51,10 +51,14 @@ export function createSessionUsecase({ worlds, sessions, state, transaction, eve
       const timestamp = Date.now(), playerName = character.name;
       // Function replacement keeps $ sequences in names literal; substitutions are not re-evaluated.
       const content = opening.content.replaceAll('{{user}}', () => playerName);
-      const saved = sessions.appendEntry(session.id, {
+      const updates = snapshots.message.map(({ key, value }) => ({ status: 'success' as const, path: key, value }));
+      const saved = sessions.appendNarrativeAssistant(session.id, {
         runId: randomUUID(), parentId: null, type: 'message', role: 'assistant', timestamp,
         payload: { message: { role: 'assistant', content, timestamp } },
         state: snapshots.message, metrics: null,
+      }, {
+        stateUpdate: { status: updates.length ? 'success' : 'no_updates', updates },
+        actionSuggestions: { status: 'no_suggestions', items: [] },
       });
       const entry = sessions.setNarrativeOutcome(session.id, saved.id, { status: 'completed', finishedAt: timestamp });
       return { item: sessions.require(session.id), entry };

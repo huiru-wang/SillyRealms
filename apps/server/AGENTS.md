@@ -1,5 +1,7 @@
 # Server
 
+- 预设严格模式与世界卡宽容模式共用 Server 纯语法模块。只在候选组装时展开原始角色 prompt、世界书 content 和预设节点；状态字段仅读捕获的 tip 三域视图及当前候选可见根，不改变 message 写授权、不再次解析填入值。世界卡导入不验证提示词变量。
+
 - 本期在 modules/usecases 管理能力上实施叙事首版：SDK 无关模型流、可选一次滚动摘要或滑动窗口裁剪（pi 适配实现）、核心提示词编译、统一 SSE、提交/停止、消息独立持久化、目录和连通性检测。通过 narrative/postprocess 实施模型输出的 message 状态更新与行动建议；不设计 runtime、engine、通用任务、Agent/tool loop 或执行恢复。Web 已按现有叙事与 state 契约接入独立运行页及 Stage SDK。
 - 单域操作采用 `route → service → repository`；应用流程采用 `route → usecase → service → repository`。route 可以调用读写能力，跨模块只读展示投影可在 route 组合；跨模块写编排必须进入 usecases。route 不写 SQL、不管理事务。
 - 业务模块统一位于 `modules/<name>`，以 `service.ts` 为唯一公开出口。Repository、存储 Row、schema、parser、validation、assets、archive、card、default、files 均为内部实现；公开领域类型从 service 显式 export type，不使用 export *。启动 services.ts/usecases.ts 显式装配依赖。
@@ -15,9 +17,9 @@
 - infrastructure/database/transaction.ts 的回调必须同步，不接受 Promise。事务中不做文件/网络/模型调用；文件与 DB 用暂存、发布、清理/补偿协调，不宣称强原子性。代表提交成功的事件在成功提交后发布。
 - openDatabase 只建立/检查结构，不播种业务数据。每次启动装配后、监听 HTTP 前调用 initialize，在同一同步事务内按稳定 ID ensureDefault，再 settings.ensure。缺失的内置预设或设置记录自动补齐；已有内置预设内容、revision、用户默认选择和显式 null 均保持原值，重复启动不更新它们。恢复预设沿用名称避重规则，失败整体回滚重试。不创建虚假模型或凭据，也没有前端初始化向导。
 - 本期只支持线性叙事存储：appendEntry 只能接当前 tip，显式 parent 不匹配时报错；追加、seq 分配与 tip 推进原子完成。不提供 setTip；内部 getHistory 只读取当前线性历史供 context 使用。GET /sessions/:id/history 已删除，HTTP 消息历史只使用 narrative/runs。写入只校验当前 tip，模型上下文按 seq 范围一次读取，消息状态按会话和 seq 取最近非 NULL 快照。
-- 正文、历史关系、state、metrics 分别写入明确字段，禁止整行覆盖。state HTTP 统一前缀 /api/v1/state，仅提供 /global/:worldId、/session/:sessionId、/message/:sessionId/:entryId 各 GET/PATCH/PUT；旧 worlds/sessions 的 state 子路径删除，不保留别名。PUT/set 保存完整 scope 快照；消息 NULL 继承前驱，显式空数组终止继承。PATCH 接收 updates:[{path,value}]，按输入顺序独立处理：只替换已存在的根或对象点分路径，缺失路径成功忽略，不创建节点；数组整体替换。沿用共享 state-validation 的定义、类型与 rules 覆盖校验，只检查受影响根，不校验整个 scope。缺失路径及未变化值均不写库；消息继承值仅在实际变更时保存为指定条目的独立快照。StateWriteResult 逐项返回 success/errorCode/errorMessage 与可选字段诊断。
+- 正文、历史关系、state、metrics 分别写入明确字段，禁止整行覆盖。state HTTP 统一前缀 /api/v1/state，仅提供 /global/:worldId、/session/:sessionId、/message/:sessionId/:entryId 各 GET/PATCH/PUT；旧 worlds/sessions 的 state 子路径删除，不保留别名。PUT/set 保存完整 scope 快照；消息 NULL 继承前驱，显式空数组终止继承。PATCH 接收 updates:[{path,value}]，按输入顺序独立处理：只替换已存在的根或对象点分路径，缺失路径成功忽略，不创建节点；数组整体替换。沿用共享 state-validation 的定义与值校验，不检查 rules 覆盖，只检查受影响根，不校验整个 scope。缺失路径及未变化值均不写库；消息继承值仅在实际变更时保存为指定条目的独立快照。StateWriteResult 逐项返回 success/errorCode/errorMessage 与可选字段诊断。
 - 仅开放已实现校验的预设类型，类型与配置统一在 PresetService 校验；引用通过 Reader.require 和数据库外键保证，不恢复 assertNarrativePreset。默认模板与导入导出协议属于 presets 内部领域知识；凭据字节不进入模型配置表。
-- 世界导入保留原始字节，不依赖上传原名；JSON/ZIP 验证卡和资源后发布，失败按明确阶段清理。导出由 DB 当前世界卡、当前标签与 package/ 当前资源构建，名称为当前 world.name.zip，原件不参与重建。卡协议与静态状态定义校验属于 worlds；state 定义、类型和 rules 校验复用既有共享 state-validation。rules 保存自然语言说明，校验其路径及覆盖，不执行说明中的业务条件。
+- 世界导入保留原始字节，不依赖上传原名；JSON/ZIP 验证卡和资源后发布，失败按明确阶段清理。导出由 DB 当前世界卡、当前标签与 package/ 当前资源构建，名称为当前 world.name.zip，原件不参与重建。卡协议与静态状态定义校验属于 worlds；state 定义、类型和 rules 校验复用既有共享 state-validation。rules 是可选的自然语言说明，导入或编辑定义时仅检查提供的路径与非空文本，不要求根或子字段覆盖。Prompt 组装不再校验规则格式；没有条目时省略规则段。
 - worlds 内部按职责组织：parser 负责 JSON 解析、领域转换和初始值提取；validation 集中卡结构、引用、状态定义及 when 静态校验；assets 负责资源读取与完整性；archive 负责导入包和 ZIP 解压/构建；files 负责磁盘生命周期。parser/validation 不读文件，assets 不处理 ZIP，archive 复用解析与校验，不重复定义协议；这些实现仍只通过 service.ts 对外提供能力。
 - 包内文件 HTTP 入口为 `/api/v1/worlds/:id/resources/*`，相对于磁盘 package/ 根目录，保留 assets/、components/ 等目录前缀；不能将其缩减为仅素材读取。存储目录和路径安全规则独立于路由名称。
 - 世界管理删除由 delete-world 用例编排：有关联会话且未传 deleteSessions=true 时返回 WORLD_HAS_SESSIONS/409，并提示数量及删除后果；确认后在同一同步事务删除全部关联会话/消息与世界记录，复用会话运行写锁，任一步失败整体回滚。配置会话访问适配器时先授权全部关联会话，授权异步等待后在事务内拒绝任何未授权的新会话。提交后清理整个世界目录；文件失败报告 WORLD_FILES_DELETE_FAILED，重试允许清理 DB 已不存在的残留目录，不做 DB/文件强事务。原件写入/发布/删除按世界串行，路径校验拒绝不安全根目录和符号链接逃逸。
@@ -40,9 +42,10 @@
 
 - 当前接入世界内容库、预设、模型配置、设置及基础会话。预设 CRUD 使用驼峰领域 config；文件导入导出协议由 presets codec 独立转换。列表返回摘要，详情按需加载；PATCH 必须带 expectedRevision，通过 Repository CAS 更新并递增 revision。
 - 模型目录由 infrastructure/pi 读取固定版本 SDK，按 provider 分组；公开 contextWindow/maxTokens/reasoning/thinkingLevelMap/thinkingLevels/api/input/promptCache 等安全元数据。有效思考档位使用 SDK helper；缓存保留时长为 SDK 最佳估计秒数，缺失用 null，不推断实际支持或保留承诺。不返回 SDK headers/baseUrl 或密钥。
+- 预设采样字段在文件和存储间共用显式映射。主叙事与摘要使用同一轮快照中的 modelParameters，Pi 根据真实路由和有效模式逐项过滤。缺省不覆盖，显式零保留；能力未知或越出模型范围只忽略该项，不通过 onPayload 改写请求。
 - credentials 独立管理外部密钥存储，models 表只保存 credentialRef。model-config 用例协调写入、补偿和删除清理，按模型串行，不在 SQLite 事务内等待外部存储；HTTP 不接收引用或返回密钥，状态不冒充模型连通性验证。
 - 默认凭据适配器是 macOS Keychain，引用按 V2 dataRoot 隔离；不复用旧 Server 凭据命名空间，不增加明文降级存储。跨资源补偿不等于崩溃原子性。
-- 会话创建经 create-session 用例：要求 openingId，验证世界中的开局与可扮演角色，明确预设/模型引用；同一同步事务初始化 session/message 状态并保存首条 assistant entry、完成结果与 tip。global 保持当前值，opening.initial_state 只整项替换 message 根；正文将全部 {{user}} 一次性替换为角色名。不执行组件/模型，不新增表或 kind/origin。成功仅发布 session.created，data 为 {sessionId,tipEntryId,timestamp,entry}，不发 run.* 或 state.changed。POST 返回 data:{item,entry}，GET 仍为 data.item。更新不允许改变 worldId/userCharacterId，已有会话不自动补写。初始化直接调用属主服务，不嵌套会发布事件的写用例。
+- 会话创建经 create-session 用例：要求 openingId，验证世界中的开局与可扮演角色，明确预设/模型引用；同一同步事务初始化 session/message 状态并保存首条 assistant entry、完成结果与 tip。首条消息的 output 按最终 message 快照逐根记录成功更新，行动建议为空。global 保持当前值，opening.initial_state 只整项替换 message 根；正文将全部 {{user}} 一次性替换为角色名。不执行组件/模型，不新增表或 kind/origin。成功仅发布 session.created，data 为 {sessionId,tipEntryId,timestamp,entry}，不发 run.* 或 state.changed。POST 返回 data:{item,entry}，GET 仍为 data.item。更新不允许改变 worldId/userCharacterId，已有会话不自动补写。初始化直接调用属主服务，不嵌套会发布事件的写用例。
 
 - 世界列表直接读取摘要并批量取标签，以 createdAt/id 游标分页；管理 PATCH 只接受名称、标签、默认配置及 expectedRevision，CAS 原子更新，不重写作者内容或运行状态。HTTP 不开放 POST /worlds 或作者内容编辑。
 - 组件读取复用 worlds/assets，path 优先且失败不回退 inline；按组件返回错误。API Origin 校验只信任服务同源和配置的 Web 来源，跨来源仅允许资源 GET/HEAD；这不是用户认证。
@@ -63,7 +66,7 @@
 - context/prepare.ts 组合阶段并经公开 SessionService 保存成功摘要；stages/compact 完成纯计划、旧摘要复用、必要摘要调用和最终候选复核，不写库、不认识 EventHub/SSE 或 run 终态。摘要通过窄端口调用；上下文进度 summary_started/summary_saved 由外层映射到 run.summarizing/run.summarized。PreparedContext 使用 ok/request 或 ok/failure.code，均携带 parentEntryId（捕获的实际 tip 或新摘要 ID；空会话/捕获前失败为 null）及可选摘要回执；凭据字节只在本轮 narrative 闭包内复用，不进入返回值。模型流收集、取消和原始调用指标归 infrastructure/model/collect.ts，不能依赖业务模块或叙事输出分离。
 - 每个压缩候选重新投影干净历史、激活材料、选择保留条目的旁注、组装实际模型消息并估算。不得假定估算随裁剪单调下降，不沿用初始候选的 activeRoots，不在估算后偷偷追加旁注。candidate.ts 组合场景候选评估，assemble 产出可直接调用模型的消息；lib 仅放模板、估算、预算计算。
 - 输入硬预算 min(preset.maxContextTokens, model.contextWindow-maxOutputTokens-1024)，软目标 60%。sliding_window 只裁剪完整 run；rolling_summary 保护最近 5 个历史 run，末尾普通消息为 user 时额外保护该完整 run，每次构建最多一次摘要。候选包含完整 entries，按自身消息顺序映射变量：仅尾部普通 user 移至 input.text；assistant 尾部（含空正文）或空会话保持原历史顺序，input.text 为空且 userInput 节点不输出包装文字。末尾 compaction 不作为普通消息判定。history.summary 恰好注入一次，history.messages 保持原角色。默认后处理提示词通过 PresetService 解析；固定协议覆盖旧数组/强制标签/固定条数要求，禁止引用 input.text、history.messages 或 history.summary。
-- model-notes 为按 entryId 关联的本次内存旁注，不修改正文或数据库。通用来源可服务 user/assistant；叙事内置来源先取最近两条有可见正文的 assistant，再读取已保存 output，没有 output 不向更早条目补足。状态只取 stateUpdate.updates 中 status=success 的行，并仅回填 path/value/reason；建议只取有效 items。partial_success 的有效项保留，行状态和失败诊断不进入旁注，各来源失败独立跳过。历史正文后空一行，依次直接追加 state_update JSONL 块和单行 action_suggestions 数组块。省略无有效项的块、外层标签与解释文字，JSON 字符串中的标签继续转义。
+- model-notes 为按 entryId 关联的本次内存旁注，不修改正文或数据库。通用来源可服务 user/assistant；叙事内置来源先取最近两条有可见正文的 assistant，再读取已保存 output，没有 output 不向更早条目补足。状态只取 stateUpdate.updates 中 status=success 的行，并仅回填 path/value/reason；建议只取有效 items。partial_success 的有效项保留，行状态和失败诊断不进入旁注，各来源失败独立跳过。历史正文后空一行，依次直接追加 state_update JSONL 块和单行 action_suggestions 数组块。缺少 output 或某项没有有效数据时仍渲染两块：状态块为零行 JSONL，建议块为 []。JSON 字符串中的标签继续转义。
 - 材料关键词和摘要只使用干净正文及适用摘要，旁注不参与激活和摘要；最终 assemble 才渲染到保留消息并计入输入预算。裁剪/摘要覆盖的条目旁注随之移除，不重复拼接，不重执行状态更新，不新增 notes 表、持久化 schema 或 contextEligible。正文编辑保留原 output，旁注表示当时的处理记录，不宣称已按新正文重算。
 - 仅摘要正常 stop、非空且无工具请求时产生摘要草稿；context 编排器在捕获的实际 tip 后追加 compaction，state=null，runId 从该 tip 派生；保存前同步复核 tip 和完整捕获原文指纹，变化返回 TIP_CONFLICT，不提交过期摘要。普通发送时仍与 user/assistant 同 run，保存完整文本、覆盖边界、sourceHash 和 metrics。最终候选超限或编译失败不能丢失成功摘要草稿；保存成功后回传父 entry 和计量回执，即使准备最终失败也保留摘要。失败/取消摘要不保存、不计量；成功摘要未知 usage 为 null。
 - run.summarized 只在实际保存成功后发布；失败、取消或保存失败不能伪造完成通知。仍超限 summary_capacity_exceeded 结束并保留用户、摘要和用量，不重试或继续裁剪。上下文不决定 run 终态；savedMessageIds 只列 message，tip 可指向 compaction。执行句柄 active Map 负责停止与查询；锁权限由同一 RuntimeCache 管理，覆盖用户保存到最终结算，取消与异常释放，在能力通知、usage 和终态前释放。
@@ -86,3 +89,10 @@
 - 叙事按 run 记录 `[yyyy-MM-dd HH:mm:ss] [事件] [紧凑JSON对象]`，时间为服务器本地时间，runId/sessionId 固定在数据开头；每条只占一行，正文不截断。默认 stdout，日志异常不得影响业务。只记录非 delta 生命周期、真实模型请求/完整 SDK 终态、后处理及结算，不重复 model.input。
 - context 成功结果独立返回最终候选 diagnostics：节点、角色和世界书名称、条件与真实匹配结果，不含正文，不重新执行条件，不向 context 注入叙事或日志依赖。模型 raw 只经可选诊断钩子传给观测方，SDK 类型和原始数据不进入业务事件或持久消息。
 - state/actions 原始块和完整处理结果分别记录；坏标签可记录整段原文用于诊断，不能用于恢复执行。结果 phase:prepared 与事务成功的 postprocess.completed/persisted:true 分开，保存失败不能宣称已提交。保留完整 usage 和终态字段，API Key/鉴权等明确凭据先脱敏。契约见 ../../docs/runtime/server-narrative.md#run-单行日志。
+
+## 最新回复重新生成
+
+- narrative.regenerate 只接受最新用户轮次的指定 AI，或无 AI 的用户轮次重试；开局和历史目标拒绝。使用当前配置、原 userEntryId/runId 和新 assistantEntryId，不增加 mode/attemptId。
+- Session.deleteEntry 是通用原子删除：预期 tip、许可校验、直接后继衔接、tip 修正；不清终态、不发事件。Narrative 在同一事务内删除并清理旧结果，提交后持锁发布 message.deleted/实际 message state.changed，再进入 send 共用 start/execute。失败不恢复旧 AI，Context 不识别调用来源。
+- run 事件、当前执行查询、结束结果及 stop 均关联新 assistantEntryId；stop 精确匹配两种 ID。run.created/202 携带真实 tipEntryId/deletedMessageIds，用户消息 ID 幂等。每次受理执行各有一次 usage 与唯一终态，不能以 runId 推断仅执行一次。
+- 删除不引入账本：recordedUsage 继续汇总保留 entries.metrics，保留摘要及其计量；seq 可复用，消息身份以 ID 为准。

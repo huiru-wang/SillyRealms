@@ -194,7 +194,7 @@ describe('run write locks across session and state operations', () => {
     expect(services.sessions.getHistory('session').map(entry => entry.id)).toEqual([run.accepted.userEntryId]);
     expect(services.state.getSession('session')).toEqual({ coins: 2 });
     expect(services.state.getGlobal('world')).toEqual({ day: 1 });
-    expect(narrative.stop('session', run.accepted.runId)).toEqual({ runId: run.accepted.runId, stopping: true });
+    expect(narrative.stop('session', run.accepted.runId, run.accepted.assistantEntryId)).toEqual({ runId: run.accepted.runId, assistantEntryId: run.accepted.assistantEntryId, stopping: true });
     expect(() => services.sessions.setState('session', {})).toThrow(new AppError('STATE_WRITE_LOCKED'));
     expect(await run.finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
     expect(narrative.list('session').activeRunId).toBeNull();

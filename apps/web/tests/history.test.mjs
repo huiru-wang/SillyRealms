@@ -80,3 +80,16 @@ test('history passes compact capability diagnostics to stage messages without du
  stored.entries[1].extData.output.stateUpdate.updates[0].value=99;
  assert.equal(message.output.stateUpdate.updates[0].value,8);
 });
+
+test('deletion invalidates pending pages and accepts a shorter authoritative history',async()=>{
+ const old=deferred(),responses=[page([run('r',[1,2])]),old.promise,page([{...run('r',[1],'stopped'),assistantEntryId:'new-a'}])];
+ const history=createHistoryController({sessionId:'s',request:async()=>responses.shift()});
+ await history.loadRecent();const pending=history.catchUp();
+ history.acceptExecution({runId:'r',assistantEntryId:'new-a',deletedMessageIds:['e2']});
+ old.resolve(page([run('r',[1,2])]));await pending;
+ assert.deepEqual(history.getSnapshot().runs[0].entries.map(entry=>entry.id),['e1']);
+ assert.equal(history.getSnapshot().runs[0].status,'running');
+ await history.loadRecent(true);
+ assert.equal(history.getSnapshot().afterSeq,1);assert.equal(history.getSnapshot().runs[0].status,'stopped');
+ assert.equal(history.getSnapshot().hasMore,false);
+});

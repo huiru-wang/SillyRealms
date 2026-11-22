@@ -40,3 +40,14 @@ test('suggestions replace as a set and consumer failures stay isolated',()=>{
  assert.equal(notifications,2);
  client.dispose();client.clear();assert.equal(notifications,2);
 });
+
+test('regeneration clears deleted suggestions and rejects late results from the old assistant',()=>{
+ const suggestions=createSuggestionsController('s');
+ suggestions.begin('r','new-a');
+ suggestions.accept({event:'action_suggestions.created',data:{sessionId:'s',runId:'r',messageId:'old-a',items:['Old']}});
+ assert.equal(suggestions.getSnapshot().suggestions,null);
+ suggestions.accept({event:'action_suggestions.created',data:{sessionId:'s',runId:'r',messageId:'new-a',items:['New']}});
+ assert.deepEqual(suggestions.getSnapshot().suggestions.items,['New']);
+ suggestions.accept({event:'message.deleted',data:{sessionId:'s',runId:'r',assistantEntryId:'next-a',messageId:'new-a',tipEntryId:'u'}});
+ assert.equal(suggestions.getSnapshot().suggestions,null);
+});

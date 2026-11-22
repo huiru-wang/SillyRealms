@@ -36,6 +36,7 @@ export const ERRORS = {
   SESSION_WRITE_LOCKED: { message: '会话正在运行，暂不允许修改', status: 409 },
   STATE_WRITE_LOCKED: { message: '关联会话正在运行，暂不允许修改状态', status: 409 },
   RUN_ALREADY_ACTIVE: { message: '该会话已有正在执行的生成', status: 409 },
+  INVALID_REGENERATION_TARGET: { message: '只能重新生成最后一个用户输入对应的回复', status: 409 },
   RUN_NOT_FOUND: { message: '该会话的运行不存在或已经结束', status: 404 },
   RUN_STOPPED: { message: '生成已停止', status: 409 },
   MODEL_NOT_FOUND: { message: '模型目录中不存在该模型', status: 422 },

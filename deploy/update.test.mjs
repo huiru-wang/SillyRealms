@@ -22,8 +22,7 @@ async function fixture(t) {
   await git(seed, 'config', 'user.email', 'deploy-test@example.invalid');
   await mkdir(join(seed, 'deploy'));
   await copyFile(new URL('./update.mjs', import.meta.url), join(seed, 'deploy/update.mjs'));
-  await copyFile(new URL('./start.sh', import.meta.url), join(seed, 'deploy/start.sh'));
-  await writeFile(join(seed, 'deploy/start.mjs'), 'console.log("old deployment");\n');
+  await copyFile(new URL('../deploy.sh', import.meta.url), join(seed, 'deploy.sh'));
   await writeFile(join(seed, '.gitignore'), '/data/\n.env\n');
   await writeFile(join(seed, 'source.txt'), 'first version');
   await git(seed, 'add', '.');
@@ -124,10 +123,7 @@ for (const path of ['operator-notes.txt', '.env']) {
 test('fetch failure exits before the deployment handoff', async t => {
   const { root, project, initial } = await fixture(t);
   await git(project, 'remote', 'set-url', 'origin', join(root, 'missing.git'));
-  // Exercise the CLI in the same fail-fast handoff used by the shell entrypoint.
-  await assert.rejects(exec('bash', ['-e', '-c',
-    'revision="$(node "$1/deploy/update.mjs" "$1")"; export SR_DEPLOY_REVISION="$revision"; exec node "$1/deploy/start.mjs"',
-    '--', project]), error => {
+  await assert.rejects(exec('bash', ['-c', 'source ./deploy.sh; update_and_deploy'], { cwd: project }), error => {
     assert.match(error.stderr, /fetch 失败/);
     assert.doesNotMatch(error.stdout, /old deployment/);
     return true;
@@ -135,32 +131,24 @@ test('fetch failure exits before the deployment handoff', async t => {
   assert.equal(await git(project, 'rev-parse', 'HEAD'), initial);
 });
 
-test('CLI handoff executes newly fetched deployment code and exports the exact revision', async t => {
+test('handoff executes the fetched deploy.sh at the exact remote revision', async t => {
   const { project, publish } = await fixture(t);
-  const revision = await publish('deploy/start.mjs', 'console.log("new deployment " + process.env.SR_DEPLOY_REVISION);\n');
-  const { stdout } = await exec('bash', ['-e', '-c',
-    'revision="$(node "$1/deploy/update.mjs" "$1")"; export SR_DEPLOY_REVISION="$revision"; exec node "$1/deploy/start.mjs"',
-    '--', project]);
-  assert.equal(stdout.trim(), 'new deployment ' + revision);
+  const revision = await publish('deploy.sh', 'deploy() { echo "new deployment $(git rev-parse HEAD)"; }\n');
+  const { stdout } = await exec('bash', ['-c', 'source ./deploy.sh; update_and_deploy'], { cwd: project });
+  assert.ok(stdout.trim().endsWith('new deployment ' + revision));
 });
 
-test('check/help stay read-only and invalid arguments fail before fetching', async t => {
+test('help and invalid arguments leave the clone untouched', async t => {
   const { project, initial, publish } = await fixture(t);
   await publish();
-  for (const args of [['--check'], ['--help']]) {
-    const { stdout } = await exec('bash', [join(project, 'deploy/start.sh'), ...args]);
-    assert.equal(stdout.trim(), 'old deployment');
-    assert.equal(await git(project, 'rev-parse', 'HEAD'), initial);
-    assert.equal(await git(project, 'rev-parse', 'origin/main'), initial);
-  }
+  const script = join(project, 'deploy.sh');
+  const { stdout } = await exec('bash', [script, '--help']);
+  assert.match(stdout, /WEB_ORIGIN/);
   for (const args of [['--unknown'], ['--check', '--unknown']]) {
-    await assert.rejects(exec('bash', [join(project, 'deploy/start.sh'), ...args]), error => {
-      assert.match(error.stderr, /用法/);
-      assert.equal(error.stdout, '');
-      return true;
-    });
-    assert.equal(await git(project, 'rev-parse', 'origin/main'), initial);
+    await assert.rejects(exec('bash', [script, ...args]), /用法/);
   }
+  assert.equal(await git(project, 'rev-parse', 'HEAD'), initial);
+  assert.equal(await git(project, 'rev-parse', 'origin/main'), initial);
 });
 
 test('requires a repository root and an origin remote', async t => {

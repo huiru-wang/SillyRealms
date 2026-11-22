@@ -8,8 +8,11 @@ export async function dispatchStageCommand(command: StageCommand, method: unknow
     case 'narrative.send': case 'composer.setDraft':
       if(!only(input,['text']) || typeof input.text !== 'string' || input.text.length > 100000 || (method==='narrative.send'&&!input.text.trim())) throw Error('请输入有效内容');
       break;
+    case 'narrative.regenerate':
+      if(!only(input,['userEntryId','assistantEntryId']) || typeof input.userEntryId !== 'string' || !input.userEntryId.trim() || !(input.assistantEntryId === null || typeof input.assistantEntryId === 'string' && !!input.assistantEntryId.trim())) throw Error('重新生成目标无效');
+      break;
     case 'narrative.stop':
-      if(!only(input,['runId']) || typeof input.runId !== 'string' || !input.runId.trim()) throw Error('运行标识无效');
+      if(!only(input,['runId','assistantEntryId']) || typeof input.assistantEntryId !== 'string' || !input.assistantEntryId.trim() || typeof input.runId !== 'string' || !input.runId.trim()) throw Error('运行标识无效');
       break;
     case 'history.loadMore': case 'history.refresh': case 'state.read':
       if(Object.keys(input).length) throw Error('请求参数无效');

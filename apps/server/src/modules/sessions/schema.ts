@@ -92,8 +92,8 @@ export const narrativeStopReasonSchema = z.enum([
   'message_persist_failed', 'tip_conflict', 'session_deleted', 'internal_error',
 ]);
 export const narrativeOutcomeSchema = z.discriminatedUnion('status', [
-  z.object({ status: z.literal('completed'), finishedAt: z.number().int().nonnegative() }).strict(),
-  z.object({ status: z.literal('stopped'), stopReason: narrativeStopReasonSchema,
+  z.object({ status: z.literal('completed'), assistantEntryId: identifier.optional(), finishedAt: z.number().int().nonnegative() }).strict(),
+  z.object({ status: z.literal('stopped'), assistantEntryId: identifier.optional(), stopReason: narrativeStopReasonSchema,
     finishedAt: z.number().int().nonnegative() }).strict(),
 ]);
 export const entryRunListSchema = z.object({

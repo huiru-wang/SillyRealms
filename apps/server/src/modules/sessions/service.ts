@@ -16,13 +16,13 @@ import {
 import type {
   AppendEntryInput, CreateSessionInput, EntryMetrics, SessionEntry,
   SessionListOptions, SessionPage, Session, UpdateEntryInput, UpdateSessionInput,
-  NarrativeOutcome, EntryRunListOptions, EntryRunPage,
+  NarrativeOutcome, EntryRunListOptions, EntryRunPage, DeletedEntry,
 } from './types.js';
 
 export type {
   AppendEntryInput, CreateSessionInput, EntryMetrics, SessionEntry,
   SessionListOptions, SessionPage, Session, UpdateEntryInput, UpdateSessionInput,
-  NarrativeOutcome, EntryRunListOptions, EntryRunPage,
+  NarrativeOutcome, EntryRunListOptions, EntryRunPage, DeletedEntry,
   NarrativeStopReason, EntryRun,
 } from './types.js';
 
@@ -128,7 +128,7 @@ export class SessionService {
     return this.#appendEntry(sessionId, appendEntrySchema.parse(input));
   }
 
-  /** Only narrative settlement may attach server-owned capability results. */
+  /** Stores trusted opening or generated assistant output alongside the entry. */
   appendNarrativeAssistant(sessionId: string, input: AppendEntryInput, output: NarrativeOutput, permit?: RunWritePermit): SessionEntry {
     this.#dependencies.cache.assertSessionWrite(identifier.parse(sessionId), permit);
     const value = appendEntrySchema.parse(input);
@@ -183,10 +183,18 @@ export class SessionService {
     return { knownUsage, recordedRequestCount, unknownUsageRequestCount, latestContext };
   }
 
-  setNarrativeOutcome(sessionId: string, entryId: string, outcome: NarrativeOutcome, permit?: RunWritePermit): SessionEntry {
+  deleteEntry(sessionId: string, entryId: string, expectedTipEntryId: string | null, permit?: RunWritePermit): DeletedEntry {
+    this.#dependencies.cache.assertSessionWrite(identifier.parse(sessionId), permit);
+    identifier.parse(entryId);
+    if (expectedTipEntryId !== null) identifier.parse(expectedTipEntryId);
+    const deleted = this.#repository.deleteEntry(sessionId, entryId, expectedTipEntryId);
+    return { ...deleted, entry: toSessionEntry(deleted.entry) };
+  }
+
+  setNarrativeOutcome(sessionId: string, entryId: string, outcome: NarrativeOutcome | null, permit?: RunWritePermit): SessionEntry {
     identifier.parse(sessionId); identifier.parse(entryId);
     this.#dependencies.cache.assertSessionWrite(sessionId, permit);
-    return toSessionEntry(this.#repository.setNarrativeOutcome(sessionId, entryId, narrativeOutcomeSchema.parse(outcome)));
+    return toSessionEntry(this.#repository.setNarrativeOutcome(sessionId, entryId, outcome === null ? null : narrativeOutcomeSchema.parse(outcome)));
   }
 
   getNarrativeOutcome(entry: SessionEntry): NarrativeOutcome | null {

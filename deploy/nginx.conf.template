@@ -1,4 +1,4 @@
-# Managed by SillyRealms deploy/start.sh.
+# Managed by SillyRealms.
 # Included by the http {} block in /etc/nginx/nginx.conf.
 # Main application: static Web + loopback API.
 server {

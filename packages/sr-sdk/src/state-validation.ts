@@ -5,7 +5,7 @@ export type StateDefinition = {
   type: 'string' | 'number' | 'boolean' | 'json';
   initial: Json;
   description: string;
-  rules: Record<string, string>;
+  rules?: Record<string, string>;
   min?: number;
   max?: number;
   load?: {
@@ -129,22 +129,6 @@ function checkRules(root: string, rules: unknown, scope: StateScope): asserts ru
     if (typeof text !== 'string') fail('INVALID_STATE', scope, root + '.rules.' + path);
     if (!text.trim()) fail('STATE_RULE_MISSING', scope, path, path);
   }
-  if (!Object.hasOwn(rules, root)) fail('STATE_RULE_MISSING', scope, root, root);
-}
-
-function checkCoverage(value: Json, path: string, rules: Record<string, string>, scope: StateScope): void {
-  const requireRule = (rulePath: string): void => {
-    if (!Object.hasOwn(rules, rulePath) || typeof rules[rulePath] !== 'string' || !rules[rulePath]!.trim())
-      fail('STATE_RULE_MISSING', scope, rulePath, rulePath);
-  };
-  requireRule(path);
-  if (Array.isArray(value)) {
-    const elementPath = path + '[]';
-    requireRule(elementPath);
-    for (const item of value) checkCoverage(item, elementPath, rules, scope);
-  } else if (value !== null && typeof value === 'object') {
-    for (const [key, item] of Object.entries(value)) checkCoverage(item, path + '.' + key, rules, scope);
-  }
 }
 
 /** Validate the complete root after every replacement, never just the submitted leaf. */
@@ -158,8 +142,6 @@ export function validateStateValue(definition: StateDefinition, value: unknown, 
       fail('STATE_OUT_OF_RANGE', scope, root);
   }
   checkSize(value, scope, root);
-  if (!isRecord(definition.rules)) fail('INVALID_STATE', scope, root + '.rules');
-  checkCoverage(value, root, definition.rules, scope);
 }
 
 function checkLoad(value: unknown, root: string, scope: StateScope): void {
@@ -178,14 +160,15 @@ function checkLoad(value: unknown, root: string, scope: StateScope): void {
   if (value.when !== undefined && typeof value.when !== 'string') fail('INVALID_STATE', scope, path + '.when');
 }
 
-export function validateStateDefinition(root: string, definition: unknown, scope: StateScope = 'message'): asserts definition is StateDefinition {
+export function validateStateDefinition(root: string, definition: unknown, scope: StateScope = 'message',
+  source: 'author' | 'stored' = 'author'): asserts definition is StateDefinition {
   if (!isSafeStateKey(root)) fail('INVALID_STATE_KEY', scope, root);
   if (!isRecord(definition)) fail('INVALID_STATE', scope, root);
   strictKeys(definition, ['type', 'initial', 'description', 'rules', 'min', 'max', 'load'], scope, root);
   if (!['string', 'number', 'boolean', 'json'].includes(definition.type as string)) fail('INVALID_STATE_TYPE', scope, root + '.type');
   if (!Object.hasOwn(definition, 'initial')) fail('STATE_INITIAL_REQUIRED', scope, root);
   if (typeof definition.description !== 'string' || !definition.description.trim()) fail('INVALID_STATE', scope, root + '.description');
-  checkRules(root, definition.rules, scope);
+  if (source === 'author' && Object.hasOwn(definition, 'rules')) checkRules(root, definition.rules, scope);
   for (const key of ['min', 'max'] as const) {
     const bound = definition[key];
     if (bound !== undefined && (definition.type !== 'number' || typeof bound !== 'number' || !Number.isFinite(bound)))
@@ -198,7 +181,7 @@ export function validateStateDefinition(root: string, definition: unknown, scope
   checkSize(definition, scope, root);
 }
 
-export function validateStateSchema(value: unknown): asserts value is StateSchema {
+export function validateStateSchema(value: unknown, source: 'author' | 'stored' = 'author'): asserts value is StateSchema {
   if (!isRecord(value)) fail('INVALID_STATE', 'message', 'state');
   strictKeys(value, ['schema_version', 'scopes'], 'message', '');
   if (value.schema_version !== 2) fail('INVALID_STATE', 'message', 'schema_version');
@@ -208,7 +191,7 @@ export function validateStateSchema(value: unknown): asserts value is StateSchem
     if (!Object.hasOwn(value.scopes, scope)) continue;
     const definitions = value.scopes[scope];
     if (!isRecord(definitions)) fail('INVALID_STATE', scope, '');
-    for (const [root, definition] of Object.entries(definitions)) validateStateDefinition(root, definition, scope);
+    for (const [root, definition] of Object.entries(definitions)) validateStateDefinition(root, definition, scope, source);
   }
   checkSize(value, 'message', 'state');
 }

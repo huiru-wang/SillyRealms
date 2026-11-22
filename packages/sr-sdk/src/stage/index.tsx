@@ -13,7 +13,7 @@ export type {SRSessionAPI, SRStateAPI} from './runtime.js';
 export type {
   AcceptedRun, RunPage, RunQuery, RunStatus, SessionEvent, NarrativeEvent,
   StateScope, StateValue, StateSnapshot, StateWriteResult, StateChangedEvent,
-  Suggestions, SuggestionsCreatedEvent, StageSnapshot, StageRun, StageMessage,
+  RegenerateRequest, MessageDeletedEvent, Suggestions, SuggestionsCreatedEvent, StageSnapshot, StageRun, StageMessage,
 } from '../stage-contract.js';
 
 export const SR = {WorldStory};

@@ -1,31 +1,13 @@
 import { z } from 'zod';
+import { parsePromptTemplate } from '../../lib/prompt-template.js';
 
 export const systemNodeIds = ['main', 'personaInfo', 'characterInfo', 'worldInfo', 'chatHistory', 'userInput'] as const;
 export const postprocessNodeIds = ['worldState', 'actionSuggestions'] as const;
 const builtinIds: readonly string[] = [...systemNodeIds, ...postprocessNodeIds];
-const systemVariables = new Set([
+export const systemVariableNames = [
   'user', 'persona.prompt', 'characters.prompts', 'world.lore',
-  'history.summary', 'history.messages', 'input.text', 'state.entries',
-]);
-
-/** Inspect template syntax only; values will never be evaluated as object paths. */
-function templateVariables(prompt: string): string[] {
-  const names: string[] = [];
-  for (let index = 0; index < prompt.length;) {
-    if (prompt[index] === '\\') {
-      if (prompt[index + 1] === '\\') { index += 2; continue; }
-      if (prompt.startsWith('{{', index + 1)) { index += 3; continue; }
-    }
-    if (!prompt.startsWith('{{', index)) { index++; continue; }
-    const end = prompt.indexOf('}}', index + 2);
-    if (end === -1) throw new Error('系统变量缺少结束标记 }}');
-    const name = prompt.slice(index + 2, end).trim();
-    if (!systemVariables.has(name)) throw new Error('未知系统变量：' + (name || '空名称'));
-    names.push(name);
-    index = end + 2;
-  }
-  return names;
-}
+  'history.summary', 'history.messages', 'input.text', 'state.message', 'state.session', 'state.global',
+] as const;
 
 export const presetNodeSchema = z.object({
   id: z.string().trim().min(1),
@@ -33,7 +15,11 @@ export const presetNodeSchema = z.object({
   kind: z.enum(['system', 'postprocess', 'text']),
   role: z.enum(['system', 'user', 'assistant', 'auto']),
   enabled: z.boolean(),
-  prompt: z.string(),
+  // Migrate real placeholders on read/import, preserving backslash escapes and literal braces.
+  prompt: z.string().transform(prompt => prompt.replace(
+    /\\\\|\\\{\{|\{\{\s*state\.entries\s*\}\}/g,
+    token => token.startsWith('{{') ? '{{state.message}}' : token,
+  )),
 }).strict();
 
 export const narrativeConfigSchema = z.object({
@@ -76,7 +62,10 @@ export const narrativeConfigSchema = z.object({
       invalid('自定义节点必须使用 text 类型及 system/user/assistant 消息角色', ['nodes', index]);
 
     let variables: string[];
-    try { variables = templateVariables(node.prompt); }
+    try {
+      variables = parsePromptTemplate(node.prompt, systemVariableNames)
+        .flatMap(segment => segment.type === 'variable' ? [segment.name] : []);
+    }
     catch (error) {
       invalid(error instanceof Error ? error.message : '提示词模板无效', ['nodes', index, 'prompt']);
       continue;
