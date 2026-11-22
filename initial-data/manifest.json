@@ -1,0 +1,9 @@
+{
+  "defaultPresetId": "sr-default-preset",
+  "presets": [
+    { "id": "sr-default-preset", "file": "标准叙事.json" }
+  ],
+  "worlds": [
+    { "id": "sr-world-xiaofanguan", "file": "小饭馆.zip" }
+  ]
+}

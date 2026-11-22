@@ -125,14 +125,18 @@ describe('import world use case', () => {
     expect(services.worlds.list()).toEqual([]);
   });
 
-  it('compensates published files when the database write fails and preserves existing worlds', async () => {
+  it('compensates a failed fixed-ID import and can retry beside a manually imported copy', async () => {
     const existing = await importWorld({ format: 'json', bytes: json(worldCardFixture()) });
     vi.spyOn(services.worlds, 'create').mockImplementationOnce(() => { throw new AppError('RESOURCE_CONFLICT'); });
-    await expect(importWorld({ format: 'json', bytes: json(worldCardFixture()) })).rejects.toThrow('RESOURCE_CONFLICT');
+    const install = createImportWorld(services);
+    const input = { format: 'json' as const, bytes: json(worldCardFixture()) };
+    await expect(install(input, 'builtin-world')).rejects.toThrow('RESOURCE_CONFLICT');
     expect(services.worlds.list().map(world => world.id)).toEqual([existing.id]);
     expect(await names('worlds')).toEqual([existing.id]);
     expect(await names('staging')).toEqual([]);
     expect(await services.worlds.readOriginal(existing.id)).not.toBeNull();
+    expect(await install(input, 'builtin-world')).toMatchObject({ id: 'builtin-world', name: existing.name });
+    expect(services.worlds.get(existing.id)).toEqual(existing);
   });
 
   it('removes the newly committed world if finalization fails', async () => {

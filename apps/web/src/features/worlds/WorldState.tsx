@@ -2,6 +2,7 @@ import {useEffect, useMemo, useState} from 'react';
 import {ChevronLeft} from 'lucide-react';
 import type {StateSchema, StateScope} from '@sillyrealms/sdk/state-validation';
 import {Button} from '../../components/ui/Button';
+import {Badge} from '../../components/ui/Field';
 import {describeWorldState, shouldEnterStateDetail, stateDescriptionLabel, type StateDescriptionGroup, type StateDescriptionNode} from './state-description';
 import {StateHelp, useStateNavigation} from './StateBrowser';
 import styles from './StateBrowser.module.css';
@@ -11,6 +12,15 @@ const scopes = {
   session: {title: '会话状态', description: '每个会话独立记录'},
   message: {title: '消息状态', description: '随剧情推进记录，可由开局设定初始内容'},
 };
+
+const typeLabels: Record<StateDescriptionNode['type'], string> = {
+  string: '字符串', number: '数值', boolean: '布尔', json: 'JSON', object: '对象',
+  array: '数组', null: '空值', mixed: '混合类型', unknown: '未指定',
+};
+
+function StateName({node}: {node: StateDescriptionNode}) {
+  return <span className={styles.stateName}><span>{stateDescriptionLabel(node)}</span><Badge>{typeLabels[node.type]}</Badge></span>;
+}
 
 function StateBrowser({groups}: {groups: StateDescriptionGroup[]}) {
   const {id, root, mobile, current: visit, enter, back} = useStateNavigation<{scope: StateScope; node: StateDescriptionNode}>(groups, '[data-world-content]');
@@ -25,7 +35,7 @@ function StateBrowser({groups}: {groups: StateDescriptionGroup[]}) {
     return <div className={styles.node} key={node.path}>
       {node.container ? <>
         <div className={styles.nodeHeading}>
-          <strong>{label}</strong>
+          <strong><StateName node={node}/></strong>
           <Button id={triggerId} variant="text" size="compact" aria-label={(drill ? '查看' : open ? '收起' : '展开') + node.path + '说明'} aria-expanded={drill ? undefined : open} aria-controls={drill ? undefined : panelId} onClick={() => {
             if (drill) {enter({scope, node}, parentLabel, triggerId); return;}
             setExpanded(previous => {const next = new Set(previous); if (next.has(identity)) next.delete(identity); else next.add(identity); return next;});
@@ -35,17 +45,17 @@ function StateBrowser({groups}: {groups: StateDescriptionGroup[]}) {
           {open && (node.children.length ? node.children.map(child => renderNode(child, scope, depth + 1, label)) : <p className={styles.description}>{node.description || '暂无字段说明。'}</p>)}
         </div>}
       </> : <>
-        <strong className={styles.leafKey}>{label}</strong>
+        <strong className={styles.leafKey}><StateName node={node}/></strong>
         <p className={styles.description}>{node.description || '暂无字段说明。'}</p>
       </>}
     </div>;
   };
   return <div ref={root} className={styles.browser}>
-    <div className={styles.toolbar}><h3>状态说明</h3><StateHelp label="关于世界状态">这个世界会记录的状态与含义</StateHelp></div>
+    <div className={styles.toolbar}><h3>状态说明</h3><StateHelp label="关于世界状态">根状态显示声明类型，子字段按初始值标注类型；仅有规则、没有初始值的字段标为“未指定”。</StateHelp></div>
     {current ? <section className={styles.scope} data-scope={current.scope}>
       <Button variant="text" size="compact" icon={<ChevronLeft size={16}/>} onClick={back}>返回 {visit.parentLabel}</Button>
       <div className={styles.detailHeading}>
-        <h3 id={id + '-detail'} tabIndex={-1}>{stateDescriptionLabel(current.node)}</h3>
+        <h3 id={id + '-detail'} tabIndex={-1}><StateName node={current.node}/></h3>
         <p>{scopes[current.scope].title} · {current.node.path}</p>
       </div>
       {current.node.children.length ? current.node.children.map(node => renderNode(node, current.scope, 0, stateDescriptionLabel(current.node))) : <p className={styles.description}>{current.node.description || '暂无字段说明。'}</p>}

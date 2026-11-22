@@ -1,0 +1,66 @@
+# SillyRealms 创作者 SDK 开发手册
+
+本手册对应当前仓库的 `@sillyrealms/sdk` 0.1.0。世界卡作者可以用 React TSX 编写会话舞台、消息组件、世界介绍和开局预览。生成世界卡的 Agent 应先确定组件运行的位置，再选择下表中的接口。包根导出的 TypeScript 类型描述会话舞台的完整能力，世界详情预览在运行时只注入其中的一部分。
+
+## 按任务查阅
+
+| 要完成的工作 | 章节 |
+| --- | --- |
+| 发消息、停止、重新生成、读历史、订阅事件、使用快照 | [会话与历史](session.md) |
+| 显示状态、修改已有字段、读取预览中的世界状态 | [状态读写](state.md) |
+| 使用官方正文、替换消息片段、显示世界文档和图片 | [组件与资源](components.md) |
+| 在仓库工具或宿主项目中校验世界卡、解析资源路径或嵌入文档 | [包子路径与校验工具](tooling.md) |
+
+## 运行环境与公开接口
+
+| 从 `@sillyrealms/sdk` 导入的值 | 会话舞台、会话消息组件 | 详情页的介绍、开局预览 |
+| --- | --- | --- |
+| `useSRSession`、`useSRHistory`、`useSRStageSnapshot` | 当前绑定会话 | 无 |
+| `useSRState` | 三个作用域的响应式字段 | 无 |
+| `useSRStateAPI` | 三个作用域的读、写、事件订阅 | `useSRWorldStateAPI` 的只读别名 |
+| `useSRWorldStateAPI` | 只读 global | 只读 global |
+| `useSRAssetUrl` | 可用 | 可用 |
+| `useSRAssetBaseUrl`、`SRAssetProvider` | 可用，宿主已提供资源地址 | 由宿主提供上下文，作者仅可调用 `useSRAssetUrl` |
+| `SR.WorldStory`、`WorldDocumentRenderer` | 可用 | 无 |
+| `RichText`、`WorldDocumentContent` | 可用 | 可用 |
+
+Stage iframe 接收宿主投递的只读快照，并通过 SDK 命令与宿主通信。宿主负责会话身份、HTTP、事件连接和历史同步。作者组件应通过 Hook 获取所需数据；文件里的包子路径、任意 npm 包、直接请求 Server API 都不属于卡内导入接口。详情预览没有会话身份。类型导入请使用 `import type`。
+
+## 第一个会话舞台
+
+在 ZIP 中创建 `components/InnStage.tsx`。这个完整组件显示连接状态，正文、分页和行动建议由 `SR.WorldStory` 渲染。
+
+```tsx
+import React from 'react';
+import { SR, useSRStageSnapshot } from '@sillyrealms/sdk';
+
+export default function InnStage() {
+  const { connected } = useSRStageSnapshot();
+  return <main>
+    <p role="status">{connected ? '已连接' : '正在连接…'}</p>
+    <SR.WorldStory />
+  </main>;
+}
+```
+
+在现有 `world.json` 的 `data` 对象中登记组件。以下是要合并的字段；保留卡片已有的角色和开局等内容。
+
+```json
+{
+  "components": [
+    { "id": "InnStage", "path": "sr-asset://components/InnStage.tsx" }
+  ],
+  "stage_component": "InnStage"
+}
+```
+
+将 `world.json` 放在 ZIP 根部，导入世界卡并打开会话。只有详情介绍和开局预览时，可用 `data.description` 或 `openings[].component` 引用对应的组件 ID。仅注册进 `components` 的模块不会自行挂载。组件可以用 `import Child from './Child'` 引入另一项已登记的组件 ID；卡内依赖使用默认导出、静态导入且不能成环。指定 `path` 时平台优先读包内文件，读失败会显示错误。[完整卡片示例](../world-card.json) · [组件挂载与预览契约](../design/world-components.md)
+
+## 编写与排错
+
+- 在 React 组件或自定义 Hook 顶层调用 Hook，将异步命令放在用户操作或 effect 中。界面用快照渲染，监听事件用 effect 注册并返回取消函数。将命令拒绝和状态写入的逐项结果分别处理。
+- 组件提示缺少导出时，先按上表检查运行位置。预览中的 `useSRStateAPI` 虽然同名，但运行时仅有两个查询方法。可跨两端使用的只读组件优先导入 `useSRWorldStateAPI`。
+- 加载、离线和刚挂载都是正常状态。读取 `runs.at(-1)`、活动执行 ID 或可选资源前处理空值。命令超时或连接中断时先恢复同步再判断结果，避免重复发送消息。
+- 作者预览在详情切换时可能保留 React 状态；隐藏时普通 JavaScript 仍可能运行。在 effect 清理函数中解除订阅、定时器，并避免在组件卸载后写回异步读取的结果。
+
+维护 SDK 或生成工具时，以[包导出表](../../packages/sr-sdk/package.json)、[作者入口](../../packages/sr-sdk/src/stage/index.tsx)和[预览注入表](../../apps/web/src/world-component-frame.tsx)核对能力。

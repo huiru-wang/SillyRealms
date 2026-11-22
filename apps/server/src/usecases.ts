@@ -22,17 +22,18 @@ export function createUsecases({ services, transaction, events, modelClient = ne
   services: Services; transaction: TransactionRunner; events: EventHub; modelClient?: ModelClient;
 }) {
   const { worlds, sessions, presets, settings } = services;
+  const importWorld = createImportWorld({ worlds, settings });
   return {
     createSession: createSessionUsecase({ worlds, sessions, state: services.state, transaction, events }),
     narrative: createNarrativeUsecases({ ...services, events, modelClient, transaction }),
     testModel: createTestModel({ models: services.models, credentials: services.credentials, modelClient }),
     listProviders: () => modelClient.listProviders(),
     modelConfigs: createModelConfigUsecases(services),
-    initialize: createInitialize({ presets, settings, transaction }),
+    initialize: createInitialize({ presets, settings, worlds, initialWorlds: services.initialWorlds, importWorld, transaction }),
     setState: createSetState({ worlds, sessions, state: services.state, transaction, events, cache: services.cache }),
     appendEntry: createAppendEntry({ sessions, state: services.state, transaction, events }),
     deleteWorld: createDeleteWorld({ worlds, sessions, transaction }),
-    importWorld: createImportWorld({ worlds, settings }),
+    importWorld,
     exportWorld: createExportWorld({ worlds }),
     importPreset: createImportPreset({ presets }),
     deletePreset: createDeletePreset(services, transaction),

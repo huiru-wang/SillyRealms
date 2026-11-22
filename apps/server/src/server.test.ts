@@ -32,7 +32,7 @@ function seedSessions(services: Services, ids: string[]) {
 }
 
 async function launch(options: Parameters<typeof startServer>[0] = {}, sessionIds: string[] = []) {
-  const running = await startServer({ databasePath: ':memory:', ...options, port: 0 });
+  const running = await startServer({ databasePath: ':memory:', ...options, dataRoot: options.dataRoot ?? temporaryDirectory(), port: 0 });
   servers.push(running);
   if (sessionIds.length) seedSessions(running.services, sessionIds);
   const address = running.server.address();
@@ -135,7 +135,7 @@ describe('Server over HTTP', () => {
     const address = running.server.address();
     if (!address || typeof address === 'string') throw new Error('Expected TCP address');
     const close = vi.spyOn(DatabaseSync.prototype, 'close');
-    await expect(startServer({ port: address.port, databasePath: ':memory:' })).rejects.toMatchObject({ code: 'EADDRINUSE' });
+    await expect(startServer({ port: address.port, databasePath: ':memory:', dataRoot: temporaryDirectory() })).rejects.toMatchObject({ code: 'EADDRINUSE' });
     expect(close).toHaveBeenCalledOnce();
   });
 

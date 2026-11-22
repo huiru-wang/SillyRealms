@@ -4,7 +4,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { AppError } from '../../errors.js';
 import { parsePresetDocument, toPresetDocument, type PresetDocument } from './card.js';
-import { DEFAULT_PRESET_ID, defaultPreset } from './default.js';
+import { builtinPresets } from './default.js';
+import { loadInitialData, resourceError } from '../../infrastructure/initial-data/catalog.js';
 import { PresetRepository, type StoredPreset } from './repository.js';
 import { presetValueSchema } from './schema.js';
 import type { CreatePresetInput, Preset, PresetListOptions, PresetPage, PresetSummary, UpdatePresetInput } from './types.js';
@@ -54,21 +55,41 @@ function toPreset(record: StoredPreset): Preset {
 export class PresetService {
   readonly #repository: PresetRepository;
 
-  constructor(db: DatabaseSync) {
+  readonly #templates: ReturnType<typeof builtinPresets>;
+  readonly #defaultId: string;
+
+  constructor(db: DatabaseSync, catalog = loadInitialData()) {
+    this.#templates = builtinPresets(catalog);
+    this.#defaultId = catalog.defaultPresetId;
     this.#repository = new PresetRepository(db);
   }
 
   getDefault(): CreatePresetInput {
-    return presetValueSchema.parse(defaultPreset());
+    return structuredClone(this.#templates.get(this.#defaultId)!.value);
   }
 
   ensureDefault(): Preset {
-    const value = presetValueSchema.parse(defaultPreset());
+    return this.ensureBuiltin(this.#defaultId);
+  }
+
+  ensureBuiltins(): string {
+    for (const [id, { file }] of this.#templates) {
+      try {
+        this.ensureBuiltin(id);
+      } catch (error) {
+        throw resourceError('presets/' + file + ' (' + id + ')', error);
+      }
+    }
+    return this.#defaultId;
+  }
+
+  private ensureBuiltin(id: string): Preset {
+    const { value } = this.#templates.get(id)!;
     for (let suffix = 0; ; suffix++) {
-      const current = this.get(DEFAULT_PRESET_ID);
+      const current = this.get(id);
       if (current) return current;
       const name = suffix === 0 ? value.name : value.name + '(' + suffix + ')';
-      if (this.#repository.createIfAvailable(DEFAULT_PRESET_ID, { ...value, name })) return this.require(DEFAULT_PRESET_ID);
+      if (this.#repository.createIfAvailable(id, { ...value, name })) return this.require(id);
     }
   }
 

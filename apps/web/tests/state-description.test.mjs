@@ -35,7 +35,10 @@ test('empty and populated arrays expose the same single element template', () =>
   const rules = {stock: '库存', 'stock[]': '每项食材', 'stock[].name': '食材名称', 'stock[].quantity': '余量'};
   const describe = initial => describeWorldState(schema({message: {stock: {type: 'json', initial, description: '库存简介', rules}}}))[0].nodes[0];
   const empty = describe([]), populated = describe([{name: '米', quantity: 4}, {name: '菜', quantity: 0}]);
-  assert.deepEqual(empty, populated);
+  assert.deepEqual(empty.children[0].children.map(node => node.path), populated.children[0].children.map(node => node.path));
+  assert.equal(empty.children[0].type, 'unknown');
+  assert.equal(populated.children[0].type, 'object');
+  assert.deepEqual(populated.children[0].children.map(node => node.type), ['string', 'number']);
   assert.equal(populated.children.length, 1);
   assert.equal(stateDescriptionLabel(populated.children[0]), '每项');
   assert.deepEqual(populated.children[0].children.map(node => node.key), ['name', 'quantity']);
@@ -77,4 +80,19 @@ test('JSON roots without rules keep their description and expose unannotated chi
   const root = describeWorldState(schema({message: {bag: field}}))[0].nodes[0];
   assert.equal(root.description, '背包');
   assert.equal(root.children[0].description, '');
+});
+
+test('root types stay declared while nested badges reflect observed values, including null and mixed arrays', () => {
+  const groups = describeWorldState(schema({session: {
+    enabled: scalar('enabled', 'boolean', false),
+    data: {type: 'json', initial: {flags: [false, true], items: [0, null, 1], value: null}, description: '字段'},
+  }}));
+  const [enabled, data] = groups[0].nodes;
+  assert.equal(enabled.type, 'boolean');
+  assert.equal(data.type, 'json');
+  const [flags, items, value] = data.children;
+  assert.equal(flags.type, 'array');
+  assert.equal(flags.children[0].type, 'boolean');
+  assert.equal(items.children[0].type, 'mixed');
+  assert.equal(value.type, 'null');
 });

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../../infrastructure/database/connection.js';
+import { loadInitialData } from '../../infrastructure/initial-data/catalog.js';
 import { ModelService } from '../models/service.js';
 import { SettingsService } from '../settings/service.js';
 import { PresetService, resolvePostprocessPrompts, type CreatePresetInput } from './service.js';
@@ -34,6 +35,21 @@ describe('typed preset persistence', () => {
     const changed = presets.update(first.id, { name: 'My saved default' });
     expect(presets.ensureDefault()).toEqual(changed);
     expect(presets.list()).toHaveLength(1);
+  });
+
+  it('uses the manifest-selected portable document for both its template and its installed record', () => {
+    const catalog = loadInitialData();
+    const document = presets.toDocument(preset('Another default'));
+    catalog.presets.push({ id: 'alternative', file: 'alternative.json', document });
+    catalog.defaultPresetId = 'alternative';
+    const service = new PresetService(db, catalog);
+    expect(service.getDefault().name).toBe('Another default');
+    expect(service.ensureBuiltins()).toBe('alternative');
+    expect(service.require('alternative')).toMatchObject(service.getDefault());
+    service.update('alternative', { name: 'Edited' });
+    expect(service.getDefault().name).toBe('Another default');
+    catalog.presets[1]!.document = {};
+    expect(() => new PresetService(db, catalog)).toThrow('presets/alternative.json (alternative)');
   });
 
   it('keeps an existing same-name preset while reserving the fixed default identity', () => {

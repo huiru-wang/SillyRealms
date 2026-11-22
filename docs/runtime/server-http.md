@@ -74,7 +74,7 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 | 方法 | 路径 | 能力 |
 |---|---|---|
 | GET / POST | /presets | 预设列表 / 创建 |
-| GET | /presets/default | 读取默认预设文档，不写数据库 |
+| GET | /presets/default | 读取发行清单指定的默认模板，返回预设领域对象，不写数据库 |
 | POST | /presets/import | 导入预设JSON文档，同名自动选择可用名称 |
 | GET / HEAD | /presets/:id/export | 当前预设JSON附件 / 下载头 |
 | GET / PATCH / DELETE | /presets/:id | 预设读取 / 修改 / 删除 |
@@ -158,6 +158,8 @@ DELETE `/worlds/:id` 未确认关联删除时，有关联会话返回 WORLD_HAS_
 世界模块内部职责：`parser.ts` 解码 JSON、调用统一校验并转换卡片与领域对象；`validation.ts` 校验卡结构、引用、状态与条件表达式；`assets.ts` 读取组件源码并检查资源引用；`archive.ts` 处理导入文件、ZIP 解压和导出打包；`files.ts` 管理目录、暂存、发布、清理和文件流。条件表达式只做静态验证，不执行。上述实现通过 `service.ts` 对外提供能力，不改变本节 HTTP 和磁盘布局契约。
 
 世界导入采用multipart/form-data，HTTP 层按实际字节限制读取正文流并保留 boundary，不依赖 Node 适配器 Request 对象具有原生 Fetch 内部状态。只接受一个file字段，扩展名为.json或.zip。上传原名只用于判断格式，不保存、不参与导出命名；保留上传原始字节。ZIP根目录为world.json，资源只能位于components/和assets/，允许子目录；验证重复/冲突路径、符号链接、大小、资源引用和世界卡内容。JSON导入不能引用不存在的包内资源。卡使用spec_version和data，不再要求固定spec标识，导出也不生成spec。
+
+启动安装内置 ZIP 和手动上传共用世界导入流程。前者按发行清单的固定 ID 补齐，后者每次生成独立的 UUID。
 
 导入由用例读取应用默认预设/模型引用，调用WorldService暂存、校验、发布文件并写入世界及标签；失败清理本次操作产生的数据和文件。数据库事务不包围异步文件操作；清理失败显式返回WORLD_IMPORT_CLEANUP_FAILED。
 

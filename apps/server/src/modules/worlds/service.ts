@@ -294,8 +294,7 @@ export class WorldService {
     return exportFilename(worldName);
   }
 
-  async prepareImport(input: WorldImportInput): Promise<PreparedWorldImport> {
-    const id = randomUUID();
+  async prepareImport(input: WorldImportInput, id: string = randomUUID()): Promise<PreparedWorldImport> {
     let files: ImportFileStage;
     try { files = await this.#files.stageImport(id, input.format, input.bytes); }
     catch (error) {

@@ -34,7 +34,7 @@ export async function startServer({
   try {
     const services = createServices(database, root, credentialStore);
     const usecases = createUsecases({ services, transaction: bindTransaction(database), events });
-    usecases.initialize();
+    await usecases.initialize();
     const app = createApp({ events, services, usecases, canAccessSession, webOrigin, stageOrigin, debug });
     const server = createServer(getRequestListener(app.fetch, { overrideGlobalObjects: false }));
     const listening = once(server, 'listening');

@@ -9,9 +9,9 @@ type ImportWorldServices = {
 };
 
 /** Publish prepared files before the short world+tags write; failures compensate only this import. */
-export function createImportWorld({ worlds, settings }: ImportWorldServices): ImportWorld {
-  return async input => {
-    const stage = await worlds.prepareImport(input);
+export function createImportWorld({ worlds, settings }: ImportWorldServices) {
+  return async (input: WorldImportInput, targetId?: string): Promise<World> => {
+    const stage = await worlds.prepareImport(input, targetId);
     let created: World | undefined;
     try {
       const defaults = settings.get();

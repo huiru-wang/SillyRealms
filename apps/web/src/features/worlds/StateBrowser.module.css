@@ -17,6 +17,8 @@
 .nodeHeading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);min-width:0}
 .nodeHeading strong,.leafKey{font-size:var(--font-14);font-weight:var(--weight-strong);line-height:var(--line-label);overflow-wrap:anywhere;min-width:0;color:var(--text)}
 .nodeHeading>button{flex-shrink:0}
+.stateName{display:inline-flex;max-width:100%;flex-wrap:wrap;align-items:center;gap:var(--space-1) var(--space-2);overflow-wrap:anywhere}
+.stateName :global(.sr-badge){font-weight:var(--weight-regular)}
 .browser .description{margin:var(--space-1) 0 0;font-size:var(--font-14);line-height:var(--line-body);color:var(--text-secondary);overflow-wrap:anywhere;white-space:pre-wrap}
 .children{margin-left:var(--space-3);margin-top:var(--space-2);min-width:0}
 .children[hidden],.helpText[hidden]{display:none}
