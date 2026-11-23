@@ -9,6 +9,7 @@ import '@tailwindcss/browser';
 import * as ReactDOMClient from 'react-dom/client';
 import * as JSXRuntime from 'react/jsx-runtime';
 import * as SDK from '@sillyrealms/sdk';
+import {StageComposerButtons} from '../../../packages/sr-sdk/src/stage/composer-buttons';
 import {StageProvider} from '../../../packages/sr-sdk/src/stage/context';
 import {StageRuntime} from '../../../packages/sr-sdk/src/stage/runtime';
 import type {SessionEvent, StageSnapshot} from '../../../packages/sr-sdk/src/stage-contract';
@@ -54,7 +55,7 @@ function appearance(payload: Record<string, any>) {
     window.dispatchEvent(new Event('sr:font-size-changed'));
   }
 }
-function render(payload: Record<string, any>) {
+function render(payload: Record<string, any>, buttons: StageComposerButtons) {
   const code = payload.modules?.code ?? {}, errors = payload.modules?.errors ?? {};
   const load = createModuleLoader(code, errors, {
     react: React, 'react-dom/client': ReactDOMClient, 'react/jsx-runtime': JSXRuntime,
@@ -80,7 +81,7 @@ function render(payload: Record<string, any>) {
   }
   const currentMatcher = matcher!;
   root.render(<Boundary key={payload.main ?? 'official'}><SDK.SRAssetProvider baseUrl={payload.assetBaseUrl ?? null}>
-    <StageProvider runtime={runtime}><StoryContext.Provider value={{
+    <StageProvider runtime={runtime} buttons={buttons}><StoryContext.Provider value={{
       debug: payload.debug === true, components, rules, state: payload.state ?? {},
       ready: () => port?.postMessage({type: 'page-mounted'}),
       match: (text, role) => currentMatcher.match(text, role, rules) as Promise<{matches: MessageMatch[]; warning: boolean}>,
@@ -101,6 +102,9 @@ window.addEventListener('message', event => {
   if (event.data.type !== 'sr-connect' || port || !event.ports[0]) return;
   const channel = event.ports[0];
   port = channel; bridge.connect(channel); matcher = new MessageMatcher();
+  const buttons = new StageComposerButtons(list => {
+    if (port === channel) channel.postMessage({type: 'composer-buttons', ...list});
+  });
   channel.onmessage = ({data: payload}) => {
     if (port !== channel || !payload || typeof payload !== 'object') return;
     if (bridge.receive(payload)) return;
@@ -109,7 +113,12 @@ window.addEventListener('message', event => {
       else if (payload.type === 'event') runtime.acceptEvent(payload.event as SessionEvent);
       else if (payload.type === 'appearance') appearance(payload);
       else if (payload.type === 'theme') document.documentElement.dataset.theme = payload.value === 'dark' ? 'dark' : 'light';
-      else if (payload.type === 'render') render(payload);
+      else if (payload.type === 'render') render(payload, buttons);
+      else if (payload.type === 'composer-button-click') {
+        void buttons.click(payload.revision, payload.id).catch(error => {
+          if (port === channel) report('sdk-error', error instanceof Error ? error.message : String(error));
+        });
+      }
     } catch (error) {
       report(payload.type === 'render' ? 'ui-error' : 'sdk-error', error instanceof Error ? error.message : String(error));
     }

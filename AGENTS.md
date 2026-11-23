@@ -95,3 +95,5 @@
 - Server narrative logs are run-scoped single lines: local timestamp, event and compact JSON with runId/sessionId. Context returns content-free diagnostics for the selected candidate; raw provider payload/final SDK diagnostics stay outside business events and storage. Log full non-delta lifecycle, capability inputs/results and settlement; distinguish prepared output from committed persistence. Redact explicit credentials and isolate serialization/sink/observer failures from execution.
 
 - Presets store optional temperature, topP, frequencyPenalty and presencePenalty independently of the model. Carry the accepted snapshot to both narrative and summary calls. Only the Pi adapter applies verified route- and mode-specific overrides; preserve explicit zero, exact precision and omitted keys through Web and portable files.
+
+- A session stage declares up to five composer buttons with useSRComposerButtons. The Host owns layout and forwards clicks on the bound port for the displayed revision. Author callbacks live in the frame. See [SDK session](docs/sdk/session.md#usesrcomposerbuttonsbuttons).

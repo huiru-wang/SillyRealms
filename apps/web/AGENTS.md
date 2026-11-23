@@ -42,3 +42,5 @@
 
 - 同轮重新生成用 assistantEntryId 区分执行，stop 必须传递该身份。HTTP/SSE 的删除回执幂等应用，收到删除确认才移除旧消息；迟到回执/旧终态不得回退 tip、复活旧消息或停止新执行。run.created 使用真实 tipEntryId，不能推断为 userEntryId。
 - history 在删除/新执行时使旧读取失效，允许同轮 seq 变小。重连和显式刷新替换最新 1–5 轮及分页缓存，普通终态仍可重叠 seq 补查；不自动重新提交。suggestions 按新助手 ID 清理/隔离，生成失败不恢复旧回复。
+
+- 会话输入区胶囊由当前舞台的 useSRComposerButtons 声明，宿主只接收最多五个受校验的按钮描述。点击按 MessagePort 和声明版本返回，回调始终留在舞台内。收起隐藏、断开清空，介绍与开局预览维持只读。

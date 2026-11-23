@@ -7,8 +7,9 @@ export {WorldDocumentContent} from '../world-state.js';
 export type {MessageComponentProps} from '../story-context.js';
 export type {SRWorldStateAPI, WorldStateQuery} from '../world-state.js';
 export {
-  useSRSession, useSRStateAPI, useSRState, useSRWorldStateAPI, useSRHistory, useSRStageSnapshot,
+  useSRComposerButtons, useSRSession, useSRStateAPI, useSRState, useSRWorldStateAPI, useSRHistory, useSRStageSnapshot,
 } from './context.js';
+export type {SRComposerButton} from './composer-buttons.js';
 export type {SRSessionAPI, SRStateAPI} from './runtime.js';
 export type {
   AcceptedRun, RunPage, RunQuery, RunStatus, SessionEvent, NarrativeEvent,

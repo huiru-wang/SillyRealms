@@ -6,6 +6,8 @@ import {RoleplayComposer} from './composer/RoleplayComposer';
 import {SessionTokenUsage} from './SessionTokenUsage';
 import {SessionConfiguration} from './SessionConfiguration';
 import {ComposerMoreMenu} from './ComposerMoreMenu';
+import {Button} from '../../components/ui/Button';
+import type {HostedComposerButton} from '../../stage-host/composer-buttons';
 import {StageHost} from '../../stage-host/StageHost';
 import {createSessionWorkspace,type SessionWorkspace} from './workspace';
 import {useSessionLayout} from './use-session-layout';
@@ -21,6 +23,7 @@ function SessionView({workspace,reload}:{workspace:SessionWorkspace;reload:()=>v
   const view=useSyncExternalStore(workspace.subscribe,workspace.getSnapshot,workspace.getSnapshot);
   const {stage,session}=view,layout=useSessionLayout();
   const [draft,setDraft]=useState(''),[expanded,setExpanded]=useState(true),[notice,setNotice]=useState(''),[settingsOpen,setSettingsOpen]=useState(false),[fontSize,setFontSize]=useState(16);
+  const [buttons,setButtons]=useState<HostedComposerButton[]>([]);
   const revision=useRef(0),draftRef=useRef(draft),expandButton=useRef<HTMLButtonElement>(null);draftRef.current=draft;
   const updateDraft=useCallback((text:string)=>{revision.current++;draftRef.current=text;setDraft(text);},[]);
   useEffect(()=>{
@@ -70,11 +73,15 @@ function SessionView({workspace,reload}:{workspace:SessionWorkspace;reload:()=>v
     <div ref={layout.viewport} className={styles.stageSlot} aria-label="故事舞台">
       {view.error?<div className="stage-error" role="alert"><h2>会话暂时不可用</h2><p>{view.error}</p><button onClick={reload}>重新读取会话</button></div>:
         view.worldError?<div className="stage-error" role="alert"><h2>世界组件加载失败</h2><p>{view.worldError}</p><button onClick={()=>void workspace.reloadWorld()}>重新读取世界</button></div>:
-        render&&view.config?<StageHost config={view.config} render={render} snapshot={stage} command={command} subscribeEvents={workspace.subscribeEvents} fontSize={fontSize} bottomInset={layout.bottomInset} onNotice={setNotice}/>:
+        render&&view.config?<StageHost config={view.config} render={render} snapshot={stage} command={command} subscribeEvents={workspace.subscribeEvents} fontSize={fontSize} bottomInset={layout.bottomInset} onNotice={setNotice} onComposerButtons={setButtons}/>:
         <p className="loading-panel" role="status">正在准备故事舞台…</p>}
     </div>
     <div ref={layout.overlay} className={styles.composerArea} data-composer-overlay>
       {error&&<div className={styles.previewError} role="alert">{error}<button type="button" aria-label="关闭通知" onClick={()=>{setNotice('');workspace.clearNotice();}}>×</button></div>}
+      {expanded&&buttons.length>0&&<div className={styles.composerButtons} role="group" aria-label="舞台快捷操作">
+        {buttons.map(button=><Button key={button.id} size="compact" disabled={button.disabled} title={button.label}
+          onClick={button.click}>{button.label}</Button>)}
+      </div>}
       {expanded?<form className={styles.composer} aria-label="消息输入" onSubmit={event=>{event.preventDefault();void submit();}}>
         <button type="button" className={styles.collapse} aria-label="收起输入框" onClick={()=>setExpanded(false)}><ChevronDown size={19}/></button>
         <ComposerMoreMenu canRegenerate={canRegenerate} onRegenerate={()=>void regenerate()}/>

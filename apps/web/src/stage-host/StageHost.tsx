@@ -2,6 +2,7 @@ import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {readAppearance} from '../styles/theme';
 import {randomId} from '../random-id';
 import {stageURL} from '../stage-url';
+import {bindComposerButtons, type HostedComposerButton} from './composer-buttons';
 import {dispatchStageCommand} from './commands';
 import type {SessionEvent,StageCommand,StageSnapshot} from '../../../../packages/sr-sdk/src/stage-contract';
 import styles from '../features/sessions/Sessions.module.css';
@@ -13,6 +14,7 @@ export type StageRender = {
 type Props = {
   config: unknown; render: StageRender; snapshot: StageSnapshot; command: StageCommand;
   subscribeEvents: (listener:(event:SessionEvent)=>void)=>()=>void;
+  onComposerButtons: (buttons: HostedComposerButton[]) => void;
   fontSize: number; bottomInset: number; onNotice?: (message:string)=>void;
 };
 /** Only iframe and MessagePort lifetime live here. Session execution survives a frame remount. */
@@ -28,7 +30,8 @@ export function StageHost(props: Props){
     let disposed=false,connected=false,ready=false,timer:ReturnType<typeof setTimeout>|undefined;
     let sourceValue:{url:string;origin:string;nonce:string};
     setError('');setMounted(false);setSource(null);
-    const close=()=>{clearTimeout(timer);port.current?.close();port.current=null;connected=false;ready=false;};
+    let buttons: ReturnType<typeof bindComposerButtons> | undefined;
+    const close=()=>{buttons?.close();buttons=undefined;clearTimeout(timer);port.current?.close();port.current=null;connected=false;ready=false;};
     const fail=(message:string)=>{if(disposed)return;close();setMounted(false);setError(message);};
     try{const nonce=randomId(),url=stageURL(props.config,location.origin,nonce);sourceValue={url:url.href,origin:url.origin,nonce};}
     catch(reason){setError(reason instanceof Error?reason.message:'舞台地址无效');return;}
@@ -40,10 +43,12 @@ export function StageHost(props: Props){
       if(disposed||connected||event.source!==frame.current?.contentWindow||event.origin!==sourceValue.origin||
         event.data?.type!=='sr-ready'||event.data.nonce!==sourceValue.nonce)return;
       connected=true;const channel=new MessageChannel();port.current=channel.port1;
+      buttons=bindComposerButtons(channel.port1,latest.current.onComposerButtons);
       channel.port1.onmessage=async({data})=>{
         if(disposed||port.current!==channel.port1||!data||typeof data!=='object')return;
         if(data.type==='ready-ack'){ready=true;publish();}
         else if(data.type==='page-mounted'){clearTimeout(timer);setMounted(true);}
+        else if(data.type==='composer-buttons'&&ready)buttons?.receive(data);
         else if(data.type==='ui-error')fail(typeof data.message==='string'?data.message:'世界组件运行失败');
         else if(data.type==='sdk-error'||data.type==='message-error')latest.current.onNotice?.(String(data.message??'组件处理失败'));
         else if(data.type==='request'&&Number.isSafeInteger(data.id)&&data.id>0){

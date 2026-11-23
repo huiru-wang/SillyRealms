@@ -6,7 +6,7 @@
 
 | 要完成的工作 | 章节 |
 | --- | --- |
-| 发消息、停止、重新生成、读历史、订阅事件、使用快照 | [会话与历史](session.md) |
+| 发消息、停止、重新生成、读历史、订阅事件、使用快照、声明输入区按钮 | [会话与历史](session.md) |
 | 显示状态、修改已有字段、读取预览中的世界状态 | [状态读写](state.md) |
 | 使用官方正文、替换消息片段、显示世界文档和图片 | [组件与资源](components.md) |
 | 在仓库工具或宿主项目中校验世界卡、解析资源路径或嵌入文档 | [包子路径与校验工具](tooling.md) |
@@ -16,6 +16,7 @@
 | 从 `@sillyrealms/sdk` 导入的值 | 会话舞台、会话消息组件 | 详情页的介绍、开局预览 |
 | --- | --- | --- |
 | `useSRSession`、`useSRHistory`、`useSRStageSnapshot` | 当前绑定会话 | 无 |
+| `useSRComposerButtons` | 当前舞台统一声明输入区快捷按钮 | 无 |
 | `useSRState` | 三个作用域的响应式字段 | 无 |
 | `useSRStateAPI` | 三个作用域的读、写、事件订阅 | `useSRWorldStateAPI` 的只读别名 |
 | `useSRWorldStateAPI` | 只读 global | 只读 global |

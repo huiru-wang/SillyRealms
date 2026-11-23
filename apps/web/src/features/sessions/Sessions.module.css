@@ -28,10 +28,14 @@
 .stageSlot{flex:1;min-width:0;min-height:0;overflow:hidden;position:relative}
 .preview{display:block;border:0;width:100%;height:100%;min-width:0;min-height:0}
 .preview :global(iframe){display:block;width:100%;height:100%;border:0}
-.composerArea{position:absolute;z-index:2;inset:auto 0 0;min-width:0;padding:10px 24px max(20px,env(safe-area-inset-bottom));pointer-events:none}
+/* Sending is primary. Author shortcuts share the secondary compact button and theme states. */
+.composerButtons{display:flex;flex-wrap:wrap;justify-content:center;gap:var(--control-gap);width:100%;max-width:var(--composer-width);margin:0 auto var(--space-2)}
+.composerButtons>button{flex:0 0 auto;max-width:min(100%,16em);height:var(--control-compact-height);border-radius:var(--control-compact-height);pointer-events:auto}
+.composerButtons :global(.sr-button-label){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.composerArea{--composer-width:600px;position:absolute;z-index:2;inset:auto 0 0;min-width:0;padding:10px 24px max(20px,env(safe-area-inset-bottom));pointer-events:none}
 .composer,.expand,.stopCollapsed{border:1px solid var(--composer-glass-edge);background:var(--composer-glass-bg);box-shadow:var(--composer-glass-shadow);-webkit-backdrop-filter:blur(16px) saturate(150%);backdrop-filter:blur(16px) saturate(150%);pointer-events:auto}
 
-.composer{width:100%;max-width:600px;min-width:0;margin:0 auto;display:grid;grid-template-columns:repeat(2,var(--touch-target)) minmax(0,1fr) 44px;align-items:end;gap:var(--space-1);padding:7px;border-radius:24px;transition:border-color var(--motion-fast),box-shadow var(--motion-fast)}
+.composer{width:100%;max-width:var(--composer-width);min-width:0;margin:0 auto;display:grid;grid-template-columns:repeat(2,var(--touch-target)) minmax(0,1fr) 44px;align-items:end;gap:var(--space-1);padding:7px;border-radius:24px;transition:border-color var(--motion-fast),box-shadow var(--motion-fast)}
 .moreActions{position:relative;align-self:stretch;display:flex;align-items:flex-end}
 .moreMenu{position:absolute;bottom:calc(100% + var(--space-3));left:0;z-index:var(--z-popover);min-width:140px;padding:var(--space-1);border:1px solid var(--stroke-strong);border-radius:var(--radius-control);background:var(--surface-raised);box-shadow:var(--shadow-popover)}
 .moreMenu button{width:100%;justify-content:flex-start}

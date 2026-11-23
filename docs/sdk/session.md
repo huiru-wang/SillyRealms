@@ -62,6 +62,34 @@ export default function RetryLatest() {
 }
 ```
 
+## useSRComposerButtons(buttons)
+
+在当前会话舞台顶层调用一次，按显示顺序传入完整的 `SRComposerButton[]`。每项提供稳定且唯一的 `id`、纯文本 `label`、可选的 `disabled` 和 `onClick()`。回调在舞台内运行，支持异步操作，回调抛出的错误会在会话页提示。下面的舞台在战斗时提供“防御”，并始终提供“查看状态”。
+
+```tsx
+import React from 'react';
+import { SR, useSRComposerButtons, useSRSession, useSRState } from '@sillyrealms/sdk';
+
+export default function StoryStage() {
+  const [scene] = useSRState<string>('scene', '', {scope: 'message'});
+  const [showState, setShowState] = React.useState(false);
+  const session = useSRSession();
+  useSRComposerButtons([
+    ...(scene === '战斗' ? [{
+      id: 'defend', label: '防御', onClick: () => session.setDraft('我举起盾牌防御。'),
+    }] : []),
+    {id: 'state', label: showState ? '收起状态' : '查看状态', onClick: () => setShowState(value => !value)},
+  ]);
+  return <SR.WorldStory showState={showState}/>;
+}
+```
+
+示例中的 `scene` 来自世界卡声明的 message 状态。`setDraft` 会替换当前草稿，玩家可编辑后发送。按钮也可以只改变舞台局部状态。
+
+- 每次取前 5 项，忽略无效项和重复 ID 的后续项。ID 和标签须为非空白字符串，分别最多 128 和 256 个 JS 字符串长度单位。建议用短动词标签。
+- 传入空数组可清空操作区。收起输入框会隐藏按钮，展开时显示当前声明。宿主统一处理每行居中、自然换行、固定高度和长标签省略。
+- 宿主按舞台连接和声明版本回传点击。列表或回调更换、禁用、卸载后，过期点击失效。仅在会话舞台声明按钮，介绍和开局预览保持只读。
+
 ## useSRHistory()
 
 返回 `runs`、`loading/loadingMore/hasMore/error` 和以下三个异步方法。想显示当前画面时订阅 Hook，独立检索记录时调用 `query` 或 `session.getRuns`。

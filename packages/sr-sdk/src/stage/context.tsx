@@ -1,14 +1,26 @@
-import {createContext, useContext, useMemo, useSyncExternalStore, type ReactNode} from 'react';
+import {createContext, useContext, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactNode} from 'react';
 import type {StageSnapshot, StateScope, StateValue} from '../stage-contract.js';
 import type {SRWorldStateAPI} from '../world-state.js';
 import {StageRuntime, stateValue, type SRSessionAPI, type SRStateAPI} from './runtime.js';
+import type {SRComposerButton, StageComposerButtons} from './composer-buttons.js';
 
+const ButtonsContext = createContext<StageComposerButtons | null>(null);
 const RuntimeContext = createContext<StageRuntime | null>(null);
 
 /** Internal frame entry: author modules receive only the hooks and command interfaces. */
-export function StageProvider({runtime, children}: {runtime: StageRuntime; children: ReactNode}) {
-  return <RuntimeContext.Provider value={runtime}>{children}</RuntimeContext.Provider>;
+export function StageProvider({runtime, buttons, children}: {runtime: StageRuntime; buttons: StageComposerButtons; children: ReactNode}) {
+  return <RuntimeContext.Provider value={runtime}>
+    <ButtonsContext.Provider value={buttons}>{children}</ButtonsContext.Provider>
+  </RuntimeContext.Provider>;
 }
+export function useSRComposerButtons(buttons: readonly SRComposerButton[]): void {
+  const registry = useContext(ButtonsContext);
+  const owner = useRef(Symbol());
+  if (!registry) throw Error('SR stage provider unavailable');
+  useLayoutEffect(() => () => registry.release(owner.current), [registry]);
+  useLayoutEffect(() => { registry.update(owner.current, buttons); });
+}
+
 function useRuntime(): StageRuntime {
   const runtime = useContext(RuntimeContext);
   if (!runtime) throw Error('SR stage provider unavailable');
