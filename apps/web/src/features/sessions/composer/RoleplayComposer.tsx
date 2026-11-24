@@ -1,3 +1,5 @@
+import {useTranslation} from 'react-i18next';
+import {i18n} from '../../../i18n/instance.ts';
 import React, {useCallback, useEffect, useRef} from 'react';
 import {LexicalComposer} from '@lexical/react/LexicalComposer';
 import {ContentEditable} from '@lexical/react/LexicalContentEditable';
@@ -87,11 +89,18 @@ function Controls({value, disabled, onChange, onSubmit}: {
   onChange: (value: string) => void;
   onSubmit: (text: string) => void;
 }) {
+  useTranslation();
   const [editor] = useLexicalComposerContext();
   const current = useRef(value), changeRef = useRef(onChange), submitRef = useRef(onSubmit);
   changeRef.current = onChange;
   submitRef.current = onSubmit;
 
+  const locale = i18n.resolvedLanguage;
+  useEffect(() => {
+    editor.update(() => {
+      for (const node of $getRoot().getChildren()) if ($isRoleplayBlockNode(node)) node.markDirty();
+    }, {tag: 'locale'});
+  }, [editor, locale]);
   useEffect(() => {editor.setEditable(!disabled);}, [editor, disabled]);
   useEffect(() => {
     if (value === current.current) return;
@@ -148,7 +157,7 @@ function Controls({value, disabled, onChange, onSubmit}: {
   ), [editor]);
 
   const changed = useCallback((state: EditorState, _editor: unknown, tags: Set<string>) => {
-    if (tags.has('external-draft')) return;
+    if (tags.has('external-draft') || tags.has('locale')) return;
     const next = state.read(() => serializeRoleplay(normalizeComposerBlocks($blocks())));
     current.current = next;
     changeRef.current(next);
@@ -156,7 +165,7 @@ function Controls({value, disabled, onChange, onSubmit}: {
 
   return <>
     <OnChangePlugin onChange={changed} ignoreSelectionChange />
-    {value.length > MAX_LENGTH && <p className="sr-composer-error" role="alert">消息超过 100000 字符，请缩短后发送。</p>}
+    {value.length > MAX_LENGTH && <p className="sr-composer-error" role="alert">{i18n.t("sessions:messageTooLong")}</p>}
   </>;
 }
 
@@ -167,6 +176,7 @@ export function RoleplayComposer({value, disabled, onChange, onSubmit}: {
   onChange: (value: string) => void;
   onSubmit: (text: string) => void;
 }) {
+  useTranslation();
   const initial = useRef(value);
   return <LexicalComposer initialConfig={{
     namespace: 'SRRoleplay',
@@ -178,7 +188,7 @@ export function RoleplayComposer({value, disabled, onChange, onSubmit}: {
     <div className="sr-roleplay-composer">
       <Controls value={value} disabled={disabled} onChange={onChange} onSubmit={onSubmit}/>
       <div className="sr-composer-editor-wrap">
-        <RichTextPlugin contentEditable={<ContentEditable className="sr-composer-editor" role="textbox" aria-label="输入消息" aria-multiline="true" aria-placeholder="写下你的回应…" placeholder={<span className="sr-composer-placeholder">写下你的回应…</span>} />} ErrorBoundary={LexicalErrorBoundary}/>
+        <RichTextPlugin contentEditable={<ContentEditable className="sr-composer-editor" role="textbox" aria-label={i18n.t("sessions:enterMessage")} aria-multiline="true" aria-placeholder={i18n.t("sessions:replyPlaceholder")} placeholder={<span className="sr-composer-placeholder">{i18n.t("sessions:replyPlaceholder")}</span>} />} ErrorBoundary={LexicalErrorBoundary}/>
       </div>
       <HistoryPlugin />
     </div>

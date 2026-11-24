@@ -1,3 +1,4 @@
+import {i18n} from '../../i18n/instance.ts';
 import {createContext,useCallback,useContext,useEffect,useRef,useState,type ReactNode} from 'react';
 import {api,ApiError,json} from '../../api';
 import {usePagedResource} from '../../data';
@@ -12,7 +13,7 @@ function useStore(){
  const {settings,saveSettings}=useManagement();
  const catalog=usePagedResource<PresetSummary>('v1/presets?type=narrative&limit=100',0,true);
  const [state,setState]=useState<State>(initial),[busy,setBusy]=useState(false);
- const [detailErrors,setDetailErrors]=useState<Record<string,string>>({}),[detailsLoading,setDetailsLoading]=useState<Record<string,boolean>>({});
+ const [detailErrors,setDetailErrors]=useState<Record<string,Error|string>>({}),[detailsLoading,setDetailsLoading]=useState<Record<string,boolean>>({});
  const current=useRef(state),pending=useRef(false),requests=useRef(new Map<string,Promise<void>>());current.current=state;
  const change=useCallback((fn:(s:State)=>State)=>{const next=fn(current.current);current.current=next;setState(next);},[]);
  const loadDetail=useCallback((id:string,discard=false):Promise<void>=>{
@@ -22,12 +23,12 @@ function useStore(){
   const task=api<{item:PresetDetail}>('v1/presets/'+encodeURIComponent(id)).then(({item})=>{
    const value=fromServer(item);
    change(s=>({...s,savedById:{...s.savedById,[id]:value},draftById:{...s.draftById,[id]:clone(value)},conflicts:{...s.conflicts,[id]:false}}));
-  }).catch(error=>{setDetailErrors(s=>({...s,[id]:error instanceof Error?error.message:'预设加载失败'}));})
+  }).catch(error=>{setDetailErrors(s=>({...s,[id]:error instanceof Error?error:i18n.t('presets:couldNotLoadPreset')}));})
    .finally(()=>{requests.current.delete(id);setDetailsLoading(s=>({...s,[id]:false}));});
   requests.current.set(id,task);return task;
  },[change]);
  const mutate=async<T,>(fn:()=>Promise<T>):Promise<T>=>{
-  if(pending.current)throw Error('正在保存，请稍候');pending.current=true;setBusy(true);
+  if(pending.current)throw Error(i18n.t('presets:savingPleaseWait'));pending.current=true;setBusy(true);
   try{return await fn();}finally{pending.current=false;setBusy(false);}
  };
  const insert=(item:PresetDetail)=>{const p=fromServer(item);change(s=>({...s,savedById:{...s.savedById,[p.id]:p},draftById:{...s.draftById,[p.id]:clone(p)}}));catalog.reload();return p.id;};
@@ -37,11 +38,11 @@ function useStore(){
  };
  const createPreset=()=>mutate(async()=>{
   const defaults=await api<{item:PresetInput}>('v1/presets/default?type=narrative');
-  const {item}=await api<{item:PresetDetail}>('v1/presets',{method:'POST',body:json({...defaults.item,name:availableName('未命名预设')})});return insert(item);
+  const {item}=await api<{item:PresetDetail}>('v1/presets',{method:'POST',body:json({...defaults.item,name:availableName(i18n.t('presets:untitledPreset'))})});return insert(item);
  });
  const getDefaultPrompt=async(nodeId:string)=>{
   const {item}=await api<{item:PresetInput}>('v1/presets/default?type=narrative');
-  const node=item.config.nodes.find(node=>node.id===nodeId);if(!node)throw Error('找不到默认提示词');return node.prompt;
+  const node=item.config.nodes.find(node=>node.id===nodeId);if(!node)throw Error(i18n.t('presets:defaultPromptNotFound'));return node.prompt;
  };
  const importPreset=(text:string)=>mutate(async()=>insert((await api<{item:PresetDetail}>('v1/presets/import',{method:'POST',body:text})).item));
  const savePreset=(id:string)=>mutate(async()=>{
@@ -55,7 +56,7 @@ function useStore(){
  });
  const duplicatePreset=(id:string)=>mutate(async()=>{
   const p=current.current.draftById[id];const error=getPresetValidationError(p);if(error)throw Error(error);
-  return insert((await api<{item:PresetDetail}>('v1/presets',{method:'POST',body:json({...presetInput(p),name:availableName(p.name+' 副本')})})).item);
+  return insert((await api<{item:PresetDetail}>('v1/presets',{method:'POST',body:json({...presetInput(p),name:availableName(i18n.t('presets:copyName',{name:p.name}))})})).item);
  });
  const deletePreset=(id:string)=>mutate(async()=>{
   await api('v1/presets/'+encodeURIComponent(id),{method:'DELETE'});
@@ -73,5 +74,6 @@ function useStore(){
   getDefaultPrompt,importPreset,createPreset,savePreset,duplicatePreset,deletePreset,setDefaultPreset,editPreset,revertPreset,isDirty};
 }
 const Context=createContext<ReturnType<typeof useStore>|null>(null);
-export function PresetProvider({children}:{children:ReactNode}){const store=useStore();return <Context.Provider value={store}>{children}</Context.Provider>;}
+export function PresetProvider({children}:{children:ReactNode}){
+  const store=useStore();return <Context.Provider value={store}>{children}</Context.Provider>;}
 export function usePresetStore(){const value=useContext(Context);if(!value)throw Error('Missing preset provider');return value;}

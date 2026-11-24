@@ -121,7 +121,7 @@ test('connection results retain real zero values and unknown usage without estim
 test('model testing preserves actual API failures and rejects malformed success responses',async()=>{
   const reason=Object.assign(Error('模型服务调用失败'),{errorCode:'PROVIDER_ERROR'});
   await assert.rejects(testModelConnection('saved',undefined,async()=>{throw reason;}),error=>error===reason);
-  assert.equal(connectionTestError(reason),'模型服务调用失败（PROVIDER_ERROR）');
+  assert.equal(connectionTestError(reason),'模型请求失败（PROVIDER_ERROR）');
   for(const response of [
     {...connectionResult(),connected:false},{...connectionResult(),providerId:''},
     {...connectionResult(),durationMs:NaN},{...connectionResult(),usage:{totalTokens:0}},

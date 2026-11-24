@@ -39,7 +39,7 @@ export class StageComposerButtons {
   constructor(publish: (list: ComposerButtonList) => void) { this.publish = publish; }
 
   update(owner: symbol, declaration: readonly SRComposerButton[]) {
-    if (this.owner !== null && this.owner !== owner) throw Error('每个会话舞台只能声明一组输入区按钮');
+    if (this.owner !== null && this.owner !== owner) throw Error('stage:commands.singleComposerOwner');
     this.owner = owner;
     const next: SRComposerButton[] = [];
     for (const button of declaration.slice(0, limit)) {

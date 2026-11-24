@@ -1,3 +1,6 @@
+import {errorKey} from '../../i18n/errors';
+import {useTranslation} from 'react-i18next';
+import {DEFAULT_LOCALE,isAppLocale} from '@sillyrealms/sdk/locale';
 import {localOrigin} from '../../local-origin';
 import {readAppearance} from '../../styles/theme';
 import {Button} from '../../components/ui/Button';
@@ -7,6 +10,7 @@ import {randomId} from '../../random-id';
 import {worldPreviewURL} from './preview-url';
 import {worldAssetBaseUrl} from '../../world-assets';
 import {worldStateQueries,readWorldState} from './world-component-protocol';
+import {stageErrorMessage} from '../../../../../packages/sr-sdk/src/stage/feedback';
 import type {PreviewModules} from './preview-cache';
 
 type Props={worldId:string;entry:string;title:string;active:boolean;load:(refresh?:boolean)=>Promise<PreviewModules>};
@@ -16,6 +20,11 @@ export function WorldComponentView(props:Props) {
   return <MountedWorldComponent key={revision} {...props} refresh={revision>0} retry={()=>setRevision(value=>value+1)}/>;
 }
 function MountedWorldComponent({worldId,entry,title,active,load,refresh,retry}:Props&{refresh:boolean;retry:()=>void}) {
+  const {t,i18n}=useTranslation('stage');
+  const locale=isAppLocale(i18n.resolvedLanguage)?i18n.resolvedLanguage:DEFAULT_LOCALE;
+  const latest=useRef({t,locale});latest.current={t,locale};
+  const notifyAppearance=useRef<(()=>void)|undefined>(undefined);
+  useEffect(()=>{notifyAppearance.current?.();},[locale]);
   const frame=useRef<HTMLIFrameElement>(null),[error,setError]=useState(''),[loaded,setLoaded]=useState(false),[height,setHeight]=useState(1);
   const [source,setSource]=useState<string>(),onFrameLoad=useRef<(()=>void)|undefined>(undefined);
   const visible=useRef(active),notifyVisibility=useRef<(()=>void)|undefined>(undefined);
@@ -26,7 +35,7 @@ function MountedWorldComponent({worldId,entry,title,active,load,refresh,retry}:P
     let gone=false,port:MessagePort|undefined,connected=false,ready=false,compiled:PreviewModules|undefined;
     let expectedOrigin:string|undefined;
     const abort=new AbortController();
-    const fail=(reason?:unknown)=>{if(gone)return;setError(reason instanceof Error?reason.message:typeof reason==='string'?reason:'组件加载失败，请重试或检查世界卡组件。');gone=true;clearTimeout(timer);abort.abort();port?.close();};
+    const fail=(reason?:unknown)=>{if(gone)return;setError(errorKey(reason,'stage:preview.loadFailed'));gone=true;clearTimeout(timer);abort.abort();port?.close();};
     const timer=setTimeout(fail,20000);
     onFrameLoad.current=()=>{
       if(gone||!expectedOrigin)return;
@@ -34,7 +43,8 @@ function MountedWorldComponent({worldId,entry,title,active,load,refresh,retry}:P
       if(connected){fail();return;}
       frame.current?.contentWindow?.postMessage({type:'sr-world-probe',nonce},expectedOrigin);
     };
-    function appearance(){if(gone)return;port?.postMessage({type:'appearance',...readAppearance()});}
+    function appearance(){if(gone)return;port?.postMessage({type:'appearance',locale:latest.current.locale,...readAppearance()});}
+    notifyAppearance.current=appearance;
     notifyVisibility.current=()=>{if(!gone&&ready)port?.postMessage({type:'visibility',active:visible.current});};
     function render(){if(ready&&compiled){appearance();notifyVisibility.current?.();port?.postMessage({type:'render',entry,modules:compiled,assetBaseUrl:worldAssetBaseUrl(location.origin,worldId)});}}
     const listener=(event:MessageEvent)=>{
@@ -52,7 +62,7 @@ function MountedWorldComponent({worldId,entry,title,active,load,refresh,retry}:P
             const queries=worldStateQueries(data.method,data.data);
             const snapshot=await api<{item:Record<string,any>}>('v1/state/global/'+encodeURIComponent(worldId),{signal:abort.signal});
             if(!gone)port?.postMessage({type:'response',id:data.id,data:queries.map(query=>({...query,value:readWorldState(snapshot.item,query.path)}))});
-          }catch(err){if(!gone)port?.postMessage({type:'response',id:data.id,error:err instanceof Error?err.message:'State read failed'});}
+          }catch(err){if(!gone)port?.postMessage({type:'response',id:data.id,error:errorKey(err,'stage:preview.readFailed')});}
         }
       };
       port.start();frame.current?.contentWindow?.postMessage({type:'sr-world-connect',nonce},expectedOrigin,[channel.port2]);
@@ -64,8 +74,8 @@ function MountedWorldComponent({worldId,entry,title,active,load,refresh,retry}:P
       const url=worldPreviewURL(import.meta.env.VITE_WORLD_PREVIEW_ORIGIN??localOrigin(location.origin, 5177),location.origin,nonce);
       expectedOrigin=url.origin;setSource(url.href);
     } catch(error) {fail(error);}
-    return()=>{gone=true;clearTimeout(timer);abort.abort();theme.disconnect();port?.close();onFrameLoad.current=undefined;notifyVisibility.current=undefined;window.removeEventListener('message',listener);};
+    return()=>{gone=true;clearTimeout(timer);abort.abort();theme.disconnect();port?.close();onFrameLoad.current=undefined;notifyVisibility.current=undefined;notifyAppearance.current=undefined;window.removeEventListener('message',listener);};
   },[worldId,entry,load,refresh]);
-  if(error)return <div role="alert"><p>{error}</p><Button variant="secondary" onClick={retry}>重试</Button></div>;
-  return <>{!loaded&&<p role="status">正在加载组件…</p>}{source&&<iframe key={source} ref={frame} title={title} data-world-component={entry} src={source} sandbox="allow-scripts allow-same-origin" onLoad={()=>onFrameLoad.current?.()} style={{display:'block',width:'100%',height,border:0,visibility:loaded?'visible':'hidden'}}/>}</>;
+  if(error)return <div role="alert"><p>{stageErrorMessage(error,key=>t(key),key=>i18n.exists(key,{ns:'stage'}))}</p><Button variant="secondary" onClick={retry}>{t('common.retry')}</Button></div>;
+  return <>{!loaded&&<p role="status">{t('preview.loading')}</p>}{source&&<iframe key={source} ref={frame} title={title} data-world-component={entry} src={source} sandbox="allow-scripts allow-same-origin" onLoad={()=>onFrameLoad.current?.()} style={{display:'block',width:'100%',height,border:0,visibility:loaded?'visible':'hidden'}}/>}</>;
 }

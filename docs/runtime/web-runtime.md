@@ -17,7 +17,7 @@
 | `features/suggestions` | 当前建议，创建、清空和最新结果恢复 |
 | `features/worlds/stage-world.ts` | 世界详情、组件编译、资源地址、展示规则与状态根清单 |
 | `transport/session-events.ts` | 单一会话 SSE、显式事件注册、订阅分发与连接状态 |
-| `stage-host` | iframe、origin/source/nonce 握手、MessagePort、命令白名单、外观 |
+| `stage-host` | iframe、origin/source/nonce 握手、MessagePort、命令白名单、外观与语言同步 |
 | `frame.tsx` 与 SDK `stage` | 作者代码与消息渲染、只读展示镜像、命令代理 |
 
 SSE 跟随会话页面，MessagePort 跟随 iframe。重新加载舞台只替换展示连接，不重新发送模型输入、不主动停止运行、不清空业务数据。世界组件或某个订阅者失败不改变已受理运行的业务结果。
@@ -72,6 +72,16 @@ frame 没有业务 HTTP/模型凭据。SDK 发起 narrative.send/regenerate/stop
 作者组件执行、messageRender、图片/音频和消息 DOM 均在独立来源 frame；匹配使用有界 Worker，CSP 允许 worker-src self，保持 connect-src/frame-src none。主站和舞台分别构建为 dist 与 dist-preview，部署规则见 [管理工作区](web-management.md)。
 
 运行页复用输入框、主题、字号、阅读锚点和状态查看器。移动会话详情隐藏主导航底栏以避免遮挡输入；保留返回列表。会话业务配置在生成中禁用，阅读字号可独立调整。
+
+## 界面与叙事语言
+
+会话页沿用管理工作区已经读取并确认的 `AppSettings.locale`，默认 `zh-CN`，支持 `en` 和 `ja`。语言是应用级设置，前端不在 localStorage 保存第二份语言偏好，也不写入会话、消息或世界内容。
+
+StageHost 在受校验的 MessagePort 外观消息中同步 locale。frame 只接受支持的语言，首次获得有效语言后再挂载内容；后续切换只更新 i18n 和文档 lang，不重建 iframe、不重新执行作者组件挂载、不重置运行镜像。官方 WorldStory 的按钮、加载/停止/失败提示、状态面板和控制标签采用当前语言；已保存或正在生成的正文、推理文本、作者名称、状态路径和值保持原文。语言消息不开放新的业务命令或来源权限。
+
+切换语言不会停止或重新发送叙事，也不会重载历史、清空建议或丢失输入草稿。已有错误与运行提示在展示时解析稳定代码/资源键，因此可以随界面语言更新。作者静态文案不由平台自动翻译。
+
+叙事提交和重新生成请求体不增加 locale。Server 的 context 仍只接收 sessionId 作为业务输入，通过 SettingsReader 在首次异步等待前捕获应用语言；同一轮压缩和候选重建沿用该快照，运行期间的语言切换从下一次准备开始生效。`{{system.language}}` 仅在预设源模板中展开为简体中文/English/日本語。默认 main 已使用该变量；已有预设需插入变量或恢复 main 默认内容。协议标签、JSON 字段名、状态路径和约定取值不会因界面语言变化而翻译。
 
 ## 用量面板与写入约束
 

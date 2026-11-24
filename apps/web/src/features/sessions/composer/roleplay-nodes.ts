@@ -1,3 +1,4 @@
+import {i18n} from '../../../i18n/instance.ts';
 import {
   $applyNodeReplacement,
   ParagraphNode,
@@ -42,15 +43,20 @@ export class RoleplayBlockNode extends ParagraphNode {
     const element = super.createDOM(config);
     element.classList.add('sr-composer-block', `sr-composer-${this.__kind}`);
     element.dataset.kind = this.__kind;
-    const label = this.__kind === 'speech' ? '话语' : '叙事指令';
-    element.dataset.label = label;
-    element.setAttribute('aria-label', `${label}输入块`);
+    this.updateLabel(element);
     return element;
   }
 
   updateDOM(previous: this, dom: HTMLElement, config: EditorConfig): boolean {
     if (previous.__kind !== this.__kind) return true;
+    this.updateLabel(dom);
     return super.updateDOM(previous, dom, config);
+  }
+
+  private updateLabel(dom: HTMLElement): void {
+    const label = this.__kind === 'speech' ? i18n.t('sessions:speech') : i18n.t('sessions:instruction');
+    dom.dataset.label = label;
+    dom.setAttribute('aria-label', i18n.t('sessions:inputBlock', {label}));
   }
 
   getKind(): RoleplayBlockKind { return this.getLatest().__kind; }

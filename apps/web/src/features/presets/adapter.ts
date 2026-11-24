@@ -1,3 +1,4 @@
+import {i18n} from '../../i18n/instance.ts';
 import { samplingError, samplingFields, samplingValues } from './sampling.ts';
 import type { WebPreset, PresetDetail, PresetInput } from './types.js';
 
@@ -20,31 +21,31 @@ export function fromServer(raw: PresetDetail): WebPreset {
 }
 
 export function getPresetValidationError(preset: WebPreset): string | null {
-  if (preset.contextStrategy === 'rolling_summary' && !preset.summaryPrompt.trim()) return '压缩提示词不能为空。';
-  if (!preset.name.trim()) return '请输入预设名称。';
-  if (!['rolling_summary', 'sliding_window'].includes(preset.contextStrategy)) return '请选择上下文策略。';
-  if (!Number.isSafeInteger(preset.maxContextTokens) || preset.maxContextTokens < 2 || !Number.isSafeInteger(preset.maxOutputTokens) || preset.maxOutputTokens < 1) return '请输入有效的上下文和输出预算。';
+  if (preset.contextStrategy === 'rolling_summary' && !preset.summaryPrompt.trim()) return i18n.t('presets:theSummaryPromptCannotBeEmpty');
+  if (!preset.name.trim()) return i18n.t('presets:enterAPresetName');
+  if (!['rolling_summary', 'sliding_window'].includes(preset.contextStrategy)) return i18n.t('presets:selectAContextStrategy');
+  if (!Number.isSafeInteger(preset.maxContextTokens) || preset.maxContextTokens < 2 || !Number.isSafeInteger(preset.maxOutputTokens) || preset.maxOutputTokens < 1) return i18n.t('presets:enterValidInputAndOutputTokenBudgets');
   for (const field of samplingFields) {
     const error = samplingError(field, preset[field.key]);
     if (error) return error;
   }
-  if (typeof preset.thinkingEnabled !== 'boolean') return '请选择是否开启深度思考。';
-  if (preset.thinkingLevel !== undefined && !['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(preset.thinkingLevel)) return '请选择有效的思考深度。';
+  if (typeof preset.thinkingEnabled !== 'boolean') return i18n.t('presets:chooseWhetherToEnableReasoning');
+  if (preset.thinkingLevel !== undefined && !['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(preset.thinkingLevel)) return i18n.t('presets:selectAValidReasoningLevel');
   const ids = new Set<string>();
   for (const node of preset.nodes) {
-    if (!node.id || ids.has(node.id) || !node.name.trim() || typeof node.prompt !== 'string' || typeof node.enabled !== 'boolean') return '请检查节点名称、提示词和 ID。';
+    if (!node.id || ids.has(node.id) || !node.name.trim() || typeof node.prompt !== 'string' || typeof node.enabled !== 'boolean') return i18n.t('presets:checkTheNodeNamePromptAndId');
     ids.add(node.id);
     const required = systemIds.includes(node.id), optional = postprocessIds.includes(node.id);
     if (required || optional) {
       const role = node.id === 'chatHistory' ? 'auto' : node.id === 'userInput' ? 'user' : 'system';
-      if (node.kind !== (required ? 'system' : 'postprocess') || node.role !== role || (required && !node.enabled)) return '系统节点的角色和启用规则不能更改。';
+      if (node.kind !== (required ? 'system' : 'postprocess') || node.role !== role || (required && !node.enabled)) return i18n.t('presets:systemNodeRolesAndEnablementRulesCannot');
     } else if (node.kind !== 'text' || !['system', 'user', 'assistant'].includes(node.role)) {
-      return '请检查自定义节点的消息角色。';
+      return i18n.t('presets:checkTheMessageRoleOfTheCustom');
     }
   }
-  if (systemIds.some(id => !ids.has(id))) return '预设缺少必需的系统节点。';
+  if (systemIds.some(id => !ids.has(id))) return i18n.t('presets:thePresetIsMissingRequiredSystemNodes');
   const builtinOrder = preset.nodes.filter(node => node.kind !== 'text').map(node => node.id);
-  if (builtinOrder.join(',') !== [...systemIds, ...postprocessIds.filter(id => ids.has(id))].join(',')) return '请保持系统节点的先后顺序。';
+  if (builtinOrder.join(',') !== [...systemIds, ...postprocessIds.filter(id => ids.has(id))].join(',')) return i18n.t('presets:keepSystemNodesInTheirRequiredOrder');
   return null;
 }
 

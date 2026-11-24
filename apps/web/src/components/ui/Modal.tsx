@@ -1,3 +1,5 @@
+import {useTranslation} from 'react-i18next';
+import {i18n} from '../../i18n/instance.ts';
 import {IconButton} from './Button';
 import {useCallback,useEffect,useId,useRef,useState,type ReactNode} from 'react';
 import {createPortal} from 'react-dom';
@@ -17,6 +19,7 @@ export type ModalProps={
 };
 
 export function Modal({title,onClose,children,size='default',footer,onBeforeClose,closeOnBackdrop=true}:ModalProps){
+  useTranslation();
   const [phase,setPhase]=useState<'enter'|'open'|'exit'>('enter');
   const titleId=useId();
   const closeRef=useRef<HTMLButtonElement>(null);
@@ -89,7 +92,7 @@ export function Modal({title,onClose,children,size='default',footer,onBeforeClos
       <section ref={panelRef} className={styles.panel} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header className={styles.header}>
           <h2 id={titleId}>{title}</h2>
-          <IconButton ref={closeRef} type="button" aria-label="关闭弹窗" onClick={requestClose}><X size={20}/></IconButton>
+          <IconButton ref={closeRef} type="button" aria-label={i18n.t("common:closeDialog")} onClick={requestClose}><X size={20}/></IconButton>
         </header>
         <div className={styles.body} data-modal-body>{children}</div>
         {hasFooter&&<footer className={styles.footer}>{footer}</footer>}

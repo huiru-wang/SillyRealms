@@ -24,8 +24,19 @@ describe('settings initialization', () => {
     expect(() => settings.ensure({ defaultPresetId: preset.id, defaultApiModelConfigId: 'missing' })).toThrow('MODEL_CONFIG_NOT_FOUND');
     expect(settings.getOptional()).toBeNull();
     const created = settings.ensure({ defaultPresetId: preset.id, defaultApiModelConfigId: null });
-    expect(created).toMatchObject({ id: 1, defaultPresetId: preset.id, defaultApiModelConfigId: null });
+    expect(created).toMatchObject({ id: 1, locale: 'zh-CN', defaultPresetId: preset.id, defaultApiModelConfigId: null });
     expect(settings.get()).toEqual(created);
+  });
+
+  it.each(['zh-CN', 'en', 'ja'] as const)('persists %s without resetting it when other settings change or initialization repeats', locale => {
+    const preset = presets.ensureDefault();
+    settings.ensure({ defaultPresetId: preset.id, defaultApiModelConfigId: null });
+    const saved = settings.update({ locale });
+    expect(saved.locale).toBe(locale);
+    expect(settings.update({ defaultPresetId: null })).toMatchObject({ locale, defaultPresetId: null });
+    expect(settings.ensure({ locale: 'zh-CN', defaultPresetId: preset.id, defaultApiModelConfigId: null }))
+      .toMatchObject({ locale, defaultPresetId: null });
+    expect(new SettingsService(db, { presets, models }).get().locale).toBe(locale);
   });
 
   it('returns existing choices unchanged instead of treating ensure as an update', () => {

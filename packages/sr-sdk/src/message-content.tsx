@@ -1,8 +1,9 @@
 import React,{useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
+import {useTranslation} from 'react-i18next';
 import {createPortal} from 'react-dom';
 import {parseRoleplay} from '@sillyrealms/roleplay';
 import {applyRoleplayMarkers,roleplayMarkers} from './world-story-roleplay.js';
-import {renderWorldDocument} from './world-document/render.js';
+import {localizeDocumentTasks,renderWorldDocument} from './world-document/render.js';
 import {useStoryConfiguration,type MessageComponentProps,type MessageMatch} from './story-context.js';
 import type {StageMessage} from './stage-contract.js';
 import {canShowLiteralPlaceholder,protectedRanges,selectMessageMatches} from './message-ranges.js';
@@ -19,11 +20,12 @@ function substitute(template:string,match:MessageMatch){
   });
 }
 function escapeHtml(text:string){return text.replace(/[&<>]/g,char=>char==='&'?'&amp;':char==='<'?'&lt;':'&gt;');}
-class ComponentBoundary extends React.Component<{children:React.ReactNode;fallback:string},{failed:boolean}>{
+class ComponentBoundary extends React.Component<{children:React.ReactNode;fallback:string;notice:string},{failed:boolean}>{
   state={failed:false};static getDerivedStateFromError(){return {failed:true};}
-  render(){return this.state.failed?<span>{this.props.fallback} <small role="status">组件显示失败，已保留原文</small></span>:this.props.children;}
+  render(){return this.state.failed?<span>{this.props.fallback} <small role="status">{this.props.notice}</small></span>:this.props.children;}
 }
 export const MessageContent = React.memo(function MessageContent({message,runId}:{message:Pick<StageMessage, 'id' | 'role' | 'content'>;runId:string}){
+  const {t}=useTranslation('stage');
   const config=useStoryConfiguration();
   const assetBaseUrl=useSRAssetBaseUrl();
   const [matches,setMatches]=useState<MessageMatch[]>([]),[targets,setTargets]=useState<Element[]>([]),[failed,setFailed]=useState(false),[warning,setWarning]=useState(false);
@@ -102,9 +104,10 @@ export const MessageContent = React.memo(function MessageContent({message,runId}
     updateMessageDOM(container,template.content);
     setTargets(Array.from(container.querySelectorAll('[data-sr-slot]')));
   },[rendered]);
-  return <div className="sr-rich"><div className="sr-message-markdown" ref={ref}/>{rendered.assetErrors.length>0&&<small role="status">{rendered.assetErrors.join('；')}</small>}{rendered.instructions.length>0&&<div className="sr-rp-instruction-panel"><span>叙事指令</span>{rendered.instructions.map((text,index)=><p key={index}>{text}</p>)}</div>}{failed&&<small role="status">消息展示规则处理失败，已显示原文</small>}{(warning||rendered.structuralWarning)&&<small role="status">部分消息展示规则无效，已保留原文</small>}{rendered.missingComponent&&<small role="status">消息组件不可用，已保留原文</small>}{rendered.portals.map(portal=>{
+  useLayoutEffect(()=>{if(ref.current)localizeDocumentTasks(ref.current,t('document.taskComplete'),t('document.taskIncomplete'));},[rendered,t]);
+  return <div className="sr-rich"><div className="sr-message-markdown" ref={ref}/>{rendered.assetErrors.length>0&&<small role="status" title={rendered.assetErrors.join('; ')}>{t('document.invalidAsset')}</small>}{rendered.instructions.length>0&&<div className="sr-rp-instruction-panel"><span>{t('message.instructions')}</span>{rendered.instructions.map((text,index)=><p key={index}>{text}</p>)}</div>}{failed&&<small role="status">{t('message.matchingFailed')}</small>}{(warning||rendered.structuralWarning)&&<small role="status">{t('message.invalidRules')}</small>}{rendered.missingComponent&&<small role="status">{t('message.missingComponent')}</small>}{rendered.portals.map(portal=>{
     const target=targets.find(node=>node.getAttribute('data-sr-slot')===portal.key);if(!target)return null;
-    const Component=portal.component;return createPortal(<ComponentBoundary fallback={portal.props.match}><Component {...portal.props}/></ComponentBoundary>,target,portal.key);
+    const Component=portal.component;return createPortal(<ComponentBoundary fallback={portal.props.match} notice={t('message.componentFailed')}><Component {...portal.props}/></ComponentBoundary>,target,portal.key);
   })}</div>;
 }, (previous,next) => previous.runId===next.runId && previous.message.id===next.message.id &&
   previous.message.role===next.message.role && previous.message.content===next.message.content);

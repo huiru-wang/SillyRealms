@@ -1,3 +1,5 @@
+import {formatNumber} from '../../i18n/format.ts';
+import {i18n} from '../../i18n/instance.ts';
 import type { CatalogModel, ModelConfig, ModelDraft, ProviderModelGroup } from './types.ts';
 
 export function modelDraft(config?: ModelConfig): ModelDraft {
@@ -22,45 +24,44 @@ export function keepsSavedSelection(draft: ModelDraft): boolean {
 }
 
 export function modelDraftError(draft: ModelDraft, groups: readonly ProviderModelGroup[] | null): string | null {
-  if (!draft.name.trim()) return '请填写连接名称。';
-  if (!draft.providerId || !draft.modelId) return '请选择服务商和模型。';
+  if (!draft.name.trim()) return i18n.t('models:enterAConnectionName');
+  if (!draft.providerId || !draft.modelId) return i18n.t('models:selectAProviderAndModel');
   // Existing connections can still have their name or key repaired when the catalog is unavailable or has retired the model.
   if (!keepsSavedSelection(draft)) {
-    if (!groups) return '模型目录尚未读取，请重试后选择模型。';
-    if (!findCatalogModel(groups, draft.providerId, draft.modelId)) return '请选择当前服务商下的模型。';
+    if (!groups) return i18n.t('models:loadTheModelCatalogBeforeSelectingA');
+    if (!findCatalogModel(groups, draft.providerId, draft.modelId)) return i18n.t('models:selectAModelFromTheCurrentProvider');
   }
-  if (!draft.id && !draft.apiKey.trim()) return '请填写 API Key。';
+  if (!draft.id && !draft.apiKey.trim()) return i18n.t('models:enterAnApiKey');
   if (draft.original && draft.providerId !== draft.original.providerId && !draft.apiKey.trim()) {
-    return '更换服务商后请填写新的 API Key。';
+    return i18n.t('models:enterANewApiKeyForThe');
   }
   return null;
 }
 
-const numberFormat = new Intl.NumberFormat('en-US');
-const tokenCount = (value: number) => Number.isFinite(value) && value >= 0 ? numberFormat.format(value) + ' tokens' : '未提供';
+const tokenCount = (value: number) => Number.isFinite(value) && value >= 0 ? formatNumber(value) + ' tokens' : i18n.t('models:notProvided');
 
 export function cacheDuration(seconds: number | null | undefined): string {
-  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return '未提供';
-  if (seconds > 0 && seconds % 86400 === 0) return numberFormat.format(seconds / 86400) + ' 天';
-  if (seconds > 0 && seconds % 3600 === 0) return numberFormat.format(seconds / 3600) + ' 小时';
-  if (seconds > 0 && seconds % 60 === 0) return numberFormat.format(seconds / 60) + ' 分钟';
-  return numberFormat.format(seconds) + ' 秒';
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return i18n.t('models:notProvided');
+  if (seconds > 0 && seconds % 86400 === 0) return i18n.t('models:duration.days',{count:seconds/86400,value:formatNumber(seconds/86400)});
+  if (seconds > 0 && seconds % 3600 === 0) return i18n.t('models:duration.hours',{count:seconds/3600,value:formatNumber(seconds/3600)});
+  if (seconds > 0 && seconds % 60 === 0) return i18n.t('models:duration.minutes',{count:seconds/60,value:formatNumber(seconds/60)});
+  return i18n.t('models:duration.seconds',{count:seconds,value:formatNumber(seconds)});
 }
 
 export type ModelFact = { field: string; label: string; value: string; detail?: string; wide?: boolean };
 export function modelFacts(model: CatalogModel): ModelFact[] {
-  const levels = model.reasoning === false ? '不支持' : model.thinkingLevels?.length ? model.thinkingLevels.join(' / ') : '未提供';
-  const modalities = model.input?.map(value => value === 'text' ? '文本' : value === 'image' ? '图片' : value).join(' · ') || '未提供';
+  const levels = model.reasoning === false ? i18n.t('models:notSupported') : model.thinkingLevels?.length ? model.thinkingLevels.join(' / ') : i18n.t('models:notProvided');
+  const modalities = model.input?.map(value => value === 'text' ? i18n.t('models:text') : value === 'image' ? i18n.t('models:images') : value).join(' · ') || i18n.t('models:notProvided');
   return [
-    { field: 'contextWindow', label: '上下文', value: tokenCount(model.contextWindow) },
-    { field: 'maxTokens', label: '输出上限', value: tokenCount(model.maxTokens) },
-    { field: 'reasoning', label: '思考能力', value: model.reasoning === true ? '支持' : model.reasoning === false ? '不支持' : '未提供' },
-    { field: 'input', label: '输入模态', value: modalities },
-    { field: 'api', label: 'API 协议', value: model.api || '未提供' },
-    { field: 'promptCache', label: '提示词缓存', value: model.promptCache
-      ? '短 ' + cacheDuration(model.promptCache.short) + ' · 长 ' + cacheDuration(model.promptCache.long) : '未提供',
+    { field: 'contextWindow', label: i18n.t('models:contextWindow'), value: tokenCount(model.contextWindow) },
+    { field: 'maxTokens', label: i18n.t('models:outputLimit'), value: tokenCount(model.maxTokens) },
+    { field: 'reasoning', label: i18n.t('models:reasoning'), value: model.reasoning === true ? i18n.t('models:supported') : model.reasoning === false ? i18n.t('models:notSupported') : i18n.t('models:notProvided') },
+    { field: 'input', label: i18n.t('models:inputModalities'), value: modalities },
+    { field: 'api', label: i18n.t('models:apiProtocol'), value: model.api || i18n.t('models:notProvided') },
+    { field: 'promptCache', label: i18n.t('models:promptCache'), value: model.promptCache
+      ? i18n.t('models:cacheRetention',{short:cacheDuration(model.promptCache.short),long:cacheDuration(model.promptCache.long)}) : i18n.t('models:notProvided'),
       detail: model.promptCache && Object.values(model.promptCache).some(value => typeof value === 'number' && Number.isFinite(value) && value >= 0)
-        ? '目录参考保留时长' : undefined },
-    { field: 'thinkingLevels', label: '可用思考级别', value: levels, wide: true },
+        ? i18n.t('models:retentionDurationFromTheCatalog') : undefined },
+    { field: 'thinkingLevels', label: i18n.t('models:availableReasoningLevels'), value: levels, wide: true },
   ];
 }

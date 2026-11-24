@@ -70,6 +70,30 @@ function seedCompaction() {
 }
 
 describe('public context preparation', () => {
+  it.each([['en', 'English'], ['ja', '日本語']] as const)('captures %s before waiting and retains it through summary and candidate rebuilds', async (locale, language) => {
+    seedCompaction();
+    const preset = services.presets.require('preset');
+    preset.config.nodes.find(node => node.id === 'main')!.prompt = 'Reply in {{system.language}}.';
+    services.presets.update('preset', { config: preset.config });
+    services.settings.ensure({ locale, defaultPresetId: null, defaultApiModelConfigId: null });
+
+    const request = input();
+    const pending = prepareContext(dependencies, request);
+    services.settings.update({ locale: 'zh-CN' });
+    const prepared = await pending;
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error(prepared.failure.code);
+    expect(summarize).toHaveBeenCalledOnce();
+    expect(prepared.request.messages[0]?.content).toBe('Reply in ' + language + '.');
+    expect(prepared.request.messages.map(message => message.content).join('\n')).not.toContain('{{system.language}}');
+
+    const next = await prepareContext(dependencies, request);
+    expect(next.ok).toBe(true);
+    if (!next.ok) throw new Error(next.failure.code);
+    expect(next.request.messages[0]?.content).toBe('Reply in 简体中文.');
+    expect(summarize).toHaveBeenCalledOnce();
+  });
+
   it('builds an empty session without saving a user or inventing an input turn', async () => {
     const preset = services.presets.require('preset');
     preset.config.nodes.find(node => node.id === 'userInput')!.prompt = 'User says: {{input.text}}';

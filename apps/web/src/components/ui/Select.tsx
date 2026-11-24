@@ -1,3 +1,5 @@
+import {useTranslation} from 'react-i18next';
+import {i18n} from '../../i18n/instance.ts';
 import {Children,isValidElement,useId,useEffect,useLayoutEffect,useMemo,useRef,useState,type ReactNode,type SelectHTMLAttributes,type KeyboardEvent} from 'react';
 import {Check,ChevronDown} from 'lucide-react';
 import styles from './Select.module.css';
@@ -7,6 +9,7 @@ const text=(node:ReactNode):string=>Children.toArray(node).map(child=>isValidEle
 
 /** One themed select-only combobox. The native control retains form/change semantics only. */
 export function Select({children,value,disabled,id:providedId,className,'aria-label':label,'aria-describedby':description,...props}:Props){
+  useTranslation();
  const generated=useId(),id=providedId??generated;
  const wrapper=useRef<HTMLDivElement>(null),trigger=useRef<HTMLButtonElement>(null),native=useRef<HTMLSelectElement>(null),menu=useRef<HTMLDivElement>(null);
  const [open,setOpen]=useState(false),[active,setActive]=useState(-1);
@@ -75,12 +78,12 @@ export function Select({children,value,disabled,id:providedId,className,'aria-la
  return <div ref={wrapper} className={[styles.root,className].filter(Boolean).join(' ')} data-select-root>
   <button ref={trigger} id={id} type="button" role="combobox" aria-label={label} aria-describedby={description} aria-required={props.required} aria-invalid={props['aria-invalid']} aria-expanded={expanded} aria-controls={expanded?id+'-list':undefined} aria-haspopup="listbox" aria-activedescendant={expanded&&active>=0?id+'-option-'+active:undefined} disabled={disabled}
    className={styles.trigger} onClick={()=>expanded?setOpen(false):show()} onKeyDown={key} onBlur={()=>setOpen(false)}>
-   <span className={styles.value} data-placeholder={selected<0||options[selected]?.value===''}>{options[selected]?.label??'请选择'}</span><ChevronDown size={16} className={styles.arrow} aria-hidden="true"/>
+   <span className={styles.value} data-placeholder={selected<0||options[selected]?.value===''}>{options[selected]?.label??i18n.t("common:select")}</span><ChevronDown size={16} className={styles.arrow} aria-hidden="true"/>
   </button>
   <select {...props} ref={native} id={id+'-native'} value={value} disabled={disabled} aria-hidden="true" tabIndex={-1} hidden style={{display:'none'}}>{children}</select>
   {expanded&&<div ref={menu} id={id+'-list'} popover="manual" role="listbox" aria-label={label} className={styles.menu} onMouseDown={event=>event.preventDefault()} onClick={event=>{event.preventDefault();event.stopPropagation();}}>
    {options.length?options.map((option,index)=><div key={option.value} id={id+'-option-'+index} role="option" aria-selected={index===selected} aria-disabled={option.disabled||undefined} data-active={index===active} className={styles.option}
-    onPointerMove={()=>{if(!option.disabled)setActive(index);}} onClick={()=>choose(index)}><span>{option.label}</span>{index===selected&&<Check size={16} aria-hidden="true"/>}</div>):<div className={styles.empty}>暂无可选项</div>}
+    onPointerMove={()=>{if(!option.disabled)setActive(index);}} onClick={()=>choose(index)}><span>{option.label}</span>{index===selected&&<Check size={16} aria-hidden="true"/>}</div>):<div className={styles.empty}>{i18n.t("common:noOptions")}</div>}
   </div>}
  </div>;
 }

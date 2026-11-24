@@ -1,3 +1,4 @@
+import {errorKey} from '../../i18n/errors.ts';
 import type {StateChangedEvent,StateScope,StateSnapshot,StateValue,StateWrite,StateWriteResult} from '../../../../../packages/sr-sdk/src/stage-contract.js';
 import {applyStateChange,isStateObject,isStatePath,isStateScope,isStateValue,messageValues,objectValues,stateScopes,type StateObject} from './values.ts';
 export {stateManifest} from './manifest.ts';
@@ -11,7 +12,7 @@ export type StateControllerOptions={
 };
 type PreparedWrite={scope:StateScope;path:string;value:StateValue}|{failure:StateWriteResult};
 const defaultRequest:StateRequest=async<T>(path:string,options?:RequestInit)=>(await import('../../api')).api<T>(path,options);
-const errorMessage=(error:unknown)=>error instanceof Error?error.message:'状态请求失败';
+const errorMessage=(error:unknown)=>errorKey(error,"sessions:stateRequestFailed");
 function failure(scope:StateScope,path:string,error:unknown,code='STATE_REQUEST_FAILED'):StateWriteResult {
   const supplied=error!==null&&typeof error==='object'&&'errorCode' in error&&typeof error.errorCode==='string'
     ?error.errorCode:code;
@@ -20,10 +21,10 @@ function failure(scope:StateScope,path:string,error:unknown,code='STATE_REQUEST_
 function prepareWrite(input:StateWrite):PreparedWrite {
   const scope=isStateScope(input?.scope)?input.scope:'message',path=typeof input?.path==='string'?input.path:'';
   if(!input||!isStateObject(input)||(input.scope!==undefined&&!isStateScope(input.scope)))
-    return {failure:failure(scope,path,Error('状态作用域无效'),'INVALID_STATE_SCOPE')};
-  if(!isStatePath(path))return {failure:failure(scope,path,Error('状态字段路径无效'),'INVALID_STATE_PATH')};
+    return {failure:failure(scope,path,Error("sessions:invalidScope"),'INVALID_STATE_SCOPE')};
+  if(!isStatePath(path))return {failure:failure(scope,path,Error("sessions:invalidPath"),'INVALID_STATE_PATH')};
   if(!Object.hasOwn(input,'value')||!isStateValue(input.value))
-    return {failure:failure(scope,path,Error('状态值必须是有效 JSON'),'INVALID_STATE_VALUE')};
+    return {failure:failure(scope,path,Error("sessions:invalidStateJson"),'INVALID_STATE_VALUE')};
   return {scope,path,value:structuredClone(input.value)};
 }
 function writeResults(value:unknown,updates:Array<Exclude<PreparedWrite,{failure:StateWriteResult}>>):StateWriteResult[] {
@@ -32,7 +33,7 @@ function writeResults(value:unknown,updates:Array<Exclude<PreparedWrite,{failure
     if(!isStateObject(item)||item.path!==update.path||item.scope!==update.scope||
       (item.success===true?(item.errorCode!==null||item.errorMessage!==''):
         item.success!==false||typeof item.errorCode!=='string'||!item.errorCode||typeof item.errorMessage!=='string'))
-      return failure(update.scope,update.path,Error('状态写入响应格式无效'),'INVALID_RESPONSE');
+      return failure(update.scope,update.path,Error("sessions:invalidWriteResponse"),'INVALID_RESPONSE');
     return {
       path:update.path,scope:update.scope,
       ...(item.success?{success:true as const,errorCode:null,errorMessage:'' as const}:
@@ -53,7 +54,7 @@ export function createStateController({sessionId,worldId,getTipEntryId,request=d
   const readErrors:Partial<Record<StateScope,string>>={};
   let disposed=false,reading=0,writeError:string|null=null,queue:Promise<void>=Promise.resolve();
   let snapshot:StateControllerSnapshot={values:{global:{},session:{},message:{}},loading:false,error:null};
-  const open=()=>{if(disposed)throw new DOMException('状态连接已关闭','AbortError');};
+  const open=()=>{if(disposed)throw new DOMException("sessions:stateDisconnected",'AbortError');};
   function publish(values=snapshot.values) {
     if(disposed)return;
     const errors=[writeError,...stateScopes.map(scope=>readErrors[scope])].filter((value):value is string=>!!value);
@@ -63,7 +64,7 @@ export function createStateController({sessionId,worldId,getTipEntryId,request=d
   function endpoint(scope:StateScope,tip=getTipEntryId()) {
     if(scope==='global')return 'v1/state/global/'+encodeURIComponent(worldId);
     if(scope==='session')return 'v1/state/session/'+encodeURIComponent(sessionId);
-    if(!tip)throw Error('当前会话尚无消息状态');
+    if(!tip)throw Error("sessions:noMessageState");
     return 'v1/state/message/'+encodeURIComponent(sessionId)+'/'+encodeURIComponent(tip);
   }
   function refreshScope(scope:StateScope):Promise<StateObject> {
@@ -82,7 +83,7 @@ export function createStateController({sessionId,worldId,getTipEntryId,request=d
           // An older response must neither undo an event nor leave unobserved roots uninitialized.
           if(generation!==generations[scope]||observed!==events[scope]||
             (scope==='message'&&tip!==getTipEntryId()))continue;
-          if(!isStateObject(response)||!Object.hasOwn(response,'item'))throw Error('状态响应格式无效');
+          if(!isStateObject(response)||!Object.hasOwn(response,'item'))throw Error("sessions:invalidStateResponse");
           const value=scope==='message'?messageValues(response.item):objectValues(response.item);
           delete readErrors[scope];publish({...snapshot.values,[scope]:value});
           if(generation!==generations[scope]||observed!==events[scope])continue;
@@ -123,7 +124,7 @@ export function createStateController({sessionId,worldId,getTipEntryId,request=d
       return structuredClone(snapshot.values);
     },
     write(updates:StateWrite[]):Promise<StateWriteResult[]> {
-      if(!Array.isArray(updates))return Promise.reject(Error('状态更新必须是数组'));
+      if(!Array.isArray(updates))return Promise.reject(Error("sessions:updatesMustBeArray"));
       const prepared=Array.from(updates,prepareWrite);
       return serialize(async()=>{
         writeError=null;publish();
@@ -149,14 +150,14 @@ export function createStateController({sessionId,worldId,getTipEntryId,request=d
           // Success may mean an ignored missing path. Only reads/events update local values.
           await reconcile(first.scope);
         }
-        open();writeError=[...new Set(results.filter(result=>!result.success).map(result=>result.errorMessage))].join('；')||null;
+        open();writeError=[...new Set(results.filter(result=>!result.success).map(result=>result.errorMessage.startsWith('sessions:')?result.errorMessage:result.errorCode))].join('；')||null;
         publish();return results;
       });
     },
     replace(scope:StateScope,value:StateValue):Promise<void> {
       let state:StateValue;
       try{
-        if(!isStateScope(scope))throw Error('状态作用域无效');
+        if(!isStateScope(scope))throw Error("sessions:invalidScope");
         scope==='message'?messageValues(value):objectValues(value);
         state=structuredClone(value);
       }catch(error){return Promise.reject(error);}

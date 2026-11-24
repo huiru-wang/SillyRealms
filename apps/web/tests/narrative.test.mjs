@@ -68,7 +68,7 @@ test('POST uses the actual compaction tip; an entire lifecycle before 202 never 
  const sending=client.send('  Original input  ');await nextTurn();
  assert.deepEqual(JSON.parse(calls[0].init.body),{input:{text:'  Original input  '},expectedTipEntryId:'summary-tip'});
  client.accept(created());client.accept(delta('Draft'));
- await assert.rejects(client.send('Duplicate'),/仍在生成/);
+ await assert.rejects(client.send('Duplicate'),{message:'sessions:alreadyRunning'});
  client.accept(delta('',{snapshot:finalSnapshot,finish_reason:'stop'}));
  assert.equal(client.getSnapshot().activeRunId,'r');
  assert.equal(client.getSnapshot().drafts.at(-1).content,'Corrected');
@@ -160,7 +160,7 @@ test('regeneration uses a new execution in the same round and ignores old termin
  client.accept({event:'run.delta',data:{...delta('New').data,assistantEntryId:'new-a',messageId:'new-a'}});
  client.accept(completed());
  assert.equal(client.getSnapshot().run.assistantEntryId,'new-a');assert.equal(client.getSnapshot().run.status,'running');
- await assert.rejects(client.stop('r','r-a'),/没有可停止/);
+ await assert.rejects(client.stop('r','r-a'),{message:'sessions:nothingToStop'});
  post.resolve(receipt);await pending;
  assert.equal(receipts.filter(item=>item.assistantEntryId==='new-a').length,1);
  assert.deepEqual(client.getSnapshot().drafts.map(item=>item.id),['r-u','new-a']);

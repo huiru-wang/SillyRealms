@@ -1,3 +1,5 @@
+import {errorMessage} from '../../i18n/errors.ts';
+import {i18n} from '../../i18n/instance.ts';
 import type {ModelConnectionResult,ModelConnectionUsage} from './types.ts';
 
 type Request=<T>(path:string,options?:RequestInit)=>Promise<T>;
@@ -7,7 +9,7 @@ const count=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number
 const usageFields=['inputTokens','outputTokens','totalTokens','cacheReadTokens','cacheWriteTokens'] as const;
 function readUsage(value:unknown):ModelConnectionUsage|null {
   if(value===null)return null;
-  if(!record(value)||usageFields.some(field=>!count(value[field])))throw Error('模型测试响应格式无效');
+  if(!record(value)||usageFields.some(field=>!count(value[field])))throw Error(i18n.t('models:invalidModelTestResponse'));
   return Object.fromEntries(usageFields.map(field=>[field,value[field]])) as ModelConnectionUsage;
 }
 /** Explicit user action only: the server loads this saved config and its credential. */
@@ -16,11 +18,11 @@ export async function testModelConnection(modelConfigId:string,signal?:AbortSign
   const result=await request<unknown>('v1/api-model-configs/'+encodeURIComponent(modelConfigId)+'/test',{method:'POST',signal});
   signal?.throwIfAborted();
   if(!record(result)||result.connected!==true||typeof result.providerId!=='string'||!result.providerId||
-    typeof result.modelId!=='string'||!result.modelId||!count(result.durationMs))throw Error('模型测试响应格式无效');
+    typeof result.modelId!=='string'||!result.modelId||!count(result.durationMs))throw Error(i18n.t('models:invalidModelTestResponse'));
   return {connected:true,providerId:result.providerId,modelId:result.modelId,durationMs:result.durationMs,usage:readUsage(result.usage)};
 }
 export function connectionTestError(reason:unknown):string {
-  const message=reason instanceof Error?reason.message:'模型连接测试失败';
+  const message=errorMessage(reason??{},'models:modelConnectionTestFailed');
   const code=reason&&typeof reason==='object'&&'errorCode' in reason&&typeof reason.errorCode==='string'?reason.errorCode:'';
   return code?message+'（'+code+'）':message;
 }

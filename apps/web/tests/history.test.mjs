@@ -57,7 +57,7 @@ test('reconnect overlaps the last running seq to capture a terminal outcome with
 
 test('broken forward pagination terminates and disposing rejects late reads without mutating state',async()=>{
  const history=createHistoryController({sessionId:'s',request:async()=>page([],{hasMore:true,nextAfterSeq:0})});
- await assert.rejects(history.catchUp(),/未前进/);
+ await assert.rejects(history.catchUp(),{message:"sessions:historyCursorStalled"});
  const waiting=deferred(),other=createHistoryController({sessionId:'s',request:()=>waiting.promise});
  const loading=other.loadRecent();other.dispose();waiting.resolve(page([run('r',[1])]));
  await assert.rejects(loading,{name:'AbortError'});assert.equal(other.getSnapshot().runs.length,0);

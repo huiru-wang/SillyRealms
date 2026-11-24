@@ -17,7 +17,7 @@ export function createCandidateEvaluator(
     return compileNarrativeContext({
       ...snapshot, ...projection,
       materials: selectNarrativeMaterials({
-        world: snapshot.world, views: snapshot.views, playerId: snapshot.session.userCharacterId,
+        locale: snapshot.locale, world: snapshot.world, views: snapshot.views, playerId: snapshot.session.userCharacterId,
         inputText: projection.inputText, history: projection.history, summary,
       }, state),
     }, model);

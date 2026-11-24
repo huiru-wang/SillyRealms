@@ -1,3 +1,4 @@
+import {errorKey} from '../../i18n/errors.ts';
 import {api} from '../../api.ts';
 import type {HttpRequest} from '../../transport/http.ts';
 import {createSessionEventChannel} from '../../transport/session-events.ts';
@@ -41,7 +42,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
     if(sessionRequest)return sessionRequest;
     const revision=tipRevision;
     sessionRequest=getSessionRecord(sessionId,abort.signal).then(value=>{
-      if(disposed)throw Error('会话页面已关闭');
+      if(disposed)throw Error("sessions:closed");
       if(revision===tipRevision)tip=value.tipEntryId;
       session={...value,tipEntryId:tip};publish();return session;
     }).finally(()=>{sessionRequest=null;});
@@ -86,9 +87,9 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
         history.acceptExecution({...event.data,deletedMessageIds:[event.data.messageId]});
         updateTip(event.data.tipEntryId);suggestions.clear();usageRevision++;
       }
-    }catch{notice='叙事事件处理失败，请重新同步会话';}
-    try{suggestions.accept(event);}catch{notice='行动建议暂时不可用';}
-    try{if(event.event==='state.changed')state?.accept(event);}catch{notice='状态同步暂时不可用';}
+    }catch{notice="sessions:narrativeEventFailed";}
+    try{suggestions.accept(event);}catch{notice="sessions:suggestionsUnavailable";}
+    try{if(event.event==='state.changed')state?.accept(event);}catch{notice="sessions:stateSyncUnavailable";}
     publish();
     for(const listener of eventListeners){try{listener(event);}catch{/* A frame listener cannot block business consumers. */}}
   }));
@@ -115,7 +116,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
           await refreshSession();
           await state?.read();
           notice=null;
-        }catch(reason){if(!disposed)notice=reason instanceof Error?reason.message:'会话同步失败';}
+        }catch(reason){if(!disposed)notice=errorKey(reason,"sessions:syncFailed");}
         publish();
       }while(repeat&&!disposed);
     })().finally(()=>{synchronization=null;});
@@ -127,7 +128,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
   }));
   async function loadWorld(){
     if(!session||disposed)return;worldError=null;publish();
-    try{world=await getWorld(session.worldId,abort.signal);}catch(reason){if(!disposed)worldError=reason instanceof Error?reason.message:'世界组件加载失败';}
+    try{world=await getWorld(session.worldId,abort.signal);}catch(reason){if(!disposed)worldError=errorKey(reason,"sessions:worldLoadFailed");}
     publish();
   }
   async function start(){
@@ -139,10 +140,10 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
       subscriptions.push(state.subscribe(publish));
       await Promise.allSettled([loadWorld(),synchronize()]);
       if(!disposed){loading=false;publish();}
-    }catch(reason){if(!disposed){loading=false;error=reason instanceof Error?reason.message:'会话加载失败';publish();}}
+    }catch(reason){if(!disposed){loading=false;error=errorKey(reason,"sessions:loadFailed");publish();}}
   }
   async function command<K extends keyof StageCommandMap>(method:K,input:StageCommandMap[K]['input']):Promise<StageCommandMap[K]['output']>{
-    if(disposed)throw Error('会话页面已关闭');
+    if(disposed)throw Error("sessions:closed");
     let result:unknown;
     switch(method){
       case 'narrative.send':
@@ -150,7 +151,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
         catch(reason){await synchronize();throw reason;}
         break;
       case 'narrative.regenerate':
-        if(!connected)throw Error('连接恢复后才能重新生成');
+        if(!connected)throw Error("sessions:regenerateOffline");
         try{result=await narrative.regenerate(input as StageCommandMap['narrative.regenerate']['input']);}
         catch(reason){await synchronize(true);throw reason;}
         break;
@@ -158,9 +159,9 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
       case 'history.loadMore':await history.loadOlder();break;
       case 'history.refresh':await synchronize(true);break;
       case 'history.query':result=await history.query(input as StageCommandMap['history.query']['input']);break;
-      case 'state.read':if(!state)throw Error('会话状态尚未就绪');result=await state.read();break;
-      case 'state.write':if(!state)throw Error('会话状态尚未就绪');result=await state.write((input as StageCommandMap['state.write']['input']).updates);break;
-      case 'composer.setDraft':throw Error('此命令需要会话输入框');
+      case 'state.read':if(!state)throw Error("sessions:notReady");result=await state.read();break;
+      case 'state.write':if(!state)throw Error("sessions:notReady");result=await state.write((input as StageCommandMap['state.write']['input']).updates);break;
+      case 'composer.setDraft':throw Error("sessions:composerRequired");
     }
     publish();return result as StageCommandMap[K]['output'];
   }

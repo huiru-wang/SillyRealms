@@ -1,3 +1,5 @@
+import { DEFAULT_LOCALE, type AppLocale } from '@sillyrealms/sdk/locale';
+import type { SettingsReader } from '../../modules/settings/service.js';
 import { projectContextMessages, type NarrativeHistoryMessage } from './stages/history/index.js';
 import { AppError } from '../../errors.js';
 import type { ModelConfig, ModelService } from '../../modules/models/service.js';
@@ -9,6 +11,7 @@ import { selectNarrativeMaterials, type NarrativeMaterials } from './stages/mate
 import { buildNarrativeNotes, type ModelNotes } from './stages/model-notes/index.js';
 
 export type ContextSources = {
+  settings: Pick<SettingsReader, 'getOptional'>;
   sessions: Pick<SessionService, 'require' | 'getHistory'>;
   worlds: Pick<WorldService, 'require'>;
   presets: Pick<PresetService, 'require'>;
@@ -16,6 +19,7 @@ export type ContextSources = {
   state: Pick<StateService, 'getViews' | 'evaluateWhen'>;
 };
 export type ContextSnapshot = {
+  locale: AppLocale;
   session: Session;
   world: World;
   preset: Preset;
@@ -32,6 +36,7 @@ export type ContextSnapshot = {
 /** Capture the current session once, independently of the caller's operation. */
 export function captureContext(services: ContextSources, sessionId: string): ContextSnapshot {
   const session = services.sessions.require(sessionId);
+  const locale = services.settings.getOptional()?.locale ?? DEFAULT_LOCALE;
   const historyEntries = services.sessions.getHistory(sessionId);
   if ((historyEntries.at(-1)?.id ?? null) !== session.tipEntryId) throw new AppError('TIP_CONFLICT');
   const projection = projectContextMessages(historyEntries);
@@ -41,9 +46,9 @@ export function captureContext(services: ContextSources, sessionId: string): Con
   const views = services.state.getViews({
     worldId: session.worldId, sessionId: session.id, entryId: session.tipEntryId,
   });
-  const captured = structuredClone({ session, world, preset, modelConfig, historyEntries, views, ...projection });
+  const captured = structuredClone({ locale, session, world, preset, modelConfig, historyEntries, views, ...projection });
   const materials = selectNarrativeMaterials({
-    world: captured.world, views: captured.views, history: captured.history,
+    locale: captured.locale, world: captured.world, views: captured.views, history: captured.history,
     playerId: captured.session.userCharacterId, inputText: captured.inputText,
   }, services.state);
   return { ...captured, materials, modelNotes: buildNarrativeNotes(captured.historyEntries) };

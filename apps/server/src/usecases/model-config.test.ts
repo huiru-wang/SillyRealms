@@ -36,7 +36,7 @@ describe('model configuration and credential functions', () => {
   it('leaves credentials intact when a referenced model cannot be deleted', async () => {
     const { operations, credentials } = setup();
     const model = await operations.create(input);
-    db.prepare('INSERT INTO app_settings VALUES(1,NULL,?,1,1)').run(model.id);
+    db.prepare('INSERT INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,NULL,?,1,1)').run(model.id);
     await expect(operations.delete(model.id)).rejects.toThrow();
     expect(await credentials.get(model.credentialRef)).toBe(input.apiKey);
   });

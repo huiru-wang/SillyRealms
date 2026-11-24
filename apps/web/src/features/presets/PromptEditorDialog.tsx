@@ -1,3 +1,6 @@
+import {errorMessage} from '../../i18n/errors.ts';
+import {i18n} from '../../i18n/instance.ts';
+import {useTranslation} from 'react-i18next';
 import {Input,Textarea} from '../../components/ui/Field';
 import {Select} from '../../components/ui/Select';
 import {useEffect, useId, useRef, useState} from 'react';
@@ -18,21 +21,23 @@ type Props = {
   onApply: (value: PromptValue) => void;
   onClose: () => void;
 };
-const textVariables = [
-  ['user', '当前玩家名'],
-  ['persona.prompt', '玩家设定'],
-  ['characters.prompts', '已加载角色'],
-  ['world.lore', '已激活世界书'],
-  ['history.summary', '已有摘要'],
-  ['state.global', '全局状态（只读）'],
-  ['state.session', '会话状态（只读）'],
-  ['state.message', '消息状态与更新规则'],
-] as const;
 
 export function PromptEditorDialog({title, initialValue, metadata = false, description, nodeId, onRestore, onApply, onClose}: Props) {
+  const {t} = useTranslation('presets');
+  const textVariables = [
+  ['system.language', t('presets:applicationLanguage')],
+  ['user', t('currentPlayerName')],
+  ['persona.prompt', t('playerPersona')],
+  ['characters.prompts', t('loadedCharacters')],
+  ['world.lore', t('activeLorebook')],
+  ['history.summary', t('existingSummary')],
+  ['state.global', t('globalStateReadOnly')],
+  ['state.session', t('sessionStateReadOnly')],
+  ['state.message', t('messageStateAndUpdateRules')],
+] as const;
   const [value, setValue] = useState(initialValue);
   const [discard, setDiscard] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<Error|string>('');
   const [restoring, setRestoring] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const alive = useRef(true);
@@ -40,8 +45,8 @@ export function PromptEditorDialog({title, initialValue, metadata = false, descr
   const dirty = JSON.stringify(value) !== JSON.stringify(initialValue);
   const variables: ReadonlyArray<readonly [string, string]> = [
     ...textVariables,
-    ...(nodeId === 'chatHistory' ? [['history.messages', '原生历史消息'] as const] : []),
-    ...(nodeId === 'userInput' ? [['input.text', '本轮输入'] as const] : []),
+    ...(nodeId === 'chatHistory' ? [['history.messages', t('originalHistoryMessages')] as const] : []),
+    ...(nodeId === 'userInput' ? [['input.text', t('currentTurnInput')] as const] : []),
   ];
   useEffect(() => {alive.current = true; return () => {alive.current = false;};}, []);
   useEffect(() => {
@@ -62,7 +67,7 @@ export function PromptEditorDialog({title, initialValue, metadata = false, descr
       const prompt = await onRestore();
       if (alive.current) {setValue(current => ({...current, prompt})); setDiscard(false);}
     } catch (reason) {
-      if (alive.current) setError(reason instanceof Error ? reason.message : '默认提示词加载失败，请重试。');
+      if (alive.current) setError(reason instanceof Error?reason: t('couldNotLoadTheDefaultPromptTry'));
     } finally {
       if (alive.current) setRestoring(false);
     }
@@ -78,43 +83,40 @@ export function PromptEditorDialog({title, initialValue, metadata = false, descr
   function apply(event: FormEvent) {
     event.preventDefault();
     if (restoring) return;
-    if (metadata && !value.name.trim()) {setError('请输入节点名称。'); return;}
+    if (metadata && !value.name.trim()) {setError(t('enterANodeName')); return;}
     onApply({...value, name: value.name.trim()});
     onClose();
   }
   return <Modal title={title} size="editor" onClose={onClose} onBeforeClose={requestClose} closeOnBackdrop={false}
     footer={<div className={styles.dialogActions}>
       {discard ? <>
-        <span className={styles.discardMessage} role="alert">修改尚未应用，确定放弃吗？</span>
-        <Button onClick={() => setDiscard(false)}>继续编辑</Button>
-        <Button onClick={onClose}>放弃修改</Button>
+        <span className={styles.discardMessage} role="alert">{t('discardUnappliedChanges')}</span>
+        <Button onClick={() => setDiscard(false)}>{t('keepEditing')}</Button>
+        <Button onClick={onClose}>{t('discardChanges')}</Button>
       </> : <>
-        <span className={styles.dialogHint}>应用后，记得保存预设</span>
-        <Button onClick={cancel}>取消</Button>
-        <Button variant="primary" type="submit" form={formId} disabled={restoring}>应用</Button>
+        <span className={styles.dialogHint}>{t('saveThePresetAfterApplying')}</span>
+        <Button onClick={cancel}>{t('cancel')}</Button>
+        <Button variant="primary" type="submit" form={formId} disabled={restoring}>{t('apply')}</Button>
       </>}
     </div>}>
     <form id={formId} onSubmit={apply} className={styles.promptForm}>
       <div className={styles.promptIntro}>
         <p className={styles.dialogDescription}>{description}</p>
-        {onRestore && <Button size="compact" type="button" disabled={restoring} onClick={() => void restore()}>{restoring ? '正在恢复…' : '恢复默认提示词'}</Button>}
+        {onRestore && <Button size="compact" type="button" disabled={restoring} onClick={() => void restore()}>{restoring ? t('restoring') : t('restoreDefaultPrompt')}</Button>}
       </div>
-      {error && <p className={styles.formError} role="alert">{error}</p>}
+      {error && <p className={styles.formError} role="alert">{errorMessage(error)}</p>}
       {metadata && <div className={styles.nodeFields}>
-        <label className={styles.field}>节点名称
-          <Input aria-label="节点名称" required maxLength={80} value={value.name}
+        <label className={styles.field}>{t('nodeName')}<Input aria-label={t('nodeName')} required maxLength={80} value={value.name}
             onChange={event => {setValue({...value, name: event.target.value}); setDiscard(false); setError('');}}/>
         </label>
-        <label className={styles.field}>消息角色
-          <Select aria-label="消息角色" value={value.role}
+        <label className={styles.field}>{t('messageRole')}<Select aria-label={t('messageRole')} value={value.role}
             onChange={event => setValue({...value, role: event.target.value as PresetRole})}>
             <option value="system">System</option><option value="user">User</option><option value="assistant">Assistant</option>
           </Select>
         </label>
       </div>}
-      <label className={styles.field}>提示词正文
-        <Textarea ref={inputRef} className={styles.promptInput} aria-label="提示词正文" rows={14} disabled={restoring}
-          placeholder="在这里编写提示词…" value={value.prompt}
+      <label className={styles.field}>{t('promptText')}<Textarea ref={inputRef} className={styles.promptInput} aria-label={t('promptText')} rows={14} disabled={restoring}
+          placeholder={t('writeYourPromptHere')} value={value.prompt}
           onChange={event => {setValue({...value, prompt: event.target.value}); setDiscard(false);}}
           onKeyDown={event => {
             if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !event.nativeEvent.isComposing) {
@@ -122,14 +124,15 @@ export function PromptEditorDialog({title, initialValue, metadata = false, descr
             }
           }}/>
       </label>
-      <div className={styles.promptMeta}><span>保留换行与原文格式</span><span>{Array.from(value.prompt).length.toLocaleString()} 字符</span></div>
+      <div className={styles.promptMeta}><span>{t('lineBreaksAndFormattingArePreserved')}</span><span>{t('presets:characterCount',{count:Array.from(value.prompt).length,value:Array.from(value.prompt).length.toLocaleString(i18n.resolvedLanguage)})}</span></div>
       {nodeId && <details className={styles.variableHelp}>
-        <summary>系统变量与状态字段</summary>
-        <div className={styles.variableList}>{variables.map(([name, label]) => <button key={name} type="button" disabled={restoring} onClick={() => insertVariable(name)} aria-label={'插入变量：' + name}>
+        <summary>{t('systemVariablesAndStateFields')}</summary>
+        <div className={styles.variableList}>{variables.map(([name, label]) => <button key={name} type="button" disabled={restoring} onClick={() => insertVariable(name)} aria-label={t('presets:insertVariable',{name})}>
           <span>{label}</span><code>{'{{' + name + '}}'}</code>
         </button>)}</div>
-        <p>整组状态含字段说明。只需某个值时，可手写 <code>{'{{state.session.人设.姓名}}'}</code>。支持 global、session、message；字段未加载或不存在时留空，填入的值不会再次解析。</p>
-        <p>点击变量插入光标处。变量内容在每轮生成时填入。{nodeId === 'chatHistory' ? '历史消息变量需保留一次，并保留原有消息角色。' : nodeId === 'userInput' ? '本轮输入变量需保留一次，可在前后添加说明。' : ''}</p>
+        <p>{t('stateGroupsIncludeFieldDescriptionsToUse')}<code>{'{{state.session.人设.姓名}}'}</code>{t('supportsGlobalSessionAndMessageMissingOr')}</p>
+        <p>{t('presets:languageVariableHelp')}</p>
+        <p>{t('clickAVariableToInsertItAt')}{nodeId === 'chatHistory' ? t('keepTheHistoryVariableOncePreservingThe') : nodeId === 'userInput' ? t('keepTheCurrentInputVariableOnceYou') : ''}</p>
       </details>}
     </form>
   </Modal>;

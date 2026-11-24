@@ -5,6 +5,7 @@ import { selectNarrativeMaterials, type MaterialSources } from './index.js';
 const conditions = { evaluateWhen: StateService.prototype.evaluateWhen };
 function sources(): MaterialSources {
   return {
+    locale: 'zh-CN',
     world: {
       id: 'world', revision: 1, specVersion: '0.1', name: 'World', description: null, cover: null,
       characters: [{ id: 'player', name: 'Robin', player_selectable: true, prompt: 'You are {{user}}.' }],

@@ -1,3 +1,4 @@
+import { DEFAULT_LOCALE } from '@sillyrealms/sdk/locale';
 import type { TransactionRunner } from '../infrastructure/database/transaction.js';
 import { resourceError, type InitialWorld } from '../infrastructure/initial-data/catalog.js';
 import type { PresetService } from '../modules/presets/service.js';
@@ -17,7 +18,7 @@ type Dependencies = {
 export function createInitialize({ presets, settings, worlds, initialWorlds, importWorld, transaction }: Dependencies) {
   return async () => {
     const defaults = transaction(() => settings.ensure({
-      defaultPresetId: presets.ensureBuiltins(), defaultApiModelConfigId: null,
+      locale: DEFAULT_LOCALE, defaultPresetId: presets.ensureBuiltins(), defaultApiModelConfigId: null,
     }));
     for (const { id, file, readBytes } of initialWorlds) {
       if (worlds.get(id)) continue;

@@ -6,7 +6,7 @@ export class MessageMatcher {
   private queue:Job[]=[];
   private closed=false;
   match(text:string,role:'user'|'assistant',rules:MessageRule[]):Promise<unknown> {
-    if(this.closed||new TextEncoder().encode(text).byteLength>1024*1024||rules.length>100||this.queue.length>=100)return Promise.reject(Error('消息处理超出限制'));
+    if(this.closed||new TextEncoder().encode(text).byteLength>1024*1024||rules.length>100||this.queue.length>=100)return Promise.reject(Error('stage:matcher.limit'));
     return new Promise((resolve,reject)=>{this.queue.push({text,role,rules,resolve,reject});this.drain();});
   }
   private drain(){
@@ -15,18 +15,18 @@ export class MessageMatcher {
   private run(job:Job){
     let worker:Worker|undefined,perRule:ReturnType<typeof setTimeout>|undefined,timer:ReturnType<typeof setTimeout>|undefined;
     let remaining=job.rules,accepted:MessageMatch[]=[],warning=false,currentIndex=0,elapsed=0,start=0,done=false;
-    const cancel=()=>finish(Error('会话已关闭'));
+    const cancel=()=>finish(Error('stage:matcher.closed'));
     const finish=(error?:Error)=>{
       if(done)return;done=true;clearTimeout(timer);clearTimeout(perRule);worker?.terminate();this.active.delete(cancel);
       error?job.reject(error):job.resolve({matches:accepted.sort((a,b)=>a.start-b.start),warning});this.drain();
     };
     const launch=()=>{
-      if(this.closed){finish(Error('会话已关闭'));return;}
+      if(this.closed){finish(Error('stage:matcher.closed'));return;}
       if(!remaining.length||elapsed>=250){if(remaining.length)warning=true;finish();return;}
       try {worker=new Worker(new URL('./message-matcher.worker.ts',import.meta.url),{type:'module'});}
-      catch {finish(Error('消息处理不可用'));return;}
+      catch {finish(Error('stage:matcher.unavailable'));return;}
       const currentWorker=worker;
-      timer=setTimeout(()=>finish(Error('消息处理启动超时')),3000);
+      timer=setTimeout(()=>finish(Error('stage:matcher.timeout')),3000);
       worker.onmessage=event=>{
         if(done||worker!==currentWorker)return;
         if(event.data?.type==='ready'){
@@ -42,11 +42,11 @@ export class MessageMatcher {
           clearTimeout(perRule);warning ||= event.data.invalid===true;accepted=event.data.matches;
         } else if(event.data?.type==='result'){
           accepted=event.data.matches;finish();
-        } else if(event.data?.type==='error')finish(Error('消息处理超出限制'));
+        } else if(event.data?.type==='error')finish(Error('stage:matcher.limit'));
       };
-      worker.onerror=()=>{if(worker===currentWorker)finish(Error('消息处理失败'));};
+      worker.onerror=()=>{if(worker===currentWorker)finish(Error('stage:matcher.failed'));};
     };
     this.active.add(cancel);launch();
   }
-  close(){this.closed=true;for(const cancel of this.active)cancel();this.active.clear();for(const job of this.queue)job.reject(Error('会话已关闭'));this.queue=[];}
+  close(){this.closed=true;for(const cancel of this.active)cancel();this.active.clear();for(const job of this.queue)job.reject(Error('stage:matcher.closed'));this.queue=[];}
 }

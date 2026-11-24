@@ -1,3 +1,5 @@
+import {useTranslation} from 'react-i18next';
+import {i18n} from '../../i18n/instance.ts';
 import {useLayoutEffect,useRef,type ReactNode,type RefObject} from 'react';
 import {createPortal} from 'react-dom';
 import {restoreDialogFocus} from '../../components/ui/focus';
@@ -6,6 +8,7 @@ import {restoreDialogFocus} from '../../components/ui/focus';
 export function SessionUsagePopover({id,anchor,onClose,children}:{
   id:string;anchor:RefObject<HTMLButtonElement|null>;onClose:()=>void;children:ReactNode;
 }){
+  useTranslation();
   const panel=useRef<HTMLDivElement>(null);
   useLayoutEffect(()=>{
     const element=panel.current,trigger=anchor.current;if(!element||!trigger)return;
@@ -36,7 +39,7 @@ export function SessionUsagePopover({id,anchor,onClose,children}:{
   return createPortal(<div className="host-usage-layer" onPointerDown={event=>{
     if(event.target===event.currentTarget){event.preventDefault();dismiss(false);}
   }}>
-    <div ref={panel} id={id} className="host-usage-content" role="region" aria-label="Token 用量详情" tabIndex={-1}
+    <div ref={panel} id={id} className="host-usage-content" role="region" aria-label={i18n.t("sessions:usageDetails")} tabIndex={-1}
       onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();dismiss(true);}}}
       onBlur={event=>{if(event.relatedTarget&&!event.currentTarget.contains(event.relatedTarget))onClose();}}>
       {children}

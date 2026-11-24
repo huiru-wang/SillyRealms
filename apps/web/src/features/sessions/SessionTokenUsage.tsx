@@ -1,3 +1,5 @@
+import {useTranslation} from 'react-i18next';
+import {i18n} from '../../i18n/instance.ts';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { api } from '../../api';
@@ -10,6 +12,7 @@ import {
 export function SessionTokenUsage({ sessionId, refreshKey }: {
   sessionId: string; refreshKey: number;
 }) {
+  useTranslation();
   const [usage, setUsage] = useState<RecordedUsage | null>(null);
   const [loading, setLoading] = useState(true), [error, setError] = useState(false);
   const [expanded, setExpanded] = useState(false), [retry, setRetry] = useState(0);
@@ -31,47 +34,47 @@ export function SessionTokenUsage({ sessionId, refreshKey }: {
   }, [sessionId, refreshKey, retry]);
 
   const composition = usage?.latestContext?.contextComposition;
-  const contextParts = useMemo(() => contextSegments(composition), [composition]);
+  const contextParts = useMemo(() => contextSegments(composition), [composition,i18n.resolvedLanguage]);
   const cumulative = usage?.knownUsage;
-  const cumulativeParts = useMemo(() => cumulative ? cumulativeSegments(cumulative) : [], [cumulative]);
+  const cumulativeParts = useMemo(() => cumulative ? cumulativeSegments(cumulative) : [], [cumulative,i18n.resolvedLanguage]);
   const hitRate = usage ? cacheHitRate(usage) : null;
 
-  return <section className="host-usage" aria-label="Token 用量统计">
+  return <section className="host-usage" aria-label={i18n.t("sessions:tokenUsage")}>
     <button ref={trigger} className="host-usage-toggle" type="button" aria-expanded={expanded} aria-controls={expanded?panelId:undefined} onClick={() => setExpanded(value => !value)}>
-      用量{expanded ? <ChevronUp size={15} aria-hidden="true" /> : <ChevronDown size={15} aria-hidden="true" />}
+      {i18n.t("sessions:usage")}{expanded ? <ChevronUp size={15} aria-hidden="true" /> : <ChevronDown size={15} aria-hidden="true" />}
     </button>
     {expanded && <SessionUsagePopover id={panelId} anchor={trigger} onClose={()=>setExpanded(false)}>
-      {error && <div className="host-usage-error" role="status">{usage ? '刷新失败，当前显示上次统计' : '统计暂不可用'} <button type="button" onClick={() => setRetry(value => value + 1)} aria-label="重试读取 Token 用量"><RefreshCw size={13} /></button></div>}
-      {loading && !usage ? <div className="host-usage-loading" role="status">正在读取用量…</div> : usage && <>
-        <section className="host-usage-context" aria-label="最近上下文组成">
+      {error && <div className="host-usage-error" role="status">{usage ? i18n.t("sessions:usageRefreshFailed") : i18n.t("sessions:usageUnavailable")} <button type="button" onClick={() => setRetry(value => value + 1)} aria-label={i18n.t("sessions:retryUsage")}><RefreshCw size={13} /></button></div>}
+      {loading && !usage ? <div className="host-usage-loading" role="status">{i18n.t("sessions:loadingUsage")}</div> : usage && <>
+        <section className="host-usage-context" aria-label={i18n.t("sessions:recentContext")}>
           <div className="host-usage-heading">
-            <strong>模型上下文</strong>
+            <strong>{i18n.t("sessions:modelContext")}</strong>
             <span className="host-usage-context-total">
-              {usage.latestContext ? contextSummary(usage.latestContext) : '暂无请求快照'}
-              {usage.latestContext?.stale && <em>旧快照</em>}
+              {usage.latestContext ? contextSummary(usage.latestContext) : i18n.t("sessions:noRequestSnapshot")}
+              {usage.latestContext?.stale && <em>{i18n.t("sessions:staleSnapshot")}</em>}
             </span>
           </div>
           {contextParts.length > 0 ? <>
-            <div className="host-usage-bar" role="img" aria-label={'上下文组成（编译字节）：' + contextParts.map(item => item.label + ' ' + percent(item.ratio)).join('，')}>
+            <div className="host-usage-bar" role="img" aria-label={i18n.t("sessions:contextBreakdown") + contextParts.map(item => item.label + ' ' + percent(item.ratio)).join(' · ')}>
               {contextParts.map(item => <span key={item.key} className={'host-usage-segment ' + item.key} style={{ width: (item.ratio * 100) + '%', background: item.color }} title={item.label + ' · ' + percent(item.ratio)}>{item.ratio >= .14 && <span>{item.label}</span>}</span>)}
             </div>
-            <p className="host-usage-caption">组成按编译上下文字节占比展示（含约定消息开销），不代表各类实际计费 Token。</p>
+            <p className="host-usage-caption">{i18n.t("sessions:contextBytesHint")}</p>
           </> : <div className="host-usage-no-breakdown">{usage.latestContext === undefined
-            ? '服务端未提供上下文快照' : usage.latestContext ? '这次请求未记录上下文组成' : '尚无上下文快照'}</div>}
+            ? i18n.t("sessions:contextNotProvided") : usage.latestContext ? i18n.t("sessions:contextNotRecorded") : i18n.t("sessions:noContext")}</div>}
           <div className="host-usage-legend">
-            <span><i className="system" />系统</span><span><i className="summary" />摘要</span><span><i className="history" />历史消息</span>
+            <span><i className="system" />{i18n.t("sessions:system")}</span><span><i className="summary" />{i18n.t("sessions:summary")}</span><span><i className="history" />{i18n.t("sessions:history")}</span>
           </div>
         </section>
-        <section className="host-usage-cumulative" aria-label="会话累计 Token 消耗">
-          <div className="host-usage-heading"><strong>会话累计</strong><span className="host-usage-context-total"><b>{full(cumulative!.totalTokens)}</b> Tokens</span></div>
-          <div className="host-usage-bar cumulative" role="img" aria-label={'累计输入 ' + full(cumulative!.inputTokens) + '，输出 ' + full(cumulative!.outputTokens) + '，缓存读取 ' + full(cumulative!.cacheReadTokens) + '，缓存写入 ' + full(cumulative!.cacheWriteTokens)}>
+        <section className="host-usage-cumulative" aria-label={i18n.t("sessions:totalTokenUsage")}>
+          <div className="host-usage-heading"><strong>{i18n.t("sessions:sessionTotal")}</strong><span className="host-usage-context-total"><b>{full(cumulative!.totalTokens)}</b> Tokens</span></div>
+          <div className="host-usage-bar cumulative" role="img" aria-label={i18n.t("sessions:cumulativeDescription",{input:full(cumulative!.inputTokens),output:full(cumulative!.outputTokens),read:full(cumulative!.cacheReadTokens),write:full(cumulative!.cacheWriteTokens)})}>
             {cumulativeParts.map(item => <span key={item.key} className={'host-usage-segment ' + item.key} style={{ width: (item.ratio * 100) + '%', background: item.color }} title={item.label + ' ' + full(item.value)} />)}
           </div>
           <div className="host-usage-legend cumulative">
             {cumulativeParts.map(item => <span key={item.key}><i className={item.key} />{item.label} {compact(item.value)}</span>)}
-            {hitRate !== null && <span className="host-usage-cache-hit">缓存命中：{percent(hitRate)}</span>}
+            {hitRate !== null && <span className="host-usage-cache-hit">{i18n.t("sessions:cacheHit")}{percent(hitRate)}</span>}
           </div>
-          {usage.unknownUsageRequestCount > 0 && <div className="host-usage-caption incomplete">有 {usage.unknownUsageRequestCount} 次已记录模型请求未取得用量，累计值不完整。</div>}
+          {usage.unknownUsageRequestCount > 0 && <div className="host-usage-caption incomplete">{i18n.t("sessions:unknownRequests",{count:usage.unknownUsageRequestCount})}</div>}
         </section>
       </>}
     </SessionUsagePopover>}

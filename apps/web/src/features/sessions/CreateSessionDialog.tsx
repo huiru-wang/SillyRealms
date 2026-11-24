@@ -1,3 +1,6 @@
+import {errorKey} from '../../i18n/errors.ts';
+import {useTranslation} from 'react-i18next';
+import {i18n} from '../../i18n/instance.ts';
 import {randomId} from '../../random-id';
 import {useEffect,useRef,useState} from 'react';
 import {useNavigate} from 'react-router-dom';
@@ -17,6 +20,7 @@ import {initialSessionSelection} from './creation';
 import {WorldAssetImage} from '../../world-assets';
 import worldStyles from '../worlds/WorldDetailPage.module.css';
 export function CreateSessionDialog({onClose,worldId:initialWorldId,lockedWorld=false,worldContext}:{onClose:()=>void;worldId:string;lockedWorld?:boolean;worldContext?:{characterId:string;openingId:string;openingName:string}}){
+  useTranslation();
  const navigate=useNavigate(),{modelsRevision,refreshSessions}=useManagement(),presets=usePresetStore();
  const worlds=usePagedResource<WorldSummary>('v1/worlds?limit=100',0,true);
  const models=usePagedResource<ModelConfig>('v1/api-model-configs?limit=100',modelsRevision,true);
@@ -50,23 +54,23 @@ export function CreateSessionDialog({onClose,worldId:initialWorldId,lockedWorld=
     result=recovered;
    }
    refreshSessions();onClose();navigate('/sessions/'+encodeURIComponent(result.item.id));
-  }catch(reason){setError(reason instanceof Error?reason.message:'创建失败');}
+  }catch(reason){setError(errorKey(reason,"common:createFailed"));}
   finally{pending.current=false;setBusy(false);}
  };
- return <Modal title="创建会话" onBeforeClose={()=>!pending.current} onClose={onClose} footer={<><Button disabled={busy} onClick={onClose}>取消</Button><Button variant="primary" disabled={!valid} loading={busy} onClick={()=>void submit()}>创建会话</Button></>}>
+ return <Modal title={i18n.t("sessions:create")} onBeforeClose={()=>!pending.current} onClose={onClose} footer={<><Button disabled={busy} onClick={onClose}>{i18n.t("common:cancel")}</Button><Button variant="primary" disabled={!valid} loading={busy} onClick={()=>void submit()}>{i18n.t("sessions:create")}</Button></>}>
   {worldContext?<><dl className={worldStyles.startSummary}>
-   <div><dt>当前开局</dt><dd>{worldContext.openingName}</dd></div>
-   <div><dt>扮演角色</dt><dd><span className={worldStyles.startAvatar} aria-hidden="true"><WorldAssetImage worldId={worldId} source={selectedRole?.avatar}/></span><span>{selectedRole?.name??'正在读取角色…'}</span></dd></div>
-  </dl><p>确认后将应用所选开局，初始化会话状态并保存首条消息。</p></>:<p>选择世界、开局、玩家身份及绑定配置，开始新的会话。</p>}
+   <div><dt>{i18n.t("sessions:currentOpening")}</dt><dd>{worldContext.openingName}</dd></div>
+   <div><dt>{i18n.t("sessions:playAs")}</dt><dd><span className={worldStyles.startAvatar} aria-hidden="true"><WorldAssetImage worldId={worldId} source={selectedRole?.avatar}/></span><span>{selectedRole?.name??i18n.t("sessions:loadingCharacters")}</span></dd></div>
+  </dl><p>{i18n.t("sessions:openingConfirmation")}</p></>:<p>{i18n.t("sessions:createDescription")}</p>}
   <div className="editor-form">
-   {!worldContext&&<><label>标题<Input aria-label="会话标题" value={title} disabled={busy} onChange={e=>setTitle(e.target.value)} placeholder="可留空"/></label>
-   <label>世界<Select aria-label="世界" value={worldId} disabled={busy||lockedWorld} onChange={e=>{setWorldId(e.target.value);setOpening('');setCharacter('');setPreset('');setModel('');setError('');}}><option value="">选择世界</option>{worldId&&!worlds.page?.items.some(w=>w.id===worldId)&&<option value={worldId}>{world.value?.item.name??"当前世界"}</option>}{worlds.page?.items.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</Select></label>
-   <label>开局<Select aria-label="会话开局" value={opening} disabled={busy||world.loading} onChange={e=>setOpening(e.target.value)}><option value="">选择开局</option>{openings.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</Select></label>
-   <label>玩家角色<Select aria-label="玩家角色" value={character} disabled={busy||world.loading} onChange={e=>{setCharacter(e.target.value);}}><option value="">选择可扮演角色</option>{roles.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</Select></label></>}
-   <label>预设<Select aria-label="会话预设" value={preset} disabled={busy} onChange={e=>setPreset(e.target.value)}><option value="">选择预设</option>{presets.presets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></label>
-   <label>模型<Select aria-label="会话模型" value={model} disabled={busy} onChange={e=>setModel(e.target.value)}><option value="">选择模型</option>{models.page?.items.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</Select></label>
+   {!worldContext&&<><label>{i18n.t("common:title")}<Input aria-label={i18n.t("sessions:title")} value={title} disabled={busy} onChange={e=>setTitle(e.target.value)} placeholder={i18n.t("sessions:optional")}/></label>
+   <label>{i18n.t("common:world")}<Select aria-label={i18n.t("common:world")} value={worldId} disabled={busy||lockedWorld} onChange={e=>{setWorldId(e.target.value);setOpening('');setCharacter('');setPreset('');setModel('');setError('');}}><option value="">{i18n.t("sessions:chooseWorld")}</option>{worldId&&!worlds.page?.items.some(w=>w.id===worldId)&&<option value={worldId}>{world.value?.item.name??i18n.t("sessions:currentWorld")}</option>}{worlds.page?.items.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</Select></label>
+   <label>{i18n.t("sessions:opening")}<Select aria-label={i18n.t("sessions:openingLabel")} value={opening} disabled={busy||world.loading} onChange={e=>setOpening(e.target.value)}><option value="">{i18n.t("sessions:chooseOpening")}</option>{openings.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</Select></label>
+   <label>{i18n.t("sessions:playerCharacter")}<Select aria-label={i18n.t("sessions:playerCharacter")} value={character} disabled={busy||world.loading} onChange={e=>{setCharacter(e.target.value);}}><option value="">{i18n.t("sessions:chooseCharacter")}</option>{roles.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</Select></label></>}
+   <label>{i18n.t("common:presets")}<Select aria-label={i18n.t("sessions:presetLabel")} value={preset} disabled={busy} onChange={e=>setPreset(e.target.value)}><option value="">{i18n.t("sessions:choosePreset")}</option>{presets.presets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></label>
+   <label>{i18n.t("common:models")}<Select aria-label={i18n.t("sessions:modelLabel")} value={model} disabled={busy} onChange={e=>setModel(e.target.value)}><option value="">{i18n.t("sessions:chooseModel")}</option>{models.page?.items.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</Select></label>
   </div>
-  {worlds.page?.items.length===0&&<p>当前 Server 中还没有世界数据，暂时无法创建会话。</p>}
+  {worlds.page?.items.length===0&&<p>{i18n.t("sessions:noWorlds")}</p>}
   {(worlds.loading||world.loading||models.loading||presets.loading)&&<Loading/>}
   {error&&<ErrorNotice message={error}/>}{worlds.error&&<ErrorNotice message={worlds.error} onRetry={worlds.reload}/>}{world.error&&<ErrorNotice message={world.error} onRetry={world.reload}/>}{models.error&&<ErrorNotice message={models.error} onRetry={models.reload}/>}{presets.error&&<ErrorNotice message={presets.error} onRetry={presets.reload}/>}
  </Modal>;

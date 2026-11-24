@@ -1,8 +1,9 @@
+import {i18n} from '../../i18n/instance.ts';
 export const samplingFields = [
-  { key: 'temperature', label: '温度', min: 0, max: 2, initial: 1, help: '值越低，措辞越稳定。' },
-  { key: 'topP', label: 'Top P', min: 0, max: 1, initial: 1, help: '值越低，下一步可选的词越少。' },
-  { key: 'frequencyPenalty', label: '频率惩罚', min: -2, max: 2, initial: 0, help: '正值抑制反复用词，重复越多，抑制越强。' },
-  { key: 'presencePenalty', label: '存在惩罚', min: -2, max: 2, initial: 0, help: '正值降低已用词再次出现的机会。' },
+  { key: 'temperature', get label() { return i18n.t('presets:temperature'); }, min: 0, max: 2, initial: 1, get help() { return i18n.t('presets:lowerValuesProduceMoreConsistentWording'); } },
+  { key: 'topP', label: 'Top P', min: 0, max: 1, initial: 1, get help() { return i18n.t('presets:lowerValuesNarrowTheNextWordChoices'); } },
+  { key: 'frequencyPenalty', get label() { return i18n.t('presets:frequencyPenalty'); }, min: -2, max: 2, initial: 0, get help() { return i18n.t('presets:positiveValuesDiscourageRepeatedWordsMoreStrongly'); } },
+  { key: 'presencePenalty', get label() { return i18n.t('presets:presencePenalty'); }, min: -2, max: 2, initial: 0, get help() { return i18n.t('presets:positiveValuesReduceTheChanceOfReusing'); } },
 ] as const;
 export type SamplingField = typeof samplingFields[number];
 export type SamplingKey = SamplingField['key'];
@@ -17,8 +18,8 @@ export function samplingNumber(value: number | string): number {
 export function samplingError(field: SamplingField, value: number | string | undefined): string | null {
   if (value === undefined) return null;
   const number = samplingNumber(value);
-  if (!Number.isFinite(number)) return '请输入有效的' + field.label + '数值。';
-  if (number < field.min || number > field.max) return field.label + '必须在 ' + field.min + ' 到 ' + field.max + ' 之间。';
+  if (!Number.isFinite(number)) return i18n.t('presets:invalidSamplingValue',{label:field.label});
+  if (number < field.min || number > field.max) return i18n.t('presets:samplingRange',{label:field.label,min:field.min,max:field.max});
   return null;
 }
 

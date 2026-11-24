@@ -64,6 +64,27 @@ function compactHistory(snapshot: ContextSnapshot, selectedModel: typeof model,
 }
 
 describe('compiled context composition', () => {
+  it.each([['zh-CN', '简体中文'], ['en', 'English'], ['ja', '日本語']] as const)('keeps %s for every history candidate and expands it only in preset source text', (locale, language) => {
+    services.settings.ensure({ locale, defaultPresetId: null, defaultApiModelConfigId: null });
+    services.worlds.update('world', {
+      characters: [{ id: 'player', name: 'Player', player_selectable: true, prompt: 'Author {{system.language}}' }],
+    });
+    append('prior', 'assistant', 'Earlier reply');
+    const snapshot = capture('Input {{system.language}}');
+    snapshot.preset.config.nodes.find(node => node.id === 'main')!.prompt = 'Language={{system.language}}';
+    snapshot.preset.config.nodes.find(node => node.id === 'personaInfo')!.prompt = '{{persona.prompt}}';
+    services.settings.update({ locale: 'zh-CN' });
+
+    const evaluate = createCandidateEvaluator(snapshot, model, services.state);
+    for (const entries of [snapshot.historyEntries, snapshot.historyEntries.slice(1)]) {
+      const compiled = evaluate(entries, '');
+      expect(compiled.messages[0]?.content).toBe('Language=' + language);
+      expect(compiled.messages.map(message => message.content)).toContain('Author {{system.language}}');
+      expect(compiled.messages.map(message => message.content)).toContain('Input {{system.language}}');
+    }
+    expect(captureContext(services, 'session').locale).toBe('zh-CN');
+  });
+
   it('rechecks visible roots for every candidate without rescanning material or rereading inherited state', () => {
     const token = '{{state.message.coins}}';
     services.worlds.update('world', {

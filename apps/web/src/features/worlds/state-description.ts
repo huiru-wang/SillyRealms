@@ -1,3 +1,4 @@
+import {i18n} from '../../i18n/instance.ts';
 import {validateStateSchema, type Json, type StateDefinition, type StateSchema, type StateScope} from '@sillyrealms/sdk/state-validation';
 
 export type StateDescriptionNode = {
@@ -72,7 +73,7 @@ export function describeWorldState(state: StateSchema | undefined): StateDescrip
 }
 
 export function stateDescriptionLabel(node: StateDescriptionNode): string {
-  return node.key === '[]' ? '每项' : node.key;
+  return node.key === '[]' ? i18n.t('worlds:eachItem') : node.key;
 }
 
 export function shouldEnterStateDetail(mobile: boolean, depth: number): boolean {

@@ -1,11 +1,12 @@
+import {i18n} from '../../i18n/instance.ts';
 
 export async function readWorldDownload(response:Response,fallback:string){
  if(!response.ok){
   const error=await response.json().catch(()=>null) as {errorCode?:string;errorMessage?:string}|null;
-  throw new Error(error?.errorMessage??'下载失败，请重试');
+  throw new Error(error?.errorMessage??i18n.t('worlds:downloadFailedTryAgain'));
  }
  const disposition=response.headers.get('Content-Disposition');
- if(!disposition?.startsWith('attachment;'))throw new Error('下载响应无效');
+ if(!disposition?.startsWith('attachment;'))throw new Error(i18n.t('worlds:invalidDownloadResponse'));
  let name=fallback;
  const encoded=/filename\*=UTF-8''([^;]+)/i.exec(disposition),plain=/filename="([^"]+)"/.exec(disposition);
  if(encoded){try{name=decodeURIComponent(encoded[1]);}catch{}}else if(plain)name=plain[1];

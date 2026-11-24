@@ -1,3 +1,6 @@
+import {errorMessage} from '../../i18n/errors.ts';
+import {i18n} from '../../i18n/instance.ts';
+import {useTranslation} from 'react-i18next';
 import { SamplingRow } from './SamplingRow';
 import { samplingFields } from './sampling';
 import {PageHeader} from '../../components/ui/PageHeader';
@@ -17,18 +20,6 @@ import { presetMenuPlacement } from './menu-placement';
 import type { PromptValue } from './PromptEditorDialog';
 import styles from './Presets.module.css';
 
-const THINKING_LEVELS: { value: PresetThinkingLevel; label: string }[] = [
-  { value: 'minimal', label: '极低' },
-  { value: 'low', label: '低' },
-  { value: 'medium', label: '中等' },
-  { value: 'high', label: '高' },
-  { value: 'xhigh', label: '更高' },
-  { value: 'max', label: '最高' },
-];
-const STRATEGIES: { id: ContextStrategy; label: string; hint: string }[] = [
-  { id: 'rolling_summary', label: '滚动摘要', hint: '整理较早对话，保留最近内容。' },
-  { id: 'sliding_window', label: '滑动窗口', hint: '保留最近对话，移出较早内容。' },
-];
 // Primary: node order and prompt content. Save remains the single primary action.
 // Reuse Presets.module.css spacing, typography and Web theme tokens.
 type Dialog = { kind: 'reloadPreset' } | { kind: 'summary' } | { kind: 'node'; node: PresetNode; isNew: boolean; insertAt?: number } | { kind: 'deletePreset' } | { kind: 'deleteNode'; node: PresetNode };
@@ -36,11 +27,23 @@ type DropTarget = { id: string; after: boolean };
 type Drag = { id: string; pointerId: number; startY: number; x: number; y: number; active: boolean; target: DropTarget | null; frame: number; handle: HTMLButtonElement; dispose: () => void };
 
 function roleLabel(role: string) {
-  return role === 'auto' ? '原始角色' : role.charAt(0).toUpperCase() + role.slice(1);
+  return role === 'auto' ? i18n.t('presets:originalRoles') : role.charAt(0).toUpperCase() + role.slice(1);
 }
 
-
 export function PresetLibraryPage() {
+  const {t} = useTranslation('presets');
+  const STRATEGIES: { id: ContextStrategy; label: string; hint: string }[] = [
+  { id: 'rolling_summary', label: t('rollingSummary'), hint: t('summarizeEarlierConversationAndKeepRecentTurns') },
+  { id: 'sliding_window', label: t('slidingWindow'), hint: t('keepRecentTurnsAndRemoveEarlierOnes') },
+];
+  const THINKING_LEVELS: { value: PresetThinkingLevel; label: string }[] = [
+  { value: 'minimal', label: t('minimal') },
+  { value: 'low', label: t('low') },
+  { value: 'medium', label: t('medium') },
+  { value: 'high', label: t('high') },
+  { value: 'xhigh', label: t('extraHigh') },
+  { value: 'max', label: t('maximum') },
+];
   const store = usePresetStore();
   const { presets, draftById, defaultPresetId, isDirty, editPreset, savePreset, revertPreset, createPreset, duplicatePreset, deletePreset, setDefaultPreset, getDefaultPrompt } = store;
   const { presetId } = useParams<{ presetId?: string }>();
@@ -51,8 +54,9 @@ export function PresetLibraryPage() {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
   const menuPanelRef = useRef<HTMLDivElement>(null);
-  const [status, setStatus] = useState('');
-  const [error, setError] = useState('');
+  const [status, setStatus] = useState<{key:string;values?:Record<string,string|number>}|null>(null);
+  const statusText = status ? t(status.key,status.values ?? {}) : '';
+  const [error, setError] = useState<Error|string>('');
   const [dragId, setDragId] = useState<string | null>(null);
   const [drop, setDrop] = useState<DropTarget | null>(null);
   const contentRef = useRef<HTMLFormElement>(null);
@@ -70,17 +74,17 @@ export function PresetLibraryPage() {
     cancelCurrentDrag();
     const element = contentRef.current;
     if (element) element.scrollTop = positions.current.get(selectedId ?? '') ?? 0;
-    setDialog(null); setMenu(null); setError(''); setStatus('');
+    setDialog(null); setMenu(null); setError(''); setStatus(null);
     return () => { if (element && selectedId) positions.current.set(selectedId, element.scrollTop); };
   }, [selectedId]);
   useEffect(() => {
     if (!error) return;
-    setStatus('');
+    setStatus(null);
     contentRef.current?.scrollTo({ top: 0, behavior: 'instant' });
   }, [error]);
   useEffect(() => {
     if (!status) return;
-    const timer = window.setTimeout(() => setStatus(''), 3200);
+    const timer = window.setTimeout(() => setStatus(null), 3200);
     return () => window.clearTimeout(timer);
   }, [status]);
   useLayoutEffect(() => {
@@ -146,11 +150,11 @@ export function PresetLibraryPage() {
     if (preset) editPreset(preset.id, current => ({ ...current, ...patch }));
     setError('');
   }
-  async function perform(fn:()=>Promise<unknown>){try{await fn();}catch(error){setError(error instanceof Error?error.message:'操作失败');}}
+  async function perform(fn:()=>Promise<unknown>){try{await fn();}catch(error){setError(error instanceof Error?error:t('operationFailed'));}}
   async function save(event: FormEvent) {
     event.preventDefault();if(!preset)return;
     const validation=getPresetValidationError(preset);if(validation){setError(validation);return;}
-    await perform(async()=>{await savePreset(preset.id);setError('');setStatus('预设已保存');});
+    await perform(async()=>{await savePreset(preset.id);setError('');setStatus({key:'presetSaved'});});
   }
   function select(id:string){navigate('/presets/'+encodeURIComponent(id));}
   function create(){void perform(async()=>{const id=await createPreset();select(id);requestAnimationFrame(()=>nameRef.current?.select());});}
@@ -165,11 +169,11 @@ export function PresetLibraryPage() {
     const next = [...preset.nodes];
     const [node] = next.splice(from, 1); next.splice(to, 0, node);
     update({ nodes: next });
-    setStatus(node.name + '已移至第 ' + (to + 1) + ' 位');
+    setStatus({key:'nodeMoved',values:{name:node.name,position:to+1}});
     setMenu(null);
     requestAnimationFrame(() => {
       const moved = groupRef.current?.querySelector<HTMLElement>('[data-custom-node="' + CSS.escape(id) + '"]');
-      moved?.querySelector<HTMLButtonElement>('button[aria-label^="拖动节点："]')?.focus({ preventScroll: true });
+      moved?.querySelector<HTMLButtonElement>('button[data-node-drag-handle]')?.focus({ preventScroll: true });
       moved?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
     });
   }
@@ -250,7 +254,7 @@ export function PresetLibraryPage() {
       const targetIndex = nodes.findIndex(node => node.id === target.id);
       if (item?.kind === 'text' && targetIndex >= 0) {
         nodes.splice(targetIndex + (target.after ? 1 : 0), 0, item);
-        update({ nodes }); setStatus('节点顺序已更新');
+        update({ nodes }); setStatus({key:'nodeOrderUpdated'});
       }
     }
     setDragId(null); setDrop(null);
@@ -266,35 +270,35 @@ export function PresetLibraryPage() {
     return <div className={styles.nodeRow} key={node.id} data-preset-node={node.id}
       data-custom-node={custom ? node.id : undefined} data-disabled={!node.enabled}
       data-dragging={dragId === node.id} data-drop={drop?.id === node.id ? (drop.after ? 'after' : 'before') : undefined}>
-      {custom ? <button type="button" className={styles.dragHandle} aria-label={'拖动节点：' + node.name} title="拖动排序，或使用方向键上移、下移"
+      {custom ? <button type="button" className={styles.dragHandle} data-node-drag-handle aria-label={t('presets:dragNode',{name:node.name})} title={t('dragToReorderOrUseTheArrow')}
         onPointerDown={event => beginDrag(event, node.id)}
         onKeyDown={event => {
           if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {event.preventDefault(); cancelCurrentDrag(); moveNode(node.id, event.key === 'ArrowUp' ? -1 : 1);}
           if (event.key === 'Escape' && drag.current) {event.preventDefault(); cancelCurrentDrag();}
         }}><GripVertical size={16} /></button>
         : <span className={styles.nodeLead} aria-hidden="true">{node.id === 'main' ? <SlidersHorizontal size={16} /> : <FileText size={16} />}</span>}
-      <button type="button" className={styles.nodeMain} aria-label={node.id === 'main' ? '编辑叙事风格' : '编辑节点：' + node.name}
+      <button type="button" className={styles.nodeMain} data-node-edit aria-label={node.id === 'main' ? t('presets:editNarrativeStyle') : t('presets:editNode',{name:node.name})}
         onClick={() => setDialog({kind: 'node', node, isNew: false})}>
         <span title={node.name}>{node.name}</span>
-        <small>{roleLabel(node.role)} · {custom ? '自定义' : optional ? '后置处理' : '始终启用'}{!node.enabled && ' · 已关闭'}</small>
+        <small>{roleLabel(node.role)} · {custom ? t('custom') : optional ? t('postprocessing') : t('alwaysEnabled')}{!node.enabled && t('disabled')}</small>
       </button>
       {custom || optional
-        ? <Switch checked={node.enabled} label={custom ? '启用节点：' + node.name : '启用' + node.name}
+        ? <Switch checked={node.enabled} label={t('presets:enableNode',{name:node.name})}
           onChange={() => changeNode(node.id, current => ({...current, enabled: !current.enabled}))} />
-        : <span className={styles.nodeFixed} title="始终启用" aria-hidden="true"><LockKeyhole size={14} /></span>}
+        : <span className={styles.nodeFixed} title={t('alwaysEnabled')} aria-hidden="true"><LockKeyhole size={14} /></span>}
       <div className={styles.menuAnchor} data-preset-menu>
-        <IconButton size="compact" icon={<MoreHorizontal size={16}/>} aria-label={'更多节点操作：' + node.name} aria-expanded={menu === menuKey} data-menu-trigger={menuKey} onClick={() => setMenu(menu === menuKey ? null : menuKey)}/>
-        {menu === menuKey && <div ref={menuPanelRef} className={styles.menuPanel} role="group" aria-label="节点操作">
+        <IconButton size="compact" icon={<MoreHorizontal size={16}/>} aria-label={t('presets:moreNodeActions',{name:node.name})} aria-expanded={menu === menuKey} data-menu-trigger={menuKey} onClick={() => setMenu(menu === menuKey ? null : menuKey)}/>
+        {menu === menuKey && <div ref={menuPanelRef} className={styles.menuPanel} role="group" aria-label={t('nodeActions')}>
           {custom && <>
-            <button type="button" autoFocus disabled={index === 0} onClick={() => moveNode(node.id, -1)}><ArrowUp size={14} />上移</button>
-            <button type="button" disabled={index === preset!.nodes.length - 1} onClick={() => moveNode(node.id, 1)}><ArrowDown size={14} />下移</button>
+            <button type="button" autoFocus disabled={index === 0} onClick={() => moveNode(node.id, -1)}><ArrowUp size={14} />{t('moveUp')}</button>
+            <button type="button" disabled={index === preset!.nodes.length - 1} onClick={() => moveNode(node.id, 1)}><ArrowDown size={14} />{t('moveDown')}</button>
             <div className={styles.menuDivider} />
           </>}
-          <button type="button" autoFocus={!custom} onClick={() => {focusMenuTrigger(menuKey); setMenu(null); openCustom(index);}}><Plus size={14} />在上方插入</button>
-          <button type="button" onClick={() => {focusMenuTrigger(menuKey); setMenu(null); openCustom(index + 1);}}><Plus size={14} />在下方插入</button>
+          <button type="button" autoFocus={!custom} onClick={() => {focusMenuTrigger(menuKey); setMenu(null); openCustom(index);}}><Plus size={14} />{t('insertAbove')}</button>
+          <button type="button" onClick={() => {focusMenuTrigger(menuKey); setMenu(null); openCustom(index + 1);}}><Plus size={14} />{t('insertBelow')}</button>
           {custom && <>
             <div className={styles.menuDivider} />
-            <button type="button" onClick={() => {focusMenuTrigger(menuKey); setDialog({kind: 'deleteNode', node}); setMenu(null);}}><Trash2 size={14} />删除节点</button>
+            <button type="button" onClick={() => {focusMenuTrigger(menuKey); setDialog({kind: 'deleteNode', node}); setMenu(null);}}><Trash2 size={14} />{t('deleteNode')}</button>
           </>}
         </div>}
       </div>
@@ -318,90 +322,90 @@ export function PresetLibraryPage() {
   }
 
   return <section className={styles.page} data-preset-workspace data-detail={!!presetId}>
-    <PageHeader title="预设" className={styles.pageHeader} identityClassName={styles.pageIdentity} actions={<>
-      <UploadButton aria-label="导入预设" accept=".json,application/json" disabled={store.busy} onChange={event=>{const file=event.target.files?.[0];if(file)void perform(async()=>select(await store.importPreset(await file.text())));}}>导入</UploadButton>
-      <Button variant={presetId?'secondary':'primary'} disabled={store.busy} aria-label="新建预设" icon={<Plus size={16}/>} onClick={create}>新建预设</Button>
+    <PageHeader title={t('presets')} className={styles.pageHeader} identityClassName={styles.pageIdentity} actions={<>
+      <UploadButton aria-label={t('importPreset')} accept=".json,application/json" disabled={store.busy} onChange={event=>{const file=event.target.files?.[0];if(file)void perform(async()=>select(await store.importPreset(await file.text())));}}>{t('import')}</UploadButton>
+      <Button variant={presetId?'secondary':'primary'} disabled={store.busy} aria-label={t('newPreset')} icon={<Plus size={16}/>} onClick={create}>{t('newPreset')}</Button>
     </>}/>
 
     <div className={styles.workspace}>
-      <section className={styles.library} aria-label="预设库">{store.loading&&<p role="status">正在加载预设…</p>}{store.error&&<p role="alert">{store.error}<button onClick={()=>void store.reload()}>重试</button></p>}
-        <div className={styles.presetList} data-preset-list tabIndex={0} aria-label="预设列表">
+      <section className={styles.library} aria-label={t('presetLibrary')}>{store.loading&&<p role="status">{t('loadingPresets')}</p>}{store.error&&<p role="alert">{errorMessage(store.error)}<button onClick={()=>void store.reload()}>{t('retry')}</button></p>}
+        <div className={styles.presetList} data-preset-list tabIndex={0} aria-label={t('presetList')}>
           {presets.map(item => <button key={item.id} type="button" className={styles.presetItem}
             data-preset-item={item.id} aria-pressed={item.id === selectedId} onClick={() => select(item.id)}>
-            <span className={styles.itemHeading}><strong data-preset-title title={item.name}>{item.name || '未命名预设'}</strong>
-              {isDirty(item.id) && <span className={styles.dirtyDot} title="未保存" aria-label="未保存" />}
-              {item.id === defaultPresetId && <span className={styles.defaultState}>默认</span>}
+            <span className={styles.itemHeading}><strong data-preset-title title={item.name}>{item.name || t('untitledPreset')}</strong>
+              {isDirty(item.id) && <span className={styles.dirtyDot} title={t('unsaved')} aria-label={t('unsaved')} />}
+              {item.id === defaultPresetId && <span className={styles.defaultState}>{t('default')}</span>}
             </span>
-            <span data-preset-description className={styles.itemDescription} title={item.description || undefined}>{item.description || '暂无描述'}</span>
+            <span data-preset-description className={styles.itemDescription} title={item.description || undefined}>{item.description || t('noDescription')}</span>
           </button>)}
-          {!presets.length && <div className={styles.emptyList}><Layers3 size={24} /><p>还没有预设</p>
-            <Button size="compact" variant="ghost" onClick={create}>创建第一个预设</Button>
+          {!presets.length && <div className={styles.emptyList}><Layers3 size={24} /><p>{t('noPresetsYet')}</p>
+            <Button size="compact" variant="ghost" onClick={create}>{t('createYourFirstPreset')}</Button>
           </div>}
         </div>
       </section>
 
-      <section className={styles.editor} aria-label="预设配置">
-        {selectedId&&store.detailsLoading[selectedId]&&<p role="status">正在加载预设详情…</p>}
-        {selectedId&&store.detailErrors[selectedId]&&<p role="alert">{store.detailErrors[selectedId]}<Button onClick={()=>void store.loadDetail(selectedId,true)}>重试</Button></p>}
-        {preset&&store.conflicts[preset.id]&&<div role="alert"><p>预设已被其他操作修改。草稿已保留，可复制为新预设或读取服务端版本。</p><Button onClick={()=>setDialog({kind:'reloadPreset'})}>读取服务端版本</Button></div>}
+      <section className={styles.editor} aria-label={t('presetConfiguration')}>
+        {selectedId&&store.detailsLoading[selectedId]&&<p role="status">{t('loadingPresetDetails')}</p>}
+        {selectedId&&store.detailErrors[selectedId]&&<p role="alert">{errorMessage(store.detailErrors[selectedId])}<Button onClick={()=>void store.loadDetail(selectedId,true)}>{t('retry')}</Button></p>}
+        {preset&&store.conflicts[preset.id]&&<div role="alert"><p>{t('thisPresetChangedElsewhereYourDraftIs')}</p><Button onClick={()=>setDialog({kind:'reloadPreset'})}>{t('loadServerVersion')}</Button></div>}
         <div className={styles.editorHeader}>
-          <button type="button" className={styles.listBack} aria-label="返回预设列表" onClick={() => navigate('/presets')}><ArrowLeft size={16} /><span>预设列表</span></button>
+          <button type="button" className={styles.listBack} aria-label={t('backToPresets')} onClick={() => navigate('/presets')}><ArrowLeft size={16} /><span>{t('presetList')}</span></button>
           {preset && <>
-            <div className={styles.editorIdentity}><h2 title={preset.name}>{preset.name || '未命名预设'}</h2>
-              <span className={styles.saveState} data-dirty={dirty}>{dirty ? <><span className={styles.dirtyDot} />未保存</> : <><Check size={12} />已保存</>}</span>
+            <div className={styles.editorIdentity}><h2 title={preset.name}>{preset.name || t('untitledPreset')}</h2>
+              <span className={styles.saveState} data-dirty={dirty}>{dirty ? <><span className={styles.dirtyDot} />{t('unsaved')}</> : <><Check size={12} />{t('saved')}</>}</span>
             </div>
             <div className={styles.editorActions}>
               <div className={styles.menuAnchor} data-preset-menu>
-                <IconButton icon={<MoreHorizontal size={19}/>} aria-label="更多预设操作" aria-expanded={menu === 'preset'} data-menu-trigger="preset" onClick={() => setMenu(menu === 'preset' ? null : 'preset')}/>
-                {menu === 'preset' && <div ref={menuPanelRef} className={styles.menuPanel} role="group" aria-label="预设操作">
-                  <button type="button" autoFocus disabled={preset.id === defaultPresetId} onClick={() => { void perform(async()=>{await setDefaultPreset(preset.id);closeMenu('preset');setStatus('已设为默认预设');}); }}><Star size={14} />设为默认</button>
-                  <button type="button" onClick={() => { void perform(async()=>{const id=await duplicatePreset(preset.id);setMenu(null);select(id);}); }}><Copy size={14} />复制预设</button>
-                  <button type="button" disabled={!dirty} onClick={() => { revertPreset(preset.id); closeMenu('preset'); setError(''); setStatus('已恢复保存的版本'); }}><Undo2 size={14} />放弃更改</button>
-                  <a href={'/api/v1/presets/'+encodeURIComponent(preset.id)+'/export'}>导出已保存预设</a><div className={styles.menuDivider} />
-                  <button type="button" onClick={() => { focusMenuTrigger('preset'); setDialog({ kind: 'deletePreset' }); setMenu(null); }}><Trash2 size={14} />删除预设</button>
+                <IconButton icon={<MoreHorizontal size={19}/>} aria-label={t('morePresetActions')} aria-expanded={menu === 'preset'} data-menu-trigger="preset" onClick={() => setMenu(menu === 'preset' ? null : 'preset')}/>
+                {menu === 'preset' && <div ref={menuPanelRef} className={styles.menuPanel} role="group" aria-label={t('presetActions')}>
+                  <button type="button" autoFocus disabled={preset.id === defaultPresetId} onClick={() => { void perform(async()=>{await setDefaultPreset(preset.id);closeMenu('preset');setStatus({key:'setAsTheDefaultPreset'});}); }}><Star size={14} />{t('setAsDefault')}</button>
+                  <button type="button" onClick={() => { void perform(async()=>{const id=await duplicatePreset(preset.id);setMenu(null);select(id);}); }}><Copy size={14} />{t('duplicatePreset')}</button>
+                  <button type="button" disabled={!dirty} onClick={() => { revertPreset(preset.id); closeMenu('preset'); setError(''); setStatus({key:'restoredTheSavedVersion'}); }}><Undo2 size={14} />{t('discardChanges')}</button>
+                  <a href={'/api/v1/presets/'+encodeURIComponent(preset.id)+'/export'}>{t('exportSavedPreset')}</a><div className={styles.menuDivider} />
+                  <button type="button" onClick={() => { focusMenuTrigger('preset'); setDialog({ kind: 'deletePreset' }); setMenu(null); }}><Trash2 size={14} />{t('deletePreset')}</button>
                 </div>}
               </div>
-              <Button type="submit" form={formId} variant="primary" aria-label="保存预设" disabled={!dirty||store.busy}>保存预设</Button>
+              <Button type="submit" form={formId} variant="primary" aria-label={t('savePreset')} disabled={!dirty||store.busy}>{t('savePreset')}</Button>
             </div>
           </>}
         </div>
-        {preset ? <form id={formId} key={preset.id} ref={contentRef} noValidate onSubmit={save} className={styles.editorContent} data-preset-content tabIndex={0} aria-label="预设配置内容">
-          {error && <p className={styles.formError} role="alert">{error}</p>}
+        {preset ? <form id={formId} key={preset.id} ref={contentRef} noValidate onSubmit={save} className={styles.editorContent} data-preset-content tabIndex={0} aria-label={t('presetConfigurationContent')}>
+          {error && <p className={styles.formError} role="alert">{errorMessage(error)}</p>}
           <section className={styles.formSection} aria-labelledby={formId + '-basic'} data-preset-section="basic">
-            <div className={styles.sectionHeading}><h3 id={formId + '-basic'}>基本信息</h3></div>
+            <div className={styles.sectionHeading}><h3 id={formId + '-basic'}>{t('basicInformation')}</h3></div>
             <div className={styles.basicFields}>
-              <label className={styles.field}>预设名称<Input ref={nameRef} aria-label="预设名称" required value={preset.name} onChange={event => update({ name: event.target.value })} /></label>
-              <label className={styles.field}>预设描述<Input aria-label="预设描述" placeholder="简短描述这个预设的叙事方式" value={preset.description} onChange={event => update({ description: event.target.value })} /></label>
+              <label className={styles.field}>{t('presetName')}<Input ref={nameRef} aria-label={t('presetName')} required value={preset.name} onChange={event => update({ name: event.target.value })} /></label>
+              <label className={styles.field}>{t('presetDescription')}<Input aria-label={t('presetDescription')} placeholder={t('brieflyDescribeThisPresetSStorytellingStyle')} value={preset.description} onChange={event => update({ description: event.target.value })} /></label>
             </div>
           </section>
           <section className={styles.formSection} aria-labelledby={formId + '-model'} data-preset-section="model">
-            <div className={styles.sectionHeading}><h3 id={formId + '-model'}>模型参数</h3></div>
-            <p className={styles.samplingHint}>预设可跨模型使用。调用时仅应用当前模型支持的值。</p>
+            <div className={styles.sectionHeading}><h3 id={formId + '-model'}>{t('modelParameters')}</h3></div>
+            <p className={styles.samplingHint}>{t('presetsCanBeUsedAcrossModelsOnly')}</p>
             <div className={styles.settingsGroup}>
               {samplingFields.map(field => <SamplingRow key={field.key} field={field} value={preset[field.key]}
                 onChange={value => update({ [field.key]: value })} />)}
               <div className={styles.parameterRow}>
                 <div className={styles.settingCopy}>
-                  <label htmlFor={formId + '-thinking'}>深度思考</label>
-                  <p id={formId + '-thinking-help'}>对支持思考的模型生效，通常需要更长时间。</p>
+                  <label htmlFor={formId + '-thinking'}>{t('reasoning')}</label>
+                  <p id={formId + '-thinking-help'}>{t('appliesToModelsWithReasoningSupportAnd')}</p>
                 </div>
-                <Switch id={formId + '-thinking'} checked={preset.thinkingEnabled} label="开启深度思考" describedBy={formId + '-thinking-help'} onChange={() => update({ thinkingEnabled: !preset.thinkingEnabled })} />
+                <Switch id={formId + '-thinking'} checked={preset.thinkingEnabled} label={t('enableReasoning')} describedBy={formId + '-thinking-help'} onChange={() => update({ thinkingEnabled: !preset.thinkingEnabled })} />
               </div>
               <div className={styles.parameterRow}>
                 <div className={styles.settingCopy}>
-                  <label htmlFor={formId + '-thinking-level'}>思考深度</label>
-                  <p id={formId + '-thinking-level-help'}>开启深度思考后生效；不支持所选级别时使用默认深度。</p>
+                  <label htmlFor={formId + '-thinking-level'}>{t('reasoningLevel')}</label>
+                  <p id={formId + '-thinking-level-help'}>{t('appliesWhenReasoningIsEnabledUnsupportedLevels')}</p>
                 </div>
-                <Select className={styles.parameterInput} id={formId + '-thinking-level'} aria-label="思考深度" aria-describedby={formId + '-thinking-level-help'} disabled={!preset.thinkingEnabled} value={preset.thinkingLevel??''} onChange={event => update({ thinkingLevel: event.target.value ? event.target.value as PresetThinkingLevel : undefined })}>
-                  <option value="">默认</option>
+                <Select className={styles.parameterInput} id={formId + '-thinking-level'} aria-label={t('reasoningLevel')} aria-describedby={formId + '-thinking-level-help'} disabled={!preset.thinkingEnabled} value={preset.thinkingLevel??''} onChange={event => update({ thinkingLevel: event.target.value ? event.target.value as PresetThinkingLevel : undefined })}>
+                  <option value="">{t('default')}</option>
                   {THINKING_LEVELS.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}
                 </Select>
               </div>
             </div>
           </section>
           <section className={styles.formSection} aria-labelledby={formId + '-context'} data-preset-section="context">
-            <div className={styles.sectionHeading}><h3 id={formId + '-context'}>上下文</h3></div>
-            <fieldset className={styles.strategyField}><legend>历史整理方式</legend>
+            <div className={styles.sectionHeading}><h3 id={formId + '-context'}>{t('context')}</h3></div>
+            <fieldset className={styles.strategyField}><legend>{t('historyStrategy')}</legend>
               <div className={styles.strategies}>{STRATEGIES.map(strategy => <label key={strategy.id} className={styles.strategyChoice}>
                 <input type="radio" name={'strategy-' + preset.id} value={strategy.id} checked={preset.contextStrategy === strategy.id} onChange={() => update({ contextStrategy: strategy.id })} />
                 <span className={styles.strategyBody}>
@@ -411,62 +415,62 @@ export function PresetLibraryPage() {
               </label>)}</div>
             </fieldset>
             <div className={styles.budgetRow}>
-              <label className={styles.field}>最大上下文输入<div className={styles.numberField}><Input aria-label="最大上下文输入" type="number" required min={2} step={1} value={preset.maxContextTokens || ''} onChange={event => update({ maxContextTokens: Number(event.target.value) })} /><span>tokens</span></div></label>
-              <label className={styles.field}>最大输出长度<div className={styles.numberField}><Input aria-label="最大输出长度" type="number" required min={1} step={1} value={preset.maxOutputTokens || ''} onChange={event => update({ maxOutputTokens: Number(event.target.value) })} /><span>tokens</span></div></label>
+              <label className={styles.field}>{t('maximumInputContext')}<div className={styles.numberField}><Input aria-label={t('maximumInputContext')} type="number" required min={2} step={1} value={preset.maxContextTokens || ''} onChange={event => update({ maxContextTokens: Number(event.target.value) })} /><span>tokens</span></div></label>
+              <label className={styles.field}>{t('maximumOutputLength')}<div className={styles.numberField}><Input aria-label={t('maximumOutputLength')} type="number" required min={1} step={1} value={preset.maxOutputTokens || ''} onChange={event => update({ maxOutputTokens: Number(event.target.value) })} /><span>tokens</span></div></label>
             </div>
             <button type="button" className={styles.summaryButton} onClick={() => setDialog({ kind: 'summary' })}>
-              <FileText size={16} aria-hidden="true" /><span><strong>压缩提示词</strong><small>{preset.contextStrategy === 'sliding_window' ? '滑动窗口不使用摘要' : '编辑整理历史时使用的提示词'}</small></span><ChevronRight size={16} aria-hidden="true" />
+              <FileText size={16} aria-hidden="true" /><span><strong>{t('summaryPrompt')}</strong><small>{preset.contextStrategy === 'sliding_window' ? t('slidingWindowsDoNotUseSummaries') : t('editThePromptUsedToSummarizeHistory')}</small></span><ChevronRight size={16} aria-hidden="true" />
             </button>
           </section>
           <section className={styles.formSection} aria-labelledby={formId + '-nodes'} data-preset-section="nodes">
             <div className={styles.sectionHeading}>
-              <h3 id={formId + '-nodes'}>提示词编排</h3>
-              <Button size="compact" variant="ghost" icon={<Plus size={15}/>} aria-label="添加自定义节点" onClick={() => openCustom()}>自定义节点</Button>
+              <h3 id={formId + '-nodes'}>{t('promptArrangement')}</h3>
+              <Button size="compact" variant="ghost" icon={<Plus size={15}/>} data-add-node aria-label={t('addCustomNode')} onClick={() => openCustom()}>{t('customNode')}</Button>
             </div>
             <div className={styles.nodeStack} ref={groupRef} data-preset-nodes>
               {preset.nodes.map(nodeRow)}
             </div>
-            <p className={styles.fieldHelp}>按列表顺序构建提示词。自定义节点可插入任意位置，系统节点保持先后顺序。</p>
+            <p className={styles.fieldHelp}>{t('promptsFollowTheListOrderCustomNodes')}</p>
           </section>
-        </form> : <div className={styles.emptyEditor}><Layers3 size={32} /><h2>{presetId ? '找不到这个预设' : '从一个预设开始'}</h2><p>{presetId ? '预设可能已被删除，请返回列表选择。' : '创建预设，设置你的叙事风格。'}</p><Button onClick={presetId ? () => navigate('/presets') : create}>{presetId ? '返回预设列表' : '新建预设'}</Button></div>}
+        </form> : <div className={styles.emptyEditor}><Layers3 size={32} /><h2>{presetId ? t('presetNotFound') : t('startWithAPreset')}</h2><p>{presetId ? t('thisPresetMayHaveBeenDeletedReturn') : t('createAPresetToDefineYourStorytelling')}</p><Button onClick={presetId ? () => navigate('/presets') : create}>{presetId ? t('backToPresets') : t('newPreset')}</Button></div>}
       </section>
     </div>
-    <div className={styles.srOnly} role="status" aria-live="polite">{status}</div>
-    {status && <div className={styles.toast} aria-hidden="true"><Check size={14} />{status}</div>}
+    <div className={styles.srOnly} role="status" aria-live="polite">{statusText}</div>
+    {status && <div className={styles.toast} aria-hidden="true"><Check size={14} />{statusText}</div>}
 
     {preset && dialog && (dialog.kind === 'summary' || dialog.kind === 'node') && <PromptEditorDialog
       key={dialog.kind === 'node' ? dialog.node.id : dialog.kind}
-      title={dialog.kind === 'summary' ? '压缩提示词' : dialog.isNew ? '添加自定义节点' : dialog.node.name}
+      title={dialog.kind === 'summary' ? t('summaryPrompt') : dialog.isNew ? t('addCustomNode') : dialog.node.name}
       metadata={dialog.kind === 'node' && dialog.node.kind === 'text'}
       nodeId={dialog.kind === 'node' ? dialog.node.id : undefined}
       initialValue={dialog.kind === 'node' ? dialog.node : {name: '', role: 'system', prompt: preset.summaryPrompt}}
-      description={dialog.kind === 'summary' ? '整理较早的故事内容，保留人物关系、关键事件与尚未完成的线索。'
-        : dialog.node.kind === 'text' ? '设置消息角色，编写提示词并插入所需的系统变量。' : '编辑此节点的提示词，系统变量会在每轮生成时填入。'}
+      description={dialog.kind === 'summary' ? t('summarizeEarlierStoryContentWhilePreservingRelationships')
+        : dialog.node.kind === 'text' ? t('chooseAMessageRoleWriteThePrompt') : t('editThisNodeSPromptSystemVariables')}
       onRestore={dialog.kind === 'node' && dialog.node.kind !== 'text' ? () => getDefaultPrompt(dialog.node.id) : undefined}
       onApply={applyPrompt} onClose={() => setDialog(null)} />}
-    {preset&&dialog?.kind==='reloadPreset'&&<Modal title="读取服务端版本" onClose={()=>setDialog(null)} footer={<><Button onClick={()=>setDialog(null)}>取消</Button><Button variant="primary" onClick={()=>{void store.loadDetail(preset.id,true);setDialog(null);setError('');}}>放弃草稿并读取</Button></>}><p>此预设未保存的编辑将被替换。需要保留时，请先复制预设。</p></Modal>}
-    {preset && dialog?.kind === 'deletePreset'  && <Modal title="删除预设" onClose={() => setDialog(null)}
-      footer={<div className={styles.dialogActions}><Button onClick={() => setDialog(null)}>取消</Button><Button variant="primary" intent="danger" onClick={() => {
+    {preset&&dialog?.kind==='reloadPreset'&&<Modal title={t('loadServerVersion')} onClose={()=>setDialog(null)} footer={<><Button onClick={()=>setDialog(null)}>{t('cancel')}</Button><Button variant="primary" onClick={()=>{void store.loadDetail(preset.id,true);setDialog(null);setError('');}}>{t('discardDraftAndLoad')}</Button></>}><p>{t('unsavedEditsToThisPresetWillBe')}</p></Modal>}
+    {preset && dialog?.kind === 'deletePreset'  && <Modal title={t('deletePreset')} onClose={() => setDialog(null)}
+      footer={<div className={styles.dialogActions}><Button onClick={() => setDialog(null)}>{t('cancel')}</Button><Button variant="primary" intent="danger" onClick={() => {
         const remaining = presets.filter(item => item.id !== preset.id);
         const next = remaining[Math.min(presets.findIndex(item => item.id === preset.id), remaining.length - 1)];
-        void perform(async()=>{await deletePreset(preset.id);setDialog(null);navigate(next?'/presets/'+next.id:'/presets');setStatus('预设已删除');});
-      }}>删除预设</Button></div>}>
-      {error&&<p role="alert">{error}</p>}<p>删除“{preset.name}”及其编辑草稿？</p>{preset.id === defaultPresetId && <p>当前为默认项，请先在设置中更换默认预设。被世界或会话引用的预设不能删除。</p>}
+        void perform(async()=>{await deletePreset(preset.id);setDialog(null);navigate(next?'/presets/'+next.id:'/presets');setStatus({key:'presetDeleted'});});
+      }}>{t('deletePreset')}</Button></div>}>
+      {error&&<p role="alert">{errorMessage(error)}</p>}<p>{t('presets:deleteConfirmation',{name:preset.name})}</p>{preset.id === defaultPresetId && <p>{t('changeTheDefaultPresetInSettingsFirst')}</p>}
     </Modal>}
-    {preset && dialog?.kind === 'deleteNode' && <Modal title="删除节点" onClose={() => setDialog(null)}
-      footer={<div className={styles.dialogActions}><Button onClick={() => setDialog(null)}>取消</Button><Button variant="primary" intent="danger" onClick={() => {
+    {preset && dialog?.kind === 'deleteNode' && <Modal title={t('deleteNode')} onClose={() => setDialog(null)}
+      footer={<div className={styles.dialogActions}><Button onClick={() => setDialog(null)}>{t('cancel')}</Button><Button variant="primary" intent="danger" onClick={() => {
         const index = preset.nodes.findIndex(node => node.id === dialog.node.id);
         const remaining = preset.nodes.filter(node => node.id !== dialog.node.id);
         const next = remaining[index] ?? remaining.at(-1);
         update({ nodes: remaining }); setDialog(null);
         requestAnimationFrame(() => {
           const target = next
-            ? groupRef.current?.querySelector<HTMLButtonElement>('[data-preset-node="' + CSS.escape(next.id) + '"] button[aria-label^="编辑"]')
-            : document.querySelector<HTMLButtonElement>('button[aria-label="添加自定义节点"]');
+            ? groupRef.current?.querySelector<HTMLButtonElement>('[data-preset-node="' + CSS.escape(next.id) + '"] button[data-node-edit]')
+            : document.querySelector<HTMLButtonElement>('button[data-add-node]');
           target?.focus({ preventScroll: true }); target?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
         });
-      }}>删除节点</Button></div>}>
-      <p>从当前预设中删除“{dialog.node.name}”？保存预设后生效。</p>
+      }}>{t('deleteNode')}</Button></div>}>
+      <p>{t('presets:deleteNodeConfirmation',{name:dialog.node.name})}</p>
     </Modal>}
   </section>;
 }

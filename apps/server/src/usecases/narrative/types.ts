@@ -5,6 +5,7 @@ import type { CredentialService } from '../../modules/credentials/service.js';
 import type { ModelService } from '../../modules/models/service.js';
 import type { PresetService } from '../../modules/presets/service.js';
 import type { SessionService } from '../../modules/sessions/service.js';
+import type { SettingsReader } from '../../modules/settings/service.js';
 import type { StateService, StateEvent } from '../../modules/state/service.js';
 import type { WorldService } from '../../modules/worlds/service.js';
 import type { EventHub } from '../../infrastructure/events/event-hub.js';
@@ -29,6 +30,7 @@ export type AcceptedNarrative = {
 };
 
 export type NarrativeDependencies = {
+  settings: Pick<SettingsReader, 'getOptional'>;
   cache: RuntimeCache;
   sessions: SessionService;
   worlds: WorldService;

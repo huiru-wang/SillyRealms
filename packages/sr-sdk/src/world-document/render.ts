@@ -127,3 +127,11 @@ export function renderWorldDocument(source:string,options:{profile:Profile;slots
   doc.querySelectorAll('style').forEach(el=>el.remove());
   return {html:doc.body.innerHTML,head,full,removedStyles,assetErrors};
 }
+
+
+/** Refresh only platform task labels; keep author HTML and mounted components intact. */
+export function localizeDocumentTasks(root: ParentNode, completed: string, incomplete: string): void {
+  for (const element of root.querySelectorAll('.sr-task-marker[role="img"]')) {
+    element.setAttribute('aria-label', element.textContent === '☑' ? completed : incomplete);
+  }
+}

@@ -22,18 +22,18 @@ export function isStatePath(path:unknown):path is string {
   return typeof path==='string'&&path.length>0&&path.split('.').every(isSafeStateKey);
 }
 export function objectValues(value:unknown):StateObject {
-  if(!isStateObject(value)||!isStateValue(value))throw Error('状态响应格式无效');
+  if(!isStateObject(value)||!isStateValue(value))throw Error("sessions:invalidStateResponse");
   return structuredClone(value) as StateObject;
 }
 /** Server resolves inheritance before returning message entries; null means no inherited roots. */
 export function messageValues(value:unknown):StateObject {
   if(value===null)return {};
-  if(!Array.isArray(value))throw Error('消息状态响应格式无效');
+  if(!Array.isArray(value))throw Error("sessions:invalidMessageState");
   const result:StateObject={};
   for(const entry of value){
     if(!isStateObject(entry)||typeof entry.key!=='string'||!isSafeStateKey(entry.key)||
       !Object.hasOwn(entry,'value')||!isStateValue(entry.value)||Object.hasOwn(result,entry.key))
-      throw Error('消息状态响应格式无效');
+      throw Error("sessions:invalidMessageState");
     result[entry.key]=structuredClone(entry.value);
   }
   return result;

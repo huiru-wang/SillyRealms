@@ -115,7 +115,7 @@ entry.role 与 payload.message.role 一致。同轮已有消息共享 runId；re
 
 ## 上下文与首版能力
 
-所有配置来自当前会话的 worldId、userCharacterId、presetId 和 apiModelConfigId，不因应用默认项更新而切换。快照在凭据或模型异步等待前完成，本轮不受后续配置或消息内容编辑影响。
+世界、玩家身份、预设和模型绑定来自当前会话的 worldId、userCharacterId、presetId 和 apiModelConfigId，不因应用默认项更新而切换；输出语言另取应用设置 locale。快照在凭据或模型异步等待前完成，本轮不受后续配置、语言或消息内容编辑影响。
 
 只接受合法的 user/assistant 历史消息，payload.message 的角色须与 entry.role 一致，content 为文本、timestamp 为有效非负数。兼容原来的纯正文 payload；reasoning/tool_calls 不进入正文投影、材料关键词扫描或模型提示词。compaction 独立于普通正文投影；rolling_summary 从新到旧查找覆盖边界与 sourceHash 有效的摘要，忽略无合法元数据、来源被修改或覆盖受保护末轮的摘要；无有效摘要时回到完整原文。实际 tip 为 null 或没有继承消息快照时，message 视图为空；叙事提交不重复初始化 opening，新会话已由创建用例保存首条消息及状态。
 
@@ -127,6 +127,14 @@ entry.role 与 payload.message.role 一致。同轮已有消息共享 runId；re
 
 worldState/actionSuggestions 为默认后处理能力，通过 PresetService.resolvePostprocessPrompts 读取非空配置或补默认提示词，忽略旧 enabled，不修改已存预设和 revision。编译提供最终激活状态与固定协议；固定协议覆盖旧提示词中的数组状态更新、强制非空标签及固定三条限制，并明确状态更新不设固定条数上限。worldState 在任一作用域有激活根时参与。预设节点按模板引用展开 `{{state.global}}`、`{{state.session}}`、`{{state.message}}`，三组分别应用世界卡的加载条件，缺失的快照值标为未设置。前两组提供只读背景，只有已激活的 message 根进入本轮允许写入的路径，与是否有 rules 无关；仅当有规则条目时才输出规则段，组装时不重复校验其格式或要求覆盖。已有预设或导入文件中的 `{{state.entries}}` 在读取时转换为 `{{state.message}}`，保留自定义文本和转义字面量。
 
+### 叙事输出语言
+
+应用设置保存 `locale: "zh-CN" | "en" | "ja"`，默认简体中文。context 通过 SettingsReader 在首次异步等待前捕获 locale，与本轮领域快照一起固定；裁剪、摘要完成后的候选重建都使用该值。运行过程中切换语言只影响下一次上下文准备，发送和重新生成共用此行为。语言不写入会话、消息或世界状态，不翻译已有历史及摘要。
+
+预设节点可插入 `{{system.language}}`，分别替换为 `简体中文`、`English` 或 `日本語`。新的标准叙事 main 已包含叙事正文/行动建议的语言要求，已有预设保持原文与 revision，需要时在编辑器插入变量或恢复该节点默认内容。世界作者素材只保留原有 user/state 插值边界，历史和替换结果不再次解析此变量。摘要提示词仍按原方式直接使用，不新增变量展开。
+
+自然语言输出可以切换；协议标签、JSON 字段名、状态路径、约定状态取值保持原义。语言切换本身不产生状态更新，状态值仍依据事实与作者规则处理。
+
 ### 唯一上下文入口
 
 调用方只使用 context/index.ts 的 prepareContext(dependencies, input) 和显式公开类型，不读取内部 capture、candidate、lib 或 stages。业务输入只有 sessionId；signal、可选 writePermit/onProgress 属于执行控制。入口不接收 kind、runId、userEntryId、previousTipEntryId 或 inputText，不判断调用来源，也不保存用户消息。准备结果包含最终模型请求、最终激活状态根、后续 parentEntryId、已提交摘要回执和准备失败信息；摘要草稿不会交给外层叙事保存。context 编排器经公开 Service 完成摘要持久化，外层负责主调用、run 事件及终态。
@@ -135,7 +143,7 @@ compact 阶段通过候选评估函数重复选择材料、组装最终消息和
 
 PreparedContext 以 ok 判别，成功返回 request 和独立的 diagnostics，失败返回 failure.code；两种结果都有 parentEntryId 和可选 summary:{entryId,metrics}。parentEntryId 表示捕获的实际 tip 或本次新保存摘要的 ID；空会话或尚未捕获成功时为 null。读取构建使用同一快照，摘要持久化前同步复核实际 tip 与原文指纹；发生变化返回 TIP_CONFLICT，不写入过期摘要。request 包含 credentialRef，不包含 API key。本轮摘要与正文的凭据读取在 narrative 闭包内复用，不进入上下文返回值或数据库。
 
-narrative/index.ts 先排入执行微任务，再同步调用 prepareContext；入口在首次 await 前捕获快照，后续准备发生在 run.created 之后。内部进度 summary_started 在凭据就绪、摘要实际调用前发出，summary_saved 在成功保存后发出；外层映射到既有 run.summarizing/run.summarized。
+narrative/index.ts 先排入执行微任务，再同步调用 prepareContext；入口在首次 await 前捕获领域快照及应用语言，后续准备发生在 run.created 之后。内部进度 summary_started 在凭据就绪、摘要实际调用前发出，summary_saved 在成功保存后发出；外层映射到既有 run.summarizing/run.summarized。
 
 ### 条目级模型旁注
 

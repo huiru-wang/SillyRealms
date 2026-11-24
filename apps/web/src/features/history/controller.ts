@@ -1,3 +1,4 @@
+import {errorKey} from '../../i18n/errors.ts';
 import type {AcceptedRun, Entry, StoredRun, RunPage, RunQuery, StageMessage, StageRun, ToolCall} from '../../../../../packages/sr-sdk/src/stage-contract.ts';
 import type {HttpRequest} from '../../transport/http.ts';
 
@@ -13,7 +14,7 @@ export type HistorySnapshot = {
 };
 type Options = {sessionId: string; request: HttpRequest};
 const terminal = (status: StoredRun['status']) => status === 'completed' || status === 'stopped';
-const errorText = (error: unknown) => error instanceof Error ? error.message : '无法读取历史记录';
+const errorText = (error: unknown) => errorKey(error,"sessions:historyFailed");
 
 function entryMessage(entry: Entry): StageMessage | null {
   if (entry.type !== 'message' || (entry.role !== 'user' && entry.role !== 'assistant')) return null;
@@ -146,7 +147,7 @@ export function createHistoryController({sessionId, request}: Options) {
           const next = page.nextAfterSeq;
           emit({runs: ordered, activeRunId: activeFrom(page), afterSeq: Math.max(snapshot.afterSeq, next ?? afterSeq), error: null});
           if (!page.hasMore) return page;
-          if (next === null || next <= afterSeq) throw new Error('历史补查游标未前进');
+          if (next === null || next <= afterSeq) throw new Error("sessions:historyCursorStalled");
           afterSeq = next;
         }
         return last;

@@ -70,7 +70,7 @@ export function startNarrative(dependencies: NarrativeDependencies, session: Ses
     release();
   });
   const prepared: Promise<PreparedContext> = prepareContext({
-    sessions: dependencies.sessions, worlds: dependencies.worlds, presets: dependencies.presets,
+    settings: dependencies.settings, sessions: dependencies.sessions, worlds: dependencies.worlds, presets: dependencies.presets,
     models: dependencies.models, state: dependencies.state, modelClient: dependencies.modelClient, summarize,
   }, {
     sessionId, writePermit, signal: run.controller.signal,

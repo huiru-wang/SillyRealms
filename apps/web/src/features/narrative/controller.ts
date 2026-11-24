@@ -1,3 +1,4 @@
+import {errorKey} from '../../i18n/errors.ts';
 import type {
   AcceptedRun, RegenerateRequest, MessageDeletedEvent, MessageDelta, MessageSnapshot, NarrativeEvent, StageMessage,
   StageRun, StoredRun, Usage,
@@ -25,7 +26,7 @@ export type NarrativeOptions = {
   onTerminal?: (event: TerminalEvent) => void;
 };
 const terminal = (status: StageRun['status']) => status === 'completed' || status === 'stopped';
-const errorText = (error: unknown) => error instanceof Error ? error.message : '叙事请求失败';
+const errorText = (error: unknown) => errorKey(error,"sessions:narrativeFailed");
 
 export function appendMessageDelta(current: MessageSnapshot, delta: MessageDelta): MessageSnapshot {
   const toolCalls = current.tool_calls.map(tool => structuredClone(tool));
@@ -104,9 +105,9 @@ export function createNarrativeController(options: NarrativeOptions) {
     callback(() => options.onAccepted?.(accepted));
   };
   async function submit(text?: string, regeneration?: RegenerateRequest): Promise<AcceptedRun> {
-    if (disposed) throw new Error('叙事客户端已关闭');
-    if (!regeneration && !text?.trim()) throw new Error('输入不能为空');
-    if (snapshot.sending || snapshot.activeRunId) throw new Error('当前会话仍在生成');
+    if (disposed) throw new Error("sessions:clientClosed");
+    if (!regeneration && !text?.trim()) throw new Error("sessions:emptyInput");
+    if (snapshot.sending || snapshot.activeRunId) throw new Error("sessions:alreadyRunning");
     emit({sending: true, error: null});
     try {
       const session = await options.getSession();
@@ -210,7 +211,7 @@ export function createNarrativeController(options: NarrativeOptions) {
     send: (text: string) => submit(text),
     regenerate: (input: RegenerateRequest) => submit(undefined, input),
     async stop(runId = snapshot.activeRunId, assistantEntryId = snapshot.run?.assistantEntryId) {
-      if (!runId || runId !== snapshot.activeRunId || !assistantEntryId || assistantEntryId !== snapshot.run?.assistantEntryId) throw new Error('当前没有可停止的生成');
+      if (!runId || runId !== snapshot.activeRunId || !assistantEntryId || assistantEntryId !== snapshot.run?.assistantEntryId) throw new Error("sessions:nothingToStop");
       emit({stopping: true, error: null});
       try {
         const result = await call<{runId: string; assistantEntryId: string; stopping: true}>(base + '/' + encodeURIComponent(runId) + '/stop', {method: 'POST', body: JSON.stringify({assistantEntryId})});

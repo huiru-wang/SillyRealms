@@ -1,533 +1,714 @@
 # 主动状态更新与 AI 帮答方案
 
-状态：**方案待实施。本次只新增计划文档，不修改业务代码。**
+状态：**方案待实施。本文按 2026-11-23 的最新定义修订：AI 帮答生成输入框草稿；一份预设包含三个独立场景编排。本次只修改计划文档。**
 
-日期：2026-11-23  
-项目：SillyRealms  
-核对基线：main / d250d23；当前目录为 apps/server、apps/web。
+日期：2026-11-23
+项目：SillyRealms
+源码核对基线：main / 4ca2e99；当前目录为 apps/server、apps/web。
+本文整体替代此前“AI 帮答刷新行动候选”和“单 nodes 数组按 scenes 筛选”的方案。
 
-## 1. 结论与范围
+## 1. 结论与功能边界
 
-将“主动更新状态”和“AI 帮答”做成两个明确的**会话辅助操作**：
+建议实施两个独立的会话辅助能力，并同时调整预设结构：
 
-- 各有独立预设模块、独立任务提示词和独立提交入口。
-- 共同复用会话写锁、上下文材料、模型适配、结果解析、保存和事件通知机制。
-- 每次受理最多进行一次目标模型调用，不生成新的故事回复或用户消息。
-- 运行期间锁定会话写入，前端禁输入、发送、重新生成、消息编辑/删除和另一项辅助操作。
-- 状态更新校正已经发生的故事所对应的当前状态；AI 帮答生成下一步候选行动，点击后仅填入草稿。
+1. **AI 帮答**：独立构建上下文、单次调用模型，将正文流式写入发起页面的输入框；结果只作为临时草稿，不保存，不计入会话 usage。
+2. **独立状态更新**：独立构建上下文、单次调用模型，复用主叙事的状态解析、校验和更新计算；结果提交到当前有效助手的状态快照。
+3. **预设**：保留一个预设资源，在其中提供“叙事 / AI 帮答 / 状态更新”三个独立节点编排。每个场景独立排序、启停和编辑正文。
+4. **模型**：叙事继续使用会话选定的模型；两个辅助场景各自可选“跟随会话模型”或指定已有模型配置。模型绑定属于场景，不属于节点。
+5. **用例**：辅助能力进入独立 session-operations 用例，与 narrative 分开；共用锁、context 内部构建能力、模型适配和确实通用的状态后处理。
 
-首版保持功能集中：使用当前会话模型和预设采样参数；预设新模块仅配置 prompt；不增加独立模型选择、启停开关、自动重试、任务队列或任务表。新增模块不会自动执行，也不改变日常叙事的状态更新和行动建议流程。
+### 1.1 AI 帮答与行动建议的区别
 
-### 两项能力的边界
+| 项目 | 主叙事中的行动建议 | AI 帮答 | 独立状态更新 |
+|---|---|---|---|
+| 目的 | 主叙事结束后给出下一步候选 | 帮玩家拟一条准备发送的回复/行动输入 | 补偿遗漏、失败或不满意的状态更新 |
+| 调用 | 主叙事同一次调用的自动能力 | 独立的一次目标模型调用 | 独立的一次目标模型调用 |
+| 输出 | action_suggestions 字符串数组 | 一段用户输入草稿正文 | state_update JSONL |
+| 展示 | 助手消息的候选项，点击填入草稿 | 直接流式填入输入框 | 状态面板及完成提示 |
+| 持久化 | 保存在原助手 output | **不保存结果、消息、output 或操作回执** | 保存有效状态、处理结果及最近回执 |
+| 会话 usage | 已包含在主叙事调用内 | **不计入** | 计入独立状态调用的实际用量 |
+| 对当前候选的影响 | 正常生成/恢复行动建议 | 不替换、不清空现有候选 | 不重新生成行动建议 |
+| 用户后续动作 | 选择候选并自行发送 | 编辑、确认并自行发送 | 查看更新结果，继续会话 |
 
-| 项目 | 主动更新状态 | AI 帮答 |
+AI 帮答不再使用“换一组建议”、三选项、50 字限制或 action_suggestions 协议。用户以后发送生成草稿，按普通用户消息进入叙事；这不补记先前帮答调用的 usage。
+
+独立状态更新与主叙事的更新权限和应用规则一致：global/session 只读，只有本次激活的 message 根及已有路径可写，使用绝对值替换。独立之处在于请求和调用，不是另造一套状态引擎。状态规则是提示信息，不是写入授权。
+
+## 2. 当前源码依据
+
+下表区分当前事实与拟议变更；本方案没有把旧目录或其他计划当成已实现能力。
+
+| 当前事实 | 源码依据 | 本次影响 |
 |---|---|---|
-| 用户目的 | 自动更新遗漏、失败，或结果不符合故事事实时主动校正 | 自动行动建议失败，或用户想换一组选择 |
-| 输入 | 最新历史、世界/角色信息、状态定义与规则、当前状态、最新回复前状态 | 最新历史、世界/角色信息、当前状态和已有候选 |
-| 输出 | message 范围内已有可写路径的最终值 | 新的一组候选行动 |
-| 生效对象 | 最新有效 AI 回复关联的状态快照 | 最新有效 AI 回复下的建议 |
-| 不产生的副作用 | 不续写故事，不顺便重生成行动建议 | 不改变状态，不代替用户发送或执行行动 |
-| 失败 | 保留旧状态和旧能力结果 | 保留原候选和草稿 |
+| 预设只有一套 nodes，内置节点具有固定相对顺序；配置与便携格式有显式映射 | [schema.ts](../apps/server/src/modules/presets/schema.ts)、[repository.ts](../apps/server/src/modules/presets/repository.ts)、[card.ts](../apps/server/src/modules/presets/card.ts) | 改为三个场景节点数组，贯通校验、编辑、复制、导入导出 |
+| worldState 同时包含状态资料与更新指令，后处理 prompt 解析忽略 enabled | [postprocess.ts](../apps/server/src/modules/presets/postprocess.ts)、[标准叙事.json](../initial-data/presets/标准叙事.json) | 新默认模板拆开资料和规则，运行时必须真正遵守能力开关 |
+| narrative 公共入口包含 submit/regenerate/stop/list/usage/shutdown | [narrative/index.ts](../apps/server/src/usecases/narrative/index.ts)、[routes/narrative.ts](../apps/server/src/routes/narrative.ts) | 保持叙事接口边界，不把辅助任务塞入 submit 的 mode |
+| context 捕获会话模型，叙事 prepare 可能发起摘要调用并追加 compaction | [capture.ts](../apps/server/src/usecases/context/capture.ts)、[prepare.ts](../apps/server/src/usecases/context/prepare.ts) | 在捕获时解析场景模型，辅助入口采用只读历史准备 |
+| 预算根据所选模型窗口、输出上限和 1024 预留计算 | [budget.ts](../apps/server/src/usecases/context/lib/budget.ts)、[assemble/index.ts](../apps/server/src/usecases/context/stages/assemble/index.ts) | 实际辅助模型必须在编译和预算前确定 |
+| collectModel 已提供 onDelta、最终 snapshot 和取消处理 | [collect.ts](../apps/server/src/infrastructure/model/collect.ts) | AI 帮答复用模型基础设施，不经过叙事 run.delta 流 |
+| 状态与建议有独立后处理函数；状态无变化返回 snapshot:null | [state-update.ts](../apps/server/src/usecases/narrative/postprocess/state-update.ts)、[action-suggestions.ts](../apps/server/src/usecases/narrative/postprocess/action-suggestions.ts) | 只提取真正共用的状态处理；更新旧消息时不能将 null 当作覆盖值 |
+| 会话写锁由 RuntimeCache 统一管理，许可按对象身份校验 | [cache/index.ts](../apps/server/src/infrastructure/cache/index.ts) | 三种调用使用同一会话锁 |
+| 普通消息编辑不能伪造 output；usage 从保存的请求计量聚合 | [sessions/service.ts](../apps/server/src/modules/sessions/service.ts)、[output.ts](../apps/server/src/modules/sessions/output.ts) | AI 分支不进入保存链；状态分支新增受控提交 |
+| 模型删除及凭据清理由用例协调，预设 JSON 内引用不受现有外键保护 | [model-config.ts](../apps/server/src/usecases/model-config.ts)、[services.ts](../apps/server/src/services.ts) | 增加固定场景模型的保存校验与删除引用检查 |
+| 日志会过滤凭据，但不会自动删除生成正文 | [run-logger.ts](../apps/server/src/infrastructure/logging/run-logger.ts) | AI 日志仅保留元信息，不注册完整 response/snapshot 记录 |
+| 更多菜单目前只有重新生成；composer 仍传 disabled=false，setDraft 没有辅助忙态保护 | [ComposerMoreMenu.tsx](../apps/web/src/features/sessions/ComposerMoreMenu.tsx)、[SessionPage.tsx](../apps/web/src/features/sessions/SessionPage.tsx) | 增加入口、草稿流写入所有权及真实禁编辑 |
+| 会话 SSE 显式注册事件，Stage 目前只有叙事运行投影 | [session-events.ts](../apps/web/src/transport/session-events.ts)、[stage-contract.ts](../packages/sr-sdk/src/stage-contract.ts) | 补辅助运行元信息和统一忙态，不广播帮答正文 |
 
-**状态补偿的定位是“校正当前状态”，不是重放整段历史结算。** 首版与现有自动状态更新保持同一写入权限：global/session 只作只读背景，只有本次激活的 message 状态根及已有路径可写。状态 rules 是提示信息，不作为写权限；权限继续由声明、激活范围和结构校验决定。
+[WorldStory 消息操作方案](WorldStory-消息操作方案.md) 中尚未实施的消息编辑/批删不纳入本次实现；现有与未来消息写入均须遵守统一服务端锁。
 
-## 2. 当前实现依据
+## 3. 预设结构：接受三个编排，保留一个资源
 
-以下是本方案核对过的当前源码，而非按旧版 serverV2 推测。
+### 3.1 为什么不继续使用 nodes + scenes
 
-| 已有能力或限制 | 源码依据 | 对方案的影响 |
-|---|---|---|
-| 预设包含 nodes、contextStrategy、modelParameters，领域/存储/导出有显式映射 | [schema.ts](../apps/server/src/modules/presets/schema.ts)、[repository.ts](../apps/server/src/modules/presets/repository.ts)、[card.ts](../apps/server/src/modules/presets/card.ts) | 两个模块要贯通编辑、保存、复制、导入导出，不能只改 UI |
-| 主叙事锁覆盖持久化到结算，全局状态也受同世界运行锁约束 | [cache/index.ts](../apps/server/src/infrastructure/cache/index.ts)、[narrative/index.ts](../apps/server/src/usecases/narrative/index.ts) | 扩展现有同一把会话锁，不另外建立互不相知的辅助锁 |
-| prepareContext 固定编译叙事请求，可能调用摘要并推进 tip | [context/prepare.ts](../apps/server/src/usecases/context/prepare.ts)、[assemble/index.ts](../apps/server/src/usecases/context/stages/assemble/index.ts) | 复用内部材料与预算能力，增加两个具名辅助上下文入口 |
-| 状态/建议有独立解析器，状态使用 JSONL 和绝对值替换 | [state-update.ts](../apps/server/src/usecases/narrative/postprocess/state-update.ts)、[action-suggestions.ts](../apps/server/src/usecases/narrative/postprocess/action-suggestions.ts) | 提取共享处理能力；主动调用额外要求目标标签必须存在 |
-| output 目前随新助手追加，普通消息编辑不能伪造 output | [sessions/service.ts](../apps/server/src/modules/sessions/service.ts)、[output.ts](../apps/server/src/modules/sessions/output.ts) | 新增受控更新已有助手结果的保存入口 |
-| 状态处理器无变化时返回 snapshot:null | [state-update.ts](../apps/server/src/usecases/narrative/postprocess/state-update.ts) | 补偿旧助手时不能把 null 直接写入，避免撤销现有快照 |
-| 用量读取目前把最新 requests 最后一项当主请求 | [sessions/service.ts](../apps/server/src/modules/sessions/service.ts) | 追加辅助计量后必须修正主上下文引用 |
-| 更多菜单当前只有重新生成；输入框仍传 disabled=false | [ComposerMoreMenu.tsx](../apps/web/src/features/sessions/ComposerMoreMenu.tsx)、[SessionPage.tsx](../apps/web/src/features/sessions/SessionPage.tsx) | 增加入口并真正禁编辑，不能只禁止发送 |
-| run.created 清理旧建议；建议恢复依赖原助手 output | [suggestions/controller.ts](../apps/web/src/features/suggestions/controller.ts) | 独立操作不能冒充 run.created；成功结果要可持久恢复 |
-| 浏览器显式注册 SSE 事件，Stage 只有现有叙事忙态 | [session-events.ts](../apps/web/src/transport/session-events.ts)、[stage-contract.ts](../packages/sr-sdk/src/stage-contract.ts) | 同步增加辅助操作事件、查询和忙态投影 |
+用户新增的独立编排要求包括：顺序可不同、节点可不同、同类节点的正文也可不同。单一 nodes 数组加场景标签只能选择子集，不能自然表达三个独立顺序和正文。
 
-现有 [WorldStory 消息操作方案](WorldStory-消息操作方案.md) 中的任意消息编辑/批删仍是另一个待实施范围。本方案要求其未来沿用统一写锁，不把那份计划当成已经上线的消息按钮，也不顺带实施整套编辑/批删能力。
+| 配置方式 | 独立顺序与正文 | 维护特点 | 选择 |
+|---|---|---|---|
+| 一份 nodes 加 scenes | 共享顺序和正文；要独立就继续加变体 | 初期简单，后续例外不断增加 | 不采用 |
+| 一个预设内三个独立 nodes | 直接支持 | 编辑当前场景只影响当前场景 | **推荐** |
+| 共享节点库、场景引用、局部覆盖 | 可以支持 | 要解释共享修改、覆盖优先级、脱离引用、删除影响 | 当前收益不足，暂不做 |
+| 三个各自管理的预设资源 | 可以支持 | 会话要配三份，复制/导入/保存生命周期分裂 | 不采用 |
 
-## 3. 预设模块
+担心“又变成三个预设”有道理：**编排层面确实有三份配置**，不能同时要求任意独立修改和完全没有模板重复。这里保留的是统一的资源管理：一个 presetId、一个名称、一次选择、一次保存、一个 revision、一套复制和导入导出流程。
 
-### 3.1 页面组织
+不引入共享节点引用、节点变体、继承链或自动联动。以后若确实出现大量跨场景长文本同步需求，再单独评估显式复用；不预先建设节点库。
 
-在预设详情中增加两个与“模型参数”“上下文”“提示词编排”同级的模块：
+### 3.2 复用与独立的边界
 
-| 模块名称 | 说明 | 首版编辑项 |
-|---|---|---|
-| 状态独立更新 | 用户主动更新状态时使用 | prompt、恢复默认 |
-| AI 帮答 | 用户主动生成候选行动时使用 | prompt、恢复默认 |
+| 内容 | 设计 |
+|---|---|
+| 玩家身份、角色、世界书、历史、状态的实际数据 | 来自同一会话/世界，运行时按当前材料规则读取，不复制到预设 |
+| 系统变量、材料激活、历史窗口、预算和模型适配 | 共享代码 |
+| 初始模板 | 由统一默认模板构造三个场景；创建后各自编辑 |
+| 节点顺序、enabled、角色与 prompt 包装文字 | 所属场景独立保存 |
+| 自定义约束长文本 | 首版各场景独立；需要复用时显式复制，复制后不联动 |
+| 公共参数、上下文策略 | 预设保留公共默认；辅助场景可有单层参数/限额覆盖 |
+| 预设资源身份与版本 | 三场景统一 |
 
-保留现有提示词编排里的 worldState、actionSuggestions 节点，供日常叙事尾部自动输出使用。独立 prompt 不加入 nodes，不参与节点排序，也不在每轮普通叙事中注入。
+例如三个场景都使用 {{world.lore}}，重复的是几行包装模板，不是三份世界书数据。角色、历史和状态亦如此。运行时材料还会受保留历史、激活条件和所选模型预算影响，三个请求不承诺恰好注入相同的材料集合。
 
-模块显示“使用会话当前模型”，不要求额外配置。共用预设的会话使用同一套辅助 prompt，但只在用户点击时执行；操作的状态和结果仍属于发起会话。
-
-### 3.2 配置与兼容
-
-领域和 HTTP 配置增加：
+### 3.3 配置示意
 
 ~~~typescript
-config.standaloneStateUpdate = { prompt: string };
-config.aiReply = { prompt: string };
+type Scene = 'narrative' | 'ai_reply' | 'state_update';
+
+type PromptNode = {
+  id: string; // 只在所属场景内唯一
+  name: string;
+  kind: 'system' | 'postprocess' | 'text';
+  role: 'system' | 'user' | 'assistant' | 'auto';
+  enabled: boolean;
+  prompt: string;
+};
+
+type PromptFlow = {
+  nodes: PromptNode[];
+};
+
+type AuxiliaryFlow = PromptFlow & {
+  apiModelConfigId: string | null; // null = 跟随会话模型
+  modelParameters?: Partial<ModelParameters>;
+  limits?: {
+    maxContextTokens?: number;
+    maxOutputTokens?: number;
+  };
+};
+
+type PresetConfigV2 = {
+  schemaVersion: 2;
+  contextStrategy: ContextStrategy; // 保留当前公共配置
+  modelParameters: ModelParameters;
+  scenes: {
+    narrative: PromptFlow;
+    ai_reply: AuxiliaryFlow;
+    state_update: AuxiliaryFlow;
+  };
+};
 ~~~
 
-- SQLite 的 config_json 沿用已有字段映射风格，增加 standalone_state_update、ai_reply。
-- 便携预设文件增加同名 snake_case 模块，与 config_json/context_strategy/model_parameters 同级。
-- 旧预设和旧导入文件缺少模块时，在读取/规范化时补默认；不批量覆写数据库、不增加 revision，也不清空历史。
-- 用户显式保存空白 prompt 时校验拒绝，使用“恢复默认”回填有效内容。
-- 编辑、另存/复制、导出再导入必须完整保留两个模块；保留 expectedRevision 冲突校验。
-- 默认内容放在 initial-data/presets/标准叙事.json；default.ts 继续读取发行资源，避免复制一份完整默认模板。
-- 兼容属于 JSON 配置扩展，首版不增加表或数据库列。
+这是建议的领域结构；存储/便携字段继续遵循项目各自的编码约定。不同时保留一份可写顶层 nodes 和三份场景 nodes，避免双重事实源。preset.type 可继续使用现有 narrative，类型更名不作为本功能前提。
 
-复用现有 PromptEditorDialog，但增加明确的独立任务编辑模式，不伪造 nodeId。使用现有严格模板语法，变量帮助只显示辅助上下文支持的纯文本变量；历史、摘要和输入由上下文入口统一装配，禁止引用 history.messages、history.summary、input.text。默认 prompt 不需要自行插入历史。
+两个辅助场景的参数覆盖全为 optional，仅一层缺省合并；没有覆盖就用公共默认。必须保留显式 0 和 false，不能把当前 thinkingEnabled.default(false) 直接用于覆盖 schema。narrative 的模型仍由 session.apiModelConfigId 决定，不再设置第二个叙事模型来源。
 
-### 3.3 默认提示词建议
+## 4. 三个场景需要哪些节点
 
-**状态独立更新：**
+### 4.1 默认完整节点矩阵
 
-~~~text
-你负责校正当前会话状态，不续写故事。
+下表的同名节点属于各自场景，**没有共享引用或编辑联动**。“必需”指结构必需；“默认”可按依赖规则调整；“可选”控制叙事自动能力。
 
-依据已保存的会话事实、状态定义、字段规则、最新回复前状态和当前状态，判断目前应有的最终值。重点检查最新 AI 回复造成的变化，较早历史只作为背景或明确事实依据。
+| 节点 | 叙事 | AI 帮答 | 独立状态更新 |
+|---|---|---|---|
+| main | 必需：叙事任务 | 必需：生成一条玩家输入草稿 | 必需：补偿当前状态 |
+| personaInfo | 默认 | 默认，确定以谁的身份回复 | 默认，理解主体及身份 |
+| characterInfo | 默认 | 默认，符合互动人物与知情范围 | 默认，理解行为与归属 |
+| worldInfo | 默认 | 默认，符合背景和世界规则 | 默认，判断事实及规则 |
+| chatHistory | 必需 | 必需 | 必需 |
+| userInput | 必需，本轮已保存用户输入 | 不包含 | 不包含 |
+| worldState | 默认；启用自动更新时必需 | 默认，只作为背景 | 必需 |
+| stateUpdateRules | 可选，自动状态更新 | 不包含 | 必需 |
+| actionSuggestions | 可选，自动行动建议 | **不包含** | 不包含 |
+| 自定义 text 节点 | 可增删、排序、修改 | 可增删、排序、修改 | 可增删、排序、修改 |
 
-区分已经发生的事实、用户的意图、行动建议和推测。不要把未发生的选项写成状态，也不要重复结算已经生效的变化。
+默认节点数分别为 9 / 6 / 7。三个 main 各自定义任务，不再使用全局 aiReplyMain/stateUpdateMain ID。恢复默认通过 (scene, nodeId) 定位。
 
-对于金币、次数、数量等字段，结合变化前后的状态计算最终值，不在当前值上再次机械增减。已有处理记录仅供参考，不能因缺少某条记录就认定尚未结算。
+默认顺序如下，用户可以在各场景内调整节点顺序：
 
-只修改有充分依据且确实需要校正的可写字段；无依据的字段保持当前值。仅输出服务端要求的状态数据块，不输出故事、行动建议或分析过程。
-~~~
+- 叙事：main → personaInfo → characterInfo → worldInfo → chatHistory → userInput → worldState → stateUpdateRules → actionSuggestions。
+- AI 帮答：main → personaInfo → characterInfo → worldInfo → chatHistory → worldState。
+- 状态更新：main → personaInfo → characterInfo → worldInfo → chatHistory → worldState → stateUpdateRules。
 
-**AI 帮答：**
+平台在最后补入本场景固定输出协议，在请求预览中可见且只读；它不是用户必须额外配置的节点。
 
-~~~text
-根据当前世界、玩家身份、最新会话和当前状态，为用户生成下一步可以选择的行动。
+### 4.2 开关和结构校验
 
-默认给出三个简洁、不同方向或不同推进速度的选项。贴合当前情境和玩家已知信息，不编造已经获得的线索，不替用户决定或执行行动。
+节点不再保存 scenes 字段，也没有跨场景总开关：
 
-已有候选仅供参考，尽量提供有差异的选择，避免只换一种说法重复原选项。每项可直接作为用户下一条输入，不附带解释。
+- 当前场景中的 enabled 只控制当前场景。
+- main、chatHistory 以及该场景其他必需节点固定启用。
+- 关闭叙事 stateUpdateRules，停止叙事自动更新，不影响手动状态更新。
+- 关闭叙事 actionSuggestions，停止自动行动建议，不影响 AI 帮答。
+- 不增加“启用整套 AI 帮答”的额外开关；入口、节点与模型配置已足够表达首版行为。
 
-仅输出服务端要求的行动建议数据块，不续写故事、不更新状态、不输出分析过程。
-~~~
+解除当前所有系统节点必须保持同一固定相对顺序的限制，保留真正的语义约束：一个 main、一次历史、叙事一次已保存输入、辅助场景没有 userInput、所需状态资料和规则齐全。chatHistory 仍以 auto 展开真实消息角色；内置语义节点角色仍受约束，自定义 text 节点可用 system/user/assistant。
 
-格式由平台固定协议保证可解析；用户可调整任务偏好，但不能靠 prompt 改变服务端写入范围和返回格式。
+history.messages 只在本场景 chatHistory 中出现一次，input.text 只在叙事 userInput 中出现一次；使用已有摘要时 history.summary 只注入一次。不允许通过复制一个历史节点造成重复注入。自定义节点不获得绕过这些约束的能力。
 
-## 4. 入口与交互
+kind=postprocess 可暂保留为“能力规则”类别，但不再是运行时强制补回或偷偷追加的特殊通道。新默认 worldState 作为资料节点；stateUpdateRules/actionSuggestions 作为能力规则。所有有效节点按当前场景列表顺序编译。
 
-输入框“更多”菜单包含：重新生成、更新状态、AI 帮答。沿用当前向上展开的菜单、图标、紧凑控件和移动端尺寸；补全多项菜单键盘焦点移动。
+### 4.3 资料、规则和输出授权
 
-### 可操作的目标
+worldState 默认只展示 global/session/message 状态资料，不再混入“续写正文后更新状态”。stateUpdateRules 描述有证据的变化、已有路径和最终绝对值；actionSuggestions 描述候选质量。固定标签和输出格式由平台协议统一提供。
 
-两个操作都针对**当前最后一条普通消息**：该消息必须是 assistant，且自身具有可见正文；其后允许存在 state 严格为 null 的 compaction。若最后一条 assistant 只有推理而没有正文，不向前寻找其他助手代替。
-
-- 开场 assistant 有可见正文时可以帮答；有可写状态时可以更新状态。
-- 已停止但保存了有效正文的 assistant 也可以补偿，只依据其中明确成立的事实。
-- 末尾只有尚未得到回复的 user 时，提示先生成/重试该轮回复；不自动跳过它去修改更早助手。
-- 无有效 assistant 正文时不可用。前端在明确没有 message 状态定义时禁用“更新状态”并说明原因；本次实际激活和可写范围由服务端确定，不能在 Web 复制激活/预算逻辑。服务端发现没有可写根时，在模型调用前结束并提示。
-- 目标由服务端根据最新历史确定；客户端不任意指定历史消息进行重算。
-
-### 运行中
-
-点击后立即进入本地提交中；受理后以服务端 operation 状态接管：
-
-- 显示“正在更新状态…”或“正在生成行动建议…”。
-- 输入框不可编辑，保留原草稿；发送、重新生成、编辑/删除消息及再次发起辅助操作不可用。
-- 已有建议保持显示但不可点击，防止从 Stage 反向修改草稿。
-- 提供停止；阅读、滚动、加载历史、查询状态不受影响。
-- 帮答成功后整体替换现有建议，点击某项沿用原来的“填入输入框”交互，不自动发送。
-- 状态更新成功后刷新状态展示；实际无变化时显示“当前状态无需调整”；部分成功提示有部分字段未能更新。
-- 帮答失败或候选为空时提示未能生成新建议，保留原候选。状态失败保留旧状态。
-- 不增加辅助操作聊天气泡，不自动滚到底，不清空用户草稿。
-
-统一忙态由叙事发送/生成与辅助操作提交/运行共同组成。至少在辅助操作期间，原生输入框和宿主 composer.setDraft 都必须拒绝编辑；平台控件和 Stage 使用同一宿主快照，不能各自维护互相冲突的 loading。
-
-## 5. 服务端接口与生命周期
-
-建议统一挂在 /api/v1/sessions/:sessionId/operations 下：
-
-| 方法与路径 | 用途 |
+| 场景 | 实际允许能力 |
 |---|---|
-| POST /operations/state-update | 独立状态更新 |
-| POST /operations/ai-reply | 独立 AI 帮答 |
-| GET /operations | 查询当前辅助操作和最新目标上的最近操作回执 |
-| POST /operations/:operationId/stop | 停止指定的辅助操作 |
+| narrative | 叙事正文；按本场景规则节点及运行条件启用 state_update/action_suggestions |
+| ai_reply | 玩家草稿正文；没有状态或建议执行能力 |
+| state_update | state_update；不生成叙事或行动建议 |
 
-两个提交接口请求体：
+context 产生一份最终能力集合，供协议生成和执行器共用。关闭某规则后，运行时 fallback 不能重新启用；模型偶然输出被关闭的能力也不执行。
 
-~~~json
-{
-  "operationId": "调用方本次生成的唯一标识",
-  "expectedTipEntryId": "客户端看到的实际 tip"
-}
+AI 帮答和状态更新默认不读未发送草稿，不制造空 user 消息，不把历史 assistant 改成 user。最新 assistant 保持原角色；叙事尾部已保存 user 通过 userInput 注入一次。历史中的候选或计划不算已发生事实，辅助场景不必注入 action_suggestions 旁注。
+
+状态更新的当前有效状态、目标定位、目标回复前参考状态均由 context 构建。参考材料在预览可见、在预算前计入；它不覆盖 {{state.message}} 的当前值，也不要求用户维护另一套数据节点。
+
+### 4.4 默认任务提示词示例
+
+**AI 帮答 main：**
+
+~~~text
+你负责以当前玩家身份，拟写一条可直接发送给叙事者的回复或行动输入。
+依据最新会话历史、玩家身份、人物信息、世界资料和当前状态，选择合理的回应。
+只表达玩家的对白、意图或尝试，不替其他角色决定结果，不把计划写成已经确认的世界事实。
+输出一条连贯的玩家草稿，不列多个候选，不附解释、标题或分析过程。
+遵守本次平台协议。最终是否发送由用户决定。
 ~~~
 
-客户端在提交前生成 operationId，服务端验证并沿用；这让 202 响应丢失时仍能准确匹配本次操作，不需要自动重发或完整幂等框架。禁止重复使用当前活跃或最近已记录的同一操作标识；不提供无限历史请求重放。
+**独立状态更新 main：**
 
-受理响应使用项目现有 HTTP 包络，状态码 202，data 至少包含 operationId、kind、sessionId、targetEntryId、tipEntryId。kind 固定为 state_update 或 ai_reply。两个提交路由只负责传输与访问校验，后续进入同一辅助操作用例。
+~~~text
+你负责依据已经发生的故事，补偿当前会话状态。
+重点检查最新已保存的助手回复，结合历史、字段定义、当前值与回复前参考状态，判断有可靠证据的最终值。
+已执行的状态更新记录仅供参考；不重放整段历史，不在已结算的当前值上重复累加。
+不续写剧情，不执行玩家尚未发送的行动。证据不足的字段保留当前值。
+按照状态更新规则和平台协议提交结果。
+~~~
 
-### 生命周期
+**共享的默认状态规则模板：**
 
-1. 校验会话访问、最新 tip、最新助手资格和运行状态；同步获得共享会话锁。
-2. 在第一次异步等待前捕获会话、目标助手、预设/模型、历史、当前状态及必要的前置状态。
-3. 创建内存执行句柄，返回 202，并发布 operation.started。
-4. 构建目标上下文，调用一次模型，完整收集目标输出；不把半截 JSON 流给用户或用于状态写入。
-5. 仅解析本次目标能力，在内存计算候选结果。
-6. 在同步事务内重新检查许可、tip 和目标身份，提交状态/结果、实际计量和操作回执。
-7. 按持有者身份释放锁，发布已提交业务变化，再发布唯一终态；finally 做幂等释放。
+~~~text
+区分已发生事实、计划、建议、猜测和未知信息。
+仅处理本次允许的已有路径，输出字段最终绝对值，保留无关字段。
+依据变化前后证据判断数量与计数，避免对同一事件重复结算。
+没有可靠证据时不猜测，不为状态变化编造故事。
+~~~
 
-停止根据 sessionId + operationId 定位 AbortController。取消发生在提交前，保持旧业务结果；提交已经完成后不能把“停止”解释为回滚。服务关闭时等待两类运行结算，最后关闭数据库和 SSE，沿用现有关闭顺序。
+最后一段由默认模板生成到叙事和状态场景，生成后两份正文独立。叙事 main 保留叙事职责，并改为遵守“本次启用能力”的协议，不无条件要求所有尾块。
 
-### 事件
+## 5. 模型设置、预算与编辑界面
 
-沿用现有会话 SSE 连接，增加：
+### 5.1 场景模型
 
-- operation.started
-- operation.completed
-- operation.stopped
-
-事件带 operationId、kind、sessionId、targetEntryId、timestamp；终态含实际 tipEntryId 和结果摘要，失败沿用 stop_reason 风格，不新增 error 对象。不要发布虚假的 run.created/run.delta 或改写原叙事 completed/stopped。
-
-状态成功且有效值变化时，继续发布既有 state.changed；帮答有非空有效候选时，继续发布 action_suggestions.created，关联目标助手真实的原 runId/messageId，允许增加可选 operationId 供关联。
-
-通知顺序为：**提交 → 释放锁 → 业务变化事件 → 操作终态**。发布失败不改变已提交结果；客户端通过读取恢复。
-
-## 6. 会话锁与权限
-
-复用 infrastructure/cache/RuntimeCache 的同一个会话互斥机制。内部许可支持“叙事执行拥有者”与“辅助操作拥有者”，仍按对象身份校验；许可不进入 HTTP、SSE 或 SDK。
-
-- 叙事发送、重新生成、状态补偿和帮答彼此互斥，不排队。
-- 所有已有会话写入，包括删除会话、普通消息写入/修改/删除、配置切换，继续由 SessionService 拦截。
-- session/message 状态写入返回 STATE_WRITE_LOCKED；会话其他写入返回 SESSION_WRITE_LOCKED，均沿用 409。
-- 同世界 global 状态继续遵守现有“任一相关会话运行期间禁止外部写入”的规则。
-- 其他会话的独立写入可正常执行；不扩为整个世界或整个应用只能有一个模型调用。
-- 受控结果保存必须携带本次内部许可，不通过暂时解锁或调用外部 PATCH 绕过保护。
-- 读取、SSE 和停止不受写锁阻断。
-
-当前 narrative 的 active Map 只能反映叙事，不能用 activeRunId=null 证明会话空闲。辅助操作有自己的小型执行句柄 Map，共享真正的写锁；不建设通用任务调度框架。
-
-## 7. 上下文构建与一次调用
-
-保留 prepareContext 作为原叙事入口，增加两个具名入口：
-
-- prepareStateUpdateContext
-- prepareActionSuggestionsContext
-
-业务输入仍为 sessionId；signal、permit 等只是执行控制。调用方不传入拼好的历史、伪用户消息或“kind”来改造原叙事请求。两个入口在 context 内部复用捕获、历史投影、材料激活、模板渲染和预算能力。
-
-### 本次实际模型输入
-
-| 内容 | 状态更新 | AI 帮答 |
+| 场景 | 默认 | 可配置内容 |
 |---|---|---|
-| 任务 prompt | standaloneStateUpdate.prompt | aiReply.prompt |
-| 世界与角色材料 | 使用当前选中/激活材料 | 使用当前选中/激活材料 |
-| 当前有效状态 | 提供当前可见范围、可写路径和字段规则 | 提供当前情境所需状态 |
-| 历史 | 保留真实角色和顺序 | 保留真实角色和顺序 |
-| 前置状态 | 提供目标助手之前的有效 message 状态 | 不额外需要 |
-| 旧结果 | 状态处理记录仅作参考 | 当前候选作为换一组的参考 |
-| 末尾任务协议 | 只允许状态数据块 | 只允许建议数据块 |
+| 叙事 | 会话当前模型 | 继续由会话设置管理 |
+| AI 帮答 | 跟随会话模型 | 可指定已有模型配置；可选参数及输入/输出限额覆盖 |
+| 独立状态更新 | 跟随会话模型 | 可指定已有模型配置；可选参数及输入/输出限额覆盖 |
 
-历史中的最新助手已经是完成保存的正文，保留其 assistant 角色，不伪装成新的 user 输入。未发送草稿不进入模型。固定任务说明与目标标记和真实历史分开装配，避免重复插入最新正文。
+支持独立模型是合理的：三个任务的输出长度、生成风格和结构化输出要求不同。默认继承可让普通用户只选一次；高级用户才展开覆盖。模型配置选择已有 apiModelConfigId，不在预设中复制 provider、URL、API Key 或凭据。
 
-不直接复用完整主叙事 messages 再替换 main：主叙事还带有叙事风格、自动尾块和节点顺序约束，会让独立任务收到互相矛盾的指令。保留材料与事实，使用本次任务自己的请求结构。
+参数面板采用“公共默认＋当前辅助场景可选覆盖”，只有一层。UI 显示有效值和是否跟随，允许清除覆盖。首版不新增三套摘要策略或三套完整上下文配置；两个辅助入口始终使用已有有效摘要与只读裁剪。
 
-### 历史预算
+有效模型必须在 context 捕获阶段选定，随后预算、参数能力校验、凭据读取和实际调用均使用该模型。禁止先按主模型的大窗口编译、发送前再换小模型。
 
-为了保证一次点击最多发起一次目标模型调用：
+沿用当前预算原则：
 
-1. 复用当前有效已有摘要，继续校验覆盖范围和 sourceHash。
-2. 超预算时裁剪完整历史轮次，每个候选重新计算材料、可写根和实际 token 估算。
-3. 保护包含目标助手的最新可见轮次及必要事实；裁剪不得使待处理目标消失。
-4. 固定材料、必需状态和目标轮次仍超限时，明确失败，不截断 JSON、不静默删除目标证据。
-5. 首版辅助操作不生成新摘要、不追加 compaction；即使预设选择 rolling_summary，也只是复用已有摘要后进行本次只读裁剪。此区别在预设模块说明中简短写明。
-6. 模型、思考设置和采样参数继承捕获时的当前配置；输出上限与输入预算沿用现有模型/预设约束。
+~~~text
+inputBudget = min(
+  当前场景有效 maxContextTokens,
+  实际模型 contextWindow - 当前场景有效 maxOutputTokens - 1024
+)
+~~~
 
-这里的“最新历史”是以最新保存状态为准并保留最新必要轮次，不承诺把全部历史无限量发送给模型。原叙事摘要策略不受此方案影响。
+模型缺失、配置本身非法、输出上限超过实际模型允许值或预算非正时，在请求模型前给出明确错误并提示调整该场景；不静默换模型。合法配置中不受所选模型支持的采样/思考选项，继续遵守现有适配器的过滤或降级规则，并通过 sampling_omitted 等诊断说明有效行为，不因换辅助模型而整体改成硬错误。模型元信息与请求诊断记录实际选中的配置，不能继续硬写 session 的模型 ID。
 
-## 8. 状态补偿的正确语义
+### 5.2 引用与可移植性
 
-### 8.1 前置状态、当前状态和最终值
+- 本机保存时，PresetService 经只读 ModelReader 校验固定引用；模型被引用时，模型删除用例查询 PresetService 的只读引用能力后阻止删除。JSON 查询留在 PresetRepository，不增加跨模块 SQL。
+- 默认跟随时不新增固定引用。异常情况下固定引用失效，执行明确失败，不悄悄改用主模型。
+- 本机复制预设保留固定绑定。
+- 便携导出保存三个场景的节点、参数和限额，**不携带本机 apiModelConfigId 或凭据**；导出说明明确“导入后跟随会话模型”，导入按 null 初始化。
+- 不按名称猜测同款模型，不建立占位引用或自动匹配系统。需要固定模型时在目标环境重新选择。
 
-例如本轮之前金币为 10，最新故事明确“获得 5 枚金币”：
+这是有意的便携边界：提示词及参数可移植，本机连接绑定不可移植。导入导出测试不能错误要求本机模型 ID 也往返不变。
 
-| 当前金币 | 应有结果 |
+### 5.3 预设界面
+
+“提示词编排”顶部切换为三个编排页签：**叙事｜AI 帮答｜状态更新**。它们是三个独立列表，不再提供混在一起的“全部节点”视图。
+
+当前场景显示任务说明、模型选择和节点列表；高级参数折叠。编辑弹窗标题注明场景，例如“AI 帮答 · 主提示”。在当前场景添加、排序、关闭或编辑，只影响该场景，不出现共享影响范围或场景复选框。
+
+三个场景共享一次预设保存和 expectedRevision；切换保留尚未保存的修改，页签可标记有修改。移动端只显示一套列表，沿用现有紧凑节点与弹窗，不做三列并排。恢复默认支持当前节点/当前场景，恢复节点不会偷偷重置模型绑定。
+
+## 6. 上下文构建与服务端边界
+
+### 6.1 继续使用具名入口
+
+context 通过 index.ts 公开三个入口，业务输入仍只有 sessionId，permit/signal/progress 等为执行控制：
+
+| context 入口 | 固定场景 | 历史策略 | 返回目的 |
+|---|---|---|---|
+| prepareContext | narrative | 现有叙事摘要/裁剪策略 | 主叙事请求 |
+| prepareAiReplyContext | ai_reply | 复用有效已有摘要，只读裁剪 | 玩家草稿请求 |
+| prepareStateUpdateContext | state_update | 复用有效已有摘要，只读裁剪 | 状态更新请求和目标证据 |
+
+不保留旧方案的 prepareActionSuggestionsContext 名称。调用者不能传入任意 prompt、历史数组或把 prepareContext 的 mode 切成其他任务。scene 在入口内部固定，context 内部复用捕获、材料激活、节点编译、估算与诊断。
+
+一次辅助操作最多发起一次目标模型调用，不自动重试、不调用模型补摘要、不追加 compaction。若一次调用未成功，交还用户决定是否重试。
+
+### 6.2 编译顺序
+
+1. 持有会话锁后，在首次异步等待前捕获会话、实际 tip、最新普通消息、预设 revision、对应场景节点及所选模型配置。
+2. 解析有效参数与限额，读取当前有效状态；状态场景额外捕获目标助手及其回复前状态。
+3. 选取已有且 sourceHash/覆盖范围有效的摘要，以及保留历史候选。
+4. 按候选的干净历史和适用输入重新激活身份、角色、世界书与状态根。历史旁注不参与摘要源文或材料激活。
+5. 按该场景自己的顺序渲染启用节点；历史保持真实角色，当前叙事输入只出现一次。
+6. 附加所需目标证据和固定平台协议；派生最终有效能力集合。
+7. 对完整实际请求计算预算；若需裁剪，回到历史候选阶段重新激活和编译，不沿用第一次的 activeRoots。
+8. 返回 request、实际模型/参数、诊断及必要目标信息。API Key 仍由执行用例按 credentialRef 读取，不进入 prompt 配置或 context 明文结果。
+
+保护最新必要轮次和状态目标，不能把待处理助手裁掉。固定材料、必需状态与目标轮次仍超限时明确失败；不截断状态 JSON、不改写真实消息角色、不静默移除必需证据。
+
+context 不发送 SSE，不保存辅助结果，不反向调用 narrative/session-operations。narrative 执行器必须把 context 的最终能力集合传给后处理，使 prompt、执行和保存一致。
+
+### 6.3 叙事接口与辅助用例的归属
+
+| 模块 | 职责 |
 |---|---|
-| 15 | 已经结算，无需更改 |
-| 12 | 校正为 15 |
-| 20 | 如事实确实只支持增加 5，校正为 15 |
-| 无法确认基数或发生事实 | 保持当前值，不猜测 |
+| routes/narrative.ts → narrative/index.ts | 提交叙事、重新生成、停止、读取叙事运行和用量 |
+| routes/session-operations.ts → session-operations/index.ts | 发起帮答/状态更新、查询辅助运行、停止与关闭 |
+| context/index.ts | 三个具名请求准备入口，共享内部编译 |
+| 共享状态后处理 | 状态标签、JSONL 校验、候选更新结果；不负责执行模型或发事件 |
+| StateService | 读取有效状态、计算候选快照和变化；不增加表或 Repository |
+| SessionService | 状态补偿的受控持久化及现有会话读取 |
+| ModelClient / collectModel | 模型适配、正文流、终态与取消 |
+| Web operations feature | 辅助运行状态、私有草稿流与状态完成同步 |
+| Stage | 接收宿主快照并代理命令，不承担模型调用或结果恢复 |
 
-不能把“获得 5”再在当前值上累加一次。服务端应用的是模型给出的绝对 value；不新增 add/subtract 之类增量指令，也不依据“某条 output 是否存在”判断事件是否结算。
+辅助用例内部保留两条明确流程：ai-reply 和 state-update，共用受理、互斥、句柄与停止的小部分代码。不要为了统一接口，把 AI 草稿接入状态持久化或行动建议结算，也不增加通用任务引擎、Agent loop 或任务表。
 
-前置状态通过目标助手之前的有效继承视图获得，当前状态通过真实 tip 获得。前置状态只用于模型理解变化；服务端必须以**当前有效状态**为底应用本次绝对值更新，未涉及的路径保留当前值，不能以旧快照整体覆盖当前状态。开场没有可靠前置状态时明确标记不可用；只处理有充分事实依据的字段，不虚构零基数。人工改过的当前状态也不能因旧记录缺失被盲目复原。
+共享提取以实际消费者为准：状态处理被 narrative 与辅助状态调用共同使用；action-suggestions 和正文流切分仍归 narrative。通用标签/严格 JSON 解析可移到不含领域依赖的 lib；状态处理通过一个明确出口供两处使用，不从辅助用例跨目录导入 narrative 私有文件。
 
-这能避免系统机械重复应用增量，但不保证模型永远理解正确；字段正确性仍受故事证据和模型判断影响。
+## 7. 独立入口、传输与互斥
 
-### 8.2 输出格式与校验
+### 7.1 API
 
-目标格式沿用现有 state_update JSONL：
+建议挂在 /api/v1/sessions/:sessionId/operations 下：
+
+| 方法与路径 | 语义与响应 |
+|---|---|
+| POST /operations/ai-reply | 200 私有 NDJSON 响应流；只向发起请求的页面传草稿 |
+| POST /operations/state-update | 202 标准 HTTP 包络；后台执行，通过会话 SSE 通知结果 |
+| GET /operations | 当前内存运行元信息、最新有效目标的最近状态更新回执；没有 AI 帮答持久结果 |
+| POST /operations/:operationId/stop | 停止指定运行；统一标准 HTTP 包络 |
+
+提交请求均包含调用方生成的 operationId 和 expectedTipEntryId。operationId 用于关联/取消，不承诺永久幂等或历史重放；客户端不能在结果不确定时自动重新调用模型。
+
+在打开私有流前完成访问、tip、基本目标资格、配置和锁校验；失败沿用标准 HTTP 错误包络。流已开始后的失败通过终态帧表示，不能再尝试返回普通 JSON 包络。
+
+AI 私有流最少包含 started / delta / completed / stopped，携带 operationId；delta 只有正文 text。completed 可携带最终 text snapshot，供前端**替换校准**，不能再次追加。stopped 使用既有 stop_reason 风格；正文已收到但中断时交由用户继续编辑。
+
+设置不缓存流响应；路由负责 NDJSON 编解码和请求断开取消，用例只产生类型明确的文本/状态事件。流内容不写服务端事件回放或浏览器持久缓存。
+
+### 7.2 目标资格
+
+首版两项入口都从最新保存的会话上下文工作：最后一条普通消息应为有可见正文的 assistant，包括开场和停止后保存的有效正文。若末尾是未获回复的 user，先完成/重试叙事；不跳过该 user 操作更早轮次。没有有效助手正文时入口不可用。
+
+AI 帮答只读取该上下文，不把目标消息当作结果保存位置，也无需满足状态继承链的特殊限制。
+
+状态更新还需要本次激活的可写 message 根，并满足第 9 节的目标状态继承条件。前端可以做基本提示，最终资格和激活范围由服务端决定，不在 Web 复制 context 的判断逻辑。
+
+### 7.3 同一把会话锁
+
+沿用初始需求，两个辅助操作运行时均锁住会话。AI 帮答虽然不写结果，仍需要稳定的生成上下文和草稿写入时段。
+
+- 叙事发送、重新生成、AI 帮答、独立状态更新互斥，不排队。
+- 会话输入、发送、已有的消息编辑/删除、配置切换及其他会话写入被统一忙态与服务端锁阻止。
+- AI 私有流拥有者可以程序化写入自己的草稿；普通输入事件和 Stage composer.setDraft 不能绕过该忙态。
+- SessionService 继续使用 SESSION_WRITE_LOCKED；状态外部写入使用 STATE_WRITE_LOCKED。沿用现有 409 契约。
+- 同世界 global 状态继续遵循现有运行期外部写入限制；其他会话的独立写入按原规则运行。
+- 许可仍是内部对象身份，不经过 HTTP/SSE/SDK；只由持有者释放。
+- 读取、滚动、加载历史、SSE 和停止保持可用。
+
+RuntimeCache 扩展运行拥有者类型即可，不增加另一把辅助锁。narrative 的 active Map 不足以证明会话空闲，辅助用例需要自己的小型句柄 Map，但真正互斥仍只有一个来源。
+
+### 7.4 共享通知与两种生命周期
+
+共享会话 SSE 增加 operation.started / operation.completed / operation.stopped，只包含身份、kind、时间、阶段、停止原因及必要目标 ID。**AI 帮答正文只能出现在发起 POST 的私有流，不能广播给其他页面。**
+
+- AI 帮答：请求取消、响应断开或离开发起页面时 abort；结束后清理句柄、释放锁。不存在结果恢复或断点续传。
+- 状态更新：受理后可继续后台运行，SSE 断连或页面离开不等于取消；用户可明确停止，回来后查询持久结果。
+- 服务关闭要同时取消/等待两类辅助流程及叙事结算，再关闭数据库和会话事件连接。
+- 任意失败路径都要 finally 释放本次锁；旧运行的 finally 不能释放后续运行持有的许可。
+
+发起帮答的页面必须等**自己的私有流终态或关闭**后结束本地生成忙态。共享 SSE 的完成元信息可能先到，不能据此提前解锁输入，再让晚到的最终 snapshot 覆盖人工编辑。
+
+## 8. AI 帮答：草稿流与不留存
+
+### 8.1 运行过程
+
+点击“更多 → AI 帮答”后：
+
+1. 本地立即进入 pending，保留原草稿的临时快照，建立本次 operationId 和草稿写入所有权。
+2. 服务端独立 prepareAiReplyContext，选择实际模型并调用一次 collectModel。
+3. 仅将正文 content 流向发起页面；reasoning_content、tool_calls 不进入输入框，也不触发工具或其他能力。
+4. 第一个有效正文片段到达时替换原草稿，后续片段连续更新。最终 snapshot 按替换语义校准。
+5. 正常完成后恢复编辑，由用户决定是否修改、发送或放弃；不自动发送、不创建消息气泡。
+6. 生成期间显示“正在帮你拟写…”，停止按钮路由到当前辅助操作；已有行动建议可以显示，但点击填草稿被禁用。
+
+AI 分支自己判定业务完成：只有收到正常终态、finishReason=stop、正文有效、没有工具调用且没有失败/停止原因，才发送 completed。长度截断、工具请求、缺少终态等均发送 stopped，保留已到达草稿，不执行工具。collectModel.failed=false 本身不足以证明业务成功，不能依赖叙事专用包装替本分支作判断。
+
+这里选择“生成一份新草稿”，不是“接着旧草稿续写”；首版不向模型发送未发送草稿。原草稿在页面内可一键恢复，不增加确认弹窗。恢复备份只在当前页面内保留，发送、切换会话或下一次生成后按草稿生命周期清理。
+
+### 8.2 失败与取消
+
+| 情况 | 输入框处理 |
+|---|---|
+| 第一个正文片段之前失败/取消 | 保留原草稿 |
+| 已收到部分正文后失败、超长截断或取消 | 保留已收到的部分草稿，说明生成中断，可继续编辑或恢复原草稿 |
+| 正常完成且正文非空 | 保留最终草稿 |
+| 模型正常结束但没有有效正文 | 提示未生成有效内容，保留原草稿 |
+| 用户停止后仍收到迟到 delta/snapshot | 丢弃，不能再修改草稿 |
+| 切换会话或当前 operationId 已变化 | 丢弃旧流写入 |
+| 页面刷新/关闭 | 取消本次调用；不从历史恢复此次帮答文本 |
+
+宿主单独维护本次生成的写入身份和草稿版本，只允许对应生成器更新；内部流更新不能误判为人工修改。Stop 立即撤销写入权，服务端锁何时释放仍以服务器状态为准。其他页面只看到忙态，不收到也不填入此次正文。
+
+平台要求输出一段草稿，不请求结构化尾块；若模型违规把列表或标签写进普通正文，它也只是可编辑的异常草稿，不能被解析为行动建议或状态指令。不为了修复模型格式再发起第二次调用。
+
+### 8.3 不留存与 usage 的硬边界
+
+AI 分支不调用 SessionService 的任何结果保存方法，不写：
+
+- user/assistant/compaction entry。
+- extData.output 或 extData.operations.aiReply。
+- metrics.requests、主叙事 context 快照或会话 usage。
+- action_suggestions.created、state.changed、run.created、run.delta、run.usage。
+- 包含生成正文、最终 snapshot、raw response 的持久日志或诊断。
+
+collectModel 可以在请求期间临时收集 snapshot 与供应商 usage；AI 分支在结束后丢弃，不把 usage 伪造为 0 写入会话。允许记录 operationId、模型标识、耗时、完成/取消/失败原因等元信息，日志使用字段白名单，不能把包含正文的错误对象整体输出。
+
+Web 只维护当前页面的内存草稿，不增加 localStorage/IndexedDB 生成结果缓存。刷新后不可恢复是该功能的约定，而不是待补齐的持久化缺口。
+
+## 9. 独立状态更新：同一更新语义，独立执行
+
+### 9.1 执行链
+
+锁定会话 → prepareStateUpdateContext → 一次独立模型调用 → 完整接收 state_update → 共享状态后处理 → 受控事务提交 → 释放锁 → state.changed（若有变化）→ operation 终态。
+
+不调用 narrative.submit，不重生成正文，不复用本轮主叙事的模型输出，也不连带运行 actionSuggestions。context 中允许使用已经保存的历史与状态处理旁注，但它们是证据，不是重放指令。
+
+沿用现有 state_update JSONL：
 
 ~~~text
 <state_update>
-{"path":"inventory.coins","value":15,"reason":"最新回复明确获得5枚金币，本轮前为10"}
+{"path":"inventory.coins","value":15,"reason":"本轮前为10，已发生的故事明确获得5枚金币"}
 </state_update>
 ~~~
 
-无变化必须返回成对空块。主动调用与普通叙事不同：**完全没有目标标签、标签损坏、调用截断或未正常结束，都视为本次操作失败**，不能伪装为“无需更新”。
+无变化使用完整成对空块。主动调用缺失目标标签、标签损坏、模型未正常结束或截断时失败；不能把“没有按协议回答”当成无需更新。普通叙事继续保留其原有缺省语义，独立入口在共享处理前增加目标完整性校验。
 
-复用现有逐行校验和处理规则：仅激活的 message 根、已有路径、合法值；成功行按序应用，重复路径按序覆盖，不新增固定条数限制。允许部分成功并给出简短提示；全部无效时保留旧 output/state，失败信息记本次操作回执/日志。
+### 9.2 避免重复结算
 
-只执行 state_update；即便模型偶然输出其他能力块，也不执行建议或正文。帮答亦如此，不能越界触发状态更新。
+若本轮前金币为 10，故事明确获得 5：
 
-### 8.3 保存位置与无变化语义
-
-补偿后的完整 message 快照与对应结果都保存到目标 assistant 上。正常后置 compaction 的 state=null，会继续继承该助手快照，因此真实 tip 的有效视图同步更新。
-
-不把补偿快照常规写到 compaction：重新生成会删除旧 assistant 而保留摘要，这会残留旧回复的补偿状态。
-
-首版要求目标之后每个 compaction 的 state **严格为 null**；显式空数组 [] 也是独立快照，会终止继承，同样拒绝。若检测到这一非常规情况，拒绝该目标并明确提示当前尾部状态不能直接补偿，不静默写入一个不会生效的历史快照。后续若支持特殊尾部状态，需与重新生成/删除语义一起扩展。
-
-保存入口区分：
-
-- changed=false：保持原 entry.state，不写 null，不创建多余快照。
-- changed=true：写入计算后的完整有效快照。
-
-不能直接把现有“为新助手追加而准备”的 snapshot:null 当成旧助手更新值。
-
-## 9. AI 帮答的结果语义
-
-使用 action_suggestions 字符串数组，默认请求三个选项，沿用既有每项不超过 50 个 Unicode 码点、过滤无效项和去重规则。三条是 prompt 目标，不是强制全部满足才成功。
-
-~~~text
-<action_suggestions>["询问守卫是否见过来访者。","先去庭院查看足迹。","留在原地观察片刻。"]</action_suggestions>
-~~~
-
-- 正常结束且至少保留一条有效候选：以整组方式替换旧建议。
-- 部分候选无效：保留有效项，可提示部分生成成功。
-- 空数组、全部无效、标签缺失/损坏、失败或取消：不清空旧建议，回执说明本次未得到新建议。
-- 原草稿不变。用户主动点击候选时才沿用现有填入行为。
-- 新建议持久化到目标 assistant 对应 output，重进页面仍应看到它。
-- 恢复时以最新合法助手持久化的有效 actionSuggestions 为准，不再要求原叙事为 completed，也不要求最近一次操作回执为 completed。比如 stopped 助手先手动帮答成功、随后再次帮答失败，之前的有效候选仍应恢复。最近回执只描述最近尝试，不决定已有候选的有效性；原叙事终态保持不变。此项属于对现有建议恢复前提的明确调整，不能回退展示更早助手的建议。
-- 下一轮普通叙事开始，继续沿用 run.created 清理旧建议的现有行为。
-
-## 10. 持久化与计量
-
-### 10.1 只保存一份能力结果
-
-目标助手的 extData.output 定义为**各能力最近一次有效完成的处理结果**：
-
-- 主动状态更新只替换 stateUpdate。
-- 帮答只替换 actionSuggestions。
-- 另一能力、正文、推理、原叙事终态及其他扩展字段保留。
-- 有效的 no_updates 可以更新 stateUpdate 处理记录，但保持原状态快照。
-- 失败/取消不替换原能力结果。
-
-output 不是该消息所有处理次数的累积账本。旧成功行被替换后，后续模型旁注反映最近结果；实际有效状态继续以完整快照为准。不能通过重放旁注恢复状态。
-
-原本中断的助手可能没有 output。存储层允许只出现本次已执行的能力字段；另一字段缺失代表没有处理记录，不能虚构“已经执行且无变化”。主叙事正常保存仍要求自己的完整双能力输出。读取归一化、model-notes 和前端投影同步支持字段缺失。
-
-### 10.2 操作回执
-
-同一目标助手的 extData.operations 只记录 stateUpdate / aiReply 各自最近一次终态：
-
-~~~typescript
-{
-  operationId,
-  kind,
-  status,       // completed / stopped
-  finishedAt,
-  stopReason?,  // 失败或取消时
-  requestId?    // 真正调用过模型才有
-}
-~~~
-
-回执不再保存一份 output，不保留完整任务历史，不承担崩溃重放。运行中只存内存句柄。普通 extData 编辑禁止伪造/删除 operations，其他编辑原样保留。
-
-新增 SessionService 的受控 commitOperation 能力，并由属主 Repository 原子写入：
-
-1. 检查本次内部许可、expectedTip、目标仍是最新合法助手。
-2. 合并本次能力结果；仅实际变化时写状态。
-3. 追加实际请求计量，保存本次回执。
-4. 不改消息 ID、seq、parent、runId、正文或 session.tipEntryId。
-
-解析与网络调用不在事务中。失败/取消可只保存回执和实际计量；若提交本身失败则业务变更整体回滚，不发成功事件，也不能宣称已有持久回执。
-
-目标消息被删除/重新生成时，其结果、回执、快照和辅助计量随该 entry 一并移除，沿用“现存 entries 统计”规则；这不代表供应商费用退款。
-
-### 10.3 计量与主上下文
-
-每次真正尝试的目标调用追加到目标助手 metrics.requests；调用前失败/取消不虚构 requestId 和计量。已经发生但 usage 未知时记录 null，不当成零。
-
-建议给请求增加可选 purpose，区分 narrative、summary、state_update、ai_reply；新增请求写清用途，旧记录保持可读且不批量重写。
-
-必须同步修正 recordedUsage：
-
-- 累计用量包含真实辅助请求，不覆盖旧请求。
-- 主叙事上下文按 metrics.context.requestId 找对应请求，不再直接取 requests.at(-1)。
-- 跳过“只有辅助请求”的助手（例如仅对开场做过帮答），继续找最近有主叙事请求的条目。
-- 旧记录没有 context 时保留既有未知组成/窗口的回退语义，但显式排除辅助请求。
-- 辅助操作不覆盖原主叙事 context 快照，也不产生假的 run.usage。
-- 操作终态后前端补读既有会话 usage 接口。
-
-日志沿用单行时间、事件、数据结构，携带 sessionId、operationId、kind。记录请求、目标解析、结算结果与 stop reason；区分 prepared 与 committed，不新增重复 model.input。
-
-## 11. 同步、刷新与异常
-
-GET /operations 返回当前 active 辅助操作，以及最新目标的最近两项回执；真实结果仍从状态接口和 narrative/runs 读取。
-
-前端在页面进入、SSE 重连、HTTP 受理结果不确定时查询。使用预先生成的 operationId 精确核对：
-
-- 匹配 active：保持忙态并继续订阅。
-- 匹配持久回执：按终态补读当前结果。
-- 没有匹配：显示结果未确认/执行已中断，恢复以服务端真实忙态为准；不自动再次调用模型，不把上一条回执冒充本次成功。
-
-操作更新已有 entry 不产生新 seq，结束后必须刷新包含目标助手的最近完整轮次；不能只查询 afterSeq > 原 seq，否则会漏掉 output/metrics 的变化。复用 bounded recent refresh 和现有覆盖式同步；旧页/迟到响应以操作身份、最新轮次和现有 checkpoint 保护。
-
-| 场景 | 规定行为 |
+| 当前状态 | 应有处理 |
 |---|---|
-| 叙事或另一辅助操作已在运行 | 返回现有忙/锁冲突，不排队、不启动第二次调用 |
-| 客户端 tip 过期 | TIP_CONFLICT，刷新后由用户再发起 |
-| 快速重复点击 | 本地 pending 禁用；服务端同一锁兜底 |
-| 202 丢失或请求超时 | 查询本次 operationId，不自动重发 |
-| 终态早于 202 到达 | 控制器按 operationId 去重，迟到受理响应不能把已结束操作重新置为运行 |
-| 模型输出中断、坏标签、全部无效 | 不应用不完整结果；保留旧业务数据 |
-| 部分状态/建议项有效 | 保存有效项并标记 partial_success |
-| 停止请求 | 提交前取消保持旧结果；已提交结果不回滚 |
-| SSE 断开/切换页面 | 不等于取消；服务端继续运行，回来查询状态和结果 |
-| 服务进程重启 | 不恢复执行；读取已提交结果，不把缺失句柄当成本次成功 |
-| 保存失败 | 不发业务成功事件；结束并释放锁，报告持久化失败 |
-| 普通叙事随后开始 | 旧 operation 终态不能解除新运行的忙态或恢复旧建议 |
+| 已经是 15 | 无实际变化 |
+| 错记为 12 | 校正为 15 |
+| 错记为 20，且证据明确只发生上述变化 | 校正为 15 |
+| 基数或事实不确定 | 保留当前值，不猜测 |
 
-## 12. 模块职责
+服务端仍应用绝对 value，不新增增量指令，也不根据有没有旧 output 判断事件是否已结算。
 
-- **presets**：辅助 prompt 的配置、校验、默认内容和便携格式。
-- **context**：从当前会话生成两类实际请求；保持材料、历史、预算能力内聚。
-- **session-operations 用例**：受理、停止、锁生命周期、模型执行、目标结果结算和通知。
-- **共享输出处理**：状态/建议标签、JSONL/JSON 解析与结果计算，供叙事和独立操作共用。
-- **sessions**：目标资格所需领域读取、受控结果/回执/计量持久化；Repository 仍只操作本域表。
-- **state**：有效视图与候选计算，不增加表，不发事件。
-- **Web operations feature**：辅助操作状态与查询；workspace 组合，Stage 只接收快照并代理命令。
+前置状态来自目标助手之前的有效继承视图，仅供模型理解。**实际候选计算必须以当前有效状态为底**，保留本次未涉及的字段，不能把旧快照整体恢复后再算。人工修改过的当前状态不能因为旧处理记录缺失就盲目撤销。开场缺少可靠前置状态时明确标记不可用，不虚构零基数。
 
-从 narrative/postprocess 提取真正共享的 parser、strict-json、state-update、action-suggestions 到 usecases/session-output，提供明确出口。叙事继续拥有正文流切分及叙事处理调度，两个辅助入口不依赖 narrative 私有执行流程。context 不反向依赖这些用例或 SSE。
+### 9.3 状态权限和部分成功
 
-这次共用的是已经出现的两种辅助操作及既有叙事解析能力，不设计插件注册中心、通用任务引擎或 Agent/tool loop。
+复用 StateService.prepareMessageUpdates：
+
+- global/session 仅背景，message 仅本次激活根和已有路径。
+- 类型、值约束、路径权限与主叙事一致。
+- 逐行隔离；有效行按顺序应用，重复路径按顺序覆盖。
+- 允许部分成功，显示部分字段未更新；全部无效时保留旧状态和旧有效结果。
+- 字段 rules 不扩大写权限，不为补偿场景增加越权写入入口。
+
+模型理解错误仍可能导致不合适的最终值；共享校验保证结构和权限，不声称自动证明所有叙事判断正确。
+
+### 9.4 保存位置与无变化
+
+将有效快照与处理结果保存到最新目标 assistant。目标之后只允许 state **严格为 null** 的 compaction；它们会继承助手状态。显式 [] 也是独立快照，同样阻断继承，需要拒绝本次补偿并说明当前尾部状态不满足条件。
+
+不常规把补偿快照写到 compaction，否则重新生成删除旧助手后可能残留与旧回复绑定的状态。
+
+- changed=false：保留原 entry.state，不能写 null。
+- changed=true：写入以当前有效状态为基底计算出的完整快照。
+- no_updates 可以更新处理记录，但不改变已有快照。
+- 不改助手正文、推理、原叙事终态、seq、parent 或 session.tipEntryId。
+
+现有处理函数的 snapshot:null 表示“新消息不需要新快照”；提取共享处理时应明确返回 changed，让新消息追加和旧消息补偿各自选择正确保存方式。
+
+## 10. 状态结果、回执和计量
+
+本节只适用于独立状态更新；AI 帮答不走这些保存路径。
+
+### 10.1 原子提交
+
+新增 SessionService.commitStateOperation 一类受控入口，通过本次内部许可，在同步事务内：
+
+1. 重查 actual tip、目标助手身份、许可和状态继承条件。
+2. 仅替换 extData.output.stateUpdate，保留 actionSuggestions、正文及其他扩展字段。
+3. changed=true 时保存状态快照。
+4. 追加确实发生的目标调用计量，保存最近一次状态更新回执。
+5. 一次提交完成；发布业务成功事件必须在提交和释放锁之后。
+
+网络调用、模型解析不放在事务内。取消发生在提交前则保留旧有效结果；已提交后取消不回滚。失败或取消可以只记录状态操作回执与实际计量；提交失败则整体回滚，不宣称有持久成功回执。
+
+output 各字段表示该能力最近一次有效完成的处理结果，不是所有处理次数的账本。原助手没有 output 时，只写实际状态字段，不能伪造一份 actionSuggestions。
+
+### 10.2 最近回执与稀疏结果
+
+extData.operations.stateUpdate 只保存最近一次状态尝试的 operationId、status、finishedAt、stopReason 及实际存在的 requestId，不重复保存输出正文，不保留 AI 回执，不建立任务历史表。
+
+普通消息编辑不能伪造/删除受保护回执。删除或重新生成目标助手时，相关状态结果、回执和计量随该助手一起移除，沿用现存 entries 的统计口径。
+
+叙事 output 也只保存实际启用能力的记录：未启用字段缺失，两项都未启用则不产生 output。读取归一化与 model-notes 必须支持缺失字段；缺失不能被补成“已执行且无变化”。只为实际保存的有效 no_updates/no_suggestions 渲染对应空旁注。历史恢复不依赖 AI 帮答结果，因为没有这类持久结果。
+
+### 10.3 状态调用 usage
+
+独立状态调用追加实际 metrics.requests；调用前失败不虚构 requestId，发生调用但 usage 不明时保持 null。请求可增加 purpose 区分 narrative/summary/state_update，旧记录仍可读；不创建 AI 帮答的持久 metrics 项。
+
+recordedUsage 需要同步修正：
+
+- 累计用量包含独立状态请求。
+- 主叙事上下文按 metrics.context.requestId 定位原请求，不能再默认取 requests.at(-1)。
+- 只有状态辅助计量的开场助手不能冒充主叙事请求。
+- 旧记录缺少 context 时保留历史回退，同时排除已明确标记为 state_update 的请求。
+- 状态操作不覆盖主叙事 context，不发假的 run.usage；完成后 Web 主动补读会话 usage。
+
+## 11. 页面状态与异常恢复
+
+输入框更多菜单提供：重新生成、AI 帮答、更新状态。辅助运行期间统一禁用输入、发送、重新生成、已有编辑/删除、建议填草稿及再次发起辅助操作；保留阅读和停止。
+
+工作区忙态应综合：叙事发送/运行、辅助提交/运行、发起页尚未结束的 AI 私有流。Stage 与原生组件使用同一宿主快照，不各自维护另一套业务 loading。
+
+| 情况 | AI 帮答 | 独立状态更新 |
+|---|---|---|
+| tip 过期或会话已锁 | 请求失败，刷新状态，用户决定重试 | 同左 |
+| 重复点击 | 本地 pending 与服务端同一锁防重入 | 同左 |
+| 受理响应不确定 | 不自动重发；关闭/取消本次流，查询真实 busy | 按本次 operationId 查询 active 或状态回执 |
+| SSE 元信息断连 | 私有流若仍健康可继续；恢复连接后补查 busy | 后台可继续，重连补查运行与结果 |
+| 私有响应断连 | 取消；保留页面已收到的部分草稿，不补发 | 不适用 |
+| 刷新或离开发起页面 | 不恢复帮答结果 | 读取已提交状态和回执 |
+| 服务进程重启 | 运行中断，无结果恢复 | 不恢复执行，仅读取已提交结果 |
+| 终态比 HTTP 受理响应先到 | 以本次流身份/终态为准，不能重新置忙 | 按 operationId 去重，迟到 202 不能复活任务 |
+| 旧事件晚到、新运行已开始 | 不解锁新运行，不写新草稿 | 不解锁新运行、不覆盖新状态投影 |
+| 提交失败 | 没有结果提交链 | 不发成功事件，释放锁并报告保存失败 |
+
+状态更新修改的是已有助手，不新增 seq。完成后必须刷新包含目标的最近完整轮次及状态/usage，不能只查 afterSeq > 原 seq。复用当前最近历史覆盖同步及身份保护，避免旧请求覆盖新页面。
+
+GET /operations 对 AI 只返回当前 active 元信息；active 不存在不等于“上一次帮答成功”。对状态操作，只有匹配 operationId 的持久回执才能证明那次尝试的终态。两种能力的恢复承诺应在控制器中分开。
+
+## 12. 旧配置迁移与兼容
+
+当前领域 schemaVersion 为 1，便携 config_json 版本为 3；建议分别升级为 2 / 4，保持显式编码，不把两个版本号误当成同一层。
+
+迁移规则：
+
+1. 将旧 nodes 放入 scenes.narrative.nodes，保留旧自定义节点、正文与顺序；为辅助场景初始化各自完整默认节点。
+2. 已知标准 main/worldState/actionSuggestions 可确定性升级为职责更清楚的新模板，并加入 stateUpdateRules。
+3. 用户改写过的混合 worldState/main 保留原文，仅留在叙事场景，提示可整理；不自动复制进 AI 帮答/状态场景，不声称能无损拆分自然语言。需要的默认状态规则单独加入，避免必须人工拆完旧文才能使用新辅助场景。
+4. 原 state/action 规则显式 enabled=false 映射为叙事对应自动能力关闭；虽然当前实现曾忽略它，新版应尊重明确配置。缺失旧规则时按现有默认行为规范化一次，不能以后每次运行再强制补回。
+5. 辅助模型默认 null，参数/限额无覆盖。现有会话 presetId、apiModelConfigId 均不改变。
+6. 读取/导入可先在内存规范化，保存时写新版本并使用 expectedRevision；不批量覆盖用户原记录，也不生成额外预设资源。
+
+旧自定义 prompt 可能仍要求某个已关闭能力，平台能力集合必须兜住实际执行，不能因此重新开启。新默认规则不会自动共享到旧自定义节点；后续修改默认模板也不静默更新用户已经保存的场景正文。
+
+复制/导出再导入应保留三场景节点、局部顺序、开关、正文和参数/限额；本机模型绑定按第 5 节约定处理。默认模板继续保存在 initial-data，恢复默认按 scene 与 nodeId 定位。
+
+不增加业务表或数据库列；数据结构变更落在现有预设 JSON 和既有 entry 的受控 output/metrics 扩展中。
 
 ## 13. 计划变更文件目录
 
-以下为计划范围，**不代表已实施**。新增文件名可在实现时小幅调整；迁移文件在原位置删除后移入新目录，避免同时保留两份实现。
+以下均为**待实施范围**，本次实际只更新本计划。共享处理只提取实际共用部分，文件名可在实现时小幅调整；迁移后不保留两份状态算法。
 
 ~~~text
 SillyRealms/
-├── initial-data/presets/标准叙事.json                 [修改] 两个默认 prompt
+├── initial-data/presets/标准叙事.json                 [修改] 三场景完整默认节点及公共参数
 ├── apps/server/
-│   ├── AGENTS.md                                     [修改] 实施后更新事实契约，不放宽架构边界
-│   ├── eslint.config.mjs                             [修改] 共享输出/具名 context 出口约束
+│   ├── AGENTS.md                                     [修改] 功能落地后同步事实契约
+│   ├── eslint.config.mjs                             [修改] 明确用例出口及共享处理依赖
 │   └── src/
-│       ├── app.ts                                    [修改] 路由注册和双类执行关闭
-│       ├── usecases.ts                               [修改] 显式装配辅助用例
-│       ├── errors.ts                                 [修改] 目标不可用/无可写状态/辅助停止原因
-│       ├── infrastructure/cache/index.ts             [修改] 同一互斥许可支持辅助拥有者
-│       ├── infrastructure/logging/run-logger.ts       [修改] 复用格式，支持辅助操作身份
+│       ├── app.ts                                    [修改] 辅助路由注册、关闭流程
+│       ├── services.ts                               [修改] ModelReader 注入 PresetService
+│       ├── usecases.ts                               [修改] 辅助用例装配、模型删除依赖
+│       ├── errors.ts                                 [修改] 目标/配置/流式终态错误映射
+│       ├── infrastructure/
+│       │   ├── cache/index.ts                        [修改] 同一会话锁支持辅助拥有者
+│       │   └── logging/run-logger.ts                 [修改] operation 日志身份；AI 元信息白名单
+│       ├── lib/
+│       │   ├── model-output.ts                       [新增/迁入] 无领域依赖的标签及严格 JSON/JSONL 解析
+│       │   └── model-output.test.ts                  [迁入/修改] 保留解析边界回归
 │       ├── modules/presets/
-│       │   ├── schema.ts                             [修改] 配置与模板校验
-│       │   ├── service.ts                            [修改] 旧值补默认、领域映射
-│       │   ├── repository.ts                         [修改] 存储字段映射
-│       │   ├── card.ts                               [修改] 导入导出映射
-│       │   └── service.test.ts                       [修改] 新旧配置与往返验证
+│       │   ├── schema.ts                             [修改] 三场景 schema 与逐场景依赖
+│       │   ├── types.ts                              [修改] 场景及辅助模型覆盖类型
+│       │   ├── scenes.ts                             [新增] 固定场景、默认节点及能力规则
+│       │   ├── model-parameters.ts                   [修改] 完整参数与全 optional 覆盖分别编解码
+│       │   ├── postprocess.ts                        [修改] 移除运行时无条件启用行为
+│       │   ├── default.ts                            [修改] 按 scene/nodeId 恢复默认
+│       │   ├── service.ts                            [修改] 规范化、ModelReader、只读引用查询
+│       │   ├── repository.ts                         [修改] JSON 映射与本域模型引用查询
+│       │   ├── card.ts                               [修改] 便携新版本，移除本机模型绑定
+│       │   └── service.test.ts                       [修改] 迁移、独立编辑、往返与引用校验
 │       ├── modules/sessions/
-│       │   ├── service.ts                            [修改] commitOperation 与主请求计量读取
-│       │   ├── repository.ts                         [修改] 原子合并结果/状态/回执/请求
-│       │   ├── schema.ts                             [修改] 回执保护、请求 purpose
-│       │   ├── types.ts                              [修改] 明确公开类型
-│       │   ├── output.ts                             [修改] 存储能力字段可缺失、叙事输入仍完整
-│       │   ├── stored-output.ts                      [修改] 新旧结果读取归一化
-│       │   └── service.test.ts                       [修改] 原子性、保留字段、计量归属
+│       │   ├── service.ts                            [修改] commitStateOperation、主请求 usage 读取
+│       │   ├── repository.ts                         [修改] 状态结果/回执/计量原子合并
+│       │   ├── schema.ts / types.ts                  [修改] 状态回执保护、请求 purpose
+│       │   ├── output.ts / stored-output.ts          [修改] 能力字段按实际执行保存与归一化
+│       │   └── service.test.ts                       [修改] 原子性、无变化、usage 归属
 │       ├── routes/
-│       │   ├── session-operations.ts                 [新增] 两提交、查询和停止
-│       │   └── session-operations.test.ts            [新增] 访问校验与 HTTP 契约
+│       │   ├── session-operations.ts                 [新增] AI 私有流、状态提交、查询、停止
+│       │   └── session-operations.test.ts            [新增] 访问、断连取消、传输契约
+│       ├── usecases/model-config.ts                  [修改] 删除前检查预设固定模型引用
+│       ├── usecases/model-config.test.ts             [修改] 引用阻止删除且保留凭据
 │       ├── usecases/context/
-│       │   ├── index.ts                              [修改] 两个具名公开入口
-│       │   ├── types.ts                              [修改] 辅助准备结果类型
-│       │   ├── prepare-operations.ts                 [新增] 捕获、目标证据、只读预算裁剪
-│       │   ├── prepare-operations.test.ts            [新增] 最新目标、摘要复用、一次调用边界
-│       │   ├── stages/assemble/operations.ts         [新增] 两种请求与固定目标协议
-│       │   └── stages/model-notes/                   [修改] 容忍单能力 output，保持事实旁注语义
-│       ├── usecases/session-output/
-│       │   ├── index.ts                              [新增] 共享解析/计算公开出口
-│       │   ├── parser.ts                             [迁入] 自身标签匹配
-│       │   ├── strict-json.ts                        [迁入] JSON/JSONL 解析
-│       │   ├── state-update.ts                       [迁入并修改] 显式 changed 和候选结果
-│       │   ├── action-suggestions.ts                 [迁入] 建议过滤和去重
-│       │   └── 对应解析测试                          [迁入并修改] 维持叙事行为，覆盖独立协议
+│       │   ├── index.ts / types.ts                   [修改] 两个具名辅助入口及明确结果类型
+│       │   ├── capture.ts                            [修改] 捕获场景节点、实际模型/参数/限额
+│       │   ├── candidate.ts                          [修改] 三场景候选材料与能力
+│       │   ├── lib/budget.ts                         [修改] 使用实际模型及有效场景限额
+│       │   ├── prepare-operations.ts                 [新增] 只读摘要复用、裁剪与目标证据
+│       │   ├── prepare-operations.test.ts            [新增] 单次调用、角色、预算与目标保护
+│       │   ├── stages/assemble/index.ts              [修改] 按当前场景独立 nodes 编译
+│       │   ├── stages/assemble/protocol.ts           [修改] 草稿/状态/叙事协议与能力一致
+│       │   └── stages/model-notes/                   [修改] 缺失能力不补假结果，辅助按需选旁注
+│       ├── usecases/state-output/
+│       │   ├── index.ts                              [新增] 共享状态后处理公开出口
+│       │   ├── state-update.ts                       [迁入/修改] 现有状态算法，显式 changed
+│       │   └── state-update.test.ts                  [迁入/修改] 叙事与补偿的共同状态规则
 │       ├── usecases/session-operations/
-│       │   ├── index.ts                              [新增] 受理、查询、停止、关闭
-│       │   ├── execute.ts                            [新增] 一次调用与目标分支
-│       │   ├── settle.ts                             [新增] 事务保存、通知、回执
-│       │   ├── types.ts                              [新增] 两类操作与显式依赖
-│       │   └── index.test.ts                         [新增] 锁、失败保持、停止、重复补偿
+│       │   ├── index.ts / types.ts                   [新增] 受理、active、停止、关闭与依赖类型
+│       │   ├── ai-reply.ts                           [新增] 一次模型调用、临时正文流、无保存链
+│       │   ├── state-update.ts                       [新增] 一次调用、共享处理、事务提交与通知
+│       │   └── index.test.ts                         [新增] 互斥、取消、无留存、状态结算
 │       ├── usecases/narrative/
-│       │   ├── postprocess/processor.ts              [修改] 调用共享计算，保留叙事调度
-│       │   └── postprocess/上述四个原实现及对应测试     [删除/迁出] 不保留重复解析器
-│       └── testing/architecture.test.ts              [修改] 验证新边界，保持 SQL/SDK 规则
+│       │   ├── execute.ts                            [修改] 传递最终有效能力集合
+│       │   ├── postprocess/processor.ts              [修改] 按能力执行、调用共享状态出口
+│       │   ├── postprocess/action-suggestions.ts     [修改] 仅迁移纯解析依赖，业务仍归叙事
+│       │   └── postprocess/state-update、parser、
+│       │       strict-json 及对应迁移测试            [删除/迁出] 避免重复实现
+│       └── testing/architecture.test.ts              [修改] 验证新公开边界及 SQL 属主约束
 ├── apps/web/src/
-│   ├── api.ts                                        [修改] 辅助接口与返回类型
+│   ├── api.ts                                        [修改] 辅助 API 类型与私有流请求入口
 │   ├── features/presets/
-│   │   ├── types.ts / adapter.ts                     [修改] 新模块双向映射
-│   │   ├── PresetStore.tsx                           [修改] 读取独立默认 prompt
-│   │   ├── PresetLibraryPage.tsx                     [修改] 两个平级模块
-│   │   └── PromptEditorDialog.tsx                   [修改] 辅助任务模式和变量帮助
+│   │   ├── types.ts / adapter.ts                     [修改] 三场景映射、默认/覆盖
+│   │   ├── PresetLibraryPage.tsx                     [修改] 独立场景页签及同一次保存
+│   │   ├── PromptEditorDialog.tsx                    [修改] 当前场景独立编辑和恢复默认
+│   │   ├── sampling.ts / SamplingRow.tsx             [修改] 可选参数覆盖，保留 0/false
+│   │   └── Presets.module.css                        [修改] 紧凑页签、模型行与高级参数
 │   ├── features/operations/
-│   │   ├── controller.ts                            [新增] operationId、忙态、停止和补查
+│   │   ├── controller.ts                            [新增] 运行身份、状态查询、两种生命周期
+│   │   ├── ai-reply-stream.ts                        [新增] 私有流、最终 snapshot、取消/迟到保护
 │   │   └── index.ts                                 [新增] feature 出口
 │   ├── features/sessions/
-│   │   ├── ComposerMoreMenu.tsx                      [修改] 两入口与键盘操作
-│   │   ├── SessionPage.tsx                           [修改] 禁编辑、运行提示、停止分流
-│   │   └── workspace.ts                             [修改] 统一忙态、事件和最近轮次刷新
-│   ├── features/suggestions/controller.ts            [修改] 成功替换、失败保持、手动结果恢复
-│   └── transport/session-events.ts                   [修改] 事件名白名单与字段验证
+│   │   ├── ComposerMoreMenu.tsx                      [修改] 帮答/更新状态入口及键盘操作
+│   │   ├── SessionPage.tsx                           [修改] 草稿生成所有权、真实禁编辑、恢复原草稿
+│   │   └── workspace.ts                             [修改] 统一 busy、停止分流、状态结束补读
+│   └── transport/session-events.ts                   [修改] 辅助元信息事件白名单与校验
 ├── apps/web/tests/
-│   ├── session-workspace.test.mjs                    [修改] 一致忙态与受理超时补查
-│   ├── session-events.test.mjs                       [修改] 新事件分发及迟到事件
-│   ├── suggestions.test.mjs                          [修改] 替换/保留/刷新恢复
-│   └── stage-frame.test.mjs                          [修改] Stage 快照与写命令边界
+│   ├── session-workspace.test.mjs                    [修改] 草稿/状态生命周期与共享 busy
+│   ├── session-events.test.mjs                       [修改] 元信息分发、迟到事件
+│   ├── ai-reply-stream.test.mjs                      [新增] 分片、最终替换、取消及无持久恢复
+│   └── stage-frame.test.mjs                          [修改] 宿主草稿命令受忙态限制
 ├── packages/sr-sdk/src/
-│   ├── stage-contract.ts                             [修改] 辅助状态和事件类型
+│   ├── stage-contract.ts                             [修改] 辅助运行元信息与忙态
 │   └── stage/
-│       ├── runtime.ts                                [修改] 只读快照与公开类型适配
-│       └── world-story.tsx                           [修改] 忙态禁用建议点击
+│       ├── runtime.ts                                [修改] 只读投影适配
+│       └── world-story.tsx                           [修改] 辅助运行期禁用候选填草稿
 ├── docs/runtime/
-│   ├── server-http.md                                [修改] 实施后的接口事实
-│   ├── server-events.md                              [修改] 实施后的事件事实
-│   ├── server-narrative.md                            [修改] output 与计量的实际含义
-│   └── web-runtime.md                                [修改] 忙态和辅助结果同步
-└── AGENTS.md                                         [修改] 实施后更新真实契约与职责归属
+│   ├── server-http.md                                [修改] 落地后的私有流与状态接口
+│   ├── server-events.md                              [修改] 辅助元信息事件，无 AI 正文广播
+│   ├── server-narrative.md                           [修改] 自动能力、稀疏 output 与 usage
+│   └── web-runtime.md                                [修改] 草稿流、状态恢复与 busy 契约
+└── AGENTS.md                                         [修改] 实施后同步真实职责和接口
 ~~~
 
-模块中的其他文件只在类型/调用链确有依赖时同步调整，不以此扩成全局重构。首版不需要新增数据库表、state Repository、SDK 作者主动调用 API 或新的消息删除 UI。源码根目录相关文档更新在功能实际落地后完成，本次仅保存此计划。
+actionSuggestions 的持久化/恢复业务无需因 AI 帮答新增一套逻辑。collectModel 已具备所需流式与取消能力，优先复用，不预先复制或重写。其他文件仅在实际类型依赖需要时调整；docs/design 继续只描述已实现事实，不把本计划写进去。
 
 ## 14. 实施顺序与验收
 
-建议分三步完成同一功能：
+### 14.1 实施顺序
 
-1. **服务端基础与预设配置**：配置往返、两个 context 入口、共享输出处理、同一会话锁和受控保存能力。
-2. **端到端业务契约**：两提交/查询/停止接口、事件、计量、失败/取消以及有效结果恢复。
-3. **Web 与 Stage**：预设编辑模块、更多菜单、禁编辑和统一忙态、建议替换与重连补读。
+1. **配置与 context**：三场景 schema/迁移/默认模板、逐场景编译、两个具名入口、实际模型解析及预算。
+2. **共享状态与服务端流程**：统一锁、状态后处理提取、受控提交、AI 私有流、状态后台接口、模型引用检查与关闭。
+3. **Web/Stage**：预设页签/模型设置、更多菜单、草稿流和停止、统一忙态、状态回执与最近轮次同步。
 
-验证遵循当前仓库约束：函数级测试、typecheck、lint；不启动真实服务、不调用真实模型、不增加模拟端到端环境。
+以上是同一功能的实施顺序，不是先让用户长期使用一套不能独立编辑的过渡配置。
 
-必须覆盖的行为：
+### 14.2 必须验证的行为
 
-- 旧预设自动获得可用默认，新预设复制/导出再导入不丢字段。
-- 两个辅助操作与叙事互斥；直接 HTTP/Stage 写入不能绕过锁。
-- 单次辅助操作不新建 user/assistant/compaction，不修改 tip/seq，不触发新摘要模型调用。
-- 10 + 5 已是 15 时无实际变化；当前 12 时写 15；再次执行不能由服务端机械累加。
-- 无变化绝不把已保存 state 写成 null；部分成功只应用有效值，失败/取消保留旧结果。
-- 中断助手原无 output 时只写实际能力，不伪造另一能力。
-- 补偿/帮答成功后删除或重新生成目标，旧状态/建议/回执不残留。
-- 辅助请求累计计量可见，主上下文面板仍关联原主请求；开场辅助计量不冒充主叙事。
-- 帮答成功整体替换，失败/空结果保持；对 stopped 助手先手动成功、再重试失败，刷新后仍恢复上次有效候选。
-- 202 超时、SSE 断连、终态先于受理响应、旧终态迟到，不导致自动重发、假空闲或覆盖新结果。
-- 数据提交前不发业务成功事件，提交失败释放锁且不留下半份状态/结果。
+验证采用函数级测试、typecheck、lint；不启动真实服务或真实模型，不建设模拟端到端环境。测试覆盖实质边界，不为每个字段映射另造重复测试。
 
-完成标准：用户在输入框更多菜单能主动校正状态或换一组行动建议，运行期间会话写入被可靠锁定；结果可查询、可恢复，并与原叙事和当前状态保持清晰关系。
+**预设与模型：**
+
+- 三场景可独立排序、启停和改正文；改一个场景不会改另一个。节点 ID 可跨场景重用，但场景内唯一。
+- 历史/输入按各自角色仅注入一次，固定协议与有效能力一致；关闭叙事自动能力后不能被 fallback 补回。
+- 已知标准旧预设可升级；用户改写的混合文本保留在叙事，辅助场景不继承旧叙事指令。
+- 本机复制保留模型绑定；便携往返保留节点/参数/限额并明确重置本地模型绑定。
+- 在捕获阶段使用所选辅助模型；小窗口、输出上限、缺失模型、凭据失败均按实际配置处理。
+- 参数覆盖中缺省、0、false 含义不同；不支持的采样/思考选项保持既有适配器过滤或降级契约。被固定引用的模型无法删除，凭据也不能误删。
+
+**AI 帮答：**
+
+- 只调用一次模型，不新增 user/assistant/compaction，不改 tip/seq、状态或原行动建议。
+- 私有流只有发起页面写草稿；其他页只更新忙态。reasoning/tool 字段不进入草稿；length、工具请求、缺终态等不能误报 completed。
+- 第一个片段前失败保留原草稿；之后失败/停止保留部分草稿。最终 snapshot 只替换一次，不重复追加。
+- 共享 SSE 终态先到不能解锁发起页；停止、换会话或新生成后旧 delta/snapshot 不能覆盖草稿。
+- 对 Sessions 持久化接口的调用次数为零；没有 output/回执/metrics 写入，会话 usage 保持不变。
+- 日志/诊断无生成正文或 raw snapshot，Web 无新增结果持久缓存；刷新后没有伪造恢复。
+- 请求断开/取消最终释放同一会话锁；直接 HTTP 和 Stage 写命令不能绕过锁。
+
+**独立状态更新：**
+
+- 使用独立 context 和模型调用，共享相同路径/值/权限规则；不执行建议或续写正文。
+- 完整空块为 no_updates；缺失/损坏标签、截断或未正常结束不当成功。
+- 10 + 5 已为 15 时不重复累加；当前为 12 时按证据校正为 15。
+- 无变化保留原快照；部分成功只提交有效变化；全失败/取消保留旧有效状态和结果。
+- 尾部 compaction.state=null 可继承，[] 或独立快照明确阻断；目标删除/重新生成后补偿不残留。
+- 状态/结果/回执/计量同事务，提交前不发成功事件，提交失败释放锁。
+- 原助手缺失另一能力时不补伪记录；历史旁注不把缺失当作无变化。
+- 状态调用计入会话 usage，主上下文仍关联原叙事 request；更新旧 seq 后页面能正确刷新。
+
+### 14.3 完成标准
+
+用户只管理一份预设，在三个页签分别调整编排和辅助模型。AI 帮答流式生成可编辑草稿，不留存调用结果、不计入会话 usage；独立状态更新使用新请求和共用状态处理准确提交补偿。三种运行共享可靠的会话互斥，各自的传输、保存和恢复边界明确。
+
+本次交付仅为上述方案及计划，不包含业务代码实现、提交或发布。

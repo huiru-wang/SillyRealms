@@ -9,11 +9,14 @@
     "./state-validation": "./src/state-validation.ts",
     "./when-expression": "./src/when-expression.ts",
     "./world-story.css": "./src/world-story.css",
-    "./world-document": "./src/world-document/WorldDocumentRenderer.tsx"
+    "./world-document": "./src/world-document/WorldDocumentRenderer.tsx",
+    "./locale": "./src/locale.ts"
   },
   "peerDependencies": {
     "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "react-dom": "19.2.0",
+    "i18next": "27.2.6",
+    "react-i18next": "18.0.3"
   },
   "dependencies": {
     "@sillyrealms/roleplay": "workspace:*",

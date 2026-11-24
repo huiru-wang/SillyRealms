@@ -1,3 +1,4 @@
+import { languageNames, type AppLocale } from '@sillyrealms/sdk/locale';
 import { systemVariableNames } from '../../../../modules/presets/service.js';
 import { narrativeForActivation } from '@sillyrealms/roleplay';
 import { validateStateSchema } from '@sillyrealms/sdk/state-validation';
@@ -10,6 +11,7 @@ import type { NarrativeHistoryMessage } from '../history/index.js';
 import type { ContextMaterialDiagnostic } from '../../diagnostics.js';
 
 export type MaterialSources = {
+  locale: AppLocale;
   world: World;
   views: StateViews;
   playerId: string;
@@ -160,6 +162,7 @@ export function selectNarrativeMaterials(input: MaterialSources, conditions: Con
   }).join(''));
   return {
     variables: {
+      'system.language': text(languageNames[input.locale]),
       user: text(playerName),
       'persona.prompt': text(playerActive ? authorPrompt(player.prompt ?? '') : ''),
       'characters.prompts': text(selected.map(({ character }) => authorPrompt(character.prompt ?? '')).filter(Boolean).join('\n\n')),

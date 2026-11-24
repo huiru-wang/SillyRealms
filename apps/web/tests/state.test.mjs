@@ -1,3 +1,5 @@
+import {i18n} from '../src/i18n/instance.ts';
+import {errorMessage} from '../src/i18n/errors.ts';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createStateController} from '../src/features/state/index.ts';
@@ -80,7 +82,8 @@ test('mixed scopes preserve batch order, retain individual failures and never in
   assert.deepEqual(results.map(item=>item.success),[true,false,true,true,true]);
   assert.deepEqual(controller.getSnapshot().values,{global:{a:2},session:{b:3},message:{coins:null}});
   assert.equal(Object.hasOwn(controller.getSnapshot().values.global,'missing'),false);
-  assert.match(controller.getSnapshot().error,/字段值无效/);
+  assert.equal(controller.getSnapshot().error,'INVALID_STATE_VALUE');
+  assert.equal(results[1].errorMessage,'字段值无效');
   controller.dispose();
 });
 
@@ -175,4 +178,21 @@ test('a scope read failure retains successful siblings and a missing tip does no
   const result=await controller.write([{path:'coins',value:5}]);
   assert.equal(result[0].success,false);
   controller.dispose();
+});
+
+test('multiple state failures keep receipts and translate each notice after a language switch',async()=>{
+  let calls=0;
+  const controller=createStateController({worldId:'w',sessionId:'s',getTipEntryId:()=> 'tip',request:async()=>{calls++;return {item:[]};}});
+  const results=await controller.write([{scope:'invalid',path:'coins',value:1},{path:'',value:2}]);
+  const notice=controller.getSnapshot().error;
+  assert.equal(calls,0);
+  assert.equal(results.length,2);
+  assert.deepEqual(results.map(row=>row.success),[false,false]);
+  assert.equal(errorMessage(notice),'状态作用域无效；状态字段路径无效');
+  await i18n.changeLanguage('en');
+  try{
+    assert.equal(errorMessage(notice),'Invalid state scope.; Invalid state field path.');
+    assert.equal(controller.getSnapshot().error,notice);
+    assert.equal(errorMessage('WORLD_NOT_FOUND；sessions:invalidPath'),'World not found.; Invalid state field path.');
+  }finally{await i18n.changeLanguage('zh-CN');controller.dispose();}
 });

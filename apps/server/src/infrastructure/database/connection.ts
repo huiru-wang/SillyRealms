@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { AppError } from '../../errors.js';
 
-export const DATABASE_VERSION = 4;
+export const DATABASE_VERSION = 6;
 export const DATABASE_APPLICATION_ID = 0x53525632; // SRV2; distinct from the old Server database.
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
@@ -125,7 +125,25 @@ const UPGRADE_V3_SQL = 'ALTER TABLE worlds ADD COLUMN revision INTEGER NOT NULL 
 
 const UPGRADE_V4_SQL = 'CREATE INDEX idx_entries_state_seq ON entries(session_id, seq) WHERE state IS NOT NULL';
 
-// Let SQLite normalize ALTER TABLE identically for new and upgraded databases.
+const UPGRADE_V5_SQL = "ALTER TABLE app_settings ADD COLUMN locale TEXT NOT NULL DEFAULT 'zh-CN' CHECK(locale IN ('zh-CN','en'))";
+
+// app_settings has no incoming references; rebuilding its CHECK keeps every stored value.
+const UPGRADE_V6_SQL = `
+ALTER TABLE app_settings RENAME TO app_settings_v5;
+CREATE TABLE app_settings (
+    id                          INTEGER PRIMARY KEY CHECK(id = 1),
+    default_preset_id           TEXT REFERENCES presets(id) ON DELETE RESTRICT,
+    default_api_model_config_id TEXT REFERENCES api_model_configs(id) ON DELETE RESTRICT,
+    created_at                  INTEGER NOT NULL,
+    updated_at                  INTEGER NOT NULL,
+    locale                      TEXT NOT NULL DEFAULT 'zh-CN' CHECK(locale IN ('zh-CN','en','ja'))
+);
+INSERT INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at,locale)
+SELECT id,default_preset_id,default_api_model_config_id,created_at,updated_at,locale FROM app_settings_v5;
+DROP TABLE app_settings_v5;
+`;
+
+// Apply identical migration SQL to reference, new and upgraded databases.
 function expectedObjects(version: number) {
   const reference = new DatabaseSync(':memory:');
   try {
@@ -133,11 +151,13 @@ function expectedObjects(version: number) {
     if (version >= 2) reference.exec(UPGRADE_V2_SQL);
     if (version >= 3) reference.exec(UPGRADE_V3_SQL);
     if (version >= 4) reference.exec(UPGRADE_V4_SQL);
+    if (version >= 5) reference.exec(UPGRADE_V5_SQL);
+    if (version >= 6) reference.exec(UPGRADE_V6_SQL);
     return new Map(reference.prepare("SELECT name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'")
       .all().map(row => [String(row.name), String(row.sql)]));
   } finally { reference.close(); }
 }
-const schemas = new Map([[1, expectedObjects(1)], [2, expectedObjects(2)], [3, expectedObjects(3)], [4, expectedObjects(4)]]);
+const schemas = new Map([[1, expectedObjects(1)], [2, expectedObjects(2)], [3, expectedObjects(3)], [4, expectedObjects(4)], [5, expectedObjects(5)], [6, expectedObjects(6)]]);
 const normalizeSql = (sql: string) => sql.replace(/\s+/g, ' ').trim().toLowerCase();
 
 function inspectDatabase(db: DatabaseSync) {
@@ -184,12 +204,16 @@ export function openDatabase(path: string): DatabaseSync {
           db.exec(UPGRADE_V2_SQL);
           db.exec(UPGRADE_V3_SQL);
           db.exec(UPGRADE_V4_SQL);
+          db.exec(UPGRADE_V5_SQL);
+          db.exec(UPGRADE_V6_SQL);
           db.exec('PRAGMA application_id=' + DATABASE_APPLICATION_ID);
         } else {
           assertCompatible(current);
           if (current.version === 1) db.exec(UPGRADE_V2_SQL);
           if (current.version < 3) db.exec(UPGRADE_V3_SQL);
           if (current.version < 4) db.exec(UPGRADE_V4_SQL);
+          if (current.version < 5) db.exec(UPGRADE_V5_SQL);
+          if (current.version < 6) db.exec(UPGRADE_V6_SQL);
         }
         db.exec('PRAGMA user_version=' + DATABASE_VERSION);
         assertCompatible(inspectDatabase(db));

@@ -23,7 +23,7 @@ describe('synchronous application transactions', () => {
     expect(() => {
       // @ts-expect-error Promise-like results are forbidden even from a non-async function.
       run(() => {
-        db.prepare('INSERT INTO app_settings VALUES(1,NULL,NULL,1,1)').run();
+        db.prepare('INSERT INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,NULL,NULL,1,1)').run();
         return Promise.resolve();
       });
     }).toThrow('must not return a Promise');

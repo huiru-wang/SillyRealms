@@ -5,7 +5,7 @@ export const systemNodeIds = ['main', 'personaInfo', 'characterInfo', 'worldInfo
 export const postprocessNodeIds = ['worldState', 'actionSuggestions'] as const;
 const builtinIds: readonly string[] = [...systemNodeIds, ...postprocessNodeIds];
 export const systemVariableNames = [
-  'user', 'persona.prompt', 'characters.prompts', 'world.lore',
+  'system.language', 'user', 'persona.prompt', 'characters.prompts', 'world.lore',
   'history.summary', 'history.messages', 'input.text', 'state.message', 'state.session', 'state.global',
 ] as const;
 

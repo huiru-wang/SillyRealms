@@ -94,10 +94,10 @@ test('frame command transport revokes pending requests and ignores late response
   const sent = []; let closed = 0;
   const bridge = new StageBridge();
   const port = {postMessage(value) { sent.push(value); }, close() { closed++; }};
-  await assert.rejects(bridge.command('history.query', {}), /尚未连接/);
+  await assert.rejects(bridge.command('history.query', {}), /bridge.notConnected/);
   bridge.connect(port);
   const first = bridge.command('state.read', {});
-  const rejected = assert.rejects(first, /已断开/);
+  const rejected = assert.rejects(first, /bridge.disconnected/);
   bridge.disconnect(); await rejected;
   bridge.connect(port);
   const second = bridge.command('history.query', {});
@@ -110,7 +110,7 @@ test('frame command transport revokes pending requests and ignores late response
 test('frame request timeouts settle callers instead of retaining pending commands forever', async () => {
   const bridge = new StageBridge(5);
   bridge.connect({postMessage() {}, close() {}});
-  await assert.rejects(bridge.command('history.query', {}), /超时/);
+  await assert.rejects(bridge.command('history.query', {}), /bridge.timeout/);
   assert.equal(bridge.receive({type: 'response', id: 1, data: {}}), false);
   bridge.disconnect();
 });
@@ -131,23 +131,23 @@ test('capability failures do not turn completed narrative into a failed run pres
     output: {stateUpdate: {status: 'invalid_tag'}, actionSuggestions: {status: 'processing_error'}},
   }]};
   assert.equal(runNotice(run), null);
-  assert.match(runNotice({...run, status: 'stopping'}), /正在停止/);
-  assert.match(runNotice({...run, status: 'unknown'}), /未确定/);
+  assert.equal(runNotice({...run, status: 'stopping'}), 'notices.stopping');
+  assert.equal(runNotice({...run, status: 'unknown'}), 'notices.unknown');
 });
 
 test('only an explicit output limit prompts a preset length adjustment', () => {
   const run = {runId: 'run', status: 'stopped', messages: []};
-  assert.match(runNotice({...run, stopReason: 'output_limit_reached'}), /调高当前预设的「最大输出长度」/);
-  assert.equal(runNotice({...run, stopReason: 'output_incomplete'}), '模型输出未完整结束。');
+  assert.equal(runNotice({...run, stopReason: 'output_limit_reached'}), 'notices.output_limit_reached');
+  assert.equal(runNotice({...run, stopReason: 'output_incomplete'}), 'notices.output_incomplete');
 });
 
 test('stream gaps and reasoning-only messages remain visible without fabricated narrative text', () => {
   assert.equal(streamNotice({streamIncomplete: false}), null);
-  assert.match(streamNotice({streamIncomplete: true}), /尚未完整同步/);
+  assert.equal(streamNotice({streamIncomplete: true}), 'notices.streamIncomplete');
   const message = {id: 'assistant', runId: 'run', role: 'assistant', content: '', reasoning_content: 'thinking',
     timestamp: 1, saved: false};
   assert.equal(messageNotice(message, 'running'), null);
-  assert.match(messageNotice({...message, saved: true}, 'stopped'), /已保存/);
+  assert.equal(messageNotice({...message, saved: true}, 'stopped'), 'notices.reasoningOnly');
   assert.equal(messageNotice({...message, content: '正文'}, 'completed'), null);
   assert.equal(message.content, '');
 });

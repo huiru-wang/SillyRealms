@@ -16,9 +16,10 @@
 .detail{container-name:model-detail;container-type:inline-size;display:flex;flex-direction:column;min-width:0;min-height:0}
 .detailHeader{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);border-bottom:1px solid var(--stroke);padding-bottom:var(--space-3);flex:none}
 .detailHeader>div{min-width:0}
-.detailActions{display:flex;align-items:center;flex-wrap:nowrap;gap:var(--space-1);flex:none}
+.detailActions{display:flex;align-items:center;flex-wrap:nowrap;gap:var(--space-1);flex:none;min-width:0;max-width:100%}
 .detailActions :global(.sr-button){flex:none}
-.detailActions :global(.sr-button-label){white-space:nowrap}
+.detailActions :global(.sr-button:not(.sr-icon-button)){flex:0 1 auto;min-width:0}
+.detailActions :global(.sr-button-label){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .detailHeader h2{font-size:var(--font-20);font-weight:600;line-height:1.4;margin:0;overflow-wrap:anywhere}
 .detailHeader p{margin:var(--space-1) 0 0;font-size:var(--font-12);color:var(--text-muted);overflow-wrap:anywhere}
 .detailBody{min-width:0;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:var(--space-4) var(--space-1) var(--space-6) 0}

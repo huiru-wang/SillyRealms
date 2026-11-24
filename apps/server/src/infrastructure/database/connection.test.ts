@@ -20,6 +20,24 @@ describe('V2 database lifecycle and constraints', () => {
     return join(directory, 'nested', 'database.sqlite');
   };
 
+  // Recreate the historical table before inserting fixtures. DROP COLUMN on V6's
+  // rebuilt table does not reproduce the exact SQL text of the validated old schema.
+  function legacySettings(database: DatabaseSync, includeLocale = false) {
+    database.exec(`
+DROP TABLE app_settings;
+CREATE TABLE app_settings (
+    id                          INTEGER PRIMARY KEY CHECK(id = 1),
+    default_preset_id           TEXT REFERENCES presets(id) ON DELETE RESTRICT,
+    default_api_model_config_id TEXT REFERENCES api_model_configs(id) ON DELETE RESTRICT,
+    created_at                  INTEGER NOT NULL,
+    updated_at                  INTEGER NOT NULL
+);
+`);
+    if (includeLocale) {
+      database.exec("ALTER TABLE app_settings ADD COLUMN locale TEXT NOT NULL DEFAULT 'zh-CN' CHECK(locale IN ('zh-CN','en'))");
+    }
+  }
+
   function seedSession() {
     db.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)').run('m', 'Model', 'provider', 'model', 'credential-ref', 1, 1);
     db.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('p', 'narrative', 'Preset', null, '{}', 1, 1);
@@ -39,7 +57,7 @@ describe('V2 database lifecycle and constraints', () => {
   it('reopens persisted values without reseeding or mutating application content', () => {
     const path = file();
     const first = openDatabase(path);
-    first.prepare('INSERT INTO app_settings VALUES(1,NULL,NULL,123,123)').run();
+    first.prepare('INSERT INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,NULL,NULL,123,123)').run();
     first.close();
     const second = openDatabase(path);
     try { expect(second.prepare('SELECT updated_at FROM app_settings WHERE id=1').get()?.updated_at).toBe(123); }
@@ -49,7 +67,8 @@ describe('V2 database lifecycle and constraints', () => {
   it('upgrades a verified V1 database without reseeding data and reopens the V2 schema', () => {
     const path = file();
     const previous = openDatabase(path);
-    previous.exec("ALTER TABLE presets DROP COLUMN revision; ALTER TABLE worlds DROP COLUMN revision; DROP INDEX idx_worlds_created; DROP INDEX idx_entries_state_seq; PRAGMA user_version=1; INSERT INTO app_settings VALUES(1,NULL,NULL,123,123)");
+    legacySettings(previous);
+    previous.exec("ALTER TABLE presets DROP COLUMN revision; ALTER TABLE worlds DROP COLUMN revision; DROP INDEX idx_worlds_created; DROP INDEX idx_entries_state_seq; PRAGMA user_version=1; INSERT INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,NULL,NULL,123,123)");
     previous.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('preserved', 'narrative', 'Keep', null, '{}', 7, 8);
     previous.close();
     const upgraded = openDatabase(path);
@@ -64,6 +83,7 @@ describe('V2 database lifecycle and constraints', () => {
   it('upgrades V2 worlds in place and keeps their content and timestamps', () => {
     const path = file();
     const previous = openDatabase(path);
+    legacySettings(previous);
     previous.exec("ALTER TABLE worlds DROP COLUMN revision; DROP INDEX idx_worlds_created; DROP INDEX idx_entries_state_seq; PRAGMA user_version=2");
     previous.prepare("INSERT INTO worlds(id,spec_version,name,characters_json,openings_json,state,created_at,updated_at) VALUES('w','0.1','Keep','[]','[]','{\"coins\":7}',10,20)").run();
     previous.exec("INSERT INTO world_tags VALUES('w','tag',0)");
@@ -74,6 +94,75 @@ describe('V2 database lifecycle and constraints', () => {
     upgraded.close();
     const reopened = openDatabase(path);
     expect(reopened.prepare('PRAGMA user_version').get()?.user_version).toBe(DATABASE_VERSION);
+    reopened.close();
+  });
+
+  it.each([3, 4])('adds the default locale to V%s without changing existing settings or world content', version => {
+    const path = file();
+    const previous = openDatabase(path);
+    legacySettings(previous);
+    if (version === 3) previous.exec('DROP INDEX idx_entries_state_seq');
+    previous.exec('PRAGMA user_version=' + version);
+    previous.prepare("INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES('keep','narrative','Custom',NULL,'{}',7,8)").run();
+    previous.prepare("INSERT INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,'keep',NULL,11,12)").run();
+    previous.prepare("INSERT INTO worlds(id,spec_version,name,characters_json,openings_json,state,created_at,updated_at) VALUES('w','0.1','Keep','[]','[]','{}',13,14)").run();
+    const originalSettings = previous.prepare('SELECT * FROM app_settings').get();
+    const originalPreset = previous.prepare('SELECT * FROM presets').get();
+    const originalWorld = previous.prepare('SELECT * FROM worlds').get();
+    previous.close();
+
+    const upgraded = openDatabase(path);
+    expect(upgraded.prepare('SELECT * FROM app_settings').get()).toEqual({ ...originalSettings, locale: 'zh-CN' });
+    expect(upgraded.prepare('SELECT * FROM presets').get()).toEqual(originalPreset);
+    expect(upgraded.prepare('SELECT * FROM worlds').get()).toEqual(originalWorld);
+    expect(upgraded.prepare('PRAGMA user_version').get()?.user_version).toBe(DATABASE_VERSION);
+    expect(() => upgraded.prepare("UPDATE app_settings SET locale='fr'").run()).toThrow();
+    upgraded.prepare("UPDATE app_settings SET locale='en'").run();
+    upgraded.close();
+
+    const reopened = openDatabase(path);
+    expect(reopened.prepare('SELECT locale,created_at,updated_at FROM app_settings').get())
+      .toEqual({ locale: 'en', created_at: 11, updated_at: 12 });
+    reopened.close();
+  });
+
+  it.each(['zh-CN', 'en'])('upgrades a V5 %s database to Japanese support without changing any saved rows', locale => {
+    const path = file();
+    const previous = openDatabase(path);
+    legacySettings(previous, true);
+    previous.exec('PRAGMA user_version=5');
+    previous.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)')
+      .run('m', 'Model', 'provider', 'model', 'credential-ref', 5, 6);
+    previous.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+      .run('p', 'narrative', 'Custom preset', 'Keep this', '{}', 7, 8);
+    previous.prepare('INSERT INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at,locale) VALUES(?,?,?,?,?,?)')
+      .run(1, 'p', 'm', 11, 12, locale);
+    previous.prepare('INSERT INTO worlds(id,spec_version,name,characters_json,openings_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)')
+      .run('w', '0.1', 'World', '[]', '[]', '{"day":2}', 13, 14);
+    previous.prepare('INSERT INTO world_tags VALUES(?,?,?)').run('w', 'keep-tag', 0);
+    previous.prepare('INSERT INTO sessions(id,world_id,preset_id,api_model_config_id,user_character_id,tip_entry_id,title,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+      .run('s', 'w', 'p', 'm', 'player', 'entry', 'Keep session', '{"coins":7}', 15, 16);
+    previous.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,timestamp,payload,state,ext_data,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run('entry', 's', null, 'run', 1, 'message', 'assistant', 17, '{"message":{"content":"Keep narrative"}}', '[{"key":"coins","value":7}]', '{"keep":true}', 18, 19);
+    const tables = ['api_model_configs', 'presets', 'app_settings', 'worlds', 'world_tags', 'sessions', 'entries'];
+    const records = new Map(tables.map(table => [table, previous.prepare('SELECT * FROM ' + table).all()]));
+    expect(() => previous.prepare("UPDATE app_settings SET locale='ja'").run()).toThrow();
+    previous.close();
+
+    const upgraded = openDatabase(path);
+    for (const table of tables) expect(upgraded.prepare('SELECT * FROM ' + table).all()).toEqual(records.get(table));
+    expect(upgraded.prepare('PRAGMA user_version').get()?.user_version).toBe(DATABASE_VERSION);
+    expect(upgraded.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    expect(upgraded.prepare("SELECT name FROM sqlite_schema WHERE name='app_settings_v5'").get()).toBeUndefined();
+    upgraded.prepare("UPDATE app_settings SET locale='ja'").run();
+    expect(() => upgraded.prepare("UPDATE app_settings SET locale='fr'").run()).toThrow();
+    upgraded.close();
+
+    const reopened = openDatabase(path);
+    expect(reopened.prepare('SELECT * FROM app_settings').get()).toEqual({ ...records.get('app_settings')![0], locale: 'ja' });
+    for (const table of tables.filter(table => table !== 'app_settings')) {
+      expect(reopened.prepare('SELECT * FROM ' + table).all()).toEqual(records.get(table));
+    }
     reopened.close();
   });
 
@@ -100,7 +189,7 @@ describe('V2 database lifecycle and constraints', () => {
   });
 
   it('rolls back a nested operation without committing the surrounding transaction', () => {
-    db.prepare('INSERT INTO app_settings VALUES(1,NULL,NULL,1,1)').run();
+    db.prepare('INSERT INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,NULL,NULL,1,1)').run();
     transaction(db, () => {
       db.prepare('UPDATE app_settings SET updated_at=10 WHERE id=1').run();
       expect(() => transaction(db, () => {

@@ -1,4 +1,5 @@
 import {useEffect,useRef,useState} from 'react';
+import {useTranslation} from 'react-i18next';
 import {useOutletContext} from 'react-router-dom';
 import {Check,MonitorCog,SlidersHorizontal} from 'lucide-react';
 import {Panel} from '../../components/ui/Field';
@@ -11,45 +12,63 @@ import {useManagement,type AppSettings} from '../../app/ManagementData';
 import {usePagedResource} from '../../data';
 import {usePresetStore} from '../presets/PresetStore';
 import type {ModelConfig} from '../models/types';
+import {DEFAULT_LOCALE,SUPPORTED_LOCALES,isAppLocale,languageNames} from '@sillyrealms/sdk/locale';
 
+type Defaults=Pick<AppSettings,'defaultPresetId'|'defaultApiModelConfigId'>;
+const defaults=(value:AppSettings):Defaults=>({defaultPresetId:value.defaultPresetId,defaultApiModelConfigId:value.defaultApiModelConfigId});
 export function SettingsPage(){
+ const {t}=useTranslation('settings');
  const {theme,toggleTheme}=useOutletContext<{theme:Theme;toggleTheme:()=>void}>();
- const {settings,saveSettings,modelsRevision}=useManagement();
+ const {settings,saveSettings,saveLocale,localeSaving,modelsRevision}=useManagement();
  const presets=usePresetStore(),models=usePagedResource<ModelConfig>('v1/api-model-configs?limit=100',modelsRevision,true);
- const [baseline,setBaseline]=useState<AppSettings|null>(null),[draft,setDraft]=useState<AppSettings|null>(null);
- const [saving,setSaving]=useState(false),[saved,setSaved]=useState(''),[error,setError]=useState('');const pending=useRef(false);
+ const [baseline,setBaseline]=useState<Defaults|null>(null),[draft,setDraft]=useState<Defaults|null>(null);
+ const [saving,setSaving]=useState(false),[saved,setSaved]=useState(false),[error,setError]=useState<unknown>(null);
+ const pending=useRef(false);
  const dirty=JSON.stringify(baseline)!==JSON.stringify(draft);
- useEffect(()=>{if(settings.value&&!dirty){setBaseline(settings.value.item);setDraft(settings.value.item);}},[settings.value,dirty]);
+ useEffect(()=>{if(settings.value&&!dirty){const value=defaults(settings.value.item);setBaseline(value);setDraft(value);}},[settings.value,dirty]);
  const save=async()=>{
   if(!draft||!baseline||pending.current)return;
-  const patch:Partial<AppSettings>={};
+  const patch:Partial<Defaults>={};
   if(draft.defaultPresetId!==baseline.defaultPresetId)patch.defaultPresetId=draft.defaultPresetId;
   if(draft.defaultApiModelConfigId!==baseline.defaultApiModelConfigId)patch.defaultApiModelConfigId=draft.defaultApiModelConfigId;
   if(!Object.keys(patch).length)return;
-  pending.current=true;setSaving(true);setError('');setSaved('');
-  try{const next=await saveSettings(patch);setBaseline(next);setDraft(next);setSaved('默认配置已保存。只影响之后导入的世界卡。');}
-  catch(reason){setError(reason instanceof Error?reason.message:'保存失败');}
+  pending.current=true;setSaving(true);setError(null);setSaved(false);
+  try{const next=defaults(await saveSettings(patch));setBaseline(next);setDraft(next);setSaved(true);}
+  catch(reason){setError(reason);}
   finally{pending.current=false;setSaving(false);}
  };
- const set=(patch:Partial<AppSettings>)=>{setDraft(current=>current?{...current,...patch}:current);setSaved('');};
+ const set=(patch:Partial<Defaults>)=>{setDraft(current=>current?{...current,...patch}:current);setSaved(false);};
+ const changeLanguage=async(value:string)=>{
+  if(!isAppLocale(value)||localeSaving||value===settings.value?.item.locale)return;
+  setError(null);setSaved(false);
+  try{await saveLocale(value);}catch(reason){setError(reason);}
+ };
  return <main className="page settings-page">
-  <PageHeader title="设置" description="管理界面外观与新世界卡的默认配置。"/>
+  <PageHeader title={t('title')} description={t('description')}/>
   {settings.error&&<ErrorNotice message={settings.error} onRetry={settings.reload}/>}
-  {error&&<ErrorNotice message={error}/>}{saved&&<div className="preset-save-ok" role="status"><Check size={16}/>{saved}</div>}
+  {!!error&&<ErrorNotice message={error}/>}
+  {saved&&<div className="preset-save-ok" role="status"><Check size={16}/>{t('defaultsSaved')}</div>}
   <div className="settings-stack">
-   <Panel className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><MonitorCog size={18}/></span><h2>外观</h2></div>
-    <label className="settings-row settings-theme-row"><span><strong>主题</strong></span><Select aria-label="主题" value={theme} onChange={event=>{if(event.target.value!==theme)toggleTheme();}}><option value="light">浅色</option><option value="dark">深色</option></Select></label>
+   <Panel className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><MonitorCog size={18}/></span><h2>{t('appearance')}</h2></div>
+    <label className="settings-row"><span><strong>{t('language')}</strong><small>{t('languageHint')}</small></span>
+     <Select aria-label={t('language')} value={settings.value?.item.locale??DEFAULT_LOCALE} disabled={!settings.value||localeSaving||saving} onChange={event=>void changeLanguage(event.target.value)}>
+      {SUPPORTED_LOCALES.map(locale=><option key={locale} value={locale}>{languageNames[locale]}</option>)}
+     </Select>
+    </label>
+    {localeSaving&&<span role="status">{t('savingLanguage')}</span>}
+    <label className="settings-row settings-theme-row"><span><strong>{t('theme')}</strong></span><Select aria-label={t('theme')} value={theme} onChange={event=>{if(event.target.value!==theme)toggleTheme();}}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option></Select></label>
    </Panel>
-   <Panel className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><SlidersHorizontal size={18}/></span><div><h2>默认配置</h2><p>导入世界卡时复制一次。修改或清空不会改变现有世界和会话。</p></div></div>
-    {presets.error&&<ErrorNotice message={presets.error} onRetry={presets.reload}/>}{models.error&&<ErrorNotice message={models.error} onRetry={models.reload}/>}
-    {!draft?(settings.loading?<Loading text="读取配置…"/>:null):<div className="settings-rows">
-     <label className="settings-row"><span><strong>默认预设</strong></span><Select aria-label="默认预设" disabled={saving} value={draft.defaultPresetId??''} onChange={event=>set({defaultPresetId:event.target.value||null})}>
-      <option value="">未设置</option>{draft.defaultPresetId&&!presets.presets.some(p=>p.id===draft.defaultPresetId)&&<option value={draft.defaultPresetId}>当前预设（列表尚未加载）</option>}{presets.presets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+   <Panel className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><SlidersHorizontal size={18}/></span><div><h2>{t('defaults')}</h2><p>{t('defaultsHint')}</p></div></div>
+    {presets.error&&<ErrorNotice message={presets.error} onRetry={presets.reload}/>}
+    {models.error&&<ErrorNotice message={models.error} onRetry={models.reload}/>}
+    {!draft?(settings.loading?<Loading text={t('loading')}/>:null):<div className="settings-rows">
+     <label className="settings-row"><span><strong>{t('defaultPreset')}</strong></span><Select aria-label={t('defaultPreset')} disabled={saving||localeSaving} value={draft.defaultPresetId??''} onChange={event=>set({defaultPresetId:event.target.value||null})}>
+      <option value="">{t('unset')}</option>{draft.defaultPresetId&&!presets.presets.some(p=>p.id===draft.defaultPresetId)&&<option value={draft.defaultPresetId}>{t('currentPreset')}</option>}{presets.presets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
      </Select></label>
-     <label className="settings-row"><span><strong>默认模型</strong></span><Select aria-label="默认模型" disabled={saving} value={draft.defaultApiModelConfigId??''} onChange={event=>set({defaultApiModelConfigId:event.target.value||null})}>
-      <option value="">未设置</option>{draft.defaultApiModelConfigId&&!models.page?.items.some(m=>m.id===draft.defaultApiModelConfigId)&&<option value={draft.defaultApiModelConfigId}>当前模型（列表尚未加载）</option>}{models.page?.items.map(m=><option key={m.id} value={m.id}>{m.name} · {m.modelId}</option>)}
+     <label className="settings-row"><span><strong>{t('defaultModel')}</strong></span><Select aria-label={t('defaultModel')} disabled={saving||localeSaving} value={draft.defaultApiModelConfigId??''} onChange={event=>set({defaultApiModelConfigId:event.target.value||null})}>
+      <option value="">{t('unset')}</option>{draft.defaultApiModelConfigId&&!models.page?.items.some(m=>m.id===draft.defaultApiModelConfigId)&&<option value={draft.defaultApiModelConfigId}>{t('currentModel')}</option>}{models.page?.items.map(m=><option key={m.id} value={m.id}>{m.name} · {m.modelId}</option>)}
      </Select></label>
-     <div className="settings-row settings-row-action"><Button variant="primary" loading={saving} disabled={!dirty} onClick={()=>void save()}>保存默认配置</Button></div>
+     <div className="settings-row settings-row-action"><Button variant="primary" loading={saving} disabled={!dirty||localeSaving} onClick={()=>void save()}>{t('saveDefaults')}</Button></div>
     </div>}
    </Panel>
   </div>

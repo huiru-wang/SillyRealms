@@ -28,7 +28,7 @@
 - 会话路由先经 SessionService 检查真实会话，再执行可选 canAccessSession；等待后先检查关闭信号，再确认会话仍存在。访问适配器不能代替会话存在性检查。
 - 普通 HTTP 统一 `{ success, errorCode, errorMessage, data }`，错误集中 errors.ts 映射并保留正确状态码；未知异常不泄漏 SQL、路径或堆栈。SSE/文件下载保留原始正文，传输开始前错误仍用 JSON 失败包络。
 - routes 使用 http/response.ts，HTTP 正文/query/游标处理留在传输层，业务校验留在 Service。跨模块列表/详情展示投影由 route 调公开 Service 组合。接口契约见 `../../docs/runtime/server-http.md`。
-- V2 使用独立数据根目录和数据库，user_version=4；只迁移结构匹配的 V2 v1–v3 库，依次添加预设 revision、世界 revision、导入时间索引和消息状态快照索引，不自动改造/清空旧 Server 库，不导入旧 Server 的建表、恢复或执行逻辑。现有 V2 设置记录保留原值；缺失的 V2 内置预设与设置由启动 initialize 幂等补齐，不导入旧 Server 数据。
+- V2 使用独立数据根目录和数据库，user_version=6；只迁移结构匹配的 V2 v1–v5 库，依次添加预设 revision、世界 revision、导入时间索引、消息状态快照索引、app_settings.locale 及其三语取值约束，不自动改造/清空旧 Server 库，不导入旧 Server 的建表、恢复或执行逻辑。现有 V2 设置记录保留原值；缺失的 V2 内置预设与设置由启动 initialize 幂等补齐，不导入旧 Server 数据。
 - 本轮仅做函数级测试、typecheck、lint，不启动真实服务或执行 HTTP/浏览器链路验证。函数测试使用内存或临时库、临时文件以及最小凭据替身，不访问真实 Keychain；架构测试检查入口/层级/SQL属主，类型测试检查 Reader 不具有写方法。关闭 HTTP/SSE 后再关库。
 
 ## 运行写入锁
@@ -62,7 +62,7 @@
 
 ## 上下文整理
 
-- 上下文独立于 narrative，外部只经 usecases/context/index.ts 使用 prepareContext 和显式公开类型。业务输入只有 sessionId，signal/permit/progress 仅用于执行控制；不接收调用类型、runId、userEntryId、previousTipEntryId 或输入文本，也不保存用户消息。首次异步等待前同步捕获 session 的世界、预设、模型配置、完整历史和实际 tip 状态；prepareContext 完成准备并返回最终请求、激活状态根、后续 parentEntryId、已保存摘要回执及准备失败信息。外层 narrative 保留用户保存、会话运行锁、主模型、后处理和最终结算。
+- 上下文独立于 narrative，外部只经 usecases/context/index.ts 使用 prepareContext 和显式公开类型。业务输入只有 sessionId，signal/permit/progress 仅用于执行控制；不接收调用类型、runId、userEntryId、previousTipEntryId 或输入文本，也不保存用户消息。首次异步等待前同步捕获 session 的世界、预设、模型配置、完整历史、实际 tip 状态及应用设置 locale；prepareContext 完成准备并返回最终请求、激活状态根、后续 parentEntryId、已保存摘要回执及准备失败信息。外层 narrative 保留用户保存、会话运行锁、主模型、后处理和最终结算。
 - context/prepare.ts 组合阶段并经公开 SessionService 保存成功摘要；stages/compact 完成纯计划、旧摘要复用、必要摘要调用和最终候选复核，不写库、不认识 EventHub/SSE 或 run 终态。摘要通过窄端口调用；上下文进度 summary_started/summary_saved 由外层映射到 run.summarizing/run.summarized。PreparedContext 使用 ok/request 或 ok/failure.code，均携带 parentEntryId（捕获的实际 tip 或新摘要 ID；空会话/捕获前失败为 null）及可选摘要回执；凭据字节只在本轮 narrative 闭包内复用，不进入返回值。模型流收集、取消和原始调用指标归 infrastructure/model/collect.ts，不能依赖业务模块或叙事输出分离。
 - 每个压缩候选重新投影干净历史、激活材料、选择保留条目的旁注、组装实际模型消息并估算。不得假定估算随裁剪单调下降，不沿用初始候选的 activeRoots，不在估算后偷偷追加旁注。candidate.ts 组合场景候选评估，assemble 产出可直接调用模型的消息；lib 仅放模板、估算、预算计算。
 - 输入硬预算 min(preset.maxContextTokens, model.contextWindow-maxOutputTokens-1024)，软目标 60%。sliding_window 只裁剪完整 run；rolling_summary 保护最近 5 个历史 run，末尾普通消息为 user 时额外保护该完整 run，每次构建最多一次摘要。候选包含完整 entries，按自身消息顺序映射变量：仅尾部普通 user 移至 input.text；assistant 尾部（含空正文）或空会话保持原历史顺序，input.text 为空且 userInput 节点不输出包装文字。末尾 compaction 不作为普通消息判定。history.summary 恰好注入一次，history.messages 保持原角色。默认后处理提示词通过 PresetService 解析；固定协议覆盖旧数组/强制标签/固定条数要求，禁止引用 input.text、history.messages 或 history.summary。
@@ -96,3 +96,5 @@
 - Session.deleteEntry 是通用原子删除：预期 tip、许可校验、直接后继衔接、tip 修正；不清终态、不发事件。Narrative 在同一事务内删除并清理旧结果，提交后持锁发布 message.deleted/实际 message state.changed，再进入 send 共用 start/execute。失败不恢复旧 AI，Context 不识别调用来源。
 - run 事件、当前执行查询、结束结果及 stop 均关联新 assistantEntryId；stop 精确匹配两种 ID。run.created/202 携带真实 tipEntryId/deletedMessageIds，用户消息 ID 幂等。每次受理执行各有一次 usage 与唯一终态，不能以 runId 推断仅执行一次。
 - 删除不引入账本：recordedUsage 继续汇总保留 entries.metrics，保留摘要及其计量；seq 可复用，消息身份以 ID 为准。
+
+- 应用语言由 SettingsService 持久化为 locale（zh-CN/en/ja，缺省 zh-CN），与默认预设、模型共用 app-settings 的 GET/PATCH。context 仅依赖只读 SettingsReader，在首次异步等待前捕获语言并在所有裁剪候选中沿用；业务输入仍只有 sessionId。预设系统变量 {{system.language}} 填入简体中文/English/日本語，作者素材、历史和替换结果不新增二次展开。默认 main 带语言约束，已有自定义预设不覆盖；协议标签、状态路径及约定状态值不因切换语言而翻译。

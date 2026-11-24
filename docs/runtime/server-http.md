@@ -8,7 +8,7 @@ HTTP适配器位于 `apps/server/src/routes/`，可调用业务模块Service或�
 
 Service 公共输入输出采用显式驼峰领域类型，存储行到领域对象的转换位于 Service，存储行及列名留在模块内部。HTTP 使用 V2 管理接口契约；跨模块展示字段由 route 调属主 Service 组合，不放回 Repository JOIN 或相互依赖的 Service 展示逻辑。作者 JSON、状态键及文档协议里的键不做递归改名。
 
-业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；Web 接入世界内容库、预设、模型配置、设置和基础会话和叙事运行页。数据库 user_version=4，只迁移结构匹配的 V2 v1–v3 库（v2 添加预设 revision，v3 添加世界 revision 和 created_at/id 索引，v4 为非 NULL 消息状态添加 (session_id,seq) 索引），拒绝未知结构和旧 Server 库。createApp传入services时必须同时传入usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureDefault 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
+业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；Web 接入世界内容库、预设、模型配置、设置和基础会话和叙事运行页。数据库 user_version=6，只迁移结构匹配的 V2 v1–v5 库（v2 添加预设 revision，v3 添加世界 revision 和 created_at/id 索引，v4 为非 NULL 消息状态添加 (session_id,seq) 索引，v5 添加带 zh-CN 默认值的 app_settings.locale，v6 在同一迁移事务内重建该单例表的 CHECK 约束以接受 ja，逐字段保留默认项、原语言及时间戳），拒绝未知结构和旧 Server 库。createApp传入services时必须同时传入usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureDefault 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
 
 ## 普通 JSON 响应
 
@@ -82,7 +82,10 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 | GET / PATCH / DELETE | /api-model-configs/:id | 模型配置读取 / 修改 / 删除 |
 | POST | /api-model-configs/:id/test | 使用已保存配置执行一次短文本连通性检测 |
 | GET | /providers/models | 按 provider 分组的 pi 静态模型目录、能力参数与消息顺序兼容性 |
-| GET / PATCH | /app-settings | 读取 / 更新应用默认预设、模型 |
+| GET / PATCH | /app-settings | 读取 / 更新应用默认预设、模型和语言 |
+
+
+应用语言由 `AppSettings.locale` 保存，只接受 `zh-CN`、`en` 和 `ja`，新安装及无语言字段的旧库默认 `zh-CN`，已有语言值在升级时保持不变。GET 返回 `data.item.locale`；PATCH `{"locale":"en"}` 只更新语言，未提交的默认预设/模型保持原值，其他字段更新也不重置语言。不接受 null、空字符串或未知语言。设置为应用实例共享值；切换成功后开始的新请求使用新语言，已捕获上下文的运行继续使用原语言。叙事提交/重新生成不新增 locale 请求字段。
 
 删除预设时如仍有引用，返回 409 `REFERENCE_CONFLICT`。响应的 `errorMessage` 列出实际引用该预设的应用默认设置、世界卡名称及会话标题。同名记录和未命名会话附带 ID。
 

@@ -1,3 +1,4 @@
+import {i18n} from '../../i18n/instance.ts';
 import type {CompiledComponents} from '../../../../../packages/sr-ui-compiler/src/index.js';
 import type {MessageRule} from '../../../../../packages/sr-sdk/src/story-types.js';
 import type {WorldDetail} from './api/worlds.js';
@@ -30,7 +31,7 @@ export async function loadStageWorld(worldId:string,signal?:AbortSignal,dependen
   signal?.throwIfAborted();
   const world=response?.item;
   if(!world||world.id!==worldId||!Array.isArray(world.characters)||!Array.isArray(world.openings)||
-    (world.components!==null&&!Array.isArray(world.components)))throw Error('世界响应格式无效');
+    (world.components!==null&&!Array.isArray(world.components)))throw Error(i18n.t('worlds:invalidWorldResponse'));
   const modules=await (dependencies.loadComponents??loadComponents)(world,signal);
   signal?.throwIfAborted();
   const rendering=world.messageRender&&typeof world.messageRender==='object'?world.messageRender as {rules?:unknown}:null;

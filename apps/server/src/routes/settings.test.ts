@@ -44,7 +44,7 @@ describe('application settings HTTP operations', () => {
     expect(initial.status).toBe(200);
     expect(await initial.json()).toMatchObject({
       success: true, errorCode: null, errorMessage: '',
-      data: { item: { id: 1, defaultPresetId: null, defaultApiModelConfigId: null } },
+      data: { item: { id: 1, locale: 'zh-CN', defaultPresetId: null, defaultApiModelConfigId: null } },
     });
     services.presets.create({ ...narrativePreset(), id: 'story' });
     services.models.create({
@@ -70,9 +70,20 @@ describe('application settings HTTP operations', () => {
     expect((await app.request('/api/v1/api-model-configs/model', { method: 'DELETE' })).status).toBe(200);
   });
 
+  it('round-trips all three supported languages without changing the application defaults', async () => {
+    for (const locale of ['en', 'ja', 'zh-CN']) {
+      const saved = await app.request(base, write('PATCH', { locale }));
+      expect(saved.status).toBe(200);
+      expect((await saved.json()).data.item)
+        .toMatchObject({ locale, defaultPresetId: null, defaultApiModelConfigId: null });
+      expect((await (await app.request(base)).json()).data.item.locale).toBe(locale);
+    }
+  });
+
   it('rejects empty, malformed and invalid settings updates without changing the singleton', async () => {
     const previous = services.settings.get();
-    for (const body of [{}, { defaultPresetId: '' }, { defaultApiModelConfigId: 7 }, { unexpected: true }]) {
+    for (const body of [{}, { defaultPresetId: '' }, { defaultApiModelConfigId: 7 }, { unexpected: true },
+      { locale: null }, { locale: 'fr' }, { locale: 'EN' }, { locale: 'ja-JP' }, { locale: '' }, { locale: 1 }]) {
       await expectFailure(await app.request(base, write('PATCH', body)), 400);
     }
     await expectFailure(await app.request(base, {

@@ -1,35 +1,39 @@
 import React, {useCallback, useEffect, useLayoutEffect, useId, useRef, useState} from 'react';
+import {useTranslation} from 'react-i18next';
 import {MessageContent} from '../message-content.js';
 import {useStoryConfiguration} from '../story-context.js';
 import {captureScrollAnchor, restoreScrollAnchor} from '../story-scroll.js';
 import type {StageRun, Suggestions} from '../stage-contract.js';
 import {useSRHistory, useSRSession, useSRStageSnapshot} from './context.js';
-import {messageNotice, runNotice, streamNotice} from './feedback.js';
+import {messageNotice, runNotice, streamNotice, stageErrorMessage} from './feedback.js';
 import {StatePanel} from './state-panel.js';
 import {MessageReasoning} from './message-reasoning.js';
 
 const StoryRun = React.memo(function StoryRun({run, suggestions, connected, onChoose}: {
   run: StageRun; suggestions: Suggestions | null; connected: boolean; onChoose(text: string): void;
 }) {
+  const {t} = useTranslation('stage');
   const {debug} = useStoryConfiguration(), notice = runNotice(run);
   return <>{run.messages.map(message => {
     const hint = messageNotice(message, run.status);
     return <article key={message.id} className={'sr-message ' + message.role} data-message-id={message.id}
-      aria-label={message.role === 'user' ? '我的消息' : '故事消息'}>
+      aria-label={t(message.role === 'user' ? 'story.myMessage' : 'story.storyMessage')}>
       {message.role === 'assistant' && <MessageReasoning message={message} status={run.status}/>}
-      <div className="sr-story-content"><MessageContent message={message} runId={run.runId}/>{hint && <p className="sr-thinking" role="status">{hint}</p>}</div>
+      <div className="sr-story-content"><MessageContent message={message} runId={run.runId}/>{hint && <p className="sr-thinking" role="status">{t(hint)}</p>}</div>
       {message.role === 'assistant' && suggestions?.messageId === message.id &&
-        <section className="sr-suggestions" aria-label="行动建议">{suggestions.items.map((item, index) =>
+        <section className="sr-suggestions" aria-label={t('story.suggestions')}>{suggestions.items.map((item, index) =>
           <button key={index} type="button" disabled={!connected} onClick={() => onChoose(item)}>{item}</button>
         )}</section>}
       {message.role === 'assistant' && debug === true && message.output &&
-        <details className="sr-thinking sr-processing"><summary>数据处理结果</summary><pre>{JSON.stringify(message.output, null, 2)}</pre></details>}
+        <details className="sr-thinking sr-processing"><summary>{t('story.processingResults')}</summary><pre>{JSON.stringify(message.output, null, 2)}</pre></details>}
     </article>;
-  })}{notice && <p className={run.status === 'stopped' ? 'sr-error' : 'sr-thinking'} role="status">{notice}</p>}</>;
+  })}{notice && <p className={run.status === 'stopped' ? 'sr-error' : 'sr-thinking'} role="status">{t(notice)}</p>}</>;
 });
 
 /** Rendering and reading position only. The Host supplies history, live output and recovery results. */
 export function WorldStory({showState = true}: {showState?: boolean} = {}) {
+  const {t,i18n} = useTranslation('stage');
+  const displayError = (value: string) => stageErrorMessage(value, key => t(key), key => i18n.exists(key, {ns: 'stage'}));
   const snapshot = useSRStageSnapshot(), history = useSRHistory(), session = useSRSession();
   const {runs, connected, suggestions} = snapshot;
   const continuityNotice = streamNotice(snapshot);
@@ -71,7 +75,7 @@ export function WorldStory({showState = true}: {showState?: boolean} = {}) {
   }, [rememberReading, focusStateTrigger]);
   const chooseSuggestion = useCallback((text: string) => {
     setActionError('');
-    void session.setDraft(text).catch(error => setActionError(error instanceof Error ? error.message : '草稿填入失败'));
+    void session.setDraft(text).catch(error => setActionError(error instanceof Error ? error.message : 'story.draftFailed'));
   }, [session]);
 
   useLayoutEffect(() => {
@@ -159,33 +163,33 @@ export function WorldStory({showState = true}: {showState?: boolean} = {}) {
   function loadMore() {
     if (!history.hasMore || history.loadingMore) return;
     stickToEnd.current = false; rememberReading(); setActionError('');
-    void history.loadMore().catch(error => setActionError(error instanceof Error ? error.message : '加载历史失败'));
+    void history.loadMore().catch(error => setActionError(error instanceof Error ? error.message : 'story.loadFailed'));
   }
   function refreshHistory() {
     setActionError('');
-    void history.refresh().catch(error => setActionError(error instanceof Error ? error.message : '读取历史失败'));
+    void history.refresh().catch(error => setActionError(error instanceof Error ? error.message : 'story.readFailed'));
   }
 
   return <div ref={root} className="sr-story" data-state-mode={docked ? 'docked' : 'overlay'}>
     <div className="sr-story-main">
-      <div className="sr-story-toolbar"><span className="sr-story-heading">故事</span>
+      <div className="sr-story-toolbar"><span className="sr-story-heading">{t('story.title')}</span>
         {showState && <button ref={stateButton} type="button" onClick={() => {
           rememberReading(); const next = !stateOpen; if (docked) dockedPreference.current = next; setStateOpen(next);
-        }} aria-controls={panelId} aria-expanded={stateOpen}>状态 <span aria-hidden="true">{stateOpen ? '−' : '+'}</span></button>}
+        }} aria-controls={panelId} aria-expanded={stateOpen}>{t('story.state')} <span aria-hidden="true">{stateOpen ? '−' : '+'}</span></button>}
       </div>
-      <div className="sr-chat-messages" ref={view} tabIndex={0} role="region" aria-label="故事内容" aria-busy={history.loading || undefined}
+      <div className="sr-chat-messages" ref={view} tabIndex={0} role="region" aria-label={t('story.content')} aria-busy={history.loading || undefined}
         onScroll={scrolled} onWheel={userScroll} onTouchMove={userScroll}
         onPointerDown={event => { if (event.target === event.currentTarget) userScroll(); }}
         onKeyDown={event => { if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) userScroll(); }}>
-        {history.hasMore && <button className="sr-more" type="button" disabled={history.loadingMore} onClick={loadMore}>{history.loadingMore ? '正在加载…' : '加载更早消息'}</button>}
-        {history.error && <p className="sr-error" role="alert">{history.error} <button type="button" onClick={refreshHistory}>重新加载历史</button></p>}
-        {actionError && <p className="sr-error" role="alert">{actionError}</p>}
-        {history.loading && !runs.length && <p className="sr-thinking" role="status">正在读取故事…</p>}
-        {!history.loading && !history.error && !runs.length && <p className="sr-thinking">暂无消息。</p>}
+        {history.hasMore && <button className="sr-more" type="button" disabled={history.loadingMore} onClick={loadMore}>{t(history.loadingMore ? 'common.loading' : 'story.loadMore')}</button>}
+        {history.error && <p className="sr-error" role="alert">{displayError(history.error)} <button type="button" onClick={refreshHistory}>{t('story.reloadHistory')}</button></p>}
+        {actionError && <p className="sr-error" role="alert">{displayError(actionError)}</p>}
+        {history.loading && !runs.length && <p className="sr-thinking" role="status">{t('story.reading')}</p>}
+        {!history.loading && !history.error && !runs.length && <p className="sr-thinking">{t('story.empty')}</p>}
         {runs.map(run => <StoryRun key={run.runId} run={run} suggestions={suggestions?.runId === run.runId ? suggestions : null} connected={connected} onChoose={chooseSuggestion}/>)}
-        {continuityNotice && <p className="sr-thinking" role="status">{continuityNotice}</p>}
+        {continuityNotice && <p className="sr-thinking" role="status">{t(continuityNotice)}</p>}
       </div>
-      {showLatest && <div className="sr-story-latest"><button className="sr-more" type="button" onClick={latest}>回到最新 <span aria-hidden="true">↓</span></button></div>}
+      {showLatest && <div className="sr-story-latest"><button className="sr-more" type="button" onClick={latest}>{t('story.latest')} <span aria-hidden="true">↓</span></button></div>}
     </div>
     {showState && stateOpen && <StatePanel id={panelId} overlay={!docked} close={closeState} restoreFocus={focusStateTrigger}/>}
   </div>;
