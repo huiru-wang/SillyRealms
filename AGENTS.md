@@ -1,5 +1,11 @@
 # AGENTS.md
 
+## World Authoring
+
+- For creating or iterating an SR world, read [sr-world-author](skills/sr-world-author/SKILL.md). For adapting a SillyTavern work, read [sr-tavern-migrate](skills/sr-tavern-migrate/SKILL.md).
+- Follow the [creator guides](docs/creator/README.md), [current world format](docs/reference/world-card.md), and [SDK](docs/sdk/README.md). Reuse `examples/worlds` and the repository's `world:check` / `world:pack` commands. Report static checks, actual import, and playtesting separately.
+- Skills are repository-local workflows. Do not assume that copying a skill folder installs its referenced documentation or tools.
+
 ## Planning Deliverables
 
 - 所有涉及代码变更的方案，必须附树形结构的变更文件目录，标明计划新增、修改、删除的文件及简要用途；目录树描述计划范围，不代表代码已经实施。

@@ -2,6 +2,12 @@
 
 [开发手册目录](README.md)。本章面向开发世界卡检查器、打包器和 Web 宿主的开发者或 Agent。以下是当前 workspace 包在 `package.json` 中另外导出的五个子路径。仓库工具可在支持 TypeScript 源码的环境里导入；世界卡 TSX 的模块加载器只注入 SDK 包根。请把这些调用放在打包或宿主代码里。
 
+## 先使用仓库创作命令
+
+在仓库根运行 `pnpm world:check <目录|json|zip>` 检查结构、资源与组件依赖；运行 `pnpm world:pack <目录> [--out <zip>]` 构建并检查最终 ZIP。成功退出 0，失败非 0；输出为 JSON 报告。默认 ZIP 写在源码目录同级，已存在时拒绝覆盖，可通过 `--out` 另存。检查不执行组件、不验证远程 URL、不调用模型。具体操作见[打包与分享](../creator/packaging.md)，工具回归测试为 `pnpm test:world-cards`。
+
+只有要编写自己的检查器或宿主集成时，才需要继续使用下面的包子路径；卡内组件仍只导入 SDK 包根。
+
 ## @sillyrealms/sdk/assets
 
 `PackageRoot` 为 `'assets' | 'components'`。函数均为同步纯函数，非法输入抛出 Error。示例中的 `base` 来自宿主，值形如 `https://reader.example/api/v1/worlds/inn/resources/`。

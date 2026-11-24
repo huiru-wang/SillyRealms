@@ -123,6 +123,42 @@ export async function resolvePackagePath(root: string, relativePath: string): Pr
   }
 
 
+/** Author folders may also contain notes; only these three roots enter a world package. */
+export const packageRoots = new Set(['world.json', 'components', 'assets']);
+
+export async function listPackageDirectory(root: string, ignoreOtherRootEntries = false): Promise<string[]> {
+  const rootStat = await lstat(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new AppError('INVALID_WORLD_DIRECTORY');
+  const files: string[] = [], names = new Set<string>();
+  let count = 0;
+  const walk = async (prefix: string): Promise<void> => {
+    for (const entry of await readdir(join(root, prefix), { withFileTypes: true })) {
+      if (!prefix && ignoreOtherRootEntries && !packageRoots.has(entry.name)) continue;
+      if (++count > 10000) throw new AppError('INVALID_WORLD_PACKAGE', '包内条目超过 10000');
+      const name = prefix ? prefix + '/' + entry.name : entry.name;
+      try { validatePackagePath(name); }
+      catch { throw new AppError('INVALID_WORLD_PACKAGE_PATH', name); }
+      const normalized = name.normalize('NFC').toLowerCase();
+      if (names.has(normalized)) throw new AppError('AMBIGUOUS_WORLD_PACKAGE_PATH', name);
+      names.add(normalized);
+      if (entry.isSymbolicLink()) throw new AppError('INVALID_WORLD_PACKAGE_FILE', name);
+      if (entry.isDirectory()) {
+        if (!['assets', 'components'].includes(name) && !name.startsWith('assets/') && !name.startsWith('components/')) {
+          throw new AppError('INVALID_WORLD_PACKAGE_FILE', name);
+        }
+        await walk(name);
+      } else if (entry.isFile()) {
+        if (name !== 'world.json' && !name.startsWith('assets/') && !name.startsWith('components/')) {
+          throw new AppError('INVALID_WORLD_PACKAGE_FILE', name);
+        }
+        files.push(name);
+      } else throw new AppError('INVALID_WORLD_PACKAGE_FILE', name);
+    }
+  };
+  await walk('');
+  return files.sort();
+}
+
 /** Module-private filesystem operations; callers coordinate persistence through WorldService. */
 export class WorldFileStore {
   constructor(private readonly dataRoot: string) {}
@@ -269,35 +305,7 @@ export class WorldFileStore {
 
   async listPackageFiles(worldId: string): Promise<string[]> {
     const root = await this.directory(worldId, 'package').catch(error => { if (missing(error)) return null; throw error; });
-    if (root === null) return [];
-    const files: string[] = [];
-    const names = new Set<string>();
-    let count = 0;
-    const walk = async (prefix: string): Promise<void> => {
-      for (const entry of await readdir(join(root, prefix), { withFileTypes: true })) {
-        if (++count > 10000) throw new AppError('INVALID_WORLD_PACKAGE', '包内条目超过 10000');
-        const name = prefix ? prefix + '/' + entry.name : entry.name;
-        try { validatePackagePath(name); }
-        catch { throw new AppError('INVALID_WORLD_PACKAGE_PATH'); }
-        const normalized = name.normalize('NFC').toLowerCase();
-        if (names.has(normalized)) throw new AppError('AMBIGUOUS_WORLD_PACKAGE_PATH');
-        names.add(normalized);
-        if (entry.isSymbolicLink()) throw new AppError('INVALID_WORLD_PACKAGE_FILE');
-        if (entry.isDirectory()) {
-          if (!['assets', 'components'].includes(name) && !name.startsWith('assets/') && !name.startsWith('components/')) {
-            throw new AppError('INVALID_WORLD_PACKAGE_FILE');
-          }
-          await walk(name);
-        } else if (entry.isFile()) {
-          if (name !== 'world.json' && !name.startsWith('assets/') && !name.startsWith('components/')) {
-            throw new AppError('INVALID_WORLD_PACKAGE_FILE');
-          }
-          files.push(name);
-        } else throw new AppError('INVALID_WORLD_PACKAGE_FILE');
-      }
-    };
-    await walk('');
-    return files.sort();
+    return root === null ? [] : listPackageDirectory(root);
   }
 
   async openExport(path: string, filename: string, cleanup: () => Promise<void>, signal?: AbortSignal): Promise<WorldDownload> {

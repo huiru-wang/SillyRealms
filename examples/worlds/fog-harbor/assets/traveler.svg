@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+<title id="title">旅人：原创角色徽像</title>
+<!-- Original geometric portrait for the SillyRealms teaching example. -->
+<rect width="256" height="256" rx="128" fill="#425d65"/>
+<circle cx="191" cy="66" r="47" fill="#e6d7b4" opacity=".13"/>
+<path d="M33 256c1-55 22-91 65-103h60c43 12 64 48 65 103Z" fill="#ba965b"/>
+<path d="M108 139h40v41h-40Z" fill="#d9b296"/>
+<path d="M82 89q0-48 46-48t46 48v26c0 28-19 48-46 48s-46-20-46-48Z" fill="#d9b296"/>
+<path d="M81 102V85c0-37 17-52 47-52 39 0 49 22 47 57l-10 27-7-43c-21 14-39 17-63 14l-6 33Z" fill="#2d3439"/>
+<path d="M75 64q50-43 106 0l-7 14H80Z" fill="#ba965b"/><path d="M71 77q59-12 116 1l-5 11q-58-8-106 0Z" fill="#2d3439"/>
+<path d="M99 154q28 19 58 0l13 20-42 27-44-27Z" fill="#e6d4ae"/>
+<path d="m117 195 25-3 15 64h-25Z" fill="#e6d4ae" opacity=".9"/>
+<path d="M62 231h25m82 0h25" stroke="#e9ddc1" stroke-width="3" opacity=".24"/>
+<path d="M103 110h5m40 0h5" stroke="#2d3439" stroke-width="3" stroke-linecap="round"/>
+<path d="M122 134q7 4 14-1" fill="none" stroke="#a47d67" stroke-width="2.5" stroke-linecap="round"/>
+</svg>

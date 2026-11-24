@@ -29,6 +29,8 @@ export const worldImportLimits = { json: WORLD_JSON_LIMIT, zip: WORLD_ZIP_LIMIT 
 export type WorldImportInput = { format: OriginalFormat; bytes: Uint8Array };
 export type PreparedWorldImport = Readonly<{ id: string; content: CreateWorld }>;
 export type { WorldCard } from './validation.js';
+export { inspectWorldSource, prepareWorldSourcePackage } from './authoring.js';
+export type { WorldSourceInspection, PreparedWorldSourcePackage } from './authoring.js';
 
 type WorldDependencies = { presets: PresetReader; models: ModelReader; cache: RuntimeCache };
 const nullableTextFields = ['cover', 'stageComponent', 'defaultPresetId', 'defaultApiModelConfigId'] as const;

@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+<title id="title">雾港：渡轮靠岸</title><desc id="desc">原创几何风格场景：暮色中的港口、远山、木码头与亮着灯的灯塔。</desc>
+<!-- Original SVG artwork created for the SillyRealms fog-harbor teaching example. No external resources. -->
+<defs>
+<linearGradient id="sky" x2="0" y2="1"><stop stop-color="#293d4c"/><stop offset=".63" stop-color="#849c9c"/><stop offset="1" stop-color="#b0b8a6"/></linearGradient>
+<linearGradient id="sea" x2=".2" y2="1"><stop stop-color="#6b9194"/><stop offset=".52" stop-color="#3c646e"/><stop offset="1" stop-color="#162f40"/></linearGradient>
+<linearGradient id="beam" x1="1" y1=".4" x2="0" y2=".6"><stop stop-color="#ffdf96" stop-opacity=".58"/><stop offset="1" stop-color="#ffe3a5" stop-opacity="0"/></linearGradient>
+<linearGradient id="stone" x2="1" y2="0"><stop stop-color="#b4b5a3"/><stop offset=".57" stop-color="#dfd2af"/><stop offset=".58" stop-color="#9b9f91"/><stop offset="1" stop-color="#6d7d7d"/></linearGradient>
+<linearGradient id="reflection" x2="0" y2="1"><stop stop-color="#efcd8c" stop-opacity=".52"/><stop offset="1" stop-color="#efcd8c" stop-opacity="0"/></linearGradient>
+</defs>
+<path fill="url(#sky)" d="M0 0h1600v900H0z"/>
+<circle cx="1040" cy="235" r="64" fill="#ead5a7" opacity=".8"/>
+<path d="M0 475 160 390 250 419 420 301 590 404 720 369 880 475 1020 398 1190 445 1365 334 1600 455v214H0Z" fill="#5b7b82" opacity=".64"/>
+<path d="m0 537 180-91 163 66 177-64 205 100 166-51 190 38 174-67 198 76 147-63v159H0Z" fill="#557d82"/>
+<path d="M0 550h1600v350H0Z" fill="url(#sea)"/>
+<path d="M0 530c280-22 430 31 660 0s418 24 940-17" fill="none" stroke="#dce3cb" stroke-width="24" opacity=".16"/>
+<path d="M0 578c390-14 573 29 905-3s498 16 695 3" fill="none" stroke="#dce3cb" stroke-width="14" opacity=".13"/>
+<path d="m1210 540 55 0 95 360h-242Z" fill="url(#reflection)"/>
+<g fill="none" stroke="#b5cbc2" stroke-linecap="round" opacity=".28">
+<path d="M380 612h121m49 0h184m-210 33h90m86 0h208M230 679h165m64 0h104m280-48h109m88 25h113m-573 64h155m70 0h87m-360 50h146m165 20h120m100-40h120m-75 74h150"/>
+</g>
+<path d="m1057 655 82-112 136-52 74 21 100 111 151 43v234h-543Z" fill="#344e55"/>
+<path d="m1142 573 78-43 96 11 105 105-120-21Z" fill="#627877"/>
+<path d="M1210 280h56l25 281h-103Z" fill="url(#stone)"/>
+<path d="M1200 278h76v22h-76Z" fill="#263c45"/>
+<path d="M1206 234h64v45h-64Z" fill="#f0ca79"/>
+<path d="M1206 233h64l-11-17h-42Z" fill="#233942"/>
+<path d="m1197 232 41-30 41 30Z" fill="#223741"/>
+<path d="M1238 191v15m-33 39h67m-53-8v41m36-41v41" fill="none" stroke="#263b43" stroke-width="5"/>
+<path d="m1204 240-575-56v169l575-94Z" fill="url(#beam)"/>
+<g fill="#385058"><path d="M1230 358h14v28h-14Z"/><path d="M1227 449h20v31h-20Z"/><path d="M1222 522q14-22 28 0v39h-28Z"/></g>
+<path d="m1310 561 142 74-31 18-135-79Z" fill="#bca878" opacity=".75"/>
+<g fill="#273e4a">
+<path d="M0 545 40 531 71 538v-58l61-39 65 39v76l43-13v-76l72-30 57 34v97l34 12v118H0Z"/>
+<path d="m99 479 31-19 35 21v52H99Zm159 15 54-22 26 16v42h-80Z" fill="#a5a98c" opacity=".21"/>
+</g>
+<g fill="#e6bd73"><path d="M112 494h12v19h-12Zm25 0h12v19h-12Zm144 7h14v20h-14Zm25 0h14v20h-14Z"/><path d="M47 566h12v19H47Zm16 0h12v19H63Z" opacity=".65"/></g>
+<path d="m0 674 295-29 119 40L0 783Z" fill="#18333e"/>
+<path d="m0 662 294-29 124 48L0 769Z" fill="#46626a"/>
+<g stroke="#1b3942" stroke-width="5" opacity=".8"><path d="m17 670 128 62m-55-70 126 53m-42-61 105 44m-34-53 90 37"/></g>
+<g fill="#1b3540"><path d="M61 648h14v125H61Zm199-13h14v89h-14Zm133 36h14v68h-14Z"/></g>
+<path d="m528 648 197-16-35 46H569Z" fill="#213a46"/>
+<path d="M588 624h68v27h-68Z" fill="#6e8c89"/>
+<path d="M603 612h45v14h-45Z" fill="#243d46"/>
+<path d="M619 554v65" stroke="#243d46" stroke-width="4"/>
+<path d="m624 561 56 41h-56Z" fill="#c2c4ac" opacity=".88"/>
+<path d="M585 681h129" stroke="#a4bcb3" stroke-width="3" opacity=".45"/>
+<path d="M0 825c205-47 378 20 592 11s405-46 604-17 286 11 404-3v84H0Z" fill="#112a38" opacity=".52"/>
+<g stroke="#e4d5ad" stroke-width="2" fill="none" opacity=".42"><path d="m860 347 11-4 11 4m35-27 9-3 9 3m-121 17 7-3 7 3"/></g>
+</svg>

@@ -11,9 +11,13 @@ import { AppError } from '../../errors.js';
 import { parseCardBytes } from './parser.js';
 import type { WorldCard } from './validation.js';
 import { COMPONENT_LIMIT, readableReason, validateAssets } from './assets.js';
-import { WorldFileStore, resolvePackagePath, WORLD_JSON_LIMIT, WORLD_ZIP_LIMIT, type ImportFileStage } from './files.js';
+import { WorldFileStore, resolvePackagePath, WORLD_JSON_LIMIT, WORLD_ZIP_LIMIT, type ImportFileStage, type PackageFile } from './files.js';
 
-const MAX_ENTRIES=10000, MAX_EXPANDED=1024*1024*1024, MAX_FILE=WORLD_ZIP_LIMIT;
+const MAX_ENTRIES=10000, MAX_FILE=WORLD_ZIP_LIMIT;
+export const WORLD_EXPANDED_LIMIT=1024*1024*1024;
+export function packageFileLimit(name: string): number {
+  return name === 'world.json' ? WORLD_JSON_LIMIT : name.startsWith('components/') ? COMPONENT_LIMIT : MAX_FILE;
+}
 
 function archive(path:string):Promise<InputZip> {
   return new Promise((resolve,reject)=>openZip(path,{lazyEntries:true,decodeStrings:true,validateEntrySizes:true,strictFileNames:true},(error,value)=>error?reject(error):resolve(value!)));
@@ -59,10 +63,10 @@ async function extract(archivePath:string, directory:string):Promise<void> {
           if(directories.has(key))throw new Error('ZIP 文件与目录冲突：'+name);
           files.add(key);
         }
-        const limit=name==='world.json'?WORLD_JSON_LIMIT:name.startsWith('components/')?COMPONENT_LIMIT:MAX_FILE;
+        const limit=packageFileLimit(name);
         if(!Number.isSafeInteger(entry.uncompressedSize)||entry.uncompressedSize>limit)throw new Error('ZIP 文件超过大小限制：'+name);
         total+=entry.uncompressedSize;
-        if(total>MAX_EXPANDED)throw new Error('ZIP 解压内容超过 1 GiB');
+        if(total>WORLD_EXPANDED_LIMIT)throw new Error('ZIP 解压内容超过 1 GiB');
         const target=join(directory,...segments);
         if(directoryEntry){
           if(entry.uncompressedSize!==0)throw new Error('ZIP 目录包含非法数据');
@@ -113,37 +117,46 @@ export async function buildWorldPackage(files:WorldFileStore,id:string,card:Worl
   const stage=await files.createTemporaryDirectory('export');
   const cleanup=()=>files.removeTemporaryDirectory(stage);
   try {
-    let size=0;
-    for(const name of names){
-      const file=await files.resolvePackageFile(id,name);
-      if(file.stat.size>MAX_FILE||size+file.stat.size>MAX_EXPANDED)throw new Error('世界资源包超过大小限制');
-      const copy=join(stage,'package',...name.split('/'));
-      await mkdir(dirname(copy),{recursive:true,mode:0o700});
-      let copied=0;
-      const guard=new Transform({transform(chunk:Buffer,_encoding,callback){
-        copied+=chunk.length;size+=chunk.length;
-        if(copied>MAX_FILE||size>MAX_EXPANDED){callback(new Error('世界资源包超过大小限制'));return;}
-        callback(null,chunk);
-      }});
-      const input=await open(file.path,constants.O_RDONLY|constants.O_NOFOLLOW);
-      try {
-        const current=await input.stat();
-        if(!current.isFile()||current.dev!==file.stat.dev||current.ino!==file.stat.ino)throw new Error('资源文件在导出期间发生变化，请重试');
-        await pipeline(input.createReadStream({autoClose:false}),guard,createWriteStream(copy,{flags:'wx',mode:0o600}));
-      }finally {await input.close();}
-    }
-    const path=join(stage,'world.zip'),zip=new ZipFile();
-    const manifest=Buffer.from(JSON.stringify(card)+'\n','utf8');
-    if(manifest.length>WORLD_JSON_LIMIT)throw new Error('导出 world.json 超过 10 MiB');
-    zip.addBuffer(manifest,'world.json');
-    for(const name of names)zip.addFile(join(stage,'package',...name.split('/')),name,{
-      compress:!/\.(?:webp|avif|png|jpe?g|gif|mp[34]|ogg|webm|woff2?|zip)$/i.test(name),
-    });
-    const output=createWriteStream(path,{flags:'wx',mode:0o600});
-    zip.on('error',(error:Error)=>output.destroy(error));
-    const writing=pipeline(zip.outputStream,output);
-    zip.end();
-    await writing;
+    const path = await writeWorldPackageArchive(stage, names, card, name => files.resolvePackageFile(id, name));
     return {path,cleanup};
   }catch(error){await cleanup();throw error;}
+}
+
+/** Shared by runtime exports and offline authoring; all output is staged before delivery. */
+export async function writeWorldPackageArchive(
+  stage: string, names: readonly string[], card: WorldCard,
+  resolveFile: (name: string) => Promise<PackageFile>,
+): Promise<string> {
+  let size=0;
+  for(const name of names){
+    const file=await resolveFile(name);
+    if(file.stat.size>MAX_FILE||size+file.stat.size>WORLD_EXPANDED_LIMIT)throw new Error('世界资源包超过大小限制');
+    const copy=join(stage,'package',...name.split('/'));
+    await mkdir(dirname(copy),{recursive:true,mode:0o700});
+    let copied=0;
+    const guard=new Transform({transform(chunk:Buffer,_encoding,callback){
+      copied+=chunk.length;size+=chunk.length;
+      if(copied>MAX_FILE||size>WORLD_EXPANDED_LIMIT){callback(new Error('世界资源包超过大小限制'));return;}
+      callback(null,chunk);
+    }});
+    const input=await open(file.path,constants.O_RDONLY|constants.O_NOFOLLOW);
+    try {
+      const current=await input.stat();
+      if(!current.isFile()||current.dev!==file.stat.dev||current.ino!==file.stat.ino)throw new Error('资源文件在导出期间发生变化，请重试');
+      await pipeline(input.createReadStream({autoClose:false}),guard,createWriteStream(copy,{flags:'wx',mode:0o600}));
+    }finally {await input.close();}
+  }
+  const path=join(stage,'world.zip'),zip=new ZipFile();
+  const manifest=Buffer.from(JSON.stringify(card)+'\n','utf8');
+  if(manifest.length>WORLD_JSON_LIMIT)throw new Error('导出 world.json 超过 10 MiB');
+  zip.addBuffer(manifest,'world.json');
+  for(const name of names)zip.addFile(join(stage,'package',...name.split('/')),name,{
+    compress:!/\.(?:webp|avif|png|jpe?g|gif|mp[34]|ogg|webm|woff2?|zip)$/i.test(name),
+  });
+  const output=createWriteStream(path,{flags:'wx',mode:0o600});
+  zip.on('error',(error:Error)=>output.destroy(error));
+  const writing=pipeline(zip.outputStream,output);
+  zip.end();
+  await writing;
+  return path;
 }

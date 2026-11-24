@@ -1,54 +1,99 @@
 # SillyRealms
 
-世界卡开发者可从[创作者 SDK 开发手册](docs/sdk/README.md)开始，查阅会话舞台、消息组件、详情预览及打包工具的接口与示例。
+**把角色、设定和玩法，做成可以进入的 AI 互动世界。**
 
-## Linux 服务器部署
+SillyRealms（SR）是面向多角色故事的 AI 叙事创作与游玩平台。你可以把人物、世界书、开局、剧情状态、自定义界面和素材组织为一张世界卡，交给玩家选择身份、进入故事，并用自然语言行动。
 
-首次配置主站与舞台地址后，在仓库根目录运行 `./deploy.sh` 即可拉取最新代码、构建并启动服务。首次命令、数据与主密钥路径见 [单机部署](deploy/README.md)。
+[开始体验](docs/getting-started.md) · [制作第一张世界卡](docs/creator/first-world.md) · [让 Agent 辅助创作](docs/creator/agent-authoring.md) · [从酒馆迁移](docs/creator/from-sillytavern.md) · [完整文档](docs/README.md)
 
-## 本地启动
+![《雾港来信》真实运行画面：故事正文与旅途面板](docs/assets/fog-harbor-session.png)
 
-使用 Node.js 22.19 或更高版本和 pnpm 10.12.1。在仓库根目录执行：
+*同一份作品中，故事、银币、线索和当前目标共同构成玩家的旅途。示例界面由官方正文组件与作者面板组合而成。*
+
+## 看一个世界如何运转
+
+《雾港来信》里，你扮演一名携信抵港的旅人。打听收件人的下落，和守灯人交谈，找到线索，再决定下一步行动。
+
+![雾港来信操作演示](docs/assets/fog-harbor-play.gif)
+
+[体验完整示例](docs/getting-started.md#体验雾港来信) · [查看示例源码与素材](examples/worlds/README.md) · [查看演示录制与验证说明](docs/assets/README.md)
+
+## 你可以创作什么
+
+| 创作想法 | 在 SR 中怎样实现 |
+| --- | --- |
+| 一座有不同人物和关系的城镇 | 在一个世界里组织多个角色、可扮演身份、世界书和开局 |
+| 能持续记录线索、金钱与目标的冒险 | 定义剧情状态，让叙事后的有效变化进入下一轮故事与界面 |
+| 有独特阅读体验的互动作品 | 直接使用官方 `WorldStory`，或组合面板、插图、消息组件与自定义舞台 |
+| 可以完整交给玩家的作品 | 用 ZIP 携带世界设定、组件和素材；导入后创建会话游玩 |
+
+![世界介绍与角色入口](docs/assets/fog-harbor-detail.png)
+
+*介绍、角色与开局属于作品的一部分。不同开局可以给故事不同的起点和初始状态。*
+
+第一张卡可以只写人物、开场和世界书。需要更丰富的玩法时，再加入状态；需要自己的视觉风格时，再学习组件。官方正文已经负责消息、历史与行动建议的基础展示。
+
+## 如果你来自酒馆社区
+
+你熟悉的角色设定、世界书、开场白和预设，仍然是创作的基础。SR 将这些内容组织到一份世界作品中，并为剧情状态和作者界面提供明确的结构。
+
+| 已有素材 | 迁移方向 |
+| --- | --- |
+| 人物设定与玩家身份 | 世界内的角色与可扮演身份 |
+| 世界书与情境资料 | 条目及其加载条件 |
+| 多个开场 | 开局与初始剧情状态 |
+| 变量、状态栏、正则展示 | 状态定义、消息展示规则和组件 |
+| 插件脚本与自动化行为 | 按行为逐项适配并记录差异 |
+
+当前导入的是 **SR 格式的 JSON 或 ZIP**。酒馆 PNG、MVU、STscript 和插件需要分析与转换。[迁移指南](docs/creator/from-sillytavern.md)会说明哪些内容能保留、哪些需要改写，仓库也提供专门的[迁移 Skill](skills/sr-tavern-migrate/SKILL.md)。
+
+## 开始体验
+
+需要 **Node.js 22.19+** 和 **pnpm 10.12.1**。在仓库根目录执行：
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-本机打开 [Web 主站](http://127.0.0.1:5176)。同一局域网内的手机或电脑打开终端里标为「Web 主站」的局域网 IPv4 地址（5176）。Web 和舞台分别监听 TCP 5176、5177，主机防火墙需要允许这两个端口。API 和 Node 调试器仅监听本机。主站可直接管理本机数据，请在可信网络中使用。按 Ctrl+C 一起停止三个进程。
+打开 [http://127.0.0.1:5176](http://127.0.0.1:5176)，配置自己的模型接口，然后导入示例世界。首次启动也会安装内置的「标准叙事」预设和「小饭馆」。
 
-| 进程 | 默认端口 | 职责 |
-| --- | --- | --- |
-| Web 主站 | 5176 | 管理页面和会话宿主，将 `/api` 转发到 Server |
-| Server API | 3001 | 处理业务请求、SSE 和持久化 |
-| 隔离舞台 | 5177 | 提供会话的 `frame.html` 和世界详情的 `world-component.html`。作者组件在单独的浏览器来源运行 |
+可以直接下载[《雾港来信》示例包](examples/worlds/packages/fog-harbor.zip)，也可以从源码检查并打包：
 
-## 运行与调试
+```sh
+pnpm world:check examples/worlds/fog-harbor
+pnpm world:pack examples/worlds/fog-harbor
+```
 
-| 根目录命令 | 用途 |
+在「世界卡」页面导入生成的 `examples/worlds/fog-harbor.zip`，选择身份和开局开始会话。模型推理使用你配置的服务；包内素材可以随作品携带。[完整体验步骤](docs/getting-started.md)
+
+[Linux 单机部署](deploy/README.md) · [本地运行、调试与备份](docs/runtime/local-development.md)
+
+## 开始创作
+
+| 你现在想做的事 | 从这里开始 |
 | --- | --- |
-| `pnpm dev` | 日常开发，前端热更新，后端监听源码改动 |
-| `pnpm debug` | 启动同一套开发环境，开启舞台诊断和 Node 调试器 |
-| `pnpm build` | 构建 Web 主站到 `apps/web/dist`，构建隔离舞台到 `apps/web/dist-preview` |
-| `pnpm start` | 本地运行已构建的两个前端产物和 TypeScript 后端。首次使用或更新前端后先执行 `pnpm build` |
-| `pnpm dev:server`、`pnpm dev:web`、`pnpm dev:stage` | 分别启动一个开发进程，便于单独排查 |
+| 改出自己的第一张卡 | [第一张世界卡](docs/creator/first-world.md) |
+| 设计人物、世界书和开局 | [世界内容](docs/creator/world-content.md) |
+| 为故事增加金币、线索和进度 | [状态与玩法](docs/creator/state-and-rules.md) |
+| 增加面板、图片和自定义舞台 | [展示与舞台](docs/creator/presentation.md) |
+| 请 Agent 完成创作或迁移 | [Agent 创作指南](docs/creator/agent-authoring.md) · [仓库 Skills](skills/README.md) |
+| 检查并分享作品 | [打包与分享](docs/creator/packaging.md) |
 
-**后端断点。** 运行 `pnpm debug` 后，用编辑器的 Node Attach 连接 `127.0.0.1:9229`，在 `apps/server/src` 中设置断点。服务直接开始监听。编辑源码触发重启时，支持自动重连的调试器可继续使用。
+![《雾港来信》手机界面](docs/assets/fog-harbor-mobile.png)
 
-**前端与舞台。** 在浏览器开发者工具中选择 5176 的主文档调试平台 UI，选择 5177 的 iframe 调试舞台或作者组件。调试模式下，`GET /api/v1/runtime/config` 返回 `debug: true`，官方舞台会展示消息携带的数据处理结果。若只需在本地构建产物中查看该面板，可执行 `SERVER_DEBUG=true pnpm start`。叙事执行日志在普通和调试模式下都输出到服务端终端。
+*同一张卡适配窄屏；作者可以为作品组织适合手机阅读的状态与正文布局。*
 
-## 内置预设与世界卡
+## 当前能力与发展方向
 
-Server 在监听前读取仓库的 [初始化资源清单](initial-data/manifest.json)。首次启动会安装「标准叙事」和「小饭馆」。每次启动按 ID 补齐缺项，已安装世界的进度、会话、文件与用户编辑过的预设继续保留。删除清单内的世界后，下次启动会从原包新建该世界，已删除的进度和会话无法借此恢复。手动导入的同名世界拥有独立 ID。
+当前已提供世界卡导入导出、多角色与开局、条件加载的世界书、三作用域状态、主叙事后的 message 状态更新、行动建议、流式正文、最新回复重新生成、上下文裁剪/摘要，以及 React 作者组件和 SDK。
 
-增加资源时，把导出的预设 JSON 放入 `initial-data/presets/`，或把世界卡 ZIP 放入 `initial-data/worlds/`，在清单对应数组中填写固定的 `id` 和文件名 `file`，并将两者一同提交。ID 使用小写字母、数字、下划线或连字符，以小写字母或数字开头。顶层 `defaultPresetId` 指定新建应用设置的默认预设。更换同一 ID 的资源文件只影响后续新装或补建的副本。
+创作主要通过**文件或 Agent 制作 → 导入试玩 → 修改迭代**进行。世界详情展示作者内容，尚未提供完整的可视化世界卡编辑器。状态规则用于指导模型，玩法需要实际试玩验证。
 
-启动错误会标出失败条目。修复文件后重启即可继续。如果数据库缺少世界记录，但数据根目录已存在同 ID 的世界目录，先备份数据库和目录，核对后移开残留目录再重启。
+长期记忆、独立 AI 帮答、独立状态更新与原生视觉小说演出属于规划中的方向。当前的行动建议与独立 AI 帮答是两项不同能力。查阅[当前运行契约](docs/runtime/web-runtime.md)，或阅读 [plan](plan/) 中各方案的状态说明。
 
-## 配置与检查
+## 参与 SR
 
-- 默认数据根目录是仓库的 `data/`。SQLite 位于 `data/database.sqlite`，导入的世界卡原件与解包资源位于 `data/worlds/<worldId>/`。备份时应一并保存数据库和世界卡目录。
-- 可通过 `SERVER_DATA_ROOT` 指定自定义绝对路径。已有部署若继续使用原目录，可将此变量指向该目录。迁移到新目录前先停止后端并整体移动数据；模型密钥按目录关联到 macOS Keychain，已有模型配置需在新目录下重新保存密钥。
-- `SERVER_PORT` 设置 API 监听端口，Web 的默认代理随之调整。显式设置 `SR_WEB_SERVER_URL` 可覆盖代理目标。
-- 外部部署时主站和舞台各用一个来源。前端来源变量在构建时生效，服务端在启动时读取配置。来源配对与 CSP 配置见 [Web 部署说明](docs/runtime/web-management.md#作者内容预览与部署)。
-- `pnpm test` 执行前后端测试，`pnpm test:web` 单独执行前端函数测试，`pnpm typecheck` 检查两端类型，`pnpm lint` 检查后端规则。
+欢迎补充教程、改进示例、报告问题，或分享你完成的作品。问题反馈请附 SR 版本、复现步骤和最小世界卡；分享素材时说明来源与使用条件。
+
+[贡献指南](CONTRIBUTING.md) · [反馈问题](https://github.com/huiru-wang/SillyRealms/issues) · [创作者文档](docs/creator/README.md) · [SDK 参考](docs/sdk/README.md)
