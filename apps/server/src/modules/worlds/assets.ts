@@ -9,7 +9,7 @@ type Components = NonNullable<WorldCard['data']['components']>;
 type FileResolver = (path: string) => Promise<PackageFile>;
 export const COMPONENT_LIMIT = 1024 * 1024;
 const COMPONENT_TOTAL = 2 * 1024 * 1024;
-type ResourceReference = { uri: string; location: string };
+type ResourceReference = { uri: string; location: string; literal?: boolean };
 
 export function readableReason(error:unknown):string {
   if(error instanceof CardError)return error.reason;
@@ -23,8 +23,8 @@ export function readableReason(error:unknown):string {
 /** Inspect declared display resources; never scan arbitrary component source or prompts. */
 function resourceReferences(card:WorldCard):ResourceReference[] {
   const references:ResourceReference[]=[];
-  const add=(value:string|undefined,location:string)=>{
-    if(value && /^sr-asset:/i.test(value.trim()))references.push({uri:value,location});
+  const add=(value:string|undefined,location:string,literal?:boolean)=>{
+    if(value && /^sr-asset:/i.test(value.trim()))references.push({uri:value,location,literal});
   };
   add(card.data.cover,'$.data.cover');
   const prose=(value:string|undefined,location:string)=>{
@@ -37,6 +37,7 @@ function resourceReferences(card:WorldCard):ResourceReference[] {
   };
   card.data.characters.forEach((item,index)=>{
     add(item.avatar,'$.data.characters['+index+'].avatar');
+    item.sprites?.forEach((sprite, spriteIndex) => add(sprite.asset, '$.data.characters[' + index + '].sprites[' + spriteIndex + '].asset', true));
     prose(item.description,'$.data.characters['+index+'].description');
   });
   card.data.openings.forEach((item,index)=>prose(item.content,'$.data.openings['+index+'].content'));
@@ -83,7 +84,7 @@ export async function validateAssets(card:WorldCard, resolve:FileResolver|null):
     try {path=parseSRAssetUri(item.uri,'assets');}
     catch {throw new CardError(item.location,'无效的包内资源地址：'+item.uri);}
     // Regex replacements may construct a resource name using captured groups.
-    if(/\$(?:\d+|<[^>]+>)/.test(path))continue;
+    if(!item.literal && /\$(?:\d+|<[^>]+>)/.test(path))continue;
     try {await resolve(path);}
     catch(error){throw new CardError(item.location,path+'：'+readableReason(error));}
   }

@@ -2,11 +2,12 @@ import { z } from 'zod';
 import { parsePromptTemplate } from '../../lib/prompt-template.js';
 
 export const systemNodeIds = ['main', 'personaInfo', 'characterInfo', 'worldInfo', 'chatHistory', 'userInput'] as const;
-export const postprocessNodeIds = ['worldState', 'actionSuggestions'] as const;
+export const postprocessNodeIds = ['worldState', 'actionSuggestions', 'characterSprite'] as const;
 const builtinIds: readonly string[] = [...systemNodeIds, ...postprocessNodeIds];
 export const systemVariableNames = [
   'system.language', 'user', 'persona.prompt', 'characters.prompts', 'world.lore',
   'history.summary', 'history.messages', 'input.text', 'state.message', 'state.session', 'state.global',
+  'characterSprite.catalog',
 ] as const;
 
 export const presetNodeSchema = z.object({
@@ -15,11 +16,7 @@ export const presetNodeSchema = z.object({
   kind: z.enum(['system', 'postprocess', 'text']),
   role: z.enum(['system', 'user', 'assistant', 'auto']),
   enabled: z.boolean(),
-  // Migrate real placeholders on read/import, preserving backslash escapes and literal braces.
-  prompt: z.string().transform(prompt => prompt.replace(
-    /\\\\|\\\{\{|\{\{\s*state\.entries\s*\}\}/g,
-    token => token.startsWith('{{') ? '{{state.message}}' : token,
-  )),
+  prompt: z.string(),
 }).strict();
 
 export const narrativeConfigSchema = z.object({
@@ -61,6 +58,9 @@ export const narrativeConfigSchema = z.object({
     if (!reserved && (node.kind !== 'text' || node.role === 'auto'))
       invalid('自定义节点必须使用 text 类型及 system/user/assistant 消息角色', ['nodes', index]);
 
+    if (node.kind === 'postprocess' && node.enabled && !node.prompt.trim())
+      invalid('启用的能力节点提示词不能为空', ['nodes', index, 'prompt']);
+
     let variables: string[];
     try {
       variables = parsePromptTemplate(node.prompt, systemVariableNames)
@@ -70,6 +70,9 @@ export const narrativeConfigSchema = z.object({
       invalid(error instanceof Error ? error.message : '提示词模板无效', ['nodes', index, 'prompt']);
       continue;
     }
+    if (node.kind === 'postprocess' && variables.some(name =>
+      name === 'input.text' || name === 'history.messages' || name === 'history.summary'))
+      invalid('能力节点不能引用当前输入或历史消息/摘要', ['nodes', index, 'prompt']);
     for (const [name, owner] of [['history.messages', 'chatHistory'], ['input.text', 'userInput']] as const) {
       const count = variables.filter(value => value === name).length;
       if (node.id === owner ? count !== 1 : count !== 0)

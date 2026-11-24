@@ -258,59 +258,69 @@ describe('model configurations and application defaults', () => {
   });
 });
 
-describe('default postprocess prompt resolution', () => {
-  it('distinguishes read-only context from writable message state in fresh defaults', () => {
+describe('declared postprocess prompt resolution', () => {
+  it('provides explicit default nodes and variables without hardcoding capabilities into main', () => {
     const config = presets.ensureDefault().config;
     const resolved = resolvePostprocessPrompts(config);
     expect(resolved.worldState).toContain('【全局状态｜只读】\n{{state.global}}');
-    expect(resolved.worldState).toContain('【会话状态｜只读】\n{{state.session}}');
     expect(resolved.worldState).toContain('【消息状态｜可更新】\n{{state.message}}');
-    expect(resolved.worldState).toContain('本轮没有可更新的消息状态时，省略 state_update');
     expect(resolved.actionSuggestions).toContain('优先生成三个');
-    expect(resolved.actionSuggestions).toContain('空标签、空数组或省略标签');
-    expect(resolved.actionSuggestions).not.toContain('必须输出');
+    expect(resolved.characterSprite).toContain('{{characterSprite.catalog}}');
+    expect(config.nodes.filter(node => node.kind === 'postprocess').map(node => node.id))
+      .toEqual(['worldState', 'actionSuggestions', 'characterSprite']);
+    const main = config.nodes.find(node => node.id === 'main')!.prompt;
+    expect(main).toContain('本轮实际构建的能力');
+    expect(main).not.toMatch(/state_update|action_suggestions|character_sprite/);
   });
 
-  it('preserves custom prompts regardless of old enabled flags without rewriting the preset', () => {
+  it('honors disabled and absent nodes without rewriting the preset or injecting defaults', () => {
     const current = presets.ensureDefault();
     const config = structuredClone(current.config);
-    for (const node of config.nodes) {
-      if (node.id === 'worldState' || node.id === 'actionSuggestions') {
-        node.enabled = false;
-        node.prompt = '  Custom ' + node.id + ' {{state.entries}}  ';
-      }
-    }
+    config.nodes = config.nodes.filter(node => node.id !== 'worldState');
+    config.nodes.find(node => node.id === 'actionSuggestions')!.enabled = false;
+    config.nodes.find(node => node.id === 'characterSprite')!.prompt = 'Custom {{characterSprite.catalog}}';
     const stored = presets.update(current.id, { config }, current.revision)!;
     const before = structuredClone(stored);
-    expect(resolvePostprocessPrompts(stored.config)).toEqual({
-      worldState: '  Custom worldState {{state.message}}  ',
-      actionSuggestions: '  Custom actionSuggestions {{state.message}}  ',
-    });
+    expect(resolvePostprocessPrompts(stored.config)).toEqual({ characterSprite: 'Custom {{characterSprite.catalog}}' });
     expect(presets.require(stored.id)).toEqual(before);
-    expect(stored).toEqual(before);
+    expect(resolvePostprocessPrompts({ ...config, nodes: config.nodes.filter(node => node.kind !== 'postprocess') })).toEqual({});
   });
 
-  it('normalizes legacy references, preserves literals and round-trips valid field paths', () => {
+  it('rejects legacy variables rather than migrating them and preserves escaped literals', () => {
     const document = presets.toDocument(preset());
     const node = document.config_json.nodes[0]!;
-    node.prompt = String.raw`{{ state.entries }} literal \{{state.entries}} slash \\{{state.entries}}`;
+    node.prompt = '{{ state.entries }}';
+    expect(() => presets.importDocument(document)).toThrow('状态变量路径无效');
+    node.prompt = String.raw`literal \{{state.entries}} and {{state.message}}`;
     const imported = presets.importDocument(document);
-    expect(presets.toDocument(imported).config_json.nodes[0]!.prompt)
-      .toBe(String.raw`{{state.message}} literal \{{state.entries}} slash \\{{state.message}}`);
+    expect(presets.toDocument(imported).config_json.nodes[0]!.prompt).toBe(node.prompt);
     node.prompt = '{{state.session.人设.姓名}}';
     expect(presets.toDocument(presets.importDocument(document)).config_json.nodes[0]!.prompt).toBe(node.prompt);
     node.prompt = '{{state.session.人设..姓名}}';
     expect(() => presets.importDocument(document)).toThrow('状态变量路径无效');
   });
 
-  it('fills missing or blank capability prompts and leaves the provided config untouched', () => {
-    const defaults = presets.ensureDefault().config;
-    const expected = resolvePostprocessPrompts(defaults);
-    const config = structuredClone(defaults);
-    config.nodes = config.nodes.filter(node => node.id !== 'worldState');
-    config.nodes.find(node => node.id === 'actionSuggestions')!.prompt = ' \n\t';
-    const before = structuredClone(config);
-    expect(resolvePostprocessPrompts(config)).toEqual(expected);
-    expect(config).toEqual(before);
+  it.each(['worldState', 'actionSuggestions', 'characterSprite'])('rejects a blank enabled %s prompt but permits it while disabled', id => {
+    const config = presets.getDefault().config;
+    const node = config.nodes.find(node => node.id === id)!;
+    node.prompt = ' \n\t';
+    expect(() => presets.create({ ...preset(), config })).toThrow('不能为空');
+    expect(() => resolvePostprocessPrompts(config)).toThrow('INVALID_NARRATIVE_TEMPLATE');
+    node.enabled = false;
+    expect(presets.create({ ...preset(), config }).config.nodes.find(item => item.id === id)?.prompt).toBe(node.prompt);
+    expect(resolvePostprocessPrompts(config)).not.toHaveProperty(id);
+  });
+
+  it.each(['{{input.text}}', '{{history.messages}}', '{{history.summary}}'])('rejects duplicate conversational material in capability prompt %s', prompt => {
+    const config = presets.getDefault().config;
+    config.nodes.find(node => node.id === 'characterSprite')!.prompt = prompt;
+    expect(() => presets.create({ ...preset(), config })).toThrow('能力节点不能引用');
+  });
+
+  it('preserves the builtin capability order while allowing custom nodes between them', () => {
+    const config = presets.getDefault().config;
+    const character = config.nodes.pop()!;
+    config.nodes.splice(config.nodes.findIndex(node => node.id === 'actionSuggestions'), 0, character);
+    expect(() => presets.create({ ...preset(), config })).toThrow('顺序');
   });
 });

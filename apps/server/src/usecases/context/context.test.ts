@@ -99,8 +99,7 @@ describe('compiled context composition', () => {
     services.sessions.setEntryState('session', 'prior', [{ key: 'coins', value }]);
     const snapshot = capture(token);
     snapshot.preset.config.nodes[0]!.prompt = '{{persona.prompt}}；预设=' + token;
-    snapshot.preset.config.nodes.push({ id: 'actionSuggestions', name: 'Actions', kind: 'postprocess',
-      role: 'system', enabled: true, prompt: '建议=' + token + '。' });
+    snapshot.preset.config.nodes.find(node => node.id === 'actionSuggestions')!.prompt = '建议=' + token + '。';
     services.sessions.setEntryState('session', 'prior', [{ key: 'coins', value: 'new value' }]);
     const evaluate = createCandidateEvaluator(snapshot, model, services.state);
     const full = evaluate(snapshot.historyEntries, '');
@@ -286,10 +285,10 @@ describe('core narrative compilation', () => {
     });
     expect(compiled.diagnostics.nodes.find(node => node.id === 'custom')).toMatchObject({ name: 'Custom', messageIndexes: [5] });
     expect(compiled.diagnostics.nodes.find(node => node.id === 'worldState')).toMatchObject({
-      source: 'default', included: false, reason: 'no_active_state', messageIndexes: [],
+      source: 'preset', included: false, reason: 'no_active_state', messageIndexes: [],
     });
     expect(compiled.diagnostics.nodes.find(node => node.id === 'actionSuggestions')).toMatchObject({
-      source: 'default', included: true, messageIndexes: [7],
+      source: 'preset', included: true, messageIndexes: [7],
     });
     expect(compiled.diagnostics.nodes.at(-1)).toMatchObject({ id: 'postprocessProtocol', source: 'platform', messageIndexes: [7] });
     expect(compiled.diagnostics.messageCount).toBe(compiled.messages.length);
@@ -316,8 +315,7 @@ describe('core narrative compilation', () => {
     expect(last).toContain('本轮没有可写状态');
     expect(compiled.diagnostics.nodes.find(node => node.id === 'worldState')?.included).toBe(true);
 
-    snapshot.preset.config.nodes.push({ id: 'worldState', name: 'World', kind: 'postprocess',
-      role: 'system', enabled: true, prompt: 'Global only {{state.global}}' });
+    snapshot.preset.config.nodes.find(node => node.id === 'worldState')!.prompt = 'Global only {{state.global}}';
     const customized = compileNarrativeContext(snapshot, model).messages.at(-1)!.content;
     expect(customized).toContain('Global only');
     expect(customized).not.toContain('value: 3');
@@ -339,9 +337,8 @@ describe('core narrative compilation', () => {
     expect(snapshot.history).toHaveLength(14);
   });
 
-  it('includes default capability instructions in the real budget without mixing them into history or summaries', () => {
+  it('includes declared capability instructions in the real budget without mixing them into history or summaries', () => {
     const preset = services.presets.getDefault();
-    for (const node of preset.config.nodes) if (node.kind === 'postprocess') node.enabled = false;
     services.presets.update('preset', { config: preset.config });
     services.worlds.update('world', { stateDefinition: { schema_version: 2, scopes: { message: {
       coins: { type: 'number', initial: 5, description: 'Coins', rules: { coins: 'Track spending' } },
@@ -364,17 +361,10 @@ describe('core narrative compilation', () => {
     expect(snapshot.materials.variables['history.summary']).toEqual({ type: 'text', value: '' });
   });
 
-  it('does not duplicate the summary through a custom postprocess template', () => {
+  it('rejects a capability template that repeats historical material instead of falling back', () => {
     const snapshot = capture();
-    snapshot.materials.variables['history.summary'] = { type: 'text', value: 'unique-summary-marker' };
-    snapshot.preset.config.nodes.push({
-      id: 'actionSuggestions', name: 'Actions', kind: 'postprocess', role: 'system',
-      enabled: true, prompt: '{{history.summary}}',
-    });
-    const compiled = compileNarrativeContext(snapshot, model);
-    const joined = compiled.messages.map(message => message.content).join('\n');
-    expect(joined.match(/unique-summary-marker/g)).toHaveLength(1);
-    expect(compiled.messages.at(-1)?.content).toContain('<action_suggestions>');
+    snapshot.preset.config.nodes.find(node => node.id === 'actionSuggestions')!.prompt = '{{history.summary}}';
+    expect(() => compileNarrativeContext(snapshot, model)).toThrow('INVALID_NARRATIVE_TEMPLATE');
   });
 
   it('leaves substituted input literal and handles escaped template delimiters', () => {
@@ -596,7 +586,9 @@ describe('model-only notes in context candidates', () => {
     snapshot.preset.config.contextStrategy.strategy = 'sliding_window';
     snapshot.preset.config.contextStrategy.maxContextTokens = compileNarrativeContext(snapshot, model).estimatedInputTokens + 10;
     expect(planContext(snapshot, model, services.state).compiled.messages.some(message => message.content === withEmptyModelNotes('Older body'))).toBe(true);
-    snapshot.modelNotes = new Map([['old', [{ source: 'example', content: 'large-note-marker ' + 'x'.repeat(6000) }]]]);
+    snapshot.historyEntries.find(entry => entry.id === 'old')!.extData.output = {
+      actionSuggestions: { status: 'success', items: Array.from({ length: 180 }, (_, index) => 'large-note-marker ' + index + ' ' + 'x'.repeat(20)) },
+    };
     const selected = planContext(snapshot, model, services.state).compiled;
     expect(selected.messages.some(message => message.content.includes('Older body'))).toBe(false);
     expect(selected.messages.some(message => message.content.includes('large-note-marker'))).toBe(false);
@@ -618,7 +610,9 @@ describe('compaction stage without persistence', () => {
 
   it('returns one successful summary draft without writing entries and keeps summary input free of notes', async () => {
     const snapshot = summarySnapshot();
-    snapshot.modelNotes = new Map([['past-0', [{ source: 'example', content: 'old-note-marker' }]]]);
+    snapshot.historyEntries.find(entry => entry.id === 'past-0')!.extData.output = {
+      actionSuggestions: { status: 'success', items: ['old-note-marker'] },
+    };
     const summarize = vi.fn(async () => ({ ok: true as const, text: 'summary', metrics: null }));
     const result = await compactHistory(snapshot, model, services.state, summarize, new AbortController().signal);
     expect(summarize).toHaveBeenCalledTimes(1);
@@ -666,5 +660,84 @@ describe('compaction stage without persistence', () => {
       return { ok: true, text: 'Late summary', metrics: null };
     }, controller.signal)).rejects.toThrow('RUN_STOPPED');
     expect(services.sessions.getHistory('session')).toHaveLength(9);
+  });
+});
+
+describe('character sprite context', () => {
+  function spritesWorld() {
+    services.worlds.update('world', { characters: [
+      { id: 'player', name: 'Player', player_selectable: true, prompt: 'Player prompt' },
+      { id: 'alice', name: 'Alice', prompt: 'Hidden character prompt', load: { mode: 'never' },
+        sprites: [
+          { id: 'default', description: 'calm sprite description', asset: 'https://example.com/default.png' },
+          { id: 'smile', description: 'smiling sprite description', asset: 'https://example.com/smile.png' },
+        ] },
+    ] });
+  }
+
+  it('captures the entire directory independently of character load and renders only selection metadata', () => {
+    spritesWorld(); append('prior', 'assistant', 'Earlier scene');
+    const snapshot = capture(), compiled = compileNarrativeContext(snapshot, model);
+    expect(compiled.characterSpriteCatalog).toHaveLength(2);
+    expect(compiled.characterSpriteCatalog[0]).toMatchObject({ characterId: 'alice', asset: 'https://example.com/default.png' });
+    const variable = snapshot.materials.variables['characterSprite.catalog'];
+    expect(variable.type).toBe('text');
+    expect(variable.value).toContain('"playerCharacterId":"player"');
+    expect(variable.value).toContain('calm sprite description');
+    expect(variable.value).not.toContain('https://');
+    expect(variable.value).not.toContain('Hidden character prompt');
+    expect(snapshot.materials.variables['characters.prompts'].value).toBe('');
+    const prompt = compiled.messages.at(-1)!.content;
+    expect(prompt).toContain('character_sprite 使用扁平 JSONL');
+    expect(prompt).toContain('truecenter');
+    expect(prompt).toContain('超过两个角色');
+    expect(compiled.messages.find(item => item.role === 'assistant')?.content).toContain('<character_sprite></character_sprite>');
+    expect(compiled.estimatedInputTokens).toBe(estimateInputTokens(compiled.messages));
+  });
+
+  it.each(['disabled', 'missing', 'no_sprites'] as const)('omits prompt, variable and historical block when %s', condition => {
+    if (condition !== 'no_sprites') spritesWorld();
+    const config = services.presets.require('preset').config;
+    if (condition === 'disabled') config.nodes.find(node => node.id === 'characterSprite')!.enabled = false;
+    if (condition === 'missing') config.nodes = config.nodes.filter(node => node.id !== 'characterSprite');
+    config.nodes[0]!.prompt = 'Catalog={{characterSprite.catalog}}';
+    services.presets.update('preset', { config });
+    append('prior', 'assistant', 'Earlier scene');
+    const snapshot = capture(), compiled = compileNarrativeContext(snapshot, model);
+    expect(snapshot.materials.variables['characterSprite.catalog'].value).toBe('');
+    expect(compiled.messages[0]?.content).toBe('Catalog=');
+    expect(compiled.messages.map(item => item.content).join('\n')).not.toContain('character_sprite');
+    expect(compiled.characterSpriteCatalog).toHaveLength(condition === 'no_sprites' ? 0 : 2);
+  });
+
+  it('disables state and actions in both current instructions and historical notes without changing active roots', () => {
+    services.worlds.update('world', { stateDefinition: { schema_version: 2, scopes: { message: {
+      coins: { type: 'number', initial: 0, description: 'Coins' },
+    } } } });
+    const config = services.presets.require('preset').config;
+    for (const node of config.nodes) if (node.kind === 'postprocess') node.enabled = false;
+    services.presets.update('preset', { config });
+    append('prior', 'assistant', 'Earlier scene');
+    const snapshot = capture(), compiled = compileNarrativeContext(snapshot, model);
+    expect(compiled.activeRoots).toEqual(['coins']);
+    expect(compiled.messages.find(item => item.role === 'assistant')?.content).toBe('Earlier scene');
+    expect(compiled.messages.at(-1)?.content).toBe('Current input');
+    expect(compiled.messages.map(item => item.content).join('\n')).not.toMatch(/state_update|action_suggestions|character_sprite/);
+    expect(compiled.diagnostics.nodes.filter(node => node.kind === 'postprocess').every(node => !node.included)).toBe(true);
+  });
+
+  it('re-evaluates state source availability after trimming without reviving older assistant notes', () => {
+    services.worlds.update('world', { stateDefinition: { schema_version: 2, scopes: { message: {
+      coins: { type: 'number', initial: 0, description: 'Coins', load: { mode: 'on_mention', keywords: ['gate'] } },
+    } } } });
+    append('old', 'assistant', 'gate');
+    append('recent', 'assistant', 'Recent scene');
+    const snapshot = capture();
+    const evaluate = createCandidateEvaluator(snapshot, model, services.state);
+    expect(evaluate(snapshot.historyEntries, '').messages.find(item => item.content.startsWith('Recent scene'))?.content)
+      .toContain('<state_update>');
+    const trimmed = evaluate(snapshot.historyEntries.slice(1), '');
+    expect(trimmed.activeRoots).toEqual([]);
+    expect(trimmed.messages.find(item => item.content.startsWith('Recent scene'))?.content).not.toContain('<state_update>');
   });
 });

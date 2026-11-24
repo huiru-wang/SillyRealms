@@ -2,7 +2,7 @@
 
 - 预设严格模式与世界卡宽容模式共用 Server 纯语法模块。只在候选组装时展开原始角色 prompt、世界书 content 和预设节点；状态字段仅读捕获的 tip 三域视图及当前候选可见根，不改变 message 写授权、不再次解析填入值。世界卡导入不验证提示词变量。
 
-- 本期在 modules/usecases 管理能力上实施叙事首版：SDK 无关模型流、可选一次滚动摘要或滑动窗口裁剪（pi 适配实现）、核心提示词编译、统一 SSE、提交/停止、消息独立持久化、目录和连通性检测。通过 narrative/postprocess 实施模型输出的 message 状态更新与行动建议；不设计 runtime、engine、通用任务、Agent/tool loop 或执行恢复。Web 已按现有叙事与 state 契约接入独立运行页及 Stage SDK。
+- 本期在 modules/usecases 管理能力上实施叙事首版：SDK 无关模型流、可选一次滚动摘要或滑动窗口裁剪（pi 适配实现）、核心提示词编译、统一 SSE、提交/停止、消息独立持久化、目录和连通性检测。通过 narrative/postprocess 实施模型输出的 message 状态更新、行动建议与独立角色立绘；不设计 runtime、engine、通用任务、Agent/tool loop 或执行恢复。Web 已按现有叙事与 state 契约接入独立运行页及 Stage SDK。
 - 单域操作采用 `route → service → repository`；应用流程采用 `route → usecase → service → repository`。route 可以调用读写能力，跨模块只读展示投影可在 route 组合；跨模块写编排必须进入 usecases。route 不写 SQL、不管理事务。
 - 业务模块统一位于 `modules/<name>`，以 `service.ts` 为唯一公开出口。Repository、存储 Row、schema、parser、validation、assets、archive、card、default、files 均为内部实现；公开领域类型从 service 显式 export type，不使用 export *。启动 services.ts/usecases.ts 显式装配依赖。
 - Service 承担本域规则和持久化能力。跨模块只依赖显式 Reader 类型并调用其只读能力，服务本域校验与计算；不依赖对方完整 Service 或调用写能力。模块不能反向依赖 usecases、routes、http 或启动装配，不得循环依赖。
@@ -62,11 +62,11 @@
 
 ## 上下文整理
 
-- 上下文独立于 narrative，外部只经 usecases/context/index.ts 使用 prepareContext 和显式公开类型。业务输入只有 sessionId，signal/permit/progress 仅用于执行控制；不接收调用类型、runId、userEntryId、previousTipEntryId 或输入文本，也不保存用户消息。首次异步等待前同步捕获 session 的世界、预设、模型配置、完整历史、实际 tip 状态及应用设置 locale；prepareContext 完成准备并返回最终请求、激活状态根、后续 parentEntryId、已保存摘要回执及准备失败信息。外层 narrative 保留用户保存、会话运行锁、主模型、后处理和最终结算。
+- 上下文独立于 narrative，外部只经 usecases/context/index.ts 使用 prepareContext 和显式公开类型。业务输入只有 sessionId，signal/permit/progress 仅用于执行控制；不接收调用类型、runId、userEntryId、previousTipEntryId 或输入文本，也不保存用户消息。首次异步等待前同步捕获 session 的世界、完整立绘目录、预设、模型配置、完整历史、实际 tip 状态及应用设置 locale；prepareContext 完成准备并返回最终请求、激活状态根、后续 parentEntryId、已保存摘要回执及准备失败信息。成功 request.characterSpriteCatalog 始终携带捕获的完整目录，节点关闭也不丢失输出引用校验材料。外层 narrative 保留用户保存、会话运行锁、主模型、后处理和最终结算。
 - context/prepare.ts 组合阶段并经公开 SessionService 保存成功摘要；stages/compact 完成纯计划、旧摘要复用、必要摘要调用和最终候选复核，不写库、不认识 EventHub/SSE 或 run 终态。摘要通过窄端口调用；上下文进度 summary_started/summary_saved 由外层映射到 run.summarizing/run.summarized。PreparedContext 使用 ok/request 或 ok/failure.code，均携带 parentEntryId（捕获的实际 tip 或新摘要 ID；空会话/捕获前失败为 null）及可选摘要回执；凭据字节只在本轮 narrative 闭包内复用，不进入返回值。模型流收集、取消和原始调用指标归 infrastructure/model/collect.ts，不能依赖业务模块或叙事输出分离。
 - 每个压缩候选重新投影干净历史、激活材料、选择保留条目的旁注、组装实际模型消息并估算。不得假定估算随裁剪单调下降，不沿用初始候选的 activeRoots，不在估算后偷偷追加旁注。candidate.ts 组合场景候选评估，assemble 产出可直接调用模型的消息；lib 仅放模板、估算、预算计算。
-- 输入硬预算 min(preset.maxContextTokens, model.contextWindow-maxOutputTokens-1024)，软目标 60%。sliding_window 只裁剪完整 run；rolling_summary 保护最近 5 个历史 run，末尾普通消息为 user 时额外保护该完整 run，每次构建最多一次摘要。候选包含完整 entries，按自身消息顺序映射变量：仅尾部普通 user 移至 input.text；assistant 尾部（含空正文）或空会话保持原历史顺序，input.text 为空且 userInput 节点不输出包装文字。末尾 compaction 不作为普通消息判定。history.summary 恰好注入一次，history.messages 保持原角色。默认后处理提示词通过 PresetService 解析；固定协议覆盖旧数组/强制标签/固定条数要求，禁止引用 input.text、history.messages 或 history.summary。
-- model-notes 为按 entryId 关联的本次内存旁注，不修改正文或数据库。通用来源可服务 user/assistant；叙事内置来源先取最近两条有可见正文的 assistant，再读取已保存 output，没有 output 不向更早条目补足。状态只取 stateUpdate.updates 中 status=success 的行，并仅回填 path/value/reason；建议只取有效 items。partial_success 的有效项保留，行状态和失败诊断不进入旁注，各来源失败独立跳过。历史正文后空一行，依次直接追加 state_update JSONL 块和单行 action_suggestions 数组块。缺少 output 或某项没有有效数据时仍渲染两块：状态块为零行 JSONL，建议块为 []。JSON 字符串中的标签继续转义。
+- 输入硬预算 min(preset.maxContextTokens, model.contextWindow-maxOutputTokens-1024)，软目标 60%。sliding_window 只裁剪完整 run；rolling_summary 保护最近 5 个历史 run，末尾普通消息为 user 时额外保护该完整 run，每次构建最多一次摘要。候选包含完整 entries，按自身消息顺序映射变量：仅尾部普通 user 移至 input.text；assistant 尾部（含空正文）或空会话保持原历史顺序，input.text 为空且 userInput 节点不输出包装文字。末尾 compaction 不作为普通消息判定。history.summary 恰好注入一次，history.messages 保持原角色。能力提示词只读取实际声明且 enabled=true 的节点，不补节点或默认正文、不转换旧预设变量；启用节点的空提示词在保存/导入时拒绝。worldState 还需适用状态材料，characterSprite 还需非空立绘目录；相同条件控制节点、固定协议和历史来源。正式变量 {{characterSprite.catalog}} 可在预设引用，但立绘条件不满足时值为空；模型目录只有角色/素材元数据和玩家角色 ID，不含资源地址。能力提示词禁止引用 input.text、history.messages 或 history.summary，编译失败明确报错。
+- model-notes 为按 entryId 关联的本次内存旁注，不修改正文或数据库。先选捕获历史中最近两条有可见正文的 assistant，再读取对应 output；没有结果不向更早条目补足。每个裁剪候选按同一节点/材料条件选择来源。状态仅回填成功 updates 的 path/value/reason，建议仅回填有效 items，立绘仅回填 success/partial_success 的完整有效 items，不带状态或诊断。正文后空一行，按 state_update/action_suggestions/character_sprite 顺序追加本轮启用来源，各块间一个换行。启用来源无有效数据时状态用零行 JSONL、建议用 []、立绘用 <character_sprite></character_sprite>。立绘无结果、失败、损坏或读取/序列化异常也返回空标签，source 自身捕获错误，避免通用 catch 丢掉该块；关闭或无素材时连空块也不附。JSON 中的标签继续转义，历史空块不改写持久结果或触发通知。
 - 材料关键词和摘要只使用干净正文及适用摘要，旁注不参与激活和摘要；最终 assemble 才渲染到保留消息并计入输入预算。裁剪/摘要覆盖的条目旁注随之移除，不重复拼接，不重执行状态更新，不新增 notes 表、持久化 schema 或 contextEligible。正文编辑保留原 output，旁注表示当时的处理记录，不宣称已按新正文重算。
 - 仅摘要正常 stop、非空且无工具请求时产生摘要草稿；context 编排器在捕获的实际 tip 后追加 compaction，state=null，runId 从该 tip 派生；保存前同步复核 tip 和完整捕获原文指纹，变化返回 TIP_CONFLICT，不提交过期摘要。普通发送时仍与 user/assistant 同 run，保存完整文本、覆盖边界、sourceHash 和 metrics。最终候选超限或编译失败不能丢失成功摘要草稿；保存成功后回传父 entry 和计量回执，即使准备最终失败也保留摘要。失败/取消摘要不保存、不计量；成功摘要未知 usage 为 null。
 - run.summarized 只在实际保存成功后发布；失败、取消或保存失败不能伪造完成通知。仍超限 summary_capacity_exceeded 结束并保留用户、摘要和用量，不重试或继续裁剪。上下文不决定 run 终态；savedMessageIds 只列 message，tip 可指向 compaction。执行句柄 active Map 负责停止与查询；锁权限由同一 RuntimeCache 管理，覆盖用户保存到最终结算，取消与异常释放，在能力通知、usage 和终态前释放。
@@ -74,21 +74,22 @@
 - ESLint 强制 context 唯一出口、公开类型出口及生产代码无其他 usecase/EventHub 反向依赖；内部阶段测试位于 context。不得为迁移放宽现有模块、SDK、SQL 或数据库属主规则。
 ## 叙事后处理
 
-- 处理目录为 usecases/narrative/postprocess，持久化仍使用 extData.output。共享正则辅助逻辑按能力名独立检查自身标签，大小写不敏感；完整缺失或空标签为 no_updates/no_suggestions。自身起止标签缺失、损坏或配对错误为 invalid_tag，整个该能力不执行，不从其他能力标签截断或恢复内容。
+- 处理目录为 usecases/narrative/postprocess，持久化仍使用 extData.output。处理器只根据实际输出匹配自身大小写不敏感标签，不读取预设、节点开关或布局。状态/建议完整缺失或空标签为 no_updates/no_suggestions；立绘缺标签不创建 characterSprite 字段，完整空标签保存 success+[]。自身起止标签缺失、损坏、嵌套或重复整块为 invalid_tag，不从其他能力标签恢复内容。
 - state_update 为 JSONL，每个非空物理行一项；仅 message scope、本轮最终激活根和已有路径。prepareMessageUpdates 只计算候选、成功更新、逐项结果及变化，不写库或发事件。每行解析/校验/规范化异常独立，成功行按序保留，重复路径按序覆盖。公共 PATCH 缺失路径忽略契约不变。
 - 状态整体使用 no_updates/success/partial_success/invalid_updates/invalid_tag/processing_error；stateUpdate.updates 按 JSONL 行序保存全部成功/失败记录，每项 status 使用 success/invalid_json/invalid_update/invalid_path/invalid_value/processing_error。成功项必须有 path/value，可含 reason；失败项保留可用的 path/value/reason 及错误诊断，不虚构缺失字段。建议整体使用 no_suggestions/success/partial_success/invalid_tag/invalid_json/invalid_suggestions/processing_error，只保存有效 items 与可选能力级 errors；空项和无效项被过滤，三条只是提示词目标，保留每条 50 个 Unicode 码点和去重规则。两类 output 均不存 results，也不持久化 blockIndex、line 或额外 index。
-- PresetService.resolvePostprocessPrompts 补齐缺失/空内置提示词，忽略旧 enabled，保留非空配置且不改 revision。服务端固定协议明确当前格式与状态更新无固定条数上限。用量采用模型实际 usage，包含隐藏数据块；不增加能力 token、更新条数或全尾部配额，输入上下文继续既有预算流程。
+- PresetService.resolvePostprocessPrompts 只返回实际声明且启用的能力提示词，无默认回退；默认内容来自发行模板或显式恢复默认。worldState/actionSuggestions/characterSprite 保持固定相对顺序。服务端固定协议只为本轮实际构建的能力提供说明；状态 JSONL 不设固定条数上限。用量采用模型实际 usage，包含隐藏数据块；不增加能力 token、原始 JSONL 行数或全尾部配额，输入上下文沿用既有预算流程。
+- character_sprite 是逐行处理的完整快照：每个非空行仅有 position/characterId/spriteId，角色与位置分别唯一，依序接受第一条完整合法行；坏 JSON、字段/引用/位置错误或重复冲突只跳过该行，失败行不占位。位置为 left/center/right/top/topleft/topright/truecenter，允许超过两项，最多七个有效条目。只存有效 items 与 errors；errors.line 为非空数据行 1-based 序号，能力级错误可无 line。全部通过为 success，部分通过为 partial_success，非空且全失败为 invalid_items+[]，坏标签/能力异常为 invalid_tag/processing_error+[]；没有跨消息 merge。明确空块 success+[] 可清场，失败空数组不能作为清场应用。
 - 仅正常 stop、无工具请求且干净正文有效时执行能力；模型中断/失败只保存部分公开内容，不生成 output。能力独立兜底，状态内部逐行隔离，能力失败不改变正常 completed。公开 delta/最终 snapshot/持久化正文都隐藏能力块，最终快照重新分离，reasoning/tool_calls 不作为能力输入。
-- 用例经同步 TransactionRunner 校验实际 tip，准备状态候选和变化信息，再原子追加助手正文/output/state/metrics。变化必须在追加前计算，避免读取更新后的视图漏发事件。SessionService.appendNarrativeAssistant 是 output 受控保存入口，新写严格接受精简结构，普通 append/update 禁止伪造或删除，编辑其他扩展保留结果，正文编辑不重执行或回滚。SessionService 读取投影兼容旧 output：按旧 results 顺序配对成功 updates，保留重复 path 和各自 reason，失败不提升为成功；旧 action results 仅移除。归一化不回写数据库，无 output 的旧消息不补造结果。
-- 提交和锁释放后、唯一终态前，独立发布实际 state.changed 与非空有效 action_suggestions.created，再发布一次总 usage/终态。run.created 驱动清理旧建议，无空 created 或 cleared。每条能力通知异常不能跳过后续通知或终态。助手保存失败无未提交通知；用户终态保存失败保留已提交状态并通知，但不发布可点击建议。
-- 聊天、持久化正文、关键词及摘要保持干净；主模型历史可由 context 的 model-notes 附加独立旁注。postprocess 不承担历史重建，不重放状态或引用 context 内部阶段。结果通过 narrative/runs 分组内的 entries 读取，不新增表或接口。
+- 用例经同步 TransactionRunner 校验实际 tip，准备状态候选和变化信息，再原子追加助手正文/output/state/metrics。变化必须在追加前计算，避免读取更新后的视图漏发事件。SessionService.appendNarrativeAssistant 是 output 受控保存入口，新写严格接受精简结构，普通 append/update 禁止伪造或删除，编辑其他扩展保留结果，正文编辑不重执行或回滚。SessionService 读取投影兼容旧 output：按旧 results 顺序配对成功 updates，保留重复 path 和各自 reason，失败不提升为成功；旧 action results 仅移除。归一化不回写数据库，无 output 的旧消息不补造结果。存在但结构损坏的 characterSprite 投影为 processing_error+[]，错误码 CHARACTER_SPRITE_STORED_RESULT_INVALID；读取历史只验证保存结构，不用当前素材目录否定过去合法 ID。
+- 提交和锁释放后、唯一终态前，依序独立发布实际 state.changed、有效非空 action_suggestions.created、可应用 character_sprite.changed，再发布一次总 usage/终态。立绘 success/partial_success 通知携带完整 items，success+[] 也发送；缺块和失败不发送。run.created 驱动清理旧建议，无空建议 created/cleared。每条能力通知异常不能跳过后续通知或终态。助手保存失败不通知；后续 run outcome 保存失败仍通知已提交状态和立绘，但不发布可点击建议。
+- 聊天、持久化正文、关键词及摘要保持干净；主模型历史由 context 附加独立旁注。postprocess 不承担历史重建，不重放状态或引用 context 内部阶段。结果仍随 narrative/runs 的 entries 返回；立绘另提供 GET /worlds/:id/character-sprites 目录与 GET /sessions/:id/entries/:entryId/character-sprites 精确消息查询（均带 /api/v1 前缀）。后者经 requireSessionAccess 和 SessionService.getMessageCharacterSprites 校验消息归属，缺失能力结果或用户消息返回 null，不继承或合并历史，compaction 拒绝。查询不受预设开关控制；资源走原 resources/*，无立绘写入端点、额外表或前端 SDK 实现。
 
 
 ## 运行日志
 
 - 叙事按 run 记录 `[yyyy-MM-dd HH:mm:ss] [事件] [紧凑JSON对象]`，时间为服务器本地时间，runId/sessionId 固定在数据开头；每条只占一行，正文不截断。默认 stdout，日志异常不得影响业务。只记录非 delta 生命周期、真实模型请求/完整 SDK 终态、后处理及结算，不重复 model.input。
 - context 成功结果独立返回最终候选 diagnostics：节点、角色和世界书名称、条件与真实匹配结果，不含正文，不重新执行条件，不向 context 注入叙事或日志依赖。模型 raw 只经可选诊断钩子传给观测方，SDK 类型和原始数据不进入业务事件或持久消息。
-- state/actions 原始块和完整处理结果分别记录；坏标签可记录整段原文用于诊断，不能用于恢复执行。结果 phase:prepared 与事务成功的 postprocess.completed/persisted:true 分开，保存失败不能宣称已提交。保留完整 usage 和终态字段，API Key/鉴权等明确凭据先脱敏。契约见 ../../docs/runtime/server-narrative.md#run-单行日志。
+- state/actions/character_sprite 原始块和完整处理结果分别记录；坏标签可记录整段原文用于诊断，不能用于恢复执行。结果 phase:prepared 与事务成功的 postprocess.completed/persisted:true 分开，保存失败不能宣称已提交。保留完整 usage 和终态字段，API Key/鉴权等明确凭据先脱敏。契约见 ../../docs/runtime/server-narrative.md#run-单行日志。
 
 ## 最新回复重新生成
 

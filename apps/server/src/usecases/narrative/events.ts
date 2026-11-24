@@ -1,5 +1,5 @@
 import type { StateEvent } from '../../modules/state/service.js';
-import type { NarrativeStopReason } from '../../modules/sessions/service.js';
+import type { CharacterSpriteItem, NarrativeStopReason } from '../../modules/sessions/service.js';
 import type {
   ModelDelta, ModelFinishReason, ModelSnapshot,
 } from '../../infrastructure/model/client.js';
@@ -54,8 +54,12 @@ export type ActionSuggestionsCreated = {
   event: 'action_suggestions.created';
   data: { sessionId: string; runId: string; messageId: string; items: string[] };
 };
+export type CharacterSpriteChangedEvent = {
+  event: 'character_sprite.changed';
+  data: { sessionId: string; runId: string; messageId: string; items: CharacterSpriteItem[] };
+};
 export type NarrativeSettlement = {
-  notifications: (StateEvent | ActionSuggestionsCreated)[];
+  notifications: (StateEvent | ActionSuggestionsCreated | CharacterSpriteChangedEvent)[];
   usage: Extract<NarrativeEvent, { event: 'run.usage' }>;
   terminal: NarrativeTerminalEvent;
 };

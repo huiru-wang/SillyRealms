@@ -7,7 +7,7 @@ import type { ModelReader } from '../models/service.js';
 import type { PresetReader } from '../presets/service.js';
 import type { WorldReader } from '../worlds/service.js';
 import { SessionRepository, type EntryRow, type SessionRow } from './repository.js';
-import { narrativeOutputSchema, type NarrativeOutput } from './output.js';
+import { narrativeOutputSchema, readCharacterSpriteOutput, type CharacterSpriteOutput, type NarrativeOutput } from './output.js';
 import { readStoredNarrativeOutput } from './stored-output.js';
 import {
   appendEntrySchema, createSessionSchema, identifier, metricsSchema,
@@ -29,7 +29,9 @@ export type {
 export type {
   NarrativeOutput, StateUpdateOutput, ActionSuggestionsOutput,
   StateUpdateStatus, StateUpdateItem, ActionSuggestionsStatus,
+  CharacterSpritePosition, CharacterSpriteItem, CharacterSpriteOutput, CharacterSpriteStatus,
 } from './output.js';
+export { parseCharacterSpriteItem, readCharacterSpriteOutput } from './output.js';
 
 type Dependencies = { worlds: WorldReader; presets: PresetReader; models: ModelReader; cache: RuntimeCache };
 
@@ -121,6 +123,17 @@ export class SessionService {
   getEntry(sessionId: string, entryId: string): SessionEntry | null {
     const entry = this.#repository.getEntry(identifier.parse(sessionId), identifier.parse(entryId));
     return entry ? toSessionEntry(entry) : null;
+  }
+
+  /** Reads only this message's result; missing/error output never inherits another message. */
+  getMessageCharacterSprites(sessionId: string, entryId: string): CharacterSpriteOutput | null {
+    this.require(sessionId);
+    const entry = this.#requireEntry(sessionId, entryId);
+    if (entry.type !== 'message') throw new AppError('INVALID_REQUEST', '立绘结果只能查询消息条目');
+    if (entry.role !== 'assistant') return null;
+    const output = entry.extData.output;
+    if (output === null || typeof output !== 'object' || Array.isArray(output)) return null;
+    return readCharacterSpriteOutput(output.characterSprite);
   }
 
   appendEntry(sessionId: string, input: AppendEntryInput, permit?: RunWritePermit): SessionEntry {

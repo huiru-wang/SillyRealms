@@ -1,5 +1,5 @@
 import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
-import { stateUpdateOutputSchema, type StateUpdateItem } from './output.js';
+import { readCharacterSpriteOutput, stateUpdateOutputSchema, type StateUpdateItem } from './output.js';
 
 const record = (value: JsonValue | undefined): JsonObject | undefined =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
@@ -44,7 +44,14 @@ function readActionSuggestions(value: JsonValue): JsonValue {
   return output;
 }
 
-/** Normalize old persisted results only while projecting entries; never rewrite stored history. */
+function readCharacterSprite(value: JsonValue): JsonValue {
+  return readCharacterSpriteOutput(value) ?? {
+    status: 'processing_error', items: [],
+    errors: [{ errorCode: 'CHARACTER_SPRITE_STORED_RESULT_INVALID' }],
+  };
+}
+
+/** Normalize persisted results only while projecting entries; never rewrite stored history. */
 export function readStoredNarrativeOutput(value: JsonValue): JsonValue {
   const output = record(value);
   if (!output) return value;
@@ -52,5 +59,6 @@ export function readStoredNarrativeOutput(value: JsonValue): JsonValue {
     ...output,
     ...(output.stateUpdate !== undefined ? { stateUpdate: readStateUpdate(output.stateUpdate) } : {}),
     ...(output.actionSuggestions !== undefined ? { actionSuggestions: readActionSuggestions(output.actionSuggestions) } : {}),
+    ...(output.characterSprite !== undefined ? { characterSprite: readCharacterSprite(output.characterSprite) } : {}),
   };
 }

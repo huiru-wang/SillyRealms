@@ -15,6 +15,7 @@ export { systemVariableNames } from './schema.js';
 export type { NarrativePresetConfig, PresetNode } from './schema.js';
 export type { PresetDocument } from './card.js';
 export { resolvePostprocessPrompts } from './postprocess.js';
+export type { PostprocessNodeId, PostprocessPrompts } from './postprocess.js';
 export type PresetReader = Pick<PresetService, 'get' | 'require' | 'list' | 'listPage' | 'getDefault' | 'toDocument'>;
 
 const createSchema = presetValueSchema.extend({ id: z.string().trim().min(1).optional() }).strict();

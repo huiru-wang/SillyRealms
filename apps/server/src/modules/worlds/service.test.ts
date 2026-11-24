@@ -39,6 +39,34 @@ function model() {
 }
 
 describe('world definitions and tags', () => {
+  it('reads the complete ordered sprite catalog without prompts, load rules or preset gating', () => {
+    const sprites = [
+      { id: 'smile', asset: 'https://images.example/alice/smile.webp', description: '微笑' },
+      { id: 'default', asset: 'https://images.example/alice/default.webp', description: '平静' },
+    ];
+    const original = worlds.create({ ...content(), id: 'sprite-world', characters: [
+      { id: 'alice', name: 'Alice', prompt: 'private narrative prompt', load: { mode: 'never' }, sprites },
+      { id: 'player', name: 'Player', player_selectable: true },
+      { id: 'bob', name: 'Bob', sprites: [{ id: 'default', asset: 'https://images.example/bob.webp', description: '严肃' }] },
+    ] });
+    expect(worlds.require(original.id).characters).toEqual(original.characters);
+    expect(worlds.getCharacterSpriteCatalog(original.id)).toEqual({
+      worldId: original.id,
+      items: [
+        { characterId: 'alice', characterName: 'Alice', spriteId: 'smile', description: '微笑', asset: sprites[0]!.asset },
+        { characterId: 'alice', characterName: 'Alice', spriteId: 'default', description: '平静', asset: sprites[1]!.asset },
+        { characterId: 'bob', characterName: 'Bob', spriteId: 'default', description: '严肃', asset: 'https://images.example/bob.webp' },
+      ],
+    });
+    const empty = worlds.create({ ...content(), id: 'empty-world' });
+    expect(worlds.getCharacterSpriteCatalog(empty.id)).toEqual({ worldId: empty.id, items: [] });
+    expect(() => worlds.getCharacterSpriteCatalog('missing')).toThrow('WORLD_NOT_FOUND');
+    expect(() => worlds.update(original.id, { characters: [
+      { id: 'player', name: 'Player', player_selectable: true, sprites: [{ ...sprites[0] }] },
+    ] })).toThrow('INVALID_WORLD_CARD');
+    expect(worlds.require(original.id).characters).toEqual(original.characters);
+  });
+
   it('persists the approved fields and ordered, deduplicated tag bindings', () => {
     vi.spyOn(Date, 'now').mockReturnValue(1000);
     const created = worlds.create({

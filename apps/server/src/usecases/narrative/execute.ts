@@ -2,7 +2,8 @@ import { AppError } from '../../errors.js';
 import type { ModelFinishReason, ModelSnapshot, ModelUsage } from '../../infrastructure/model/client.js';
 import { processNarrativeOutput } from './postprocess/processor.js';
 import type { StateEvent } from '../../modules/state/service.js';
-import type { EntryMetrics } from '../../modules/sessions/service.js';
+import type { CharacterSpriteItem, EntryMetrics } from '../../modules/sessions/service.js';
+import type { CharacterSpriteCatalogItem } from '../../modules/worlds/service.js';
 import type { NarrativeEvent, NarrativeSettlement, NarrativeStopReason, RunEventFields } from './events.js';
 import type { NarrativeDependencies, NarrativeExecution } from './types.js';
 import { assertRunning, callModel, cancellationReason, copySnapshot, failureReason, hasPublicOutput, zeroUsage } from './model-call.js';
@@ -28,6 +29,8 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
   let parentId = userEntryId;
   let rawContent = '', activeRoots: string[] = [];
   let committedState: StateEvent | null = null, committedSuggestions: string[] = [];
+  let characterSpriteCatalog: readonly CharacterSpriteCatalogItem[] = [];
+  let committedSprites: CharacterSpriteItem[] | undefined;
   const fields = (): RunEventFields => ({ runId, assistantEntryId, sessionId, provider, model, timestamp: Date.now() });
   const publish = (event: NarrativeEvent) => events.publish(sessionId, event);
   publish({ event: 'run.created', data: { ...fields(), messages: [{ ...userMessage }], tipEntryId: acceptedTipEntryId, deletedMessageIds } });
@@ -48,6 +51,7 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
     if (context.ok) {
       const compiled = context.request, selected = compiled.model;
       activeRoots = compiled.activeRoots;
+      characterSpriteCatalog = compiled.characterSpriteCatalog;
       const apiKey = await getApiKey(compiled.credentialRef);
       assertRunning(signal);
       const result = await callModel(modelClient, selected, compiled.messages, {
@@ -92,15 +96,19 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
           if (sessions.require(sessionId).tipEntryId !== parentId) throw new AppError('TIP_CONFLICT');
           log('postprocess.started', { messageId: assistantEntryId, allowedRoots: activeRoots });
           const processed = processNarrativeOutput(rawContent, dependencies.state, {
-            sessionId, parentId, allowedRoots: activeRoots,
+            sessionId, parentId, allowedRoots: activeRoots, characterSpriteCatalog,
           }, (event, data) => log(event, { messageId: assistantEntryId, ...data }));
           sessions.appendNarrativeAssistant(sessionId, { ...input, state: processed.state }, processed.output, writePermit);
-          return { change: processed.change, suggestions: processed.output.actionSuggestions.items };
+          const sprites = processed.output.characterSprite;
+          return { change: processed.change, suggestions: processed.output.actionSuggestions.items,
+            sprites: sprites?.status === 'success' || sprites?.status === 'partial_success' ? sprites.items : undefined };
         });
         committedState = committed.change;
         committedSuggestions = committed.suggestions;
+        committedSprites = committed.sprites;
         log('postprocess.completed', { messageId: assistantEntryId, persisted: true,
-          stateChanged: committedState !== null, suggestionCount: committedSuggestions.length });
+          stateChanged: committedState !== null, suggestionCount: committedSuggestions.length,
+          ...(committedSprites === undefined ? {} : { characterSpriteCount: committedSprites.length }) });
       } else {
         // Interrupted/model-failed output is visible history only; no postprocessing was executed.
         sessions.appendEntry(sessionId, input, writePermit);
@@ -146,6 +154,11 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
   if (stopReason === undefined && committedSuggestions.length) {
     notifications.push({ event: 'action_suggestions.created',
       data: { sessionId, runId, messageId: assistantEntryId, items: [...committedSuggestions] } });
+  }
+  // A committed snapshot remains authoritative even if recording the run outcome later failed.
+  if (committedSprites !== undefined) {
+    notifications.push({ event: 'character_sprite.changed',
+      data: { sessionId, runId, messageId: assistantEntryId, items: committedSprites.map(item => ({ ...item })) } });
   }
   const total = addUsage(summaryUsage, attempted ? usage : zeroUsage());
   const usageEvent: NarrativeSettlement['usage'] = { event: 'run.usage', data: {

@@ -4,9 +4,9 @@
 
 Server 在现有会话上提供按预设整理上下文、可选一次摘要调用、一次正文调用、正文/公开 reasoning/工具请求增量和显式停止。用户受理时先保存；助手完整或部分公开内容在正常结束、失败或停止时独立结算。用户、成功摘要及助手各自保存，不使用跨模型调用的整体事务。SSE 只使用 Server 自有契约，外部仅发布一次 run 总 usage，异常终态仅使用 stop_reason。
 
-Web 已接入管理、作者预览与文本叙事运行页，见 [运行接入](web-runtime.md)。原 Server/Web 保持独立。Server 处理正文尾部的状态 JSONL 与行动建议数组；不提供 Agent/tool loop、修复重试、重启恢复、执行状态表或事件回放。
+Web 已接入管理、作者预览与文本叙事运行页，见 [运行接入](web-runtime.md)。原 Server/Web 保持独立。Server 处理正文尾部的状态 JSONL、行动建议数组和独立角色立绘 JSONL 快照；不提供 Agent/tool loop、修复重试、重启恢复、执行状态表或事件回放。
 
-会话创建由独立 create-session 用例完成开局选择、{{user}} 替换、session/message 初始状态和首条 assistant 消息的一次事务保存，只发 session.created。首条消息是普通 run 分组的一部分，不分类；其正文参与后续历史，状态被后继继承。服务端按应用开局覆盖后的 message 快照逐根写入 extData.output.stateUpdate.updates，每行保存成功状态、根路径及完整值。有更新时状态为 success，空快照为 no_updates。行动建议保存为 no_suggestions 和空数组，模型请求计数为零。
+会话创建由独立 create-session 用例完成开局选择、{{user}} 替换、session/message 初始状态和首条 assistant 消息的一次事务保存，只发 session.created。首条消息是普通 run 分组的一部分，不分类；其正文参与后续历史，状态被后继继承。服务端按应用开局覆盖后的 message 快照逐根写入 extData.output.stateUpdate.updates，每行保存成功状态、根路径及完整值。有更新时状态为 success，空快照为 no_updates。行动建议保存为 no_suggestions 和空数组，模型请求计数为零。开局不自动创建持久立绘结果。
 
 状态 HTTP 独立提供三个 scope 的 GET/PATCH/PUT。叙事后处理只更新本轮激活且已存在的 message 路径，不向模型开放 global/session 写入；公共 PATCH 的缺失路径忽略语义保持不变。state.changed 保持 `{path,scope,value}` 契约，在成功提交实际变化后发布；message 事件表示当前 tip 的有效继承视图。叙事有变化时保存完整助手状态快照，无变化时继续 null 继承；内部 getViews/evaluateWhen 服务于叙事上下文。具体写入与读取语义见 [状态接口](server-http.md#状态接口)。Web 的 state feature 与 Stage SDK 按这些路径和事件语义接入，写后读取权威状态，不乐观推导被忽略的值。
 
@@ -21,6 +21,7 @@ Web 已接入管理、作者预览与文本叙事运行页，见 [运行接入](
 | `src/usecases/context/capture.ts` | 首次异步等待前通过公开 Service 冻结 session 当前消息、实际 tip 状态及配置 |
 | `src/usecases/context/prepare.ts` | 会话上下文阶段编排、成功摘要保存、准备结果与已提交回执 |
 | `src/usecases/context/candidate.ts` | 将历史投影、材料选择和真实消息编译组合为候选评估函数 |
+| `src/usecases/context/capabilities.ts` | 同条件选择能力节点、模型目录及历史旁注来源 |
 | `src/usecases/context/stages/history/`、`materials/` | 干净历史投影、完整 run 边界、候选材料激活 |
 | `src/usecases/context/stages/model-notes/` | 条目旁注来源与选择，正文和旁注分离 |
 | `src/usecases/context/stages/compact/` | 计划、旧摘要复用、摘要请求与执行、最终候选复核；不持久化 |
@@ -125,13 +126,17 @@ entry.role 与 payload.message.role 一致。同轮已有消息共享 runId；re
 
 预设节点和已选中的玩家/NPC prompt、世界书 content 支持 `{{state.<global|session|message>.<路径>}}`：从本轮捕获视图逐段读对象自有属性，只能读取当前裁剪候选按 load 激活的根，不增加写授权。字符串原样填入（作者素材保留原有正文转义），其余值输出紧凑 JSON；缺值或不可见根留空。世界卡导入不检查变量；作者素材中非法的闭合 state 路径留空，不支持的自定义变量和未闭合正文原样保留。只扫描源字段，输入、历史、替换结果和最终消息均不再扫描；状态规则、开局、摘要提示不新增插值。
 
-worldState/actionSuggestions 为默认后处理能力，通过 PresetService.resolvePostprocessPrompts 读取非空配置或补默认提示词，忽略旧 enabled，不修改已存预设和 revision。编译提供最终激活状态与固定协议；固定协议覆盖旧提示词中的数组状态更新、强制非空标签及固定三条限制，并明确状态更新不设固定条数上限。worldState 在任一作用域有激活根时参与。预设节点按模板引用展开 `{{state.global}}`、`{{state.session}}`、`{{state.message}}`，三组分别应用世界卡的加载条件，缺失的快照值标为未设置。前两组提供只读背景，只有已激活的 message 根进入本轮允许写入的路径，与是否有 rules 无关；仅当有规则条目时才输出规则段，组装时不重复校验其格式或要求覆盖。已有预设或导入文件中的 `{{state.entries}}` 在读取时转换为 `{{state.message}}`，保留自定义文本和转义字面量。
+worldState、actionSuggestions、characterSprite 按固定相对顺序声明。PresetService.resolvePostprocessPrompts 只返回实际存在且 enabled=true 的节点，不补缺失节点、不替换空提示词、不读取旧变量别名。启用能力节点的空提示词在保存/导入时拒绝；模板编译失败明确报错，无默认回退。默认正文来自发行模板或用户显式恢复默认。main 使用遵守本轮实际构建能力的通用措辞。
+
+worldState 在已启用且任一作用域有适用状态材料时参与。预设模板的 `{{state.global}}`、`{{state.session}}`、`{{state.message}}` 分别应用世界卡加载条件，缺失快照值标为未设置。global/session 是只读背景；只有最终激活的 message 根用于后处理路径授权，与是否有 rules 无关。仅有可写根时构建 state_update 输出协议；只提供已声明规则，不要求覆盖。actionSuggestions 需要实际启用的节点。
+
+characterSprite 还要求世界目录非空。context 首次异步等待前捕获全卡已声明的合法素材，角色 load 只控制角色 prompt，不裁掉立绘目录；成功 request.characterSpriteCatalog 无论节点是否启用都保留，供实际输出校验。正式变量 `{{characterSprite.catalog}}` 只在立绘条件成立时提供角色 ID/姓名、素材 ID/说明、当前玩家角色 ID，不含 asset 地址、完整角色 prompt 或图片。该变量可用于其他预设节点，但关闭或缺失立绘节点时值为空。条件同时控制立绘节点、固定协议和历史来源；详情见 [预设创作](../creator/presets-and-models.md) 与 [世界卡协议](../reference/world-card.md)。
 
 ### 叙事输出语言
 
 应用设置保存 `locale: "zh-CN" | "en" | "ja"`，默认简体中文。context 通过 SettingsReader 在首次异步等待前捕获 locale，与本轮领域快照一起固定；裁剪、摘要完成后的候选重建都使用该值。运行过程中切换语言只影响下一次上下文准备，发送和重新生成共用此行为。语言不写入会话、消息或世界状态，不翻译已有历史及摘要。
 
-预设节点可插入 `{{system.language}}`，分别替换为 `简体中文`、`English` 或 `日本語`。新的标准叙事 main 已包含叙事正文/行动建议的语言要求，已有预设保持原文与 revision，需要时在编辑器插入变量或恢复该节点默认内容。世界作者素材只保留原有 user/state 插值边界，历史和替换结果不再次解析此变量。摘要提示词仍按原方式直接使用，不新增变量展开。
+预设节点可插入 `{{system.language}}`，分别替换为 `简体中文`、`English` 或 `日本語`。新的标准叙事 main 已包含叙事正文和面向用户自然语言的语言要求，已有预设保持原文与 revision，需要时在编辑器插入变量或恢复该节点默认内容。世界作者素材只保留原有 user/state 插值边界，历史和替换结果不再次解析此变量。摘要提示词仍按原方式直接使用，不新增变量展开。
 
 自然语言输出可以切换；协议标签、JSON 字段名、状态路径、约定状态取值保持原义。语言切换本身不产生状态更新，状态值仍依据事实与作者规则处理。
 
@@ -141,15 +146,15 @@ worldState/actionSuggestions 为默认后处理能力，通过 PresetService.res
 
 compact 阶段通过候选评估函数重复选择材料、组装最终消息和估算，不把阶段固定为各执行一次的流水线。每个候选都从捕获的干净输入重建；真实摘要复核失败时仍返回成功摘要草稿，保存后将摘要回执与失败一起交还，避免丢失已成功摘要的父链和计量。摘要端口不依赖叙事模型调用适配、正文分离或 SSE。
 
-PreparedContext 以 ok 判别，成功返回 request 和独立的 diagnostics，失败返回 failure.code；两种结果都有 parentEntryId 和可选 summary:{entryId,metrics}。parentEntryId 表示捕获的实际 tip 或本次新保存摘要的 ID；空会话或尚未捕获成功时为 null。读取构建使用同一快照，摘要持久化前同步复核实际 tip 与原文指纹；发生变化返回 TIP_CONFLICT，不写入过期摘要。request 包含 credentialRef，不包含 API key。本轮摘要与正文的凭据读取在 narrative 闭包内复用，不进入上下文返回值或数据库。
+PreparedContext 以 ok 判别，成功返回 request 和独立的 diagnostics，失败返回 failure.code；两种结果都有 parentEntryId 和可选 summary:{entryId,metrics}。parentEntryId 表示捕获的实际 tip 或本次新保存摘要的 ID；空会话或尚未捕获成功时为 null。读取构建使用同一快照，摘要持久化前同步复核实际 tip 与原文指纹；发生变化返回 TIP_CONFLICT，不写入过期摘要。request 包含 credentialRef 和本轮完整 characterSpriteCatalog，不包含 API key；素材目录与本轮模型输入使用同一捕获版本。本轮摘要与正文的凭据读取在 narrative 闭包内复用，不进入上下文返回值或数据库。
 
 narrative/index.ts 先排入执行微任务，再同步调用 prepareContext；入口在首次 await 前捕获领域快照及应用语言，后续准备发生在 run.created 之后。内部进度 summary_started 在凭据就绪、摘要实际调用前发出，summary_saved 在成功保存后发出；外层映射到既有 run.summarizing/run.summarized。
 
 ### 条目级模型旁注
 
-model-notes 构建按 entryId 关联的独立内存数据，历史正文始终不变。通用构建支持 user/assistant 条目和显式来源；叙事内置状态更新、行动建议两个来源，来源异常独立跳过，不影响另一个来源或正文。
+model-notes 构建按 entryId 关联的独立内存数据，历史正文始终不变。叙事内置状态更新、行动建议、角色立绘三个独立来源；节点与材料条件同当前 prompt，未启用或无适用材料的来源不附块。其他来源失败独立隔离；立绘 source 内部捕获读取、校验和序列化异常，仍返回完整空标签。
 
-在本轮已捕获历史中先选择最近两条有可见正文的 assistant，再分别读取对应 extData.output；没有 output 不继续向更早消息补足数量。状态来源只取 updates 中 status=success 的 path/value/reason，建议来源只取有效 items，partial_success 的有效项保留；行状态与诊断不注入模型。错误、坏 JSON、失败标签或当前状态倒推值不构成历史旁注。
+在本轮已捕获历史中先选择最近两条有可见正文的 assistant，再分别读取对应 extData.output；没有结果不继续向更早消息补足。状态来源只取成功 updates 的 path/value/reason，建议来源只取有效 items；立绘来源只序列化该消息 success/partial_success 的完整有效 items，不注入行状态、错误诊断或原始失败行。每个裁剪候选重新核对来源条件，窗口始终来自同一份捕获历史。
 
 | 消费方 | 输入投影 |
 | --- | --- |
@@ -158,9 +163,9 @@ model-notes 构建按 entryId 关联的独立内存数据，历史正文始终�
 | 主模型 | 干净正文及最终保留条目的旁注 |
 | 输入预算 | 实际发送的最终消息，包含旁注 |
 
-只有候选最终保留的 entry 才渲染旁注；滑窗删除或被摘要覆盖后，旁注随条目一起移除。每次渲染从干净正文开始，不重复追加。主模型历史中的正文与第一个数据块用一个空行分隔。状态块内每行一个 JSON 对象，建议数组与其起止标签同在一行；两块之间用一个换行分隔。每条入选消息都包含两个块。没有有效状态行时，状态块起止标签之间只有换行；没有有效建议时，建议块内容为 []。旧条目没有 output 时使用相同的空块。JSON 字符串中的保留标签继续转义。
+只有候选最终保留的 entry 才渲染旁注；滑窗删除或被摘要覆盖后，旁注随条目移除。每次从干净正文开始，正文与首个数据块间空一行，随后按 state_update → action_suggestions → character_sprite 顺序仅追加启用来源，各块间一个换行。启用来源无有效数据时，状态为零行 JSONL，建议为单行 []；立绘缺失、空数组、失败或损坏均为 `<character_sprite></character_sprite>`。关闭立绘节点或目录为空时连空标签也不附。JSON 字符串中的保留标签继续转义。
 
-正文编辑保留已保存 output；旁注表示当时的处理记录，不表示依据编辑后的正文重新校验。旁注不回写历史、不重执行更新、不触发状态事件，也不进入公开聊天、摘要或关键词。无需 notes 表、持久化 schema、contextEligible 或历史重建 API；原文 sourceHash 不包含动态旁注。
+正文编辑保留已保存 output；旁注表示当时的处理记录，不表示依据编辑后的正文重新校验。旁注不回写历史、不把缺失/失败结果改成成功、不重执行更新、不触发状态或立绘事件，也不进入公开聊天、摘要或关键词。无需 notes 表、持久化 schema、contextEligible 或历史重建 API；原文 sourceHash 不包含动态旁注。
 
 ### 自动裁剪与滚动摘要
 
@@ -218,9 +223,9 @@ maxOutputTokens 交给 pi 既有预算映射，供应商实际输出参数可能
 <action_suggestions>["继续询问店主。","","离开酒馆。"]</action_suggestions>
 ```
 
-每个能力只用大小写不敏感的正则匹配、校验自己的起止标签。整对标签缺失或内容空白是正常无结果；只出现一侧标签、标签损坏或配对错误为 invalid_tag，该能力不执行任何数据。其他能力不作为边界或恢复锚点，继续独立匹配自己的完整标签。JSON 字符串中的保留标签应 Unicode 转义，正文使用 HTML 实体。
+每个能力独立匹配、校验自己大小写不敏感的起止标签，不读取预设或 enabled。状态/建议缺块或空块是正常无结果；立绘缺块不创建结果，完整空块是明确的成功空快照。自身标签损坏、嵌套、配对错误或重复整块为 invalid_tag，该能力不执行数据。其他能力不作为边界或恢复锚点，继续独立匹配；JSON 字符串中的标签使用 Unicode 转义，正文使用 HTML 实体。
 
-流式隐藏缓冲未完成标签前缀，支持跨分片和 UTF-16；最终快照再次分离。postprocess 仅解析 content，不从 reasoning/tool_calls 执行能力，摘要调用不启用此流程。
+流式隐藏无条件识别三种保留能力标签，不依赖预设开关；缓冲未完成标签前缀，支持跨分片和 UTF-16；最终快照再次分离。postprocess 仅解析 content，不从 reasoning/tool_calls 执行能力，摘要调用不启用此流程。
 
 ### 状态更新
 
@@ -243,15 +248,42 @@ action_suggestions 保持 JSON 数组。每项 trim、验证字符串及 50 个 
 
 整体 status 为 no_suggestions、success、partial_success、invalid_tag、invalid_json、invalid_suggestions、processing_error。缺失/空标签或 [] 是 no_suggestions；有有效项也有无效项为 partial_success，非空数组中的条目全部无效为 invalid_suggestions。结果只保存 status、items 和可选能力级 errors，不保存逐项 results。
 
+### 角色立绘
+
+立绘是独立服务端能力，与视觉小说和前端左右布局无关。模型每轮输出最新完整快照，每个非空数据行是只有 position、characterId、spriteId 的扁平对象：
+
+```text
+<character_sprite>
+{"position":"left","characterId":"alice","spriteId":"smile"}
+{"position":"center","characterId":"bob","spriteId":"default"}
+{"position":"right","characterId":"carol","spriteId":"serious"}
+</character_sprite>
+```
+
+position 允许 left、center、right、top、topleft、topright、truecenter。同一快照中角色与位置分别唯一，因此可展示 3～7 个角色，不受两侧组件限制。按非空行序独立执行严格 JSON、字段、目录引用、位置和唯一性校验；先检查重复角色，再检查重复位置。第一条完整合法行保留，后续冲突行跳过；失败行不占用角色或位置，不覆盖已接受行。原始 JSONL 不设额外行数上限。
+
+| 输入 | characterSprite 结果 | 变化通知 |
+| --- | --- | --- |
+| 无标签 | 无该字段 | 不发 |
+| 完整空标签或只有空白 | success，items=[] | 发空快照 |
+| 所有非空行通过 | success，items 为全部接受项 | 发完整快照 |
+| 部分通过 | partial_success，items 为接受项，errors 记录失败行 | 发完整接受项快照 |
+| 非空且全部失败 | invalid_items，items=[]，errors 为行诊断 | 不发 |
+| 自身标签错误 / 能力级异常 | invalid_tag / processing_error，items=[] | 不发 |
+
+错误项结构为 `{errorCode,line?}`；line 从 1 开始计算非空数据行，空白行不占号，能力级错误可不含 line。结果只保存有效 items 和诊断，不保留重复 updates/results 或完整原始行列表。`[]` 不是合法 JSONL 对象，也不是空标签别名。
+
+success 和 partial_success 的 items 都是一份完整新快照；前一条消息中缺席的角色不会被补回。明确空标签 `<character_sprite></character_sprite>` 表示清场；全部失败的空数组只表示没有可应用结果，消费者须结合 status 判断。两者在已启用的历史来源中均可投影为空标签，历史投影本身不发布清场事件。
+
 ### 保存、失败与历史
 
-各能力独立异常边界，状态内部逐行隔离。正常叙事的能力失败不改变 completed；模型错误、取消、length、工具请求或正文无效不执行能力，部分助手无 output。读取状态材料失败不能阻止建议与正文保存。
+各能力独立异常边界，状态和立绘内部逐行隔离。正常叙事的能力失败不改变 completed；模型错误、取消、length、工具请求或正文无效不执行能力，部分助手无 output。读取状态材料失败不能阻止建议、立绘与正文保存。
 
 SessionService.appendNarrativeAssistant 将干净正文、extData.output、可靠状态候选和 metrics 原子追加。主流程在同一收尾事务中校验 tip、计算候选并预计算有效状态变更，再保存助手；不逐行写库或提前通知。成功项已提交时，即使状态为 partial_success 也发布实际变化。主流程存储失败仍按既有规则结算，不承诺数据库整体不可用时 completed。
 
-用户终态独立保存失败时，助手/状态不回滚；实际已提交状态仍通知，但本轮不发布可点击建议。事件在提交和锁释放后、唯一终态前发布，顺序见会话事件文档。
+run outcome 独立保存失败时，助手及已提交能力结果不回滚；实际状态和可应用立绘仍通知，本轮不发布可点击建议。正常事件顺序为提交、释放锁、state.changed、符合条件的 action_suggestions.created、character_sprite.changed、总 usage、唯一终态。立绘事件携带 sessionId/runId/messageId/items，success/partial_success 每次都通知，success 空数组也通知；无块、全坏行、标签错误或处理异常不发立绘事件。通知异常分别隔离，完整字段见 [会话事件](server-events.md)。
 
-公共追加/编辑禁止写入或删除 output，编辑其他 extData 保留它；正文编辑保留当时处理结果，不重做或回滚状态。新 output 严格使用精简结构；旧格式仅在 SessionService 读取投影时归一化，旧成功 updates 按 results 成功行的顺序配对，保留重复 path 及各自 reason，失败不提升为成功，行动建议移除旧 results。归一化不重写数据库；旧 entry 没有 output 时正常读取且不补造结果。轮次列表返回归一化后的结构化结果，不新增接口或表。
+公共追加/编辑禁止写入或删除 output，编辑其他 extData 保留它；正文编辑保留当时结果，不重做或回滚。新 output 严格使用精简结构；既有 state/action 格式仍只在 SessionService 读取投影时归一化，不重写存储。立绘保存结构损坏时投影为 processing_error、items=[]、错误码 CHARACTER_SPRITE_STORED_RESULT_INVALID；不存在该字段时保持缺失。读取只验证保存结构，不依据最新素材目录改写历史合法 ID。结果随 narrative/runs 的 entries 返回，另有立绘目录和指定消息的只读 GET，见 [立绘查询](server-http.md#立绘查询)；无新表、列或能力运行状态缓存。
 
 聊天、持久化正文、关键词激活与摘要保持干净。主模型的保留历史由 context 在最终组装时附加条目级 model-only notes，读取历史或旁注不重执行更新；规则见[条目级模型旁注](#条目级模型旁注)。没有持久化 notes schema、contextEligible 或能力专用历史重建模块。
 
@@ -307,11 +339,11 @@ POST 或 SSE 断开不取消叙事；只有显式 stop 或服务正常关闭触�
 | `model.request` | `purpose:summary\|narrative`、实际 provider/model、`source:provider_payload` 与 SDK 发送前钩子取得的真实请求体 `raw` |
 | `model.response` | 相同调用归属及完整 `raw`；`sdk_message` 为归一化前的最终 SDK 消息，`sdk_error` 为 SDK 错误消息，`adapter_error` 表示取消、抛错或缺失终态 |
 | `postprocess.started` | 处理的助手 ID 和本轮允许更新的状态根 |
-| `state_update.raw` / `action_suggestions.raw` | 自身标签状态和未经 trim 的原始块内容；坏标签保留完整模型原文并标记 `source:unparsed_model_output`，不会据此恢复执行 |
-| `state_update.result` / `action_suggestions.result` | 完整能力状态、有效更新/建议、每行/每项处理结果及错误；`phase:prepared` 明确此时仅完成计算 |
-| `postprocess.completed` | 助手事务成功后的 `persisted:true`、实际状态变化标记和建议数 |
+| `state_update.raw` / `action_suggestions.raw` / `character_sprite.raw` | 自身标签状态和未经 trim 的原始块内容；坏标签保留完整模型原文并标记 `source:unparsed_model_output`，不会据此恢复执行 |
+| `state_update.result` / `action_suggestions.result` / `character_sprite.result` | 完整能力状态、有效更新/建议、每行/每项处理结果及错误；`phase:prepared` 明确此时仅完成计算 |
+| `postprocess.completed` | 助手事务成功后的 `persisted:true`、实际状态变化标记、建议数及可应用立绘条目数 |
 | `message.persist_failed` | 助手保存失败原因及 `persisted:false`；先前 prepared 结果不构成已提交声明 |
-| `state.changed` / `action_suggestions.created` | 提交成功后的实际通知数据 |
+| `state.changed` / `action_suggestions.created` / `character_sprite.changed` | 提交成功后的实际通知数据 |
 | `run.stop_requested` | 用户取消或关机的停止请求，与最终停止结果分开 |
 | `run.usage` | 结算用量事件的全部字段，保留零和未知 null 语义 |
 | `run.completed` / `run.stopped` | 完整终态，包括实际 savedMessageIds、tipEntryId 和适用的 stop_reason |

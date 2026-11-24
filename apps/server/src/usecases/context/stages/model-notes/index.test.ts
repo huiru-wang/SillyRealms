@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { NarrativeOutput, SessionEntry } from '../../../../modules/sessions/service.js';
-import { buildModelNotes, buildNarrativeNotes, renderModelNotes, type ModelNoteSource } from './index.js';
+import { buildModelNotes, buildNarrativeNotes as buildSelectedNarrativeNotes, renderModelNotes, type ModelNoteSource } from './index.js';
+
+const standardCapabilities = { worldState: true, actionSuggestions: true, characterSprite: false };
+const buildNarrativeNotes = (entries: readonly SessionEntry[]) => buildSelectedNarrativeNotes(entries, standardCapabilities);
 
 function output(): NarrativeOutput {
   return {

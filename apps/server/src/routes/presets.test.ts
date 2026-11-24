@@ -201,7 +201,7 @@ describe('preset HTTP operations', () => {
       data: { item: { name: '标准叙事', config: { schemaVersion: 1 } } },
     });
     expect(body.data.item.config.nodes.map((node: { id: string }) => node.id)).toEqual([
-      'main', 'personaInfo', 'characterInfo', 'worldInfo', 'chatHistory', 'userInput', 'worldState', 'actionSuggestions',
+      'main', 'personaInfo', 'characterInfo', 'worldInfo', 'chatHistory', 'userInput', 'worldState', 'actionSuggestions', 'characterSprite',
     ]);
     expect(body.data.item).not.toHaveProperty('id');
     expect(services.presets.list()).toEqual([]);

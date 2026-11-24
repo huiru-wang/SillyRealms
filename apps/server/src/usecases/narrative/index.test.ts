@@ -770,7 +770,7 @@ describe('run diagnostic logs', () => {
     expect(logs.map(item => item.event)).toEqual([
       'run.created', 'context.completed', 'model.request', 'model.response', 'postprocess.started',
       'state_update.raw', 'state_update.result', 'action_suggestions.raw', 'action_suggestions.result',
-      'postprocess.completed', 'run.usage', 'run.completed',
+      'character_sprite.raw', 'postprocess.completed', 'run.usage', 'run.completed',
     ]);
     expect(logs[0]!.data).toMatchObject({ runId: accepted.runId, sessionId: 'session',
       messages: [{ content: '第一行\n第二行' }] });
@@ -786,6 +786,10 @@ describe('run diagnostic logs', () => {
       purpose: 'narrative', source: 'sdk_message',
       raw: { content: [{ type: 'text', text: '完整正文' }], usage: { input: 20, output: 5 } },
     });
+    expect(logs.find(item => item.event === 'character_sprite.raw')!.data).toMatchObject({
+      tagStatus: 'missing', blocks: [], source: 'block_contents',
+    });
+    expect(logs.some(item => item.event === 'character_sprite.result')).toBe(false);
     expect(logs.find(item => item.event === 'run.usage')!.data).toEqual(
       seen.find(item => item.event === 'run.usage')!.data);
     expect(logs.at(-1)!.data).toEqual(terminalEvent.data);

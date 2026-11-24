@@ -38,6 +38,15 @@ export type WorldManagementPatch = Partial<Pick<World, 'name' | 'tags' | 'defaul
 export type WorldListOptions = { q?: string; tag?: string; limit?: number; offset?: number; before?: { createdAt: number; id: string } };
 export type WorldPage = { items: WorldSummary[]; hasMore: boolean };
 
+export type CharacterSpriteCatalogItem = {
+  characterId: string;
+  characterName: string;
+  spriteId: string;
+  description: string;
+  asset: string;
+};
+export type CharacterSpriteCatalog = { worldId: string; items: CharacterSpriteCatalogItem[] };
+
 export const worldContentFields = [
   'specVersion', 'name', 'description', 'cover', 'characters', 'openings',
   'lorebook', 'stateDefinition', 'messageRender', 'components',

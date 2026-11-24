@@ -8,6 +8,7 @@
 
 - [根结构](#根结构)
 - [角色](#角色)
+- [角色立绘](#角色立绘)
 - [开局](#开局)
 - [世界书](#世界书)
 - [加载条件](#加载条件)
@@ -64,11 +65,51 @@
 | `description` | 可选字符串，玩家可读介绍 |
 | `prompt` | 可选字符串，进入人物/玩家身份材料 |
 | `avatar` | 可选图片地址 |
+| `sprites` | 可选立绘素材数组；非空时必须含 ID 为 default 的素材 |
 | `player_selectable` | 可选布尔，是否可被玩家选择 |
 | `order` | 可选整数，角色材料排序；默认 0 |
 | `load` | 可选加载条件 |
 
 角色 prompt 支持精确 `{{user}}` 和本轮可见的 state 字段插值；不是任意模板执行器。选中角色通过其 load 后作为 persona 材料，其他激活角色作为 character 材料。详见[组织世界内容](../creator/world-content.md)。
+
+### 角色立绘
+
+在角色内声明素材。表情、姿态或服装的变化分别对应一张素材，由模型选择其 ID：
+
+~~~json
+{
+  "id": "alice",
+  "name": "爱丽丝",
+  "sprites": [
+    {
+      "id": "default",
+      "asset": "sr-asset://assets/characters/alice/default.webp",
+      "description": "平静站立，适合日常交流。"
+    },
+    {
+      "id": "restrained_smile",
+      "asset": "sr-asset://assets/characters/alice/restrained-smile.webp",
+      "description": "勉强微笑，适合掩饰担忧或安慰他人。"
+    }
+  ]
+}
+~~~
+
+| 素材字段 | 约束 |
+| --- | --- |
+| `id` | 非空，角色内部唯一；非空素材数组必须有 default。不同角色可以各自使用 default |
+| `asset` | 非空的 HTTP(S) URL，或安全的 sr-asset://assets/ 包内资源引用 |
+| `description` | 非空文本，说明模型应在什么情境选择这张素材 |
+
+素材对象只接受以上三个字段；`sprites` 可以省略或为 []。角色 ID 和素材 ID 是消息结果引用的稳定标识。立绘无需另设 emotion 字段，也不在素材中指定左右槽位、CSS 或组件名。
+
+目录包含全卡已声明的素材。角色 load 只控制角色 prompt 加载，不过滤立绘目录；素材说明是可被模型读取的选择资料，不应承担剧情解锁或隐藏信息的职责。节点启用后，模型材料只包含角色 ID/姓名、素材 ID/说明和当前玩家角色 ID，图片地址用于资源读取。
+
+引用包内图片时，必须将文件放进 ZIP 的对应 assets/ 路径。导入、导出、`world:check` 与打包都会检查声明的包内资源；单独 JSON 导入不能引用包内文件。在线地址只校验 URI，不在导入时下载或探测。
+
+每轮显示哪些角色、使用哪张图和哪个语义位置，由立绘 prompt 与本轮故事决定。模型输出使用独立的 character_sprite JSONL 快照，见[预设中的角色立绘](../creator/presets-and-models.md#角色立绘)。七种位置可供不同前端布局消费，不依赖视觉小说模式。开局消息不会自动生成立绘快照。
+
+当前实现提供服务端素材目录、消息结果与 SSE 契约；Stage 的立绘 SDK 门面和官方显示组件仍需后续接入。
 
 ## 开局
 

@@ -24,7 +24,24 @@ function keywords(rule:{mode?:string;keywords?:string[]},ctx:z.RefinementCtx) {
 }
 const load=z.object(rules).superRefine(keywords);
 const loreLoad=z.object({...rules,order:z.number().int().optional()}).superRefine(keywords);
-const character=z.object({id,name:nonblank,description:z.string().optional(),prompt:z.string().optional(),avatar:z.string().optional(),order:z.number().int().optional(),player_selectable:z.boolean().optional(),load:load.optional()});
+const spriteAsset = nonblank.superRefine((value, ctx) => {
+  try {
+    if (/^sr-asset:/i.test(value)) parseSRAssetUri(value, 'assets');
+    else {
+      const url = new URL(value);
+      if (!['http:', 'https:'].includes(url.protocol) || !/^https?:\/\//i.test(value)) throw new Error('Unsupported asset protocol');
+    }
+  } catch {
+    ctx.addIssue({ code: 'custom', message: 'Expected an HTTP(S) URL or sr-asset://assets/ package path' });
+  }
+});
+const sprite = z.object({ id, asset: spriteAsset, description: nonblank }).strict();
+const sprites = z.array(sprite).superRefine(unique).superRefine((items, ctx) => {
+  if (items.length && !items.some(item => item.id === 'default')) {
+    ctx.addIssue({ code: 'custom', message: 'Nonempty sprites must contain default' });
+  }
+});
+const character=z.object({id,name:nonblank,description:z.string().optional(),prompt:z.string().optional(),avatar:z.string().optional(),order:z.number().int().optional(),player_selectable:z.boolean().optional(),load:load.optional(),sprites:sprites.optional()});
 const componentId=z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$-]*$/);
 const componentView=z.object({type:z.literal('component'),component:componentId}).strict();
 export const openingSchema=z.object({id,name:nonblank,content:nonblank,initial_state:dict.optional(),type:z.literal('component').optional(),component:componentId.optional()}).superRefine((value,ctx)=>{if((value.type===undefined)!==(value.component===undefined))ctx.addIssue({code:'custom',path:['component'],message:'type and component must be specified together'});});
@@ -33,6 +50,8 @@ function unique(items:{id:string}[],ctx:z.RefinementCtx) {
   const seen=new Set<string>();
   items.forEach((item,i)=>{if(seen.has(item.id)) ctx.addIssue({code:'custom',path:[i,'id'],message:'Duplicate ID'}); seen.add(item.id);});
 }
+const characters = z.array(character).superRefine(unique)
+  .refine(items => items.some(item => item.player_selectable === true), 'Expected a selectable player character');
 const boundedBytes=(limit:number)=>z.string().refine(value=>Buffer.byteLength(value,'utf8')<=limit,`Exceeds ${limit} bytes`);
 const renderRule=z.object({
   id,
@@ -70,7 +89,7 @@ const components=z.array(componentSource).max(100).superRefine(unique).superRefi
 });
 const schema=z.object({spec_version:z.literal('0.1'),data:z.object({
   name:id,description:componentView.optional(),tags:z.array(id).optional(),cover:z.string().optional(),
-  characters:z.array(character).superRefine(unique).refine(items=>items.some(v=>v.player_selectable===true),'Expected a selectable player character'),
+  characters,
   openings:z.array(openingSchema).min(1).superRefine(unique),state:atomicStateSchema.optional(),
   lorebook:z.object({entries:z.array(lore).superRefine(unique)}).optional(),message_render:messageRender.optional(),ui:z.never().optional(),components:components.optional(),stage_component:componentId.optional(),extensions:z.custom<Record<string,unknown>>(v=>v!==null && typeof v==='object' && !Array.isArray(v),'Expected extension object').optional()
 })});
@@ -145,6 +164,15 @@ export function validateCard(raw: unknown): WorldCard {
     if (rule.replacement.type === 'component') reference(rule.replacement.component, '$.data.message_render.rules[' + index + '].replacement.component');
   });
   return card;
+}
+
+export function validateCharacters(value: unknown): WorldCard['data']['characters'] {
+  const result = characters.safeParse(value);
+  if (!result.success) {
+    const issue = result.error.issues[0]!;
+    throw new CardError(location(['data', 'characters', ...issue.path]), issue.message);
+  }
+  return result.data;
 }
 
 export function validateComponents(value: unknown) { return components.parse(value); }

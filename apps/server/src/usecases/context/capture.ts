@@ -6,14 +6,15 @@ import type { ModelConfig, ModelService } from '../../modules/models/service.js'
 import type { Preset, PresetService } from '../../modules/presets/service.js';
 import type { Session, SessionEntry, SessionService } from '../../modules/sessions/service.js';
 import type { StateService, StateViews } from '../../modules/state/service.js';
-import type { World, WorldService } from '../../modules/worlds/service.js';
+import type { CharacterSpriteCatalogItem, World, WorldService } from '../../modules/worlds/service.js';
 import { selectNarrativeMaterials, type NarrativeMaterials } from './stages/materials/index.js';
 import { buildNarrativeNotes, type ModelNotes } from './stages/model-notes/index.js';
+import { resolveContextCapabilities, promptSpriteCatalog } from './capabilities.js';
 
 export type ContextSources = {
   settings: Pick<SettingsReader, 'getOptional'>;
   sessions: Pick<SessionService, 'require' | 'getHistory'>;
-  worlds: Pick<WorldService, 'require'>;
+  worlds: Pick<WorldService, 'require' | 'getCharacterSpriteCatalog'>;
   presets: Pick<PresetService, 'require'>;
   models: Pick<ModelService, 'require'>;
   state: Pick<StateService, 'getViews' | 'evaluateWhen'>;
@@ -22,6 +23,7 @@ export type ContextSnapshot = {
   locale: AppLocale;
   session: Session;
   world: World;
+  characterSpriteCatalog: readonly CharacterSpriteCatalogItem[];
   preset: Preset;
   modelConfig: ModelConfig;
   history: NarrativeHistoryMessage[];
@@ -42,14 +44,17 @@ export function captureContext(services: ContextSources, sessionId: string): Con
   const projection = projectContextMessages(historyEntries);
   const world = services.worlds.require(session.worldId);
   const preset = services.presets.require(session.presetId);
+  const characterSpriteCatalog = services.worlds.getCharacterSpriteCatalog(session.worldId).items;
   const modelConfig = services.models.require(session.apiModelConfigId);
   const views = services.state.getViews({
     worldId: session.worldId, sessionId: session.id, entryId: session.tipEntryId,
   });
-  const captured = structuredClone({ locale, session, world, preset, modelConfig, historyEntries, views, ...projection });
+  const captured = structuredClone({ locale, session, world, preset, modelConfig, historyEntries, views, characterSpriteCatalog, ...projection });
   const materials = selectNarrativeMaterials({
     locale: captured.locale, world: captured.world, views: captured.views, history: captured.history,
     playerId: captured.session.userCharacterId, inputText: captured.inputText,
+    characterSpriteCatalog: promptSpriteCatalog(captured.preset.config, captured.characterSpriteCatalog),
   }, services.state);
-  return { ...captured, materials, modelNotes: buildNarrativeNotes(captured.historyEntries) };
+  const capabilities = resolveContextCapabilities(captured.preset.config, materials, captured.characterSpriteCatalog);
+  return { ...captured, materials, modelNotes: buildNarrativeNotes(captured.historyEntries, capabilities) };
 }

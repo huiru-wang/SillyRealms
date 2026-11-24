@@ -1,6 +1,6 @@
 # Server 会话事件
 
-Server 的叙事用例和会话 SSE 共用一个 EventHub。业务消息遵循 Server 自有契约，pi 只负责 SDK 适配；消息结算属于 `usecases/narrative/`，传输位于 `infrastructure/events/`。本契约仅在 Server 实施，Web、Web 与共享前端运行 SDK 暂不适配。
+Server 的叙事用例和会话 SSE 共用一个 EventHub。业务消息遵循 Server 自有契约，pi 只负责 SDK 适配；消息结算属于 `usecases/narrative/`，传输位于 `infrastructure/events/`。本页定义服务端事件；各前端能力按已接入的契约消费。新增立绘事件的 Stage SDK 桥接与官方组件尚未接入。
 
 EventHub 按 sessionId 同步通知监听器。事件仅包含 event 和 JSON 对象 data；不生成 SSE `id:`，没有确认或回放。单个订阅者失败不影响业务执行或其他连接。SSE 不读取数据库、不判断运行是否结束。
 
@@ -59,7 +59,7 @@ run.created 中用户消息的 timestamp 是其保存时的消息时间。messag
 
 摘要由独立 context 模块准备，进度经外层叙事适配到现有事件；context 和 compact 不直接依赖 EventHub 或 SSE。run.summarized 仅由实际已保存摘要回执触发，最终上下文准备失败时仍携带已保存摘要的用量和父链。模型旁注只用于主模型输入，不新增事件，也不进入公开聊天增量。
 
-摘要事件共用 runId/assistantEntryId/sessionId/provider/model/timestamp；不发布 run.phase、generating，不含 data.phase。摘要内部流不发 run.delta。正常顺序为 run.created → 可选摘要事件 → 干净正文 run.delta/最终 snapshot → 持久化及释放执行锁 → state.changed（有变化）→ action_suggestions.created（有有效建议）→ run.usage → 唯一终态。摘要失败或取消没有 summarized；成功摘要落库后预算仍超限，summarized 后直接 usage → stopped(summary_capacity_exceeded)，没有正文调用。
+摘要事件共用 runId/assistantEntryId/sessionId/provider/model/timestamp；不发布 run.phase、generating，不含 data.phase。摘要内部流不发 run.delta。正常顺序为 run.created → 可选摘要事件 → 干净正文 run.delta/最终 snapshot → 持久化及释放执行锁 → state.changed（有变化）→ action_suggestions.created（符合既有建议通知条件）→ character_sprite.changed（有可应用立绘结果）→ run.usage → 唯一终态。摘要失败或取消没有 summarized；成功摘要落库后预算仍超限，summarized 后直接 usage → stopped(summary_capacity_exceeded)，没有正文调用。
 
 ### 删除通知与重新生成
 
@@ -176,7 +176,59 @@ messageId 是承载 output 的助手 entry ID；items 是本轮完整有效集�
 
 标签缺失、空标签、空数组、无有效建议、模型未正常结束或主流程未完成时不发布 created。新 run 的 run.created 已负责清空旧建议，不发送 messageId=null/items=[] 的 created 清空事件，也不增加 cleared。
 
-state.changed 与 action_suggestions.created 独立发布；每条能力通知异常局部处理，继续其余通知及 run.usage/终态，不回滚已提交数据或重新执行能力。能力结果通过 runs 分页中的 entry.extData.output 读取，事件不重复传输全部诊断。首次加载/重连只恢复最新已完成 run 的有效结果，不回找更早建议冒充当前建议。
+state.changed、action_suggestions.created 与 character_sprite.changed 独立发布；每条能力通知异常局部处理，继续其余通知及 run.usage/终态，不回滚已提交数据或重新执行能力。能力结果通过 runs 分页中的 entry.extData.output 读取，事件不重复传输全部诊断。首次加载/重连只恢复最新已完成 run 的有效结果，不回找更早建议冒充当前建议。
+
+## 角色立绘变化
+
+助手消息的可应用立绘结果成功提交并释放执行锁后，发布 character_sprite.changed：
+
+~~~ts
+{
+  event: 'character_sprite.changed',
+  data: {
+    sessionId: string,
+    runId: string,
+    messageId: string,
+    items: Array<{
+      position: 'left' | 'center' | 'right' | 'top' | 'topleft' | 'topright' | 'truecenter',
+      characterId: string,
+      spriteId: string
+    }>
+  }
+}
+~~~
+
+messageId 是实际保存结果的助手 entry ID。items 是该消息通过逐行校验的完整快照，角色 ID 和 position 各自唯一；可以超过两项，最多七个有效位置。接收方按消息身份使用整份数组，不把它当增量，不与前一条消息合并。人物与上一条消息相同但来源 messageId 更新时，仍发送通知。
+
+| 保存结果 | 是否通知 |
+| --- | --- |
+| success，items 非空 | 发送全部有效条目 |
+| partial_success | 发送全部通过条目，忽略失败行 |
+| success，items=[] | 发送空数组，明确清场 |
+| 没有 characterSprite 结果 | 不发送 |
+| invalid_items、invalid_tag、processing_error | 不发送；失败的空数组不代表清场 |
+| 助手事务失败 | 不发送未提交结果 |
+
+清场事件示例：
+
+~~~text
+event: character_sprite.changed
+data: {"sessionId":"s-1","runId":"r-2","messageId":"m-2","items":[]}
+~~~
+
+SSE 不重复传输行错误诊断。部分成功时仍发送完整有效数组；非空模型块全部失败时保存 invalid_items，不发布清场事件。历史模型旁注补出的空标签也不改变持久结果或产生新事件。
+
+正常结算顺序为：助手事务提交、释放运行锁、state.changed、符合既有条件的 action_suggestions.created、character_sprite.changed、run.usage、唯一终态。能力通知彼此隔离。助手已经提交而后续 run 结束结果写入失败时，立绘仍作为已提交事实通知；它不依赖 run.completed，也不沿用行动建议必须正文主流程完成的通知条件。
+
+重生成沿用 message.deleted：旧助手 ID 被删除，新执行使用新助手 ID。客户端据删除事件使旧消息来源失效；服务端不自动回找更早快照、不合成回退数组，也不合并新旧立绘。事件只说明哪条消息保存了哪份快照，不规定组件显示哪个消息。
+
+读取配合：
+
+- `GET /api/v1/worlds/:worldId/character-sprites` 返回素材目录及资源引用。
+- `GET /api/v1/sessions/:sessionId/entries/:messageId/character-sprites` 精确返回该消息的 status/items/errors，未产生结果时为 null，不向前继承。
+- 包内素材继续通过 `GET /api/v1/worlds/:worldId/resources/*` 访问；在线素材按既有资源解析规则使用。事件只携带 ID 和位置，不携带图片字节、地址或本机路径。
+
+事件复用现有会话 SSE，不增加连接、回放或专用资源下载入口。当前实现为服务端契约，Stage 立绘 SDK 门面与官方显示组件另行接入。接口详情见 [Server HTTP](server-http.md)。
 
 ## 预留事件
 

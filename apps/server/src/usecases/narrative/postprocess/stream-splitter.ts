@@ -1,4 +1,4 @@
-const NAMES = ['state_update', 'action_suggestions', 'sr_extensions'];
+const NAMES = ['state_update', 'action_suggestions', 'character_sprite', 'sr_extensions'];
 const MARKERS = NAMES.flatMap(name => ['<' + name, '</' + name]);
 const MAX_PREFIX = Math.max(...MARKERS.map(marker => marker.length));
 

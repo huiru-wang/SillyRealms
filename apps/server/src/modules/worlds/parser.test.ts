@@ -3,6 +3,49 @@ import { cardToWorld, parseCard } from './parser.js';
 import { worldCardFixture } from './test-fixtures.js';
 
 describe('world card protocol', () => {
+  it('preserves optional sprite metadata and permits the same sprite ID in different characters', () => {
+    const raw = worldCardFixture();
+    const sprites = [
+      { id: 'default', asset: 'https://images.example/alice/default.webp', description: '平静站立' },
+      { id: 'smile', asset: 'sr-asset://assets/alice/smile.webp', description: '微笑' },
+    ];
+    const card = parseCard({ ...raw, data: { ...raw.data, characters: [
+      { ...raw.data.characters[0], sprites },
+      { id: 'bob', name: 'Bob', sprites: [{ ...sprites[0], asset: 'http://images.example/bob.webp' }] },
+      { id: 'carol', name: 'Carol', sprites: [] },
+      { id: 'dave', name: 'Dave' },
+    ] } });
+    expect(card.data.characters[0]?.sprites).toEqual(sprites);
+    expect(cardToWorld(card).characters).toEqual(card.data.characters);
+    expect(card.data.characters[2]?.sprites).toEqual([]);
+    expect(card.data.characters[3]).not.toHaveProperty('sprites');
+  });
+
+  it('rejects invalid sprite declarations at their character field', () => {
+    const raw = worldCardFixture();
+    const sprite = { id: 'default', asset: 'https://images.example/alice.webp', description: '平静' };
+    const invalid = [
+      [{ ...sprite, id: 'smile' }],
+      [sprite, { ...sprite }],
+      [{ ...sprite, id: ' ' }],
+      [{ ...sprite, description: ' ' }],
+      [{ ...sprite, asset: '' }],
+      [{ ...sprite, asset: 'file:///private/picture.webp' }],
+      [{ ...sprite, asset: 'data:image/png;base64,AQ==' }],
+      [{ ...sprite, asset: 'assets/picture.webp' }],
+      [{ ...sprite, asset: 'sr-asset://components/picture.webp' }],
+      [{ ...sprite, asset: 'sr-asset://assets/../secret' }],
+      [{ ...sprite, asset: 'https://' }],
+      [{ ...sprite, position: 'left' }],
+      null,
+    ];
+    for (const sprites of invalid) {
+      expect(() => parseCard({ ...raw, data: { ...raw.data,
+        characters: [{ ...raw.data.characters[0], sprites }],
+      } })).toThrow('$.data.characters[0].sprites');
+    }
+  });
+
   it('accepts optional and partial rule maps and rejects malformed entries at import', () => {
     const raw = worldCardFixture();
     const parse = (fields: object) => parseCard({ ...raw, data: { ...raw.data,

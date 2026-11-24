@@ -1,6 +1,8 @@
 import type { SessionEntry } from '../../../../modules/sessions/service.js';
 import { actionSuggestionNotes } from './action-suggestions.js';
 import { stateUpdateNotes } from './state-update.js';
+import { characterSpriteNotes } from './character-sprite.js';
+import type { ContextCapabilities } from '../../capabilities.js';
 import { record } from './serialization.js';
 import type { ModelNote, ModelNotes, ModelNoteSource } from './types.js';
 
@@ -26,13 +28,17 @@ export function buildModelNotes(entries: readonly SessionEntry[], sources: reado
 }
 
 /** Select the most recent visible assistants first; missing output never revives older notes. */
-export function buildNarrativeNotes(entries: readonly SessionEntry[]): ModelNotes {
+export function buildNarrativeNotes(entries: readonly SessionEntry[], capabilities: ContextCapabilities): ModelNotes {
   const recent = entries.filter(entry => {
     if (entry.type !== 'message' || entry.role !== 'assistant') return false;
     const message = record(entry.payload.message);
     return message?.role === 'assistant' && typeof message.content === 'string' && message.content.trim().length > 0;
   }).slice(-2);
-  return buildModelNotes(recent, [stateUpdateNotes, actionSuggestionNotes]);
+  return buildModelNotes(recent, [
+    ...(capabilities.worldState ? [stateUpdateNotes] : []),
+    ...(capabilities.actionSuggestions ? [actionSuggestionNotes] : []),
+    ...(capabilities.characterSprite ? [characterSpriteNotes] : []),
+  ]);
 }
 
 /** Only assembly calls this function; activation and summarization keep the original body. */

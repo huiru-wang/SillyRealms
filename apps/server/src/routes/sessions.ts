@@ -124,6 +124,12 @@ export function createSessionRoutes({ events, sessions, worlds, appendEntry, cre
     return success(c, { item: appendEntry(id, input) }, 201);
   });
 
+  routes.get('/:id/entries/:entryId/character-sprites', async c => {
+    const id = c.req.param('id'), messageId = c.req.param('entryId');
+    await access(id, c.req.raw);
+    return success(c, { sessionId: id, messageId, result: sessions.getMessageCharacterSprites(id, messageId) });
+  });
+
   routes.patch('/:id/entries/:entryId', async c => {
     const id = c.req.param('id');
     await access(id, c.req.raw);

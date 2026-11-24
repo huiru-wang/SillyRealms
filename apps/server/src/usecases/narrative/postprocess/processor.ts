@@ -1,15 +1,20 @@
-import type { NarrativeOutput, ActionSuggestionsOutput } from '../../../modules/sessions/service.js';
+import type { NarrativeOutput, ActionSuggestionsOutput, CharacterSpriteOutput } from '../../../modules/sessions/service.js';
 import type { StateService } from '../../../modules/state/service.js';
+import type { CharacterSpriteCatalogItem } from '../../../modules/worlds/service.js';
 import { extractCapability, type CapabilityExtraction } from './parser.js';
 import { processActionSuggestions } from './action-suggestions.js';
+import { failedCharacterSpriteOutput, processCharacterSprite } from './character-sprite.js';
 import { failedStateOutput, processStateUpdates, type StatePostprocessResult } from './state-update.js';
 
-type Capability = 'state_update' | 'action_suggestions';
+type Capability = 'state_update' | 'action_suggestions' | 'character_sprite';
 export type PostprocessObserver = (event: string, data: Record<string, unknown>) => void;
 
 /** Each capability owns extraction and processing; no shared tail-validity gate. */
 export function processNarrativeOutput(text: string, state: Pick<StateService, 'prepareMessageUpdates'>,
-  context: { sessionId: string; parentId: string; allowedRoots: readonly string[] }, observe?: PostprocessObserver) {
+  context: {
+    sessionId: string; parentId: string; allowedRoots: readonly string[];
+    characterSpriteCatalog?: readonly CharacterSpriteCatalogItem[];
+  }, observe?: PostprocessObserver) {
   const report = (event: string, data: Record<string, unknown>) => {
     try { void Promise.resolve(observe?.(event, structuredClone(data))).catch(() => {}); }
     catch { /* Diagnostics never change capability results. */ }
@@ -43,6 +48,14 @@ export function processNarrativeOutput(text: string, state: Pick<StateService, '
   }
   report('action_suggestions.result', { phase: 'prepared', ...suggestions });
 
-  const output: NarrativeOutput = { stateUpdate: stateResult.output, actionSuggestions: suggestions };
+  let characterSprite: CharacterSpriteOutput | undefined;
+  try { characterSprite = processCharacterSprite(extract('character_sprite'), context.characterSpriteCatalog ?? []); }
+  catch { characterSprite = failedCharacterSpriteOutput(); }
+  if (characterSprite) report('character_sprite.result', { phase: 'prepared', ...characterSprite });
+
+  const output: NarrativeOutput = {
+    stateUpdate: stateResult.output, actionSuggestions: suggestions,
+    ...(characterSprite ? { characterSprite } : {}),
+  };
   return { output, state: stateResult.snapshot, change: stateResult.change };
 }

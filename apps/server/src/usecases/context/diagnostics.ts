@@ -26,11 +26,11 @@ export type ContextNodeDiagnostic = {
   name: string;
   kind: 'system' | 'postprocess' | 'text' | 'protocol';
   role: 'system' | 'user' | 'assistant' | 'auto';
-  /** Configured flag; built-in postprocess nodes deliberately ignore legacy enabled. */
+  /** The configured flag; disabled nodes never contribute instructions or historical notes. */
   enabled: boolean;
   included: boolean;
-  reason: 'included' | 'disabled' | 'empty' | 'no_active_state';
-  source: 'preset' | 'default' | 'fallback' | 'platform';
+  reason: 'included' | 'disabled' | 'empty' | 'no_active_state' | 'no_character_sprites';
+  source: 'preset' | 'platform';
   /** Zero-based positions in the final model request, not log line numbers. */
   messageIndexes: number[];
   modelNoteEntryIds?: string[];

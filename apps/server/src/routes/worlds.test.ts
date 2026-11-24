@@ -93,6 +93,20 @@ async function resources(worldId: string) {
 }
 
 describe('world routes', () => {
+  it('returns only sprite catalog fields, including an empty catalog and missing-world errors', async () => {
+    const sprite = { id: 'default', asset: 'https://images.example/player.webp', description: '平静' };
+    const world = services.worlds.create({ ...content(), characters: [
+      { ...content().characters[0], prompt: 'hidden prompt', load: { mode: 'never' }, sprites: [sprite] },
+    ] });
+    expect(await data(await app.request(base + '/' + world.id + '/character-sprites'))).toEqual({
+      worldId: world.id,
+      items: [{ characterId: 'player', characterName: 'Player', spriteId: 'default', description: '平静', asset: sprite.asset }],
+    });
+    services.worlds.update(world.id, { characters: content().characters });
+    expect(await data(await app.request(base + '/' + world.id + '/character-sprites'))).toEqual({ worldId: world.id, items: [] });
+    await failure(await app.request(base + '/missing/character-sprites'), 'WORLD_NOT_FOUND', 404);
+  });
+
   it('reads, updates and deletes management details without exposing state', async () => {
     const item = services.worlds.create({ ...content(), state: { coins: 1 }, tags: [' 城市 ', '城市'] });
     expect((await data<{ item: WorldDetail }>(await app.request(base + '/' + item.id))).item.tags).toEqual(['城市']);
@@ -313,7 +327,9 @@ describe('world routes', () => {
   });
 
   it('imports multipart JSON and exports the current card as ZIP with a safe Unicode filename', async () => {
-    const original = JSON.stringify(worldCardFixture());
+    const fixture = worldCardFixture();
+    const sprites = [{ id: 'default', asset: 'https://images.example/player.webp', description: '平静' }];
+    const original = JSON.stringify({ ...fixture, data: { ...fixture.data, characters: [{ ...fixture.data.characters[0], sprites }] } });
     const form = new FormData();
     form.set('file', new File([original], 'old-upload.json', { type: 'application/json' }));
     const imported = await data<{ item: WorldDetail }>(
@@ -332,6 +348,7 @@ describe('world routes', () => {
     const card = JSON.parse(exported['world.json']!.toString());
     expect(card).toMatchObject({ spec_version: '0.1', data: { name: '新 名称', tags: ['现在'] } });
     expect(card).not.toHaveProperty('spec');
+    expect(card.data.characters[0].sprites).toEqual(sprites);
     const source = await app.request(base + '/' + imported.item.id + '/original');
     expect(await source.text()).toBe(original);
     await vi.waitFor(async () => expect(await readdir(join(root, 'staging'))).toEqual([]));

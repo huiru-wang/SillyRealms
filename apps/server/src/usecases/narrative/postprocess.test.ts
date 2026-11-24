@@ -10,7 +10,7 @@ import type { ModelClient, ModelEvent, ModelInfo, ModelUsage } from '../../infra
 import type { NarrativeOutput } from '../../modules/sessions/service.js';
 import { createServices, type Services } from '../../services.js';
 import { memoryCredentials } from '../../testing/credentials.js';
-import { narrativePreset, withEmptyModelNotes } from '../../testing/fixtures.js';
+import { narrativePreset } from '../../testing/fixtures.js';
 import { createNarrativeUsecases, type AcceptedNarrative, type NarrativeUsecases } from './index.js';
 import type { NarrativeTerminalEvent } from './events.js';
 import * as suggestions from './postprocess/action-suggestions.js';
@@ -314,7 +314,7 @@ describe('narrative postprocessing integration', () => {
     const second = submit(); await second.finished;
     const history = stream.mock.calls[1]![1].filter(message => message.role === 'assistant');
     expect(history).toHaveLength(2);
-    expect(history[0]!.content).toBe(withEmptyModelNotes('Opening'));
+    expect(history[0]!.content).toBe(['Opening', '', '<state_update>', '</state_update>', actions([])].join('\n'));
     expect(history[1]!.content).toBe([
       body, '', stateBlock('{"path":"coins","value":8,"reason":"购买热汤"}'), actions(),
     ].join('\n'));

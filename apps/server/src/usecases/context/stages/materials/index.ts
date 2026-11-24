@@ -6,7 +6,7 @@ import { AppError } from '../../../../errors.js';
 import { parsePromptTemplate } from '../../../../lib/prompt-template.js';
 import { readStateVariable, type VisibleRoots } from '../../lib/state-variable.js';
 import type { StateService, StateViews } from '../../../../modules/state/service.js';
-import type { World, WorldCard } from '../../../../modules/worlds/service.js';
+import type { CharacterSpriteCatalogItem, World, WorldCard } from '../../../../modules/worlds/service.js';
 import type { NarrativeHistoryMessage } from '../history/index.js';
 import type { ContextMaterialDiagnostic } from '../../diagnostics.js';
 
@@ -18,6 +18,8 @@ export type MaterialSources = {
   inputText: string;
   history: readonly NarrativeHistoryMessage[];
   summary?: string;
+  /** The prompt-visible catalog; callers pass an empty array when its node is disabled. */
+  characterSpriteCatalog?: readonly CharacterSpriteCatalogItem[];
 };
 export type SystemVariableName = typeof systemVariableNames[number];
 export type PromptVariable = { type: 'text'; value: string } | { type: 'messages'; value: readonly NarrativeHistoryMessage[] };
@@ -173,6 +175,9 @@ export function selectNarrativeMaterials(input: MaterialSources, conditions: Con
       'state.message': message.variable,
       'state.session': session.variable,
       'state.global': global.variable,
+      'characterSprite.catalog': text(input.characterSpriteCatalog?.length
+        ? encoded({ playerCharacterId: playerId, items: input.characterSpriteCatalog.map(({ characterId, characterName, spriteId, description }) =>
+          ({ characterId, characterName, spriteId, description })) }) : ''),
     },
     activeRoots: message.roots, visibleRoots, diagnostics, selection,
   };

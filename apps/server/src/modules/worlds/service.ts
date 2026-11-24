@@ -8,22 +8,23 @@ import type { ModelReader } from '../models/service.js';
 import type { PresetReader } from '../presets/service.js';
 import { assertWorldId, exportFilename, WORLD_JSON_LIMIT, WORLD_ZIP_LIMIT, WorldFileStore, type OriginalFormat, type PackageFile, type ImportFileStage, type WorldDownload, type WorldOriginal, type WorldPaths } from './files.js';
 import { cardToWorld, worldToCard } from './parser.js';
-import { openingSchema, validateWorldStateDefinition } from './validation.js';
+import { openingSchema, validateCharacters, validateWorldStateDefinition } from './validation.js';
 import { readComponents } from './assets.js';
 import { buildWorldPackage, readImportPackage } from './archive.js';
 import { WorldRepository, type WorldContentRow, type WorldRow } from './repository.js';
 import {
-  worldContentFields, type CreateWorld, type WorldContent, type WorldListOptions, type WorldPatch, type World, type WorldPage, type WorldTag, type WorldManagementPatch,
+  worldContentFields, type CreateWorld, type WorldContent, type WorldListOptions, type WorldPatch, type World, type WorldPage, type WorldTag, type WorldManagementPatch, type CharacterSpriteCatalog,
 } from './types.js';
 
 export type WorldOpening = z.infer<typeof openingSchema>;
-export type { CreateWorld, WorldContent, WorldDescription, WorldListOptions, WorldPage, WorldPatch, World, WorldTag, WorldSummary, WorldDetail, WorldManagementPatch } from './types.js';
+export type { CreateWorld, WorldContent, WorldDescription, WorldListOptions, WorldPage, WorldPatch, World, WorldTag, WorldSummary, WorldDetail, WorldManagementPatch, CharacterSpriteCatalog, CharacterSpriteCatalogItem } from './types.js';
 export type { OriginalFormat, PackageFile, WorldDownload, WorldOriginal, WorldPaths } from './files.js';
 
 export interface WorldReader {
   get(id: string): World | null;
   require(id: string): World;
   getState(worldId: string): JsonObject | null;
+  getCharacterSpriteCatalog(worldId: string): CharacterSpriteCatalog;
 }
 export const worldImportLimits = { json: WORLD_JSON_LIMIT, zip: WORLD_ZIP_LIMIT } as const;
 export type WorldImportInput = { format: OriginalFormat; bytes: Uint8Array };
@@ -135,6 +136,21 @@ export class WorldService {
     return world;
   }
 
+  getCharacterSpriteCatalog(worldId: string): CharacterSpriteCatalog {
+    const world = this.require(worldId);
+    const characters = validateCharacters(world.characters);
+    return {
+      worldId,
+      items: characters.flatMap(character => (character.sprites ?? []).map(sprite => ({
+        characterId: character.id,
+        characterName: character.name,
+        spriteId: sprite.id,
+        description: sprite.description,
+        asset: sprite.asset,
+      }))),
+    };
+  }
+
   listUsingDefaultPreset(presetId: string) {
     return this.#repository.listUsingDefaultPreset(presetId);
   }
@@ -204,6 +220,7 @@ export class WorldService {
     if (!changes.length) return current;
     const next = normalizeContent({ ...current, ...Object.fromEntries(changes) });
     if (patch.stateDefinition != null) validateWorldStateDefinition(patch.stateDefinition);
+    if (patch.characters !== undefined) next.characters = validateCharacters(patch.characters);
     const tags = patch.tags === undefined ? undefined : tagsFrom(patch.tags);
     this.checkReferences(next);
     return toWorld(this.#repository.update(id, toContentRow(next), tags));

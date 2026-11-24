@@ -39,7 +39,7 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 }
 ```
 
-- 单项读取、创建及更新的 data 为 `{ item }`，包括会话详情和预设默认模板；删除为 `{ id }`。
+- 常规单项读取、创建及更新的 data 为 `{ item }`，包括会话详情和预设默认模板；删除为 `{ id }`。立绘目录与指定消息查询使用各自明确的 data 结构，见[立绘查询](#立绘查询)。
 - 世界、预设、模型、会话列表返回 `{ items, hasMore, nextCursor }`；标签、条目和线性历史返回 `{ items }`。
 - 资源创建返回 201，叙事受理返回 202，普通成功返回 200。删除也返回 200 包络，不使用无正文的 204。
 - 健康检查返回成功包络，data 为 `{ ok: true }`。
@@ -99,6 +99,8 @@ modelParameters 包含可选有限数值 temperature（0–2）、topP（0–1�
 
 创建接收 `{name,description,type,config}`（可提供 id）。PATCH 接收修改字段及必填 expectedRevision，成功后 revision 加一；版本过期返回 PRESET_REVISION_CONFLICT/409，保持服务端内容不变。温度可省略，表示未指定；summaryPrompt 只有 rolling_summary 策略要求非空。
 
+能力节点按 worldState → actionSuggestions → characterSprite 的相对顺序保存；节点可缺失或关闭。启用能力节点必须有非空 prompt，禁止引用 input.text/history.messages/history.summary；不在读取时补节点、补默认提示词或转换 state.entries。正式变量包含 {{characterSprite.catalog}}，启用及素材条件见 [预设创作](../creator/presets-and-models.md)。
+
 默认模板接口返回 `data.item`，没有 ID/revision，不创建持久化记录。导入仍接收便携文档 `{name,description,config_json:{schemaVersion:3,nodes},context_strategy,model_parameters}`，导入成功返回领域详情。导出使用同一便携文档协议，当前名称加 .json，排除 ID、revision、时间戳；GET/HEAD 下载成功不套包络。文件协议转换属于 presets 模块，不影响 CRUD 配置结构。
 
 模型创建接收 `{name,providerId,modelId,apiKey}`，ID 由服务端生成；PATCH 接收上述字段的非空子集，省略 apiKey 保留原值，更换 providerId 必须同时提供新 apiKey。客户端不能传 credentialRef。响应为 `{id,name,providerId,modelId,credentialStatus,createdAt,updatedAt}`，不返回密钥或引用。credentialStatus 为 configured（凭据存在）、missing（未保存或不属于当前存储）、unavailable（存储不可访问），不代表已验证模型调用。
@@ -137,6 +139,7 @@ promptCache 是 SDK 提供的最佳估计保留时长，缺失表示未提供，
 | GET / PATCH / DELETE | /worlds/:id | 领域详情 / 管理字段修改 / 删除世界及确认后的关联会话 |
 | GET | /worlds/tags | 已绑定标签 `{name,worldCount}` |
 | GET | /worlds/:id/components | 已解析组件源码及按组件 ID 返回的错误 |
+| GET | /worlds/:id/character-sprites | 世界声明的完整立绘素材目录 |
 | GET / HEAD | /worlds/:id/original | 下载或检查已保存原件 |
 | GET / HEAD | /worlds/:id/resources/* | 读取或检查包内组件、素材等资源 |
 
@@ -178,6 +181,7 @@ DELETE `/worlds/:id` 未确认关联删除时，有关联会话返回 WORLD_HAS_
 | GET / PATCH / DELETE | /sessions/:id | 会话读取 / 修改 / 删除 |
 | POST | /sessions/:id/entries | 追加普通消息 |
 | PATCH | /sessions/:id/entries/:entryId | 普通消息正文或 extData 更新 |
+| GET | /sessions/:id/entries/:entryId/character-sprites | 指定消息自身的立绘结果，缺失为 null |
 | POST | /sessions/:id/narrative/runs | 保存用户消息并受理一次叙事生成 |
 | POST | /sessions/:id/narrative/runs/:runId/stop | 显式停止当前匹配的叙事生成 |
 | GET | /sessions/:id/narrative/runs | 每页最多 5 轮的完整历史或 afterSeq 补查 |
@@ -331,21 +335,117 @@ metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstT
     status: 'no_suggestions' | 'success' | 'partial_success' | 'invalid_tag' | 'invalid_json' | 'invalid_suggestions' | 'processing_error',
     items: string[],
     errors?: Array<{ errorCode: string }>
+  },
+  characterSprite?: {
+    status: 'success' | 'partial_success' | 'invalid_items' | 'invalid_tag' | 'processing_error',
+    items: Array<{
+      position: 'left' | 'center' | 'right' | 'top' | 'topleft' | 'topright' | 'truecenter';
+      characterId: string; spriteId: string;
+    }>,
+    errors?: Array<{ errorCode: string; line?: number }>
   }
 }
 ```
 
-结果随轮次列表中的 entries 返回，不新增查询或写入端点，不增加能力开关响应字段。该字段由 SessionService 的受控叙事保存入口写入，普通 POST/PATCH 不能伪造或删除。
+结果随轮次列表中的 entries 返回。立绘另提供目录与精确消息结果两个只读 GET；状态/建议不新增独立查询端点，所有能力均无独立写入 API，也不增加能力开关响应字段。output 由 SessionService 的受控叙事保存入口写入，普通 POST/PATCH 不能伪造或删除。
 
-每个能力只校验自己的大小写不敏感标签；整对缺失或空标签是 no_updates/no_suggestions，自身标签损坏为 invalid_tag 且不执行该能力。stateUpdate.updates 按输入行序保存全部成功/失败记录，成功项必须有 path/value，失败项仅保留可用的输入字段与诊断。建议数组逐项校验，空白、类型、长度或重复项被过滤，保留有效 items，并以能力 status 表达全部成功、部分成功或无有效建议；三条仅是提示词目标。两类结果均不含 results，errors 仅承载能力级诊断。
+每个能力按实际输出独立匹配大小写不敏感的自身标签，不读取预设或 enabled。状态/建议缺失或空块为 no_updates/no_suggestions，坏标签为 invalid_tag。stateUpdate.updates 保存全部成功/失败记录，建议仅保留过滤后的有效 items，三条只是 prompt 目标；这两类结果不含 results、blockIndex、line 或额外 index，errors 为能力级诊断。立绘缺标签不创建 characterSprite 字段；逐行接收只有 position/characterId/spriteId 的扁平对象，角色和位置分别唯一，第一条有效行优先，失败行不占位。支持七种位置，允许超过两项。立绘 errors.line 单独记录从 1 开始的非空数据行序号；标签/能力级诊断可不含 line。
 
 run.completed 表示正文主流程完成，不等同于能力全部成功。能力异常记录在 output，查询方可查看能力状态与状态更新行诊断；模型取消、错误、length 等未执行后处理时，部分助手不产生 output。旧消息没有 output 不补造结果。
 
-新写入严格校验上述结构。旧已保存 output 仅在 SessionService 读取投影时归一化：按旧 results 顺序将成功行与旧 updates 配对，保留重复 path 及各自 value/reason，失败行保留失败；缺少可信成功载荷时以 processing_error 记录，不能虚构已应用更新。旧行动建议只移除 results。读取及正文编辑不为此重写原存储，不新增数据库迁移。
+新写入严格校验上述结构。既有 state/action 输出读取归一化保持原规则：旧成功 results 与 updates 按顺序配对，保留重复路径与 reason，不虚构已应用更新；旧建议只移除 results。立绘字段存在但结构损坏时，投影为 processing_error、items=[]、错误码 CHARACTER_SPRITE_STORED_RESULT_INVALID；字段缺失保持缺失。读取不使用当前目录重新否定历史合法角色/素材 ID，不重写原存储，不增加数据库迁移。
 
-公开与持久化正文保持干净。context 在本轮历史中先选最近两条有可见正文的 assistant，再从已保存 output 构建条目级 model-only notes；状态只取 updates 中 status=success 的 path/value/reason，建议只取有效 items，状态行诊断不进入模型。入选条目没有 output 时使用空状态块和空建议数组，最终未保留的消息不注入旁注。旁注只进入主模型输入与实际输入估算，不进入摘要、关键词激活或 HTTP 返回字段，不回写正文或重执行状态更新。正文编辑保留当时结果，旁注不表示已按编辑正文重算。不持久化 blockIndex、line、contextEligible 或 notes，不新增接口和表。
+公开与持久化正文保持干净。context 先选捕获历史中最近两条有可见正文的 assistant，再按当前节点与材料条件构建来源；仅最终保留消息才附旁注。状态只取成功 updates，建议只取有效 items，立绘只取该消息 success/partial_success 的有效 items，均不注入错误诊断。启用的立绘来源在无结果、失败、损坏或读取/序列化异常时附完整空标签，关闭或无素材时不附。历史空标签不将 null/失败改为成功，不回写消息或触发清场。旁注只进入主模型和实际预算，不进入 HTTP 正文、摘要或关键词。状态/建议不持久化行号；立绘 errors.line 按上述契约保存。不新增 notes 表或历史重建接口。
 
 建议创建事件为 action_suggestions.created，仅发布本轮已保存的有效非空建议；run.created 驱动清空上一轮建议，首次恢复只认最新 run 的实际完成结果。详见 [会话事件](server-events.md#行动建议创建) 与 [叙事执行](server-narrative.md#叙事后处理与能力结果)。
+
+## 立绘查询
+
+两项 GET 均不读取预设，不受节点开关影响。立绘是完整消息快照；目录提供素材元数据，消息接口只读取指定消息，不提供当前画面继承或跨消息 merge。
+
+### 素材目录
+
+`GET /worlds/:id/character-sprites` 调用 WorldService.getCharacterSpriteCatalog，按世界卡角色及 sprites 原顺序返回全卡已声明目录，不按角色 load 筛选。没有素材返回 items=[]，世界不存在返回 WORLD_NOT_FOUND/404。
+
+HTTP 200 成功包络：
+
+```json
+{
+  "success": true,
+  "errorCode": null,
+  "errorMessage": "",
+  "data": {
+    "worldId": "w-1",
+    "items": [
+      {
+        "characterId": "alice",
+        "characterName": "爱丽丝",
+        "spriteId": "default",
+        "description": "平静站立。",
+        "asset": "sr-asset://assets/characters/alice/default.webp"
+      }
+    ]
+  }
+}
+```
+
+每张素材一项，以 characterId + spriteId 关联；响应不包含角色完整 prompt、load 条件、图片字节或绝对磁盘路径。素材协议见 [世界卡协议](../reference/world-card.md)。
+
+### 指定消息结果
+
+`GET /sessions/:id/entries/:entryId/character-sprites` 先执行 requireSessionAccess，再调用 SessionService.getMessageCharacterSprites 校验 sessionId 与消息归属。返回 data:{sessionId,messageId,result}。result 始终只属于目标消息，不查最近有效画面、不向前继承。
+
+部分通过的 HTTP 200 示例：
+
+```json
+{
+  "success": true,
+  "errorCode": null,
+  "errorMessage": "",
+  "data": {
+    "sessionId": "s-1",
+    "messageId": "m-1",
+    "result": {
+      "status": "partial_success",
+      "items": [
+        {
+          "position": "left",
+          "characterId": "alice",
+          "spriteId": "smile"
+        },
+        {
+          "position": "center",
+          "characterId": "bob",
+          "spriteId": "default"
+        }
+      ],
+      "errors": [
+        {
+          "line": 2,
+          "errorCode": "duplicate_position"
+        }
+      ]
+    }
+  }
+}
+```
+
+| result | 读取与应用语义 |
+| --- | --- |
+| null | 用户消息，或助手没有该能力结果；不代表明确清场 |
+| success + 非空 items | 完整成功快照，整体替换 |
+| success + [] | 模型明确空标签产生的成功空快照，可清场 |
+| partial_success | 接受行组成完整快照；保留 errors，不补回上一消息条目 |
+| invalid_items + [] | 非空块全部行失败，无可应用快照 |
+| invalid_tag / processing_error + [] | 标签或处理失败；无可应用快照 |
+
+会话不存在/不可访问返回 SESSION_NOT_FOUND/404；消息不存在或不属于该会话返回 ENTRY_NOT_FOUND/404；compaction 等非 message 目标及非法参数返回 INVALID_REQUEST/400。历史旁注补出的空标签不改变 result。重新生成删除旧消息后，旧 ID 返回不存在，新回复使用新的 messageId。
+
+可应用结果提交后，经现有 session SSE 发布 character_sprite.changed，携带 sessionId/runId/messageId/items；success 空数组也发，partial_success 发全部有效条目，失败不发。errors 不重复放入 SSE，调用方可查询对应消息。事件及顺序见 [会话事件](server-events.md)。
+
+### 资源与 Stage 边界
+
+目录返回的 asset 交给既有资源解析能力；包内资源继续使用 GET /worlds/:id/resources/*，沿用路径与 MIME 校验，不新建立绘下载路由。当前交付仅为服务端 HTTP/SSE 契约，立绘 Stage SDK 门面、前端组件、胶囊和布局策略尚未接入。
 
 ## 舞台部署配置
 

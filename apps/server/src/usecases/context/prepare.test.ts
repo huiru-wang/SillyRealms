@@ -308,3 +308,32 @@ describe('public context preparation', () => {
     expect(services.sessions.require('session').tipEntryId).toBe(change === 'tip' ? 'new-tail' : 'current');
   });
 });
+
+describe('captured character sprite catalog', () => {
+  it.each([true, false])('retains the synchronous catalog across async preparation when enabled=%s', enabled => {
+    services.worlds.update('world', { characters: [
+      { id: 'player', name: 'Player', player_selectable: true, prompt: 'Original persona',
+        sprites: [{ id: 'default', description: 'captured-description', asset: 'https://example.com/original.png' }] },
+    ] });
+    const config = services.presets.require('preset').config;
+    config.nodes.find(node => node.id === 'characterSprite')!.enabled = enabled;
+    services.presets.update('preset', { config });
+    const pending = prepareContext(dependencies, input());
+    services.worlds.update('world', { characters: [
+      { id: 'player', name: 'Player', player_selectable: true, prompt: 'Original persona',
+        sprites: [{ id: 'default', description: 'later-description', asset: 'https://example.com/later.png' }] },
+    ] });
+    return pending.then(prepared => {
+      expect(prepared.ok).toBe(true);
+      if (!prepared.ok) throw new Error(prepared.failure.code);
+      expect(prepared.request.characterSpriteCatalog).toEqual([{
+        characterId: 'player', characterName: 'Player', spriteId: 'default',
+        description: 'captured-description', asset: 'https://example.com/original.png',
+      }]);
+      const messages = prepared.request.messages.map(message => message.content).join('\n');
+      expect(messages.includes('captured-description')).toBe(enabled);
+      expect(messages).not.toContain('later-description');
+      expect(messages).not.toContain('https://example.com/original.png');
+    });
+  });
+});
