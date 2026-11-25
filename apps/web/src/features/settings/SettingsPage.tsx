@@ -13,8 +13,6 @@ import {useManagement,type AppSettings} from '../../app/ManagementData';
 import {usePagedResource} from '../../data';
 import {usePresetStore} from '../presets/PresetStore';
 import type {ModelConfig} from '../models/types';
-import type {WorldListItem} from '../worlds/api/worlds';
-import {WorldCover} from '../worlds/WorldCover';
 import {MIN_MOSAIC_DENSITY,MAX_MOSAIC_DENSITY} from '../worlds/cover-mosaic';
 import styles from './SettingsPage.module.css';
 import {DEFAULT_LOCALE,SUPPORTED_LOCALES,isAppLocale,languageNames} from '@sillyrealms/sdk/locale';
@@ -24,10 +22,8 @@ const defaults=(value:AppSettings):Defaults=>({defaultReplyAssistPresetId:value.
 export function SettingsPage(){
  const {t}=useTranslation('settings');
  const {theme,toggleTheme}=useOutletContext<{theme:Theme;toggleTheme:()=>void}>();
- const {settings,saveSettings,saveLocale,localeSaving,modelsRevision,worldsRevision,
+ const {settings,saveSettings,saveLocale,localeSaving,modelsRevision,
   coverMosaicDensity,setCoverMosaicDensity,saveCoverMosaicDensity,coverMosaicSaving,coverMosaicError}=useManagement();
- const previewWorlds=usePagedResource<WorldListItem>('v1/worlds?limit=8',worldsRevision);
- const previewWorld=previewWorlds.page?.items.find(world=>world.cover);
  const presets=usePresetStore(),models=usePagedResource<ModelConfig>('v1/api-model-configs?limit=100',modelsRevision,true);
  const [baseline,setBaseline]=useState<Defaults|null>(null),[draft,setDraft]=useState<Defaults|null>(null);
  const [saving,setSaving]=useState(false),[saved,setSaved]=useState(false),[error,setError]=useState<unknown>(null);
@@ -77,9 +73,6 @@ export function SettingsPage(){
        onBlur={()=>void saveCoverMosaicDensity()}/>
       <output htmlFor="settings-mosaic-density" className={styles.mosaicValue}>{coverMosaicDensity}</output>
      </div>
-     {previewWorld&&<div className={styles.mosaicPreview} role="img" aria-label={t('mosaicPreview',{name:previewWorld.name})}>
-      <WorldCover worldId={previewWorld.id} source={previewWorld.cover} mosaicEnabled density={coverMosaicDensity} className={styles.mosaicCover}/>
-     </div>}
      {!!coverMosaicError&&<div className={styles.mosaicNotice}><ErrorNotice message={coverMosaicError} onRetry={()=>void saveCoverMosaicDensity()}/></div>}
     </div>
    </Panel>

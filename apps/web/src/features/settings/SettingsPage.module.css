@@ -1,5 +1,3 @@
 .mosaicControl{display:grid;grid-template-columns:minmax(0,1fr) 3ch;align-items:center;gap:var(--space-2);min-width:0}
 .mosaicValue{text-align:right;font-variant-numeric:tabular-nums;color:var(--text-secondary);font-size:var(--font-13)}
-.mosaicPreview{grid-column:2;position:relative;width:min(100%,128px);aspect-ratio:.905;overflow:hidden;border:1px solid var(--stroke);border-radius:var(--radius-item);background:var(--media-bg)}
-.mosaicCover{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .mosaicNotice{grid-column:1/-1;min-width:0}

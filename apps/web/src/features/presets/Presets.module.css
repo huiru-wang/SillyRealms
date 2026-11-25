@@ -19,8 +19,10 @@
 .itemDescription{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:18px;color:var(--text-muted)}
 .itemType{display:inline-flex;flex-shrink:0}
 .presetTypeChoices{display:grid;gap:var(--control-gap)}
-.presetItem[aria-pressed="true"],.presetItem[aria-pressed="true"]:hover{background:var(--selection-bg);border-color:var(--stroke)}
-.presetItem[aria-pressed="true"] .itemDescription{color:var(--text-secondary)}
+@container library-workspace (width > 744px){
+ .presetItem[aria-pressed="true"],.presetItem[aria-pressed="true"]:hover{background:var(--selection-bg);border-color:var(--stroke)}
+ .presetItem[aria-pressed="true"] .itemDescription{color:var(--text-secondary)}
+}
 .dirtyDot{display:inline-block;flex-shrink:0;width:5px;height:5px;border-radius:50%;background:var(--accent)}
 .editor{display:flex;flex-direction:column;min-width:0;min-height:0}
 .editorHeader{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);min-height:var(--touch-target);padding-bottom:var(--space-3);flex-shrink:0;border-bottom:1px solid var(--stroke)}
@@ -131,7 +133,7 @@
 @media(hover:hover) and (pointer:fine){.variableList button:not(:disabled):hover{background:var(--surface-hover)}}
 @keyframes menu-in{from{opacity:0;translate:0 -3px}to{opacity:1;translate:0 0}}
 @media(hover:hover) and (pointer:fine){
- .presetItem:not([aria-pressed="true"]):hover,.menuPanel button:not(:disabled):hover,.menuPanel a:hover{background:var(--surface-hover)}
+ .presetItem:hover,.menuPanel button:not(:disabled):hover,.menuPanel a:hover{background:var(--surface-hover)}
  .summaryButton:hover{background:var(--surface-hover);border-color:var(--stroke-strong)}
  .nodeRow:has(.nodeMain:hover){background:var(--surface-hover)}
  .strategyChoice input:not(:checked):hover+.strategyBody{background:var(--surface-hover);border-color:var(--stroke-strong)}
