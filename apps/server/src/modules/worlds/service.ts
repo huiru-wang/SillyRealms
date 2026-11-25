@@ -1,14 +1,14 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import type { JsonObject } from '../../infrastructure/database/connection.js';
+import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
 import type { RuntimeCache } from '../../infrastructure/cache/index.js';
 import { AppError } from '../../errors.js';
 import type { ModelReader } from '../models/service.js';
 import type { PresetReader } from '../presets/service.js';
 import { assertWorldId, exportFilename, WORLD_JSON_LIMIT, WORLD_ZIP_LIMIT, WorldFileStore, type OriginalFormat, type PackageFile, type ImportFileStage, type WorldDownload, type WorldOriginal, type WorldPaths } from './files.js';
 import { cardToWorld, worldToCard } from './parser.js';
-import { openingSchema, validateCharacters, validateWorldStateDefinition } from './validation.js';
+import { openingSchema, validateCharacters, validateWorldExtensions, validateWorldStateDefinition } from './validation.js';
 import { readComponents } from './assets.js';
 import { buildWorldPackage, readImportPackage } from './archive.js';
 import { WorldRepository, type WorldContentRow, type WorldRow } from './repository.js';
@@ -61,6 +61,7 @@ function normalizeContent(input: WorldContent): WorldContent {
     if (typeof value !== 'string') throw new AppError('INVALID_WORLD_FIELD', field);
     content[field] = field === 'defaultPresetId' || field === 'defaultApiModelConfigId' ? nonblank(value, field) : value;
   }
+  if (content.extensions !== null) validateWorldExtensions(content.extensions);
   const description = input.description;
   if (description !== null && typeof description !== 'string') {
     if (typeof description !== 'object' || Array.isArray(description) ||
@@ -91,9 +92,19 @@ function initialContent(input: CreateWorld): WorldContent {
   };
 }
 
+function coverMosaicEnabled(extensions: JsonValue): boolean {
+  return extensions !== null && typeof extensions === 'object' && !Array.isArray(extensions) && extensions.cover_mosaic_enabled === true;
+}
+
+function withCoverMosaic(extensions: JsonValue, enabled: boolean): JsonObject {
+  const current = extensions ?? {};
+  validateWorldExtensions(current);
+  return { ...current, cover_mosaic_enabled: enabled };
+}
+
 function toWorld(row: WorldRow): World {
   return {
-    id: row.id, revision: row.revision, specVersion: row.spec_version, name: row.name, description: row.description, cover: row.cover,
+    id: row.id, revision: row.revision, coverMosaicEnabled: coverMosaicEnabled(row.extensions_json), specVersion: row.spec_version, name: row.name, description: row.description, cover: row.cover,
     characters: row.characters_json, openings: row.openings_json, lorebook: row.lorebook_json,
     stateDefinition: row.state_definition_json, messageRender: row.message_render_json,
     components: row.components, stageComponent: row.stage_component, extensions: row.extensions_json,
@@ -162,7 +173,7 @@ export class WorldService {
   listPage(options: WorldListOptions = {}): WorldPage {
     const pagination = this.listOptions(options);
     const items = this.#repository.listSummaries({ ...pagination, limit: pagination.limit + 1 });
-    return { items: items.slice(0, pagination.limit).map(row => ({ id: row.id, name: row.name, cover: row.cover, tags: row.tags, createdAt: row.created_at, updatedAt: row.updated_at })), hasMore: items.length > pagination.limit };
+    return { items: items.slice(0, pagination.limit).map(row => ({ id: row.id, name: row.name, cover: row.cover, coverMosaicEnabled: row.cover_mosaic_enabled, tags: row.tags, createdAt: row.created_at, updatedAt: row.updated_at })), hasMore: items.length > pagination.limit };
   }
 
   private listOptions(options: WorldListOptions) {
@@ -178,6 +189,7 @@ export class WorldService {
   updateManagement(id: string, input: WorldManagementPatch): World {
     const value = z.object({
       name: z.string().trim().min(1).optional(), tags: z.array(z.string().trim().min(1)).optional(),
+      coverMosaicEnabled: z.boolean().optional(),
       defaultPresetId: z.string().trim().min(1).nullable().optional(),
       defaultApiModelConfigId: z.string().trim().min(1).nullable().optional(),
       expectedRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -187,6 +199,7 @@ export class WorldService {
     this.checkReferences({ ...current, ...value });
     const patch = {
       ...(value.name !== undefined ? { name: value.name } : {}),
+      ...(value.coverMosaicEnabled !== undefined ? { extensions_json: withCoverMosaic(current.extensions, value.coverMosaicEnabled) } : {}),
       ...(value.defaultPresetId !== undefined ? { default_preset_id: value.defaultPresetId } : {}),
       ...(value.defaultApiModelConfigId !== undefined ? { default_api_model_config_id: value.defaultApiModelConfigId } : {}),
     };
@@ -206,7 +219,7 @@ export class WorldService {
     assertWorldId(id);
     const content = normalizeContent(initialContent(input));
     const tags = tagsFrom(input.tags === undefined ? [] : input.tags);
-    worldToCard({ ...content, id, tags, state: {}, revision: 1, createdAt: 0, updatedAt: 0 });
+    worldToCard({ ...content, tags });
     this.checkReferences(content);
     return toWorld(this.#repository.create(id, toContentRow(content), tags, input.state === undefined ? {} : input.state));
   }

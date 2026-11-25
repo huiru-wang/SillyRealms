@@ -5,6 +5,7 @@ import {Check,MonitorCog,SlidersHorizontal} from 'lucide-react';
 import {Panel} from '../../components/ui/Field';
 import {Button} from '../../components/ui/Button';
 import {Select} from '../../components/ui/Select';
+import {Range} from '../../components/ui/Range';
 import {PageHeader} from '../../components/ui/PageHeader';
 import type {Theme} from '../../hooks/useTheme';
 import {ErrorNotice,Loading} from '../../app/ui';
@@ -12,6 +13,10 @@ import {useManagement,type AppSettings} from '../../app/ManagementData';
 import {usePagedResource} from '../../data';
 import {usePresetStore} from '../presets/PresetStore';
 import type {ModelConfig} from '../models/types';
+import type {WorldListItem} from '../worlds/api/worlds';
+import {WorldCover} from '../worlds/WorldCover';
+import {MIN_MOSAIC_DENSITY,MAX_MOSAIC_DENSITY} from '../worlds/cover-mosaic';
+import styles from './SettingsPage.module.css';
 import {DEFAULT_LOCALE,SUPPORTED_LOCALES,isAppLocale,languageNames} from '@sillyrealms/sdk/locale';
 
 type Defaults=Pick<AppSettings,'defaultPresetId'|'defaultApiModelConfigId'|'defaultReplyAssistPresetId'>;
@@ -19,7 +24,10 @@ const defaults=(value:AppSettings):Defaults=>({defaultReplyAssistPresetId:value.
 export function SettingsPage(){
  const {t}=useTranslation('settings');
  const {theme,toggleTheme}=useOutletContext<{theme:Theme;toggleTheme:()=>void}>();
- const {settings,saveSettings,saveLocale,localeSaving,modelsRevision}=useManagement();
+ const {settings,saveSettings,saveLocale,localeSaving,modelsRevision,worldsRevision,
+  coverMosaicDensity,setCoverMosaicDensity,saveCoverMosaicDensity,coverMosaicSaving,coverMosaicError}=useManagement();
+ const previewWorlds=usePagedResource<WorldListItem>('v1/worlds?limit=8',worldsRevision);
+ const previewWorld=previewWorlds.page?.items.find(world=>world.cover);
  const presets=usePresetStore(),models=usePagedResource<ModelConfig>('v1/api-model-configs?limit=100',modelsRevision,true);
  const [baseline,setBaseline]=useState<Defaults|null>(null),[draft,setDraft]=useState<Defaults|null>(null);
  const [saving,setSaving]=useState(false),[saved,setSaved]=useState(false),[error,setError]=useState<unknown>(null);
@@ -59,6 +67,21 @@ export function SettingsPage(){
     </label>
     {localeSaving&&<span role="status">{t('savingLanguage')}</span>}
     <label className="settings-row settings-theme-row"><span className="settings-row-label"><strong>{t('theme')}</strong></span><Select aria-label={t('theme')} value={theme} onChange={event=>{if(event.target.value!==theme)toggleTheme();}}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option></Select></label>
+    <div className="settings-row">
+     <label className="settings-row-label" htmlFor="settings-mosaic-density"><strong>{t('mosaicDensity')}</strong></label>
+     <div className={styles.mosaicControl} aria-busy={coverMosaicSaving}>
+      <Range id="settings-mosaic-density" min={MIN_MOSAIC_DENSITY} max={MAX_MOSAIC_DENSITY} step={1} value={coverMosaicDensity}
+       onChange={event=>setCoverMosaicDensity(Number(event.target.value))}
+       onPointerUp={()=>void saveCoverMosaicDensity()} onPointerCancel={()=>void saveCoverMosaicDensity()}
+       onKeyUp={event=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(event.key))void saveCoverMosaicDensity();}}
+       onBlur={()=>void saveCoverMosaicDensity()}/>
+      <output htmlFor="settings-mosaic-density" className={styles.mosaicValue}>{coverMosaicDensity}</output>
+     </div>
+     {previewWorld&&<div className={styles.mosaicPreview} role="img" aria-label={t('mosaicPreview',{name:previewWorld.name})}>
+      <WorldCover worldId={previewWorld.id} source={previewWorld.cover} mosaicEnabled density={coverMosaicDensity} className={styles.mosaicCover}/>
+     </div>}
+     {!!coverMosaicError&&<div className={styles.mosaicNotice}><ErrorNotice message={coverMosaicError} onRetry={()=>void saveCoverMosaicDensity()}/></div>}
+    </div>
    </Panel>
    <Panel className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><SlidersHorizontal size={18}/></span><div><h2>{t('defaults')}</h2><p>{t('defaultsHint')}</p></div></div>
     {presets.error&&<ErrorNotice message={presets.error} onRetry={presets.reload}/>}

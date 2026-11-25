@@ -3,6 +3,26 @@ import { cardToWorld, parseCard } from './parser.js';
 import { worldCardFixture } from './test-fixtures.js';
 
 describe('world card protocol', () => {
+  it.each([true, false])('preserves an explicit cover mosaic flag (%s) and all author extensions', enabled => {
+    const raw = worldCardFixture();
+    const extensions = { cover_mosaic_enabled: enabled, author: { version: '1.0', notes: ['keep', 2, false] } };
+    const card = parseCard({ ...raw, data: { ...raw.data, extensions } });
+    expect(card.data.extensions).toEqual(extensions);
+    expect(cardToWorld(card).extensions).toEqual(extensions);
+    expect(parseCard(raw).data).not.toHaveProperty('extensions');
+  });
+
+  it('requires an extension object and a boolean for the reserved cover flag', () => {
+    const raw = worldCardFixture();
+    for (const extensions of [null, [], 'text', 1]) {
+      expect(() => parseCard({ ...raw, data: { ...raw.data, extensions } })).toThrow('$.data.extensions');
+    }
+    for (const enabled of [null, 'true', 'false', 0, 1, [], {}]) {
+      expect(() => parseCard({ ...raw, data: { ...raw.data, extensions: { cover_mosaic_enabled: enabled } } }))
+        .toThrow('$.data.extensions.cover_mosaic_enabled');
+    }
+  });
+
   it('preserves optional sprite metadata and permits the same sprite ID in different characters', () => {
     const raw = worldCardFixture();
     const sprites = [

@@ -132,7 +132,7 @@ CREATE TABLE app_settings (
     previous.close();
 
     const upgraded = openDatabase(path);
-    expect(upgraded.prepare('SELECT * FROM app_settings').get()).toEqual({ ...originalSettings, locale: 'zh-CN', default_reply_assist_preset_id: null });
+    expect(upgraded.prepare('SELECT * FROM app_settings').get()).toEqual({ ...originalSettings, locale: 'zh-CN', default_reply_assist_preset_id: null, cover_mosaic_density: 24 });
     expect(upgraded.prepare('SELECT * FROM presets').get()).toEqual({ ...originalPreset, api_model_config_id: null });
     expect(upgraded.prepare('SELECT * FROM worlds').get()).toEqual(originalWorld);
     expect(upgraded.prepare('PRAGMA user_version').get()?.user_version).toBe(DATABASE_VERSION);
@@ -167,7 +167,7 @@ CREATE TABLE app_settings (
     const tables = ['api_model_configs', 'presets', 'app_settings', 'worlds', 'world_tags', 'sessions', 'entries'];
     const records = new Map(tables.map(table => [table, previous.prepare('SELECT * FROM ' + table).all().map(row => ({
       ...row,
-      ...(table === 'app_settings' ? { default_reply_assist_preset_id: null } : {}),
+      ...(table === 'app_settings' ? { default_reply_assist_preset_id: null, cover_mosaic_density: 24 } : {}),
       ...(table === 'presets' ? { api_model_config_id: null } : {}),
     }))]));
     records.set('sessions', []);
@@ -186,6 +186,45 @@ CREATE TABLE app_settings (
 
     const reopened = openDatabase(path);
     expect(reopened.prepare('SELECT * FROM app_settings').get()).toEqual({ ...records.get('app_settings')![0], locale: 'ja' });
+    for (const table of tables.filter(table => table !== 'app_settings')) {
+      expect(reopened.prepare('SELECT * FROM ' + table).all()).toEqual(records.get(table));
+    }
+    reopened.close();
+  });
+
+  it('adds V10 density to a verified V9 database without changing any existing rows', () => {
+    const path = file();
+    const previous = openDatabase(path);
+    previous.exec('ALTER TABLE app_settings DROP COLUMN cover_mosaic_density; PRAGMA user_version=9');
+    previous.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)')
+      .run('m', 'Model', 'provider', 'model', 'credential-ref', 5, 6);
+    previous.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+      .run('p', 'narrative', 'Custom preset', 'Keep this', '{}', 7, 8);
+    previous.prepare('INSERT INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at,locale) VALUES(?,?,?,?,?,?)')
+      .run(1, 'p', 'm', 11, 12, 'ja');
+    previous.prepare('INSERT INTO worlds(id,spec_version,name,characters_json,openings_json,state,extensions_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)')
+      .run('w', '0.1', 'World', '[]', '[]', '{"day":2}', '{"cover_mosaic_enabled":true,"creator":"keep"}', 13, 14);
+    previous.prepare('INSERT INTO world_tags VALUES(?,?,?)').run('w', 'keep-tag', 0);
+    previous.prepare('INSERT INTO sessions(id,world_id,runtime_config,user_character_id,tip_entry_id,title,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)')
+      .run('s', 'w', JSON.stringify({ narrative_preset_id: 'p', api_model_config_id: 'm', reply_assist_preset_id: null, replay_assist_goal: 'Keep goal', font_size: 18 }),
+        'player', 'entry', 'Keep session', '{"coins":7}', 15, 16);
+    previous.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,timestamp,payload,state,ext_data,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run('entry', 's', null, 'run', 1, 'message', 'assistant', 17, '{"message":{"content":"Keep narrative"}}', '[{"key":"coins","value":7}]', '{"keep":true}', 18, 19);
+    const tables = ['api_model_configs', 'presets', 'app_settings', 'worlds', 'world_tags', 'sessions', 'entries'];
+    const records = new Map(tables.map(table => [table, previous.prepare('SELECT * FROM ' + table).all().map(row => ({
+      ...row, ...(table === 'app_settings' ? { cover_mosaic_density: 24 } : {}),
+    }))]));
+    previous.close();
+
+    const upgraded = openDatabase(path);
+    for (const table of tables) expect(upgraded.prepare('SELECT * FROM ' + table).all()).toEqual(records.get(table));
+    expect(upgraded.prepare('PRAGMA user_version').get()?.user_version).toBe(10);
+    expect(upgraded.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    upgraded.prepare('UPDATE app_settings SET cover_mosaic_density=64 WHERE id=1').run();
+    upgraded.close();
+
+    const reopened = openDatabase(path);
+    expect(reopened.prepare('SELECT * FROM app_settings').get()).toEqual({ ...records.get('app_settings')![0], cover_mosaic_density: 64 });
     for (const table of tables.filter(table => table !== 'app_settings')) {
       expect(reopened.prepare('SELECT * FROM ' + table).all()).toEqual(records.get(table));
     }

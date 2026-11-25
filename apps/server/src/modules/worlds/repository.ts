@@ -102,23 +102,23 @@ export class WorldRepository {
     if (tag) { conditions.push('EXISTS (SELECT 1 FROM world_tags t WHERE t.world_id=w.id AND t.name=?)'); args.push(tag); }
     if (before) { conditions.push('(w.created_at < ? OR (w.created_at = ? AND w.id < ?))'); args.push(before.createdAt, before.createdAt, before.id); }
     const filter = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
-    const rows = this.db.prepare('SELECT w.id,w.name,w.cover,w.created_at,w.updated_at FROM worlds w' + filter + ' ORDER BY w.created_at DESC,w.id DESC LIMIT ? OFFSET ?').all(...args, limit, offset);
+    const rows = this.db.prepare("SELECT w.id,w.name,w.cover,CASE WHEN json_type(w.extensions_json,'$.cover_mosaic_enabled')='true' THEN 1 ELSE 0 END AS cover_mosaic_enabled,w.created_at,w.updated_at FROM worlds w" + filter + ' ORDER BY w.created_at DESC,w.id DESC LIMIT ? OFFSET ?').all(...args, limit, offset);
     const tags = new Map<string, string[]>();
     if (rows.length) {
       for (const row of this.db.prepare('SELECT world_id,name FROM world_tags WHERE world_id IN (' + rows.map(() => '?').join(',') + ') ORDER BY world_id,sort_order,name').all(...rows.map(row => String(row.id)))) {
         const id = String(row.world_id); const values = tags.get(id) ?? []; values.push(String(row.name)); tags.set(id, values);
       }
     }
-    return rows.map(row => ({ id: String(row.id), name: String(row.name), cover: row.cover === null ? null : String(row.cover), tags: tags.get(String(row.id)) ?? [], created_at: Number(row.created_at), updated_at: Number(row.updated_at) }));
+    return rows.map(row => ({ id: String(row.id), name: String(row.name), cover: row.cover === null ? null : String(row.cover), cover_mosaic_enabled: Number(row.cover_mosaic_enabled) === 1, tags: tags.get(String(row.id)) ?? [], created_at: Number(row.created_at), updated_at: Number(row.updated_at) }));
   }
 
-  updateManagement(id: string, patch: { name?: string; default_preset_id?: string | null; default_api_model_config_id?: string | null }, tags: string[] | undefined, revision: number): WorldRow | null {
+  updateManagement(id: string, patch: { name?: string; extensions_json?: JsonObject; default_preset_id?: string | null; default_api_model_config_id?: string | null }, tags: string[] | undefined, revision: number): WorldRow | null {
     return transaction(this.db, () => {
       const changes = Object.entries(patch);
       const assignments = changes.map(([key]) => key + '=?');
       assignments.push('revision=revision+1', 'updated_at=?');
       const result = this.db.prepare('UPDATE worlds SET ' + assignments.join(',') + ' WHERE id=? AND revision=?')
-        .run(...changes.map(([,value]) => value!), Date.now(), id, revision);
+        .run(...changes.map(([key, value]) => key === 'extensions_json' ? encodeJson(value, 'object') : value as SQLInputValue), Date.now(), id, revision);
       if (!result.changes) return null;
       if (tags !== undefined) this.writeTags(id, tags);
       return this.get(id)!;

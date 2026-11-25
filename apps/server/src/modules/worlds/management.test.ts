@@ -15,15 +15,15 @@ const content=()=>cardToWorld(parseCard(worldCardFixture()));
 describe('world management functions',()=>{
  it('queries summaries and literal name/tag filters without decoding large document columns',()=>{
   vi.spyOn(Date,'now').mockReturnValue(100);
-  services.worlds.create({...content(),id:'c',name:'港 100%',tags:['港','夜']});
+  services.worlds.create({...content(),id:'c',name:'港 100%',tags:['港','夜'],extensions:{cover_mosaic_enabled:true,author:{notes:'keep'}}});
   services.worlds.create({...content(),id:'b',name:'港 100%',tags:['港']});
   services.worlds.create({...content(),id:'a',name:'山',tags:['山']});
   db.exec("PRAGMA ignore_check_constraints=ON; UPDATE worlds SET components='unreadable' WHERE id='c'");
   const first=services.worlds.listPage({q:'100%',tag:'港',limit:1});
-  expect(first.items[0]).toMatchObject({id:'c',tags:['港','夜'],createdAt:100});
-  expect(first.items[0]).not.toHaveProperty('components');expect(first.hasMore).toBe(true);
+  expect(first.items[0]).toMatchObject({id:'c',tags:['港','夜'],createdAt:100,coverMosaicEnabled:true});
+  expect(first.items[0]).not.toHaveProperty('components');expect(first.items[0]).not.toHaveProperty('extensions');expect(first.hasMore).toBe(true);
   const next=services.worlds.listPage({q:'100%',tag:'港',limit:1,before:{createdAt:100,id:'c'}});
-  expect(next.items.map(item=>item.id)).toEqual(['b']);expect(next.hasMore).toBe(false);
+  expect(next.items.map(item=>item.id)).toEqual(['b']);expect(next.items[0]?.coverMosaicEnabled).toBe(false);expect(next.hasMore).toBe(false);
  });
  it('updates only management fields with revision protection and keeps author JSON/state intact',()=>{
   const world=services.worlds.create({...content(),id:'world'});
@@ -35,6 +35,37 @@ describe('world management functions',()=>{
   expect(services.worlds.require(world.id).name).toBe('Renamed');
   services.worlds.setState(world.id,{coins:99});expect(services.worlds.require(world.id).revision).toBe(2);
   expect(()=>services.worlds.updateManagement(world.id,{expectedRevision:2,characters:[]} as never)).toThrow();
+ });
+ it('merges the cover flag without replacing author extensions and preserves it through later edits',()=>{
+  const extensions={author:{version:'1.0',notes:['keep',false]},custom_key:7};
+  const world=services.worlds.create({...content(),extensions});
+  expect(world.coverMosaicEnabled).toBe(false);
+  const before=db.prepare('SELECT cover,characters_json,openings_json,state FROM worlds WHERE id=?').get(world.id);
+  const enabled=services.worlds.updateManagement(world.id,{coverMosaicEnabled:true,expectedRevision:1});
+  expect(enabled).toMatchObject({coverMosaicEnabled:true,revision:2,extensions:{...extensions,cover_mosaic_enabled:true}});
+  expect(JSON.parse(String(db.prepare('SELECT extensions_json FROM worlds WHERE id=?').get(world.id)?.extensions_json)))
+   .toEqual({...extensions,cover_mosaic_enabled:true});
+  expect(()=>services.worlds.updateManagement(world.id,{name:'Lost',tags:['lost'],coverMosaicEnabled:false,expectedRevision:1})).toThrow('WORLD_REVISION_CONFLICT');
+  expect(services.worlds.require(world.id)).toEqual(enabled);
+  const disabled=services.worlds.updateManagement(world.id,{coverMosaicEnabled:false,expectedRevision:2});
+  expect(disabled).toMatchObject({coverMosaicEnabled:false,revision:3,extensions:{...extensions,cover_mosaic_enabled:false}});
+  const renamed=services.worlds.updateManagement(world.id,{name:'Renamed',expectedRevision:3});
+  expect(renamed.extensions).toEqual(disabled.extensions);
+  expect(db.prepare('SELECT cover,characters_json,openings_json,state FROM worlds WHERE id=?').get(world.id)).toEqual(before);
+ });
+ it('keeps absent extensions absent until an explicit cover choice is saved',()=>{
+  const world=services.worlds.create(content());
+  expect(world).toMatchObject({coverMosaicEnabled:false,extensions:null});
+  const updated=services.worlds.updateManagement(world.id,{coverMosaicEnabled:false,expectedRevision:1});
+  expect(updated).toMatchObject({coverMosaicEnabled:false,extensions:{cover_mosaic_enabled:false},revision:2});
+ });
+ it('rejects malformed extension definitions before any content is changed',()=>{
+  const world=services.worlds.create({...content(),extensions:{author:'keep'}});
+  for(const extensions of [[],true,'text',{cover_mosaic_enabled:1},{cover_mosaic_enabled:'true'}]){
+   expect(()=>services.worlds.update(world.id,{name:'Lost',extensions})).toThrow('INVALID_WORLD_CARD');
+   expect(services.worlds.require(world.id)).toEqual(world);
+   expect(()=>services.worlds.create({...content(),extensions})).toThrow('INVALID_WORLD_CARD');
+  }
  });
  it('retains legacy content while clearing defaults and rejects missing references atomically',()=>{
   const preset=services.presets.create(narrativePreset()),world=services.worlds.create({...content(),defaultPresetId:preset.id});

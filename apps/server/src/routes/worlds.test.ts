@@ -127,22 +127,44 @@ describe('world routes', () => {
 
   it('returns filtered summary cursor pages and batched session counts', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1000);
-    const first = services.worlds.create({ ...content(), id: 'world-c', tags: ['城市'], cover: 'sr-asset://assets/cover.png' });
+    const first = services.worlds.create({ ...content(), id: 'world-c', tags: ['城市'], cover: 'sr-asset://assets/cover.png', extensions: { cover_mosaic_enabled: true } });
     const second = services.worlds.create({ ...content(), id: 'world-a', tags: ['城市'] });
     services.worlds.create({ ...content(), id: 'world-b', tags: ['荒野'] });
     const config = configuration();
     for (const id of ['session-one', 'session-two']) services.sessions.create({ runtimeConfig: { narrativePresetId: config.presetId, apiModelConfigId: config.apiModelConfigId }, id, worldId: first.id, userCharacterId: 'player' });
     const url = base + '?tag=' + encodeURIComponent('城市') + '&q=' + encodeURIComponent('雾') + '&limit=1';
     const firstPage = await data<Page<WorldListItem>>(await app.request(url));
-    expect(firstPage.items).toEqual([{ id: first.id, name: first.name, cover: first.cover, tags: ['城市'], sessionCount: 2, createdAt: 1000, updatedAt: 1000 }]);
+    expect(firstPage.items).toEqual([{ id: first.id, name: first.name, cover: first.cover, coverMosaicEnabled: true, tags: ['城市'], sessionCount: 2, createdAt: 1000, updatedAt: 1000 }]);
     expect(firstPage.hasMore).toBe(true);
     const lastPage = await data<Page<WorldListItem>>(await app.request(url + '&cursor=' + firstPage.nextCursor));
-    expect(lastPage).toEqual({ items: [{ id: second.id, name: second.name, cover: null, tags: ['城市'], sessionCount: 0, createdAt: 1000, updatedAt: 1000 }], hasMore: false, nextCursor: null });
+    expect(lastPage).toEqual({ items: [{ id: second.id, name: second.name, cover: null, coverMosaicEnabled: false, tags: ['城市'], sessionCount: 0, createdAt: 1000, updatedAt: 1000 }], hasMore: false, nextCursor: null });
     expect(await data(await app.request(base + '?tag=absent'))).toEqual({ items: [], hasMore: false, nextCursor: null });
     await failure(await app.request(base + '?tag=other&cursor=' + firstPage.nextCursor), 'INVALID_REQUEST', 400);
     await failure(await app.request(base + '?cursor=invalid'), 'INVALID_REQUEST', 400);
     await failure(await app.request(base + '?tagId=old'), 'INVALID_REQUEST', 400);
     expect(await data(await app.request(base + '/tags'))).toEqual({ items: [{ name: '城市', worldCount: 2 }, { name: '荒野', worldCount: 1 }] });
+  });
+
+  it('exposes and updates only the typed cover flag while preserving foreign extension data', async () => {
+    const extensions = { author: { release: 'v1', notes: ['keep'] }, custom: 2 };
+    const world = services.worlds.create({ ...content(), extensions });
+    const initial = await data<{ item: WorldDetail }>(await app.request(base + '/' + world.id));
+    expect(initial.item.coverMosaicEnabled).toBe(false);
+    const enabled = await data<{ item: WorldDetail }>(await jsonRequest('/' + world.id, 'PATCH', { coverMosaicEnabled: true }));
+    expect(enabled.item).toMatchObject({ coverMosaicEnabled: true, revision: 2, extensions: { ...extensions, cover_mosaic_enabled: true } });
+    const page = await data<Page<WorldListItem>>(await app.request(base));
+    expect(page.items[0]).toMatchObject({ id: world.id, coverMosaicEnabled: true });
+    expect(page.items[0]).not.toHaveProperty('extensions');
+    await failure(await jsonRequest('/' + world.id, 'PATCH', { coverMosaicEnabled: false }), 'WORLD_REVISION_CONFLICT', 409);
+    const disabled = await data<{ item: WorldDetail }>(await jsonRequest('/' + world.id, 'PATCH', { coverMosaicEnabled: false, expectedRevision: 2 }));
+    expect(disabled.item).toMatchObject({ coverMosaicEnabled: false, revision: 3, extensions: { ...extensions, cover_mosaic_enabled: false } });
+    for (const body of [
+      { coverMosaicEnabled: 'false' }, { coverMosaicEnabled: 1 }, { coverMosaicEnabled: null },
+      { extensions: { cover_mosaic_enabled: true } }, { cover_mosaic_enabled: true },
+    ]) {
+      await failure(await jsonRequest('/' + world.id, 'PATCH', { expectedRevision: 3, ...body }), 'INVALID_REQUEST', 400);
+    }
+    expect(services.worlds.require(world.id)).toMatchObject({ revision: 3, extensions: disabled.item.extensions, coverMosaicEnabled: false });
   });
 
   it('projects author fields and preserves legacy text descriptions without runtime state', async () => {

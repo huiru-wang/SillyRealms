@@ -6,6 +6,7 @@ import {
   type StateSchema,
 } from '@sillyrealms/sdk/state-validation';
 import { AppError } from '../../errors.js';
+import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
 
 
 const atomicStateSchema = z.custom<StateSchema>((value) => value !== null && typeof value === 'object');
@@ -87,11 +88,19 @@ const componentSource=z.object({
 const components=z.array(componentSource).max(100).superRefine(unique).superRefine((value,ctx)=>{
   if(value.reduce((total,item)=>total+Buffer.byteLength(item.component??'','utf8'),0)>2*1024*1024)ctx.addIssue({code:'custom',message:'Components exceed 2 MiB'});
 });
+const extensions = z.custom<Record<string, unknown>>(
+  value => value !== null && typeof value === 'object' && !Array.isArray(value), 'Expected extension object',
+).superRefine((value, ctx) => {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Object.hasOwn(value, 'cover_mosaic_enabled') && typeof value.cover_mosaic_enabled !== 'boolean') {
+    ctx.addIssue({ code: 'custom', path: ['cover_mosaic_enabled'], message: 'Expected boolean' });
+  }
+});
 const schema=z.object({spec_version:z.literal('0.1'),data:z.object({
   name:id,description:componentView.optional(),tags:z.array(id).optional(),cover:z.string().optional(),
   characters,
   openings:z.array(openingSchema).min(1).superRefine(unique),state:atomicStateSchema.optional(),
-  lorebook:z.object({entries:z.array(lore).superRefine(unique)}).optional(),message_render:messageRender.optional(),ui:z.never().optional(),components:components.optional(),stage_component:componentId.optional(),extensions:z.custom<Record<string,unknown>>(v=>v!==null && typeof v==='object' && !Array.isArray(v),'Expected extension object').optional()
+  lorebook:z.object({entries:z.array(lore).superRefine(unique)}).optional(),message_render:messageRender.optional(),ui:z.never().optional(),components:components.optional(),stage_component:componentId.optional(),extensions:extensions.optional()
 })});
 
 export type WorldCard = z.infer<typeof schema>;
@@ -164,6 +173,14 @@ export function validateCard(raw: unknown): WorldCard {
     if (rule.replacement.type === 'component') reference(rule.replacement.component, '$.data.message_render.rules[' + index + '].replacement.component');
   });
   return card;
+}
+
+export function validateWorldExtensions(value: JsonValue): asserts value is JsonObject {
+  const result = extensions.safeParse(value);
+  if (!result.success) {
+    const issue = result.error.issues[0]!;
+    throw new CardError(location(['data', 'extensions', ...issue.path]), issue.message);
+  }
 }
 
 export function validateCharacters(value: unknown): WorldCard['data']['characters'] {

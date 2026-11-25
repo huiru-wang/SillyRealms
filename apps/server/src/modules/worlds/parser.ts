@@ -1,6 +1,6 @@
 import type { StateScope } from '@sillyrealms/sdk/state-validation';
 import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
-import type { CreateWorld, World } from './types.js';
+import type { CreateWorld, WorldContent } from './types.js';
 import { CardError, validateCard, type WorldCard } from './validation.js';
 
 /** Parse a decoded author document through the shared validation rules. */
@@ -33,7 +33,7 @@ export function cardToWorld(card: WorldCard): CreateWorld {
   };
 }
 
-export function worldToCard(world: World): WorldCard {
+export function worldToCard(world: WorldContent & { tags: readonly string[] }): WorldCard {
   return parseCard({
     spec_version: world.specVersion,
     data: {

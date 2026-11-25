@@ -1,14 +1,14 @@
 import type {StateSchema,StateDefinition} from '@sillyrealms/sdk/state-validation';
 export type {StateDefinition} from '@sillyrealms/sdk/state-validation';
 export type Tag={name:string;worldCount:number};
-export type WorldListItem={id:string;name:string;cover:string|null;tags:string[];sessionCount:number;createdAt:number;updatedAt:number};
+export type WorldListItem={id:string;name:string;cover:string|null;coverMosaicEnabled:boolean;tags:string[];sessionCount:number;createdAt:number;updatedAt:number};
 export type Character={id:string;name:string;description?:string;prompt?:string;avatar?:string;player_selectable?:boolean;order?:number;load?:StateDefinition['load']};
 export type Opening={type?:'component';component?:string;id:string;name:string;content:string;initial_state?:Record<string,unknown>};
 export type LoreEntry={id:string;title?:string;content:string;enabled?:boolean;load?:StateDefinition['load'] & {order?:number}};
-export type WorldDetail={id:string;revision:number;specVersion:string;name:string;cover:string|null;tags:string[];
+export type WorldDetail={id:string;revision:number;specVersion:string;name:string;cover:string|null;coverMosaicEnabled:boolean;tags:string[];
  description:string|{type:'component';component:string}|null;characters:Character[];openings:Opening[];
  lorebook:{entries:LoreEntry[]}|null;stateDefinition:StateSchema|null;
  components:Array<{id:string;path?:string;component?:string}>|null;stageComponent:string|null;messageRender:unknown;extensions:unknown;
  defaultPresetId:string|null;defaultApiModelConfigId:string|null;createdAt:number;updatedAt:number};
-export type WorldPatch=Partial<Pick<WorldDetail,'name'|'tags'|'defaultPresetId'|'defaultApiModelConfigId'>>;
+export type WorldPatch=Partial<Pick<WorldDetail,'name'|'tags'|'defaultPresetId'|'defaultApiModelConfigId'|'coverMosaicEnabled'>>;
 export type Session={id:string;worldId:string;title:string|null;updatedAt:number;cover:string|null};

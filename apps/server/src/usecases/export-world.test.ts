@@ -61,6 +61,28 @@ describe('export world use case', () => {
     await vi.waitFor(async () => expect(await readdir(join(root, 'staging'))).toEqual([]));
   });
 
+  it.each([true, false])('round-trips the current cover mosaic flag (%s) through JSON and ZIP without changing the original', async enabled => {
+    const raw = worldCardFixture();
+    const author = { release: '1.0', notes: ['keep', false, 7] };
+    const source = Buffer.from(JSON.stringify({ ...raw, data: { ...raw.data,
+      extensions: { author, cover_mosaic_enabled: !enabled },
+    } }, null, 2) + '\n');
+    const world = await importWorld({ format: 'json', bytes: source });
+    expect(world.coverMosaicEnabled).toBe(!enabled);
+    services.worlds.updateManagement(world.id, { coverMosaicEnabled: enabled, expectedRevision: world.revision });
+    const download = await exportWorld(world.id);
+    const bytes = new Uint8Array(await new Response(download.body).arrayBuffer());
+    const entries = await unzipBytes(bytes);
+    const card = JSON.parse(entries['world.json']!.toString());
+    expect(card.data.extensions).toEqual({ author, cover_mosaic_enabled: enabled });
+    expect(card.data).not.toHaveProperty('coverMosaicEnabled');
+    for (const input of [{ format: 'zip' as const, bytes }, { format: 'json' as const, bytes: entries['world.json']! }]) {
+      const imported = await importWorld(input);
+      expect(imported).toMatchObject({ coverMosaicEnabled: enabled, extensions: { author, cover_mosaic_enabled: enabled } });
+    }
+    expect(await services.worlds.readOriginal(world.id)).toEqual({ format: 'json', bytes: source });
+  });
+
   it('exports JSON-only worlds to ZIP and rejects unrepresentable textual descriptions', async () => {
     const world = await importWorld(input());
     const download = await exportWorld(world.id);

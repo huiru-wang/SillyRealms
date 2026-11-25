@@ -1,6 +1,6 @@
 # Web
 
-- 本项目仅对接 Server：世界内容库、预设、模型配置、设置、会话运行。世界详情只允许名称、标签及默认配置管理；角色、开局、世界书、状态定义和组件只读。会话路由挂载 SessionPage，只调用 Server 已实现的接口。
+- 本项目仅对接 Server：世界内容库、预设、模型配置、设置、会话运行。世界详情只允许名称、标签、默认配置及封面马赛克开关管理；角色、开局、世界书、状态定义和组件只读。会话路由挂载 SessionPage，只调用 Server 已实现的接口。
 - 复用本项目的 components/ui、styles/theme.ts 和 tokens.css，遵守 docs/design/UI-SPEC.md。业务对接不顺带重做视觉系统。
 - 管理控件跨桌面/移动/粗指针保持标准 36px、compact/图标 32px，禁止移动端或 pointer:coarse 统一放大到 44px。页面工具栏、分类与菜单使用共享尺寸 token；移动端页边距/面板留白为 12px，操作间距复用 --control-gap（4px）。显式 prominent、会话输入条、主导航和安全区按原契约保留，完整尺寸表见 UI-SPEC。
 - API 使用 /api/v1、驼峰 CRUD 结构、data.item 单项和 items/hasMore/nextCursor 分页。预设文件协议仅用于导入导出，不渗透编辑器状态。
@@ -25,7 +25,7 @@
 - 世界详情以本模块的 WorldDetailPage.tsx / WorldDetailPage.module.css 为 UI 基线，完整保留折叠头部、角色条同步、六个图标 Tab、开局导航、弹窗和滚动交互；禁止用新面板布局替换。只适配 V2 顶层领域字段、分页、刷新和管理写入约束。
 - 世界状态说明由 worlds/state-description 投影已验证的规则路径与默认结构，容器逐级展开、叶子显示规则原文，数组仅一份元素模板；不执行规则、不展示默认值。WorldState 按非空 scope 分组并使用现有主题背景，移动深层详情保留返回位置和展开状态；StateInspector 的开局初始值展示保持独立。
 - OpeningState 只展示 openingStateRows 验证后的 message 初始值，覆盖按完整根替换，不按 rules 补字段。字段 key/value 保持同排，数组按实际元素分批展示，来源只标根节点；与 WorldState 共用 StateBrowser 的帮助和深层导航，滚动恢复分别使用 data-modal-body / data-world-content，Escape 优先收起帮助。
-- 世界入口在头部选择角色，创建确认沿用该角色；提交当前 openingId 和角色，开局名称可作为会话标题；全局会话入口增加开局选择，单个默认选中、多个要求选择。创建后进入会话舞台，消息与正则组件替换统一在独立来源 frame 渲染，不增加开场标记或专用分支。名称标签在更多菜单弹窗编辑，默认项在运行配置 Tab 编辑。
+- 世界入口在头部选择角色，创建确认沿用该角色；提交当前 openingId 和角色，开局名称可作为会话标题；全局会话入口增加开局选择，单个默认选中、多个要求选择。创建后进入会话舞台，消息与正则组件替换统一在独立来源 frame 渲染，不增加开场标记或专用分支。名称标签在更多菜单弹窗编辑，默认项与封面马赛克在世界配置 Tab 编辑。马赛克仅替换列表封面图层，复用共享 Switch/Range；密度草稿由 ManagementData 共享并保存，封面采用 Canvas 缩小采样和最近邻放大，文字/渐变不参与像素化。
 
 - 隔离 world-preview 服务/构建同时提供 frame.html 与 world-component.html，管理来源拒绝这两个入口。runtime/config 使用明确的 stage.origin/entryPath/debug，不接受 port 推导。SessionPage 挂载 stage-host/StageHost；后者只管理 iframe、受限 bridge 和外观，不保存业务状态，不因 frame 重载停止生成。
 

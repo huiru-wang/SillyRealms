@@ -12,17 +12,23 @@ export type SettingsReader = Pick<SettingsService, 'get' | 'getOptional'>;
 
 const valueSchema = z.object({
   locale: z.enum(SUPPORTED_LOCALES),
+  coverMosaicDensity: z.number().int().min(8).max(64),
   defaultReplyAssistPresetId: z.string().trim().min(1).nullable(),
   defaultPresetId: z.string().trim().min(1).nullable(),
   defaultApiModelConfigId: z.string().trim().min(1).nullable(),
 }).strict();
-const defaultsSchema = valueSchema.extend({ defaultReplyAssistPresetId: valueSchema.shape.defaultReplyAssistPresetId.default(null), locale: valueSchema.shape.locale.default(DEFAULT_LOCALE) });
+const defaultsSchema = valueSchema.extend({
+  defaultReplyAssistPresetId: valueSchema.shape.defaultReplyAssistPresetId.default(null),
+  locale: valueSchema.shape.locale.default(DEFAULT_LOCALE),
+  coverMosaicDensity: valueSchema.shape.coverMosaicDensity.default(24),
+});
 const patchSchema = valueSchema.partial().refine(value => Object.values(value).some(item => item !== undefined), '应用默认设置更新不能为空');
 
 function toAppSettings(record: StoredAppSettings): AppSettings {
   return {
     id: record.id,
     locale: record.locale,
+    coverMosaicDensity: record.cover_mosaic_density,
     defaultReplyAssistPresetId: record.default_reply_assist_preset_id,
     defaultPresetId: record.default_preset_id,
     defaultApiModelConfigId: record.default_api_model_config_id,
@@ -63,12 +69,13 @@ export class SettingsService {
     const patch = patchSchema.parse(input);
     const current = this.get();
     const locale = patch.locale ?? current.locale;
+    const coverMosaicDensity = patch.coverMosaicDensity ?? current.coverMosaicDensity;
     const presetId = patch.defaultPresetId === undefined ? current.defaultPresetId : patch.defaultPresetId;
     const modelId = patch.defaultApiModelConfigId === undefined ? current.defaultApiModelConfigId : patch.defaultApiModelConfigId;
     if (presetId !== null) this.#services.presets.require(presetId, 'narrative');
     const replyId = patch.defaultReplyAssistPresetId === undefined ? current.defaultReplyAssistPresetId : patch.defaultReplyAssistPresetId;
     if (replyId) this.#services.presets.require(replyId, 'reply_assist');
     if (modelId !== null) this.#services.models.require(modelId);
-    return toAppSettings(this.#repository.update({ locale, defaultReplyAssistPresetId: replyId, defaultPresetId: presetId, defaultApiModelConfigId: modelId }));
+    return toAppSettings(this.#repository.update({ locale, coverMosaicDensity, defaultReplyAssistPresetId: replyId, defaultPresetId: presetId, defaultApiModelConfigId: modelId }));
   }
 }

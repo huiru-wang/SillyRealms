@@ -10,7 +10,7 @@ function sources(): MaterialSources {
       id: 'world', revision: 1, specVersion: '0.1', name: 'World', description: null, cover: null,
       characters: [{ id: 'player', name: 'Robin', player_selectable: true, prompt: 'You are {{user}}.' }],
       openings: [], lorebook: null, stateDefinition: null, messageRender: null, components: null,
-      stageComponent: null, extensions: null, defaultPresetId: null, defaultApiModelConfigId: null,
+      stageComponent: null, extensions: null, coverMosaicEnabled: false, defaultPresetId: null, defaultApiModelConfigId: null,
       state: {}, tags: [], createdAt: 0, updatedAt: 0,
     },
     playerId: 'player', inputText: 'Enter the harbor',

@@ -44,7 +44,7 @@ describe('application settings HTTP operations', () => {
     expect(initial.status).toBe(200);
     expect(await initial.json()).toMatchObject({
       success: true, errorCode: null, errorMessage: '',
-      data: { item: { id: 1, locale: 'zh-CN', defaultPresetId: null, defaultApiModelConfigId: null } },
+      data: { item: { id: 1, locale: 'zh-CN', coverMosaicDensity: 24, defaultPresetId: null, defaultApiModelConfigId: null } },
     });
     services.presets.create({ ...narrativePreset(), id: 'story' });
     services.models.create({
@@ -80,10 +80,23 @@ describe('application settings HTTP operations', () => {
     }
   });
 
+  it('round-trips cover density while retaining unrelated settings', async () => {
+    await app.request(base, write('PATCH', { locale: 'ja' }));
+    for (const coverMosaicDensity of [8, 24, 64]) {
+      const saved = await app.request(base, write('PATCH', { coverMosaicDensity }));
+      expect(saved.status).toBe(200);
+      expect((await saved.json()).data.item).toMatchObject({
+        coverMosaicDensity, locale: 'ja', defaultPresetId: null, defaultApiModelConfigId: null,
+      });
+      expect((await (await app.request(base)).json()).data.item.coverMosaicDensity).toBe(coverMosaicDensity);
+    }
+  });
+
   it('rejects empty, malformed and invalid settings updates without changing the singleton', async () => {
     const previous = services.settings.get();
     for (const body of [{}, { defaultPresetId: '' }, { defaultApiModelConfigId: 7 }, { unexpected: true },
-      { locale: null }, { locale: 'fr' }, { locale: 'EN' }, { locale: 'ja-JP' }, { locale: '' }, { locale: 1 }]) {
+      { locale: null }, { locale: 'fr' }, { locale: 'EN' }, { locale: 'ja-JP' }, { locale: '' }, { locale: 1 },
+      { coverMosaicDensity: null }, { coverMosaicDensity: '24' }, { coverMosaicDensity: 7 }, { coverMosaicDensity: 65 }, { coverMosaicDensity: 24.5 }]) {
       await expectFailure(await app.request(base, write('PATCH', body)), 400);
     }
     await expectFailure(await app.request(base, {

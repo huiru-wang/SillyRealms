@@ -3,6 +3,7 @@ import {useEffect,useRef,useState} from 'react';
 import {Button} from '../../components/ui/Button';
 import {Input,Textarea} from '../../components/ui/Field';
 import {Select} from '../../components/ui/Select';
+import {Switch} from '../../components/ui/Switch';
 import {Modal} from '../../components/ui/Modal';
 import {api,ApiError,json} from '../../api';
 import {ErrorNotice} from '../../app/ui';
@@ -14,7 +15,7 @@ import type {WorldDetail,WorldPatch} from './api/worlds';
 import {parseTags} from './management';
 import styles from './WorldDetailPage.module.css';
 type Props={world:WorldDetail;onSaved:(world:WorldDetail)=>void};
-const draftOf=(world:WorldDetail)=>({name:world.name,tags:world.tags.join('，'),defaultPresetId:world.defaultPresetId??'',defaultApiModelConfigId:world.defaultApiModelConfigId??''});
+const draftOf=(world:WorldDetail)=>({name:world.name,tags:world.tags.join('，'),defaultPresetId:world.defaultPresetId??'',defaultApiModelConfigId:world.defaultApiModelConfigId??'',coverMosaicEnabled:world.coverMosaicEnabled});
 export function WorldMetadataForm(props:Props){
   return <WorldForm {...props} kind="metadata"/>;}
 export function WorldDefaultsForm(props:Props){
@@ -34,6 +35,7 @@ function WorldForm({world,onSaved,kind}:Props&{kind:'metadata'|'defaults'}){
    if(draft.name.trim()!==baseline.name)patch.name=draft.name.trim();
    const tags=parseTags(draft.tags);if(JSON.stringify(tags)!==JSON.stringify(baseline.tags))patch.tags=tags;
   }else{
+   if(draft.coverMosaicEnabled!==baseline.coverMosaicEnabled)patch.coverMosaicEnabled=draft.coverMosaicEnabled;
    if((draft.defaultPresetId||null)!==baseline.defaultPresetId)patch.defaultPresetId=draft.defaultPresetId||null;
    if((draft.defaultApiModelConfigId||null)!==baseline.defaultApiModelConfigId)patch.defaultApiModelConfigId=draft.defaultApiModelConfigId||null;
   }
@@ -53,9 +55,12 @@ function WorldForm({world,onSaved,kind}:Props&{kind:'metadata'|'defaults'}){
   {kind==='metadata'?<div className="editor-form">
    <label>{t('worldName')}<Input value={draft.name} disabled={busy} onChange={e=>change({name:e.target.value})}/></label>
    <label>{t('tags')}<Textarea value={draft.tags} disabled={busy} onChange={e=>change({tags:e.target.value})} rows={2} placeholder={t('separateWithCommasOrLineBreaks')}/></label>
-  </div>:<><p className={styles.stateIntro}>{t('prefillsNewSessionsOnlyCanBeLeft')}</p><DefaultsFields draft={draft} change={change} busy={busy}/></>}
+  </div>:<>
+   <div className={styles.displaySetting}><label htmlFor="world-cover-mosaic">{t('coverMosaic')}</label><Switch id="world-cover-mosaic" checked={draft.coverMosaicEnabled} disabled={busy} label={t('coverMosaic')} onChange={coverMosaicEnabled=>change({coverMosaicEnabled})}/></div>
+   <p className={styles.stateIntro}>{t('prefillsNewSessionsOnlyCanBeLeft')}</p><DefaultsFields draft={draft} change={change} busy={busy}/>
+  </>}
   {error&&<ErrorNotice message={error}/>}
-  <div className="actions"><Button variant="primary" loading={busy} disabled={!dirty} onClick={()=>void save()}>{t(kind==='metadata'?'worlds:saveMetadata':'worlds:saveDefaults')}</Button>{dirty&&<Button disabled={busy} variant="ghost" onClick={()=>setReloadConfirm(true)}>{t('discardAndReload')}</Button>}{conflict&&!dirty&&<Button onClick={()=>setReloadConfirm(true)}>{t('reload')}</Button>}</div>
+  <div className="actions"><Button variant="primary" loading={busy} disabled={!dirty} onClick={()=>void save()}>{t(kind==='metadata'?'worlds:saveMetadata':'worlds:saveConfiguration')}</Button>{dirty&&<Button disabled={busy} variant="ghost" onClick={()=>setReloadConfirm(true)}>{t('discardAndReload')}</Button>}{conflict&&!dirty&&<Button onClick={()=>setReloadConfirm(true)}>{t('reload')}</Button>}</div>
   {saved&&<p role="status">{t('saved')}</p>}
   {reloadConfirm&&<Modal title={t('reloadWorldConfiguration')} onBeforeClose={()=>!pending.current} onClose={()=>setReloadConfirm(false)} footer={<><Button disabled={busy} onClick={()=>setReloadConfirm(false)}>{t('keepEditing')}</Button><Button variant="primary" loading={busy} onClick={()=>void reload()}>{t('discardChangesAndLoad')}</Button></>}><p>{t('discardLocalChangesToThisFormAnd')}</p>{error&&<ErrorNotice message={error}/>}</Modal>}
  </div>;

@@ -26,15 +26,16 @@ export type WorldPatch = Partial<WorldContent> & { tags?: readonly string[] };
 export type World = WorldContent & {
   id: string;
   revision: number;
+  coverMosaicEnabled: boolean;
   state: JsonObject;
   tags: string[];
   createdAt: number;
   updatedAt: number;
 };
 export type WorldTag = { name: string; worldCount: number };
-export type WorldSummary = Pick<World, 'id' | 'name' | 'cover' | 'tags' | 'createdAt' | 'updatedAt'>;
+export type WorldSummary = Pick<World, 'id' | 'name' | 'cover' | 'coverMosaicEnabled' | 'tags' | 'createdAt' | 'updatedAt'>;
 export type WorldDetail = Omit<World, 'state'>;
-export type WorldManagementPatch = Partial<Pick<World, 'name' | 'tags' | 'defaultPresetId' | 'defaultApiModelConfigId'>> & { expectedRevision: number };
+export type WorldManagementPatch = Partial<Pick<World, 'name' | 'tags' | 'coverMosaicEnabled' | 'defaultPresetId' | 'defaultApiModelConfigId'>> & { expectedRevision: number };
 export type WorldListOptions = { q?: string; tag?: string; limit?: number; offset?: number; before?: { createdAt: number; id: string } };
 export type WorldPage = { items: WorldSummary[]; hasMore: boolean };
 
