@@ -1,5 +1,5 @@
 import {createContext, useContext, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactNode} from 'react';
-import type {StageSnapshot, StateScope, StateValue} from '../stage-contract.js';
+import type {ActionSuggestionsState, StageSnapshot, StateScope, StateValue} from '../stage-contract.js';
 import type {SRWorldStateAPI} from '../world-state.js';
 import {StageRuntime, stateValue, type SRSessionAPI, type SRStateAPI} from './runtime.js';
 import type {SRComposerButton, StageComposerButtons} from './composer-buttons.js';
@@ -30,6 +30,8 @@ export function useSRStageSnapshot(): StageSnapshot {
   const runtime = useRuntime();
   return useSyncExternalStore(runtime.observe, runtime.getSnapshot, runtime.getSnapshot);
 }
+/** Read the Host projection through the existing stage store; rendering never restores suggestions. */
+export function useSRActionSuggestions(): ActionSuggestionsState { return useSRStageSnapshot().suggestions; }
 export function useSRSession(): SRSessionAPI { return useRuntime().session; }
 export function useSRStateAPI(): SRStateAPI { return useRuntime().state; }
 export function useSRHistory() {

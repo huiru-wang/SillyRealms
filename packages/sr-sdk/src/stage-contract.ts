@@ -40,6 +40,8 @@ export type NarrativeEvent =
   | {event: 'run.completed'; data: SavedRunFields}
   | {event: 'run.stopped'; data: SavedRunFields & {stop_reason: string}};
 export type StateChangedEvent = {event: 'state.changed'; data: {path: string; scope: StateScope; value: StateValue}};
+/** Host-owned display data; wire events retain their internal run and message identity. */
+export type ActionSuggestionsState = Readonly<{items: readonly string[]}>;
 export type Suggestions = {runId: string; messageId: string; items: string[]};
 export type SuggestionsCreatedEvent = {event: 'action_suggestions.created'; data: Suggestions & {sessionId: string}};
 export type CharacterSpriteItem = {
@@ -67,7 +69,7 @@ export type StageRun = {
 };
 export type StageSnapshot = {
   sessionId: string; connected: boolean; activeRunId: string | null; activeAssistantEntryId: string | null; sending: boolean; runs: StageRun[]; streamIncomplete?: boolean;
-  suggestions: Suggestions | null;
+  suggestions: ActionSuggestionsState;
   history: {loading: boolean; loadingMore: boolean; hasMore: boolean; error: string | null};
   state: StateSnapshot; stateLoading: boolean; stateError: string | null;
 };

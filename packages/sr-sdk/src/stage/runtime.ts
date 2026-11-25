@@ -24,7 +24,7 @@ export interface SRStateAPI {
 
 export function emptyStageSnapshot(): StageSnapshot {
   return {
-    sessionId: '', connected: false, activeRunId: null, activeAssistantEntryId: null, sending: false, runs: [], suggestions: null,
+    sessionId: '', connected: false, activeRunId: null, activeAssistantEntryId: null, sending: false, runs: [], suggestions: {items: []},
     history: {loading: true, loadingMore: false, hasMore: false, error: null},
     state: {global: {}, session: {}, message: {}}, stateLoading: true, stateError: null,
   };

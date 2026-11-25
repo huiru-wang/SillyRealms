@@ -10,7 +10,7 @@
 | --- | --- |
 | 发消息、停止、重新生成、读历史、订阅事件、使用快照、声明输入区按钮 | [会话与历史](session.md) |
 | 显示状态、修改已有字段、读取预览中的世界状态 | [状态读写](state.md) |
-| 使用官方正文、替换消息片段、显示世界文档和图片 | [组件与资源](components.md) |
+| 组合官方正文与行动建议、自定义行动视图、替换消息片段、显示文档和图片 | [组件与资源](components.md) |
 | 在仓库工具或宿主项目中校验世界卡、解析资源路径或嵌入文档 | [包子路径与校验工具](tooling.md) |
 
 ## 运行环境与公开接口
@@ -18,33 +18,65 @@
 | 从 `@sillyrealms/sdk` 导入的值 | 会话舞台、会话消息组件 | 详情页的介绍、开局预览 |
 | --- | --- | --- |
 | `useSRSession`、`useSRHistory`、`useSRStageSnapshot` | 当前绑定会话 | 无 |
+| `useSRActionSuggestions` | 当前建议的只读 items | 无 |
 | `useSRComposerButtons` | 当前舞台统一声明输入区快捷按钮 | 无 |
 | `useSRState` | 三个作用域的响应式字段 | 无 |
 | `useSRStateAPI` | 三个作用域的读、写、事件订阅 | `useSRWorldStateAPI` 的只读别名 |
 | `useSRWorldStateAPI` | 只读 global | 只读 global |
 | `useSRAssetUrl` | 可用 | 可用 |
 | `useSRAssetBaseUrl`、`SRAssetProvider` | 可用，宿主已提供资源地址 | 由宿主提供上下文，作者仅可调用 `useSRAssetUrl` |
-| `SR.WorldStory`、`WorldDocumentRenderer` | 可用 | 无 |
+| `SR.WorldStory`、`SR.ActionSuggestions`、`WorldDocumentRenderer` | 可用 | 无 |
 | `RichText`、`WorldDocumentContent` | 可用 | 可用 |
 
 Stage iframe 接收宿主投递的只读快照，并通过 SDK 命令与宿主通信。宿主负责会话身份、HTTP、事件连接和历史同步。作者组件应通过 Hook 获取所需数据；文件里的包子路径、任意 npm 包、直接请求 Server API 都不属于卡内导入接口。详情预览没有会话身份。类型导入请使用 `import type`。
 
 ## 第一个会话舞台
 
-在 ZIP 中创建 `components/InnStage.tsx`。这个完整组件显示连接状态，正文、分页和行动建议由 `SR.WorldStory` 渲染。
+在 ZIP 中创建 `components/InnStage.tsx`。这个完整组件显示连接状态，组合负责正文/分页的 WorldStory 与独立行动区：
 
 ```tsx
 import React from 'react';
-import { SR, useSRStageSnapshot } from '@sillyrealms/sdk';
+import {
+  SR, useSRActionSuggestions, useSRStageSnapshot,
+} from '@sillyrealms/sdk';
+
+const styles = `
+.first-stage {
+  box-sizing: border-box;
+  height: 100%; min-height: 0; min-width: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+  padding-bottom: var(--sr-story-bottom-inset, 0px);
+}
+.first-stage-status { flex: none; }
+.first-stage-reading {
+  flex: 1; min-height: 0; min-width: 0;
+  --sr-story-reading-bottom-space: 16px;
+  --sr-story-content-bottom-inset: 0px;
+}
+.first-stage-actions {
+  box-sizing: border-box; flex: none; min-height: 0;
+  max-height: clamp(calc(var(--control-height, 36px) + 20px), 30%, 240px);
+  overflow: auto; padding: 10px 16px;
+}
+`;
 
 export default function InnStage() {
   const { connected } = useSRStageSnapshot();
-  return <main>
-    <p role="status">{connected ? '已连接' : '正在连接…'}</p>
-    <SR.WorldStory />
+  const { items } = useSRActionSuggestions();
+  return <main className="first-stage">
+    <style>{styles}</style>
+    <p className="first-stage-status" role="status">
+      {connected ? '已连接' : '正在连接…'}
+    </p>
+    <div className="first-stage-reading"><SR.WorldStory /></div>
+    {items.length > 0 && (
+      <div className="first-stage-actions"><SR.ActionSuggestions /></div>
+    )}
   </main>;
 }
 ```
+
+行动区连同有留白的外层容器一起条件挂载，空数组时不占位置。Hook 只读宿主数据；完整生命周期与作者视图见[会话](session.md#usesractionsuggestions)和[组件组合](components.md#行动建议与舞台组合)。
 
 在现有 `world.json` 的 `data` 对象中登记组件。以下是要合并的字段；保留卡片已有的角色和开局等内容。
 

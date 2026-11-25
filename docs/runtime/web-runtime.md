@@ -14,7 +14,7 @@
 | `features/narrative` | send/regenerate/stop、原生 run 事件、当前运行和临时模型输出 |
 | `features/history` | 持久 entries 的唯一客户端集合、五轮分页、seq 补查、消息投影 |
 | `features/state` | global/session/message 读写与有效值、消息数组归一化、状态事件 |
-| `features/suggestions` | 当前建议，创建、清空和最新结果恢复 |
+| `features/suggestions` | 当前行动建议展示状态、接受执行时清空、实时注入和最新普通消息恢复 |
 | `features/worlds/stage-world.ts` | 世界详情、组件编译、资源地址、展示规则与状态根清单 |
 | `transport/session-events.ts` | 单一会话 SSE、显式事件注册、订阅分发与连接状态 |
 | `stage-host` | iframe、origin/source/nonce 握手、MessagePort、命令白名单、外观与语言同步 |
@@ -25,13 +25,13 @@ SSE 跟随会话页面，MessagePort 跟随 iframe。重新加载舞台只替换
 ## 服务端协议
 
 - 发送：`POST /api/v1/sessions/:id/narrative/runs`，正文 `{input:{text},expectedTipEntryId}`。返回 `{runId,userEntryId,assistantEntryId,userMessage,tipEntryId,deletedMessageIds}`，userMessage 为已保存的 `{id,role:'user',content,timestamp}`，没有客户端请求去重 ID。
-- HTTP 受理成功即展示返回的用户消息；run.created 按消息 ID 确认或补偿，不重复插入，也不清除同轮已到达的助手输出。迟到的 HTTP 响应只补齐用户消息，不回退已有阶段、tip 或终态；history 读取后按同一 ID 接管。
+- HTTP 受理成功时，workspace 在同一次接受处理内展示返回的用户消息、清空上一轮行动建议并更新执行状态，再发布组合快照。run.created 经同一接受入口确认或补偿，以 assistantEntryId 去重，不重复插入或清空本次已经到达的新建议和助手输出。迟到的 HTTP 响应不回退已有阶段、tip 或终态；history 读取后按同一 ID 接管。
 - 重新生成：`POST .../narrative/runs/regenerate`，正文 `{userEntryId,assistantEntryId,expectedTipEntryId}`；Host 提供当前 tip，assistantEntryId=null 表示最新用户无回复时重试。
 - 停止：`POST .../narrative/runs/:runId/stop`，正文 `{assistantEntryId}`；请求取消不等于已收到终态。
 - 历史和状态：使用 narrative/runs 的完整轮次、nextCursor、nextAfterSeq、activeRunId，以及三作用域 state 路径。真实 tip 从 session、摘要事件和终态取得，不能以最后可见 assistant 替代 compaction tip。
 - 当前事件：message.deleted、run.created/summarizing/summarized/delta/usage/completed/stopped、state.changed、action_suggestions.created、character_sprite.changed。旧 run.phase/run.failed、usage.updated、action_suggestions.changed 均不参与 V2。
 - 临时输出按 messageId 归属，delta 追加，snapshot 整体替换。snapshot 不表示已保存；终态先按 savedMessageIds 移除未保存输出，再补查 runs 页，持久 entries 按相同 ID 接管，未保存输出不冒充历史。
-- action_suggestions.created 是完整集合，run.created 清空旧建议。恢复只认最新 run 的实际完成结果，不能寻找更早建议填补空结果。建议只读取 output.actionSuggestions 的整体 status/items；history 将 output 透传给 Stage，状态成功/失败诊断来自同一 stateUpdate.updates 列表中的 status。两类结果没有 results；旧格式由服务端读取时归一化，前端不重复兼容。
+- action_suggestions.created 整体替换当前建议；接受新执行时清空，同一执行的重复确认不再次清空。建议事件可以早于 run.completed，终态不无条件擦除本次建议。恢复只读最新 run 最后一条普通 message 的 output.actionSuggestions：须为有效完成的 assistant，且整体 status 为 success/partial_success、有有效非空 items。最后是 user、无结果或结果无效时为空，不回找更早助手。history 仍透传 output 供诊断；stateUpdate 使用带逐项 status 的 updates。两类结果没有 results，旧格式由服务端读取时归一化。
 - 状态 path:"" 替换完整 scope；null 是普通字段值。PATCH success 可以表示路径不存在而被忽略；字段请求值不能直接写入本地缓存。按真实事件/补读同步，混合作用域写入按原顺序分组，无跨 scope 原子承诺。
 
 ## 初次读取与连接恢复
@@ -43,6 +43,14 @@ SSE 跟随会话页面，MessagePort 跟随 iframe。重新加载舞台只替换
 HTTP 和 SSE 的删除回执按旧消息 ID 幂等处理，服务端确认后才移除旧 AI、清除旧终态和建议；原用户按消息 ID 保留一次。narrative 以新 assistantEntryId 隔离同轮执行，旧结束/停止事件不能影响新执行。迟到 HTTP 不重复应用删除或回退 tip、阶段、终态。历史查询发现同轮新执行时丢弃旧临时输出。
 
 SSE 无回放。丢失过流连续性时，不把后续缺头的 delta 拼成完整正文；等待最终 snapshot 或保存结果。断线不停止运行，退出页面只释放本地订阅。异常提交不自动重发，查询同步后仍保留未确认的输入草稿。
+
+## 行动建议的展示与恢复
+
+建议的业务状态只在 Host 维护。`workspace.synchronize()` 在异步读取前捕获既有 `suggestions.checkpoint()`，复用会话读取与 `history.loadRecent(reset)` / `history.catchUp()`，从已整理顺序的最新 run 调用 `suggestions.restore(latest, checkpoint)`。以最后一条普通 message 判断，隐藏 compaction 不参与；不新增 bootstrap、建议专用接口、第二套排序或恢复 Store。较旧读取不能覆盖随后接受或注入的状态。
+
+进入会话、整页刷新、连接建立、重连及显式刷新复用这一协调入口；向上翻历史页不恢复建议。断线保留当前内容，重连后同步；仅 iframe 重建则重新投递 Host 现有快照，不再读取历史。服务端 actionSuggestions 的保存和原生事件身份不变，StageSnapshot 对作者只投影 `{items}`，初始为 `{items: []}`。
+
+`useSRActionSuggestions()` 只是现有 StageRuntime 的订阅投影。组件卸载、多处读取或重挂载不创建新连接，也不清空或恢复 Host 数据。请求明确未受理时保留建议；已受理执行即使后来停止、失败或没有新建议，也不复活上一轮。未知提交结果由现有 SSE/同步确认，不自动重发。
 
 ## 悬浮立绘
 
@@ -63,17 +71,23 @@ V2 frame 直接注入作者导入的包根入口 `@sillyrealms/sdk`。公共值�
 | `useSRStageSnapshot().connected` | 宿主 SSE 的当前连接状态，首次挂载、断线和重连时均以快照为准 |
 | `useSRSession().subscribe(listener)` | 原生 SessionEvent 名称和数据 |
 | `useSRSession().setDraft(text)` | 受限命令更新平台输入草稿，返回 Promise |
-| `useSRStageSnapshot()` | 不可变展示镜像，包含连接、历史、当前 run、建议和状态 |
+| `useSRStageSnapshot()` | 不可变展示镜像，包含连接、历史、当前 run、仅 items 的建议和状态 |
+| `useSRActionSuggestions()` | 只读 `{items: readonly string[]}`，无消息归属、setter 或操作资格 |
 | `useSRHistory()` | 展示历史及 loadMore/refresh/query 命令 |
 | `useSRStateAPI()` / `useSRState()` | 显式读取或显示镜像；写入通过 Host state feature |
 | `useSRWorldStateAPI()` | global 状态查询 |
-| `SR.WorldStory` | 官方纯展示组件，不独立执行历史合并/恢复 |
+| `SR.WorldStory` | 正文、历史分页与阅读，不渲染行动建议，不独立执行历史合并/恢复 |
+| `SR.ActionSuggestions` | 独立行动组件，读取 Hook，默认点击 setDraft；不依赖 WorldStory |
 
 Stage SDK 通过 `@sillyrealms/sdk` 导入。frame 的事件订阅不重复驱动业务 reducer；React 所需镜像只由 Host snapshot 替换。Stage 中的文档在已有隔离文档内直接渲染，不创建嵌套 iframe。
 
 ## 桥接与展示
 
-官方 WorldStory 直接展示 AI 正文，用户消息使用右对齐的主题强调色淡色气泡；Markdown 首尾块移除多余外边距，保持气泡上下留白一致。公开 reasoning_content 独立显示为默认折叠的思考内容，展开后在固定高度区域内滚动；同时支持流式内容和已保存消息，不混入正文。行动建议放在对应 AI 消息正文下方，以轻边框、淡阴影的圆角按钮呈现，点击填入草稿。服务端运行配置的 `debug` 为 true 且该消息有处理结果时，在建议下方显示可展开的「数据处理结果」。
+官方 WorldStory 直接展示 AI 正文，用户消息使用右对齐的主题强调色淡色气泡；Markdown 首尾块移除多余外边距，保持气泡上下留白一致。公开 reasoning_content 独立显示为默认折叠的思考内容，展开后在固定高度区域内滚动；同时支持流式内容和已保存消息，不混入正文。服务端运行配置的 `debug` 为 true 且该消息有处理结果时，在助手正文之后显示可展开的「数据处理结果」。
+
+未声明自定义 Stage 时，frame 使用 `default-stage.tsx` 组合 WorldStory 与独立行动区。只有 items 非空才挂载整个行动区 wrapper；正文位于剩余高度内，行动区在其下方、输入框上方，常规限高按容器高度的 30% 且不超过 240px，并独立滚动；可用高度极小时，max-height 仍允许一行标准按钮加 20px 外层留白，不设常驻最小高度。外壳统一按 `--sr-story-bottom-inset` 留出输入区，正文通过 `--sr-story-reading-bottom-space:16px` 和 `--sr-story-content-bottom-inset:0px` 避免重复留白及局部控件偏移。fixed 状态对话框仍保留原视口 inset。frame 单独加载 `@sillyrealms/sdk/action-suggestions.css`。
+
+官方行动组件以轻边框、淡阴影的圆角按钮呈现，点击替换并展开草稿。作者 Stage 自行条件组合官方组件或用 Hook 绘制视图，决定填草稿或直接发送；平台不向作者 Stage 强插行动区、不增加世界卡配置或消息匹配规则。普通 send 不先填草稿，也不清除玩家已有草稿。布局和输入框避让契约见 [SDK 组件](../sdk/components.md#行动建议与舞台组合)。
 
 frame 没有业务 HTTP/模型凭据。SDK 发起 narrative.send/regenerate/stop、history.loadMore/refresh/query、state.read/write、composer.setDraft 等白名单命令；Host 用当前会话绑定决定资源身份。查询返回值、原生事件和展示快照通过 MessagePort 返回。预览文档仍只开放 global 查询。
 

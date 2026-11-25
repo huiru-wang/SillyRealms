@@ -187,14 +187,14 @@ test('regeneration deletes the old projection before streaming, retains summary 
  const {workspace,server,channel}=setup(true);server.active=null;server.tip='r-a';
  server.runs[1]=run('r',[entry('r-u',2,'r','user'),entry('r-a',3,'r')]);
  server.runs[1].entries[1].extData.output={actionSuggestions:{status:'success',items:['Old action']}};
- await workspace.start();assert.equal(workspace.getSnapshot().stage.suggestions.messageId,'r-a');
+ await workspace.start();assert.deepEqual(workspace.getSnapshot().stage.suggestions,{items:['Old action']});
  channel.emit({event:'message.deleted',data:{sessionId:'s',runId:'r',assistantEntryId:'new-a',messageId:'r-a',tipEntryId:'summary'}});
  assert.deepEqual(workspace.getSnapshot().stage.runs.at(-1).messages.map(message=>message.id),['r-u']);
  assert.equal(workspace.getSnapshot().stage.activeAssistantEntryId,'new-a');
  channel.emit({event:'run.created',data:{...fields(),assistantEntryId:'new-a',messages:[{id:'r-u',role:'user',content:'Go',timestamp:2}],tipEntryId:'summary',deletedMessageIds:['r-a']}});
  assert.equal(workspace.getSnapshot().session.tipEntryId,'summary');
  assert.deepEqual(workspace.getSnapshot().stage.runs.at(-1).messages.map(message=>message.id),['r-u']);
- assert.equal(workspace.getSnapshot().stage.suggestions,null);
+ assert.deepEqual(workspace.getSnapshot().stage.suggestions,{items:[]});
  channel.emit({event:'run.completed',data:{...fields(),savedMessageIds:['r-u','r-a'],tipEntryId:'r-a'}});
  assert.equal(workspace.getSnapshot().stage.activeAssistantEntryId,'new-a');
  channel.emit({event:'run.delta',data:{...fields(),assistantEntryId:'new-a',messageId:'new-a',messages:[{role:'assistant',delta:{content:'New'}}]}});
@@ -219,4 +219,64 @@ test('reply-assist events reach the host without being forwarded to stage subscr
  workspace.subscribeReplyAssist(event=>host.push(event));workspace.subscribeEvents(event=>stage.push(event));
  channel.emit({event:'reply_assist.delta',data:{sessionId:'s',requestId:'q',delta:{content:'private draft'}}});
  assert.equal(host.length,1);assert.deepEqual(stage,[]);
+});
+
+
+for(const first of ['HTTP','SSE'])test(first+' acceptance publishes the saved user and empty suggestions together, then duplicate receipts preserve live suggestions',async t=>{
+ const {workspace,server,channel}=setup();t.after(()=>workspace.dispose());
+ server.runs[0].entries[0].extData.output={actionSuggestions:{status:'success',items:['Previous action']}};
+ await workspace.start();
+ const post=deferred();
+ server.onRequest=(path,init)=>init.method==='POST'&&path==='v1/sessions/s/narrative/runs'?post.promise:undefined;
+ const sending=workspace.command('narrative.send',{text:'Go'});await nextTurn();
+ assert.deepEqual(workspace.getSnapshot().stage.suggestions,{items:['Previous action']});
+ const snapshots=[];
+ workspace.subscribe(()=>snapshots.push(structuredClone(workspace.getSnapshot().stage)));
+ const receipt={runId:'r',userEntryId:'r-u',assistantEntryId:'r-a',tipEntryId:'r-u',deletedMessageIds:[],
+  userMessage:{id:'r-u',role:'user',content:'Go',timestamp:2}};
+ const created={event:'run.created',data:{...fields(),tipEntryId:'r-u',deletedMessageIds:[],messages:[receipt.userMessage]}};
+ server.runs.push(run('r',[entry('r-u',2,'r','user')],'running'));server.active='r';server.tip='r-u';
+ if(first==='HTTP'){post.resolve(receipt);await sending;}
+ else channel.emit(created);
+ assert.ok(snapshots.length);
+ for(const snapshot of snapshots){
+  assert.deepEqual(snapshot.runs.at(-1).messages.map(message=>message.id),['r-u']);
+  assert.deepEqual(snapshot.suggestions,{items:[]});
+ }
+ channel.emit({event:'action_suggestions.created',data:{sessionId:'s',runId:'r',messageId:'r-a',items:['Current action']}});
+ channel.emit(created);
+ if(first==='SSE'){post.resolve(receipt);await sending;}
+ assert.deepEqual(workspace.getSnapshot().stage.suggestions,{items:['Current action']});
+ assert.deepEqual(workspace.getSnapshot().stage.runs.at(-1).messages.map(message=>message.id),['r-u']);
+});
+
+test('disconnect retains suggestions and reconnect restores only the latest ordinary message through the existing history read',async t=>{
+ const {workspace,server,channel,calls}=setup();t.after(()=>workspace.dispose());
+ server.runs[0].entries[0].extData.output={actionSuggestions:{status:'partial_success',items:['Saved action']}};
+ await workspace.start();
+ assert.deepEqual(workspace.getSnapshot().stage.suggestions,{items:['Saved action']});
+ channel.disconnect();
+ assert.deepEqual(workspace.getSnapshot().stage.suggestions,{items:['Saved action']});
+ const previous=server.runs[0].entries[0];
+ server.runs[0]=run('opening',[previous,entry('opening-u',2,'opening','user')]);
+ server.tip='opening-u';
+ calls.length=0;
+ channel.connect();await nextTurn();
+ assert.deepEqual(workspace.getSnapshot().stage.suggestions,{items:[]});
+ assert.ok(calls.some(call=>call.path==='v1/sessions/s/narrative/runs'));
+ assert.equal(calls.some(call=>call.init.method==='POST'),false);
+});
+
+test('a history refresh started before acceptance cannot overwrite the new user or live suggestions',async t=>{
+ const {workspace,server,channel}=setup();t.after(()=>workspace.dispose());
+ server.runs[0].entries[0].extData.output={actionSuggestions:{status:'success',items:['Old action']}};
+ await workspace.start();
+ const read=deferred(),oldPage={items:structuredClone(server.runs),hasMore:false,nextCursor:null,nextAfterSeq:1,activeRunId:null};
+ server.onRequest=(path,init)=>path==='v1/sessions/s/narrative/runs'&&!init.method?read.promise:undefined;
+ const refresh=workspace.refresh();await nextTurn();
+ channel.emit({event:'run.created',data:{...fields(),tipEntryId:'r-u',deletedMessageIds:[],messages:[{id:'r-u',role:'user',content:'Go',timestamp:2}]}});
+ channel.emit({event:'action_suggestions.created',data:{sessionId:'s',runId:'r',messageId:'r-a',items:['Live action']}});
+ read.resolve(oldPage);await refresh;
+ assert.deepEqual(workspace.getSnapshot().stage.runs.at(-1).messages.map(message=>message.id),['r-u']);
+ assert.deepEqual(workspace.getSnapshot().stage.suggestions,{items:['Live action']});
 });

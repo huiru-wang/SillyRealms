@@ -1,0 +1,38 @@
+/* Optional official actions. The author or default Stage owns placement and scrolling. */
+.sr-action-suggestions {
+  box-sizing: border-box; width: 100%; min-width: 0;
+  container-type: inline-size; container-name: sr-actions;
+  color: var(--reading-text, var(--sr-story-text, CanvasText));
+  font-family: var(--font-ui, system-ui, sans-serif); font-size: var(--control-font, 14px); line-height: 1.6;
+}
+.sr-action-suggestions-items { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-2, 8px); min-width: 0; }
+.sr-action-suggestions .sr-action-suggestion {
+  appearance: none; box-sizing: border-box; min-width: 0; max-width: 100%; min-height: var(--control-height, 36px);
+  margin: 0; padding: var(--space-1, 4px) var(--control-padding, 12px);
+  border: 1px solid color-mix(in srgb, var(--reading-border, var(--sr-story-line, GrayText)) 55%, transparent);
+  border-radius: var(--radius-control, 8px);
+  color: inherit; background: var(--reading-surface, var(--sr-story-surface, Canvas));
+  font: inherit; text-align: start; white-space: normal; overflow-wrap: anywhere; cursor: pointer;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--shadow-color, var(--reading-border, GrayText)) 25%, transparent);
+  transition: border-color var(--motion-fast, 130ms) ease, background-color var(--motion-fast, 130ms) ease, box-shadow var(--motion-fast, 130ms) ease;
+}
+.sr-action-suggestions .sr-action-suggestion:not(:disabled):active {
+  background: color-mix(in srgb, var(--accent, var(--sr-story-accent, Highlight)) 6%, var(--reading-surface, var(--sr-story-surface, Canvas)));
+  box-shadow: none;
+}
+.sr-action-suggestions .sr-action-suggestion:disabled { opacity: .5; cursor: default; box-shadow: none; }
+.sr-action-suggestions .sr-action-suggestion:focus-visible { outline: 2px solid var(--focus, var(--sr-story-focus, Highlight)); outline-offset: 3px; }
+.sr-action-suggestions-error { margin: var(--space-2, 8px) 0 0; color: var(--danger, var(--sr-story-danger, CanvasText)); font-size: 13px; overflow-wrap: anywhere; }
+@media (hover: hover) {
+  .sr-action-suggestions .sr-action-suggestion:not(:disabled):not(:active):hover {
+    border-color: var(--reading-border, var(--sr-story-line, GrayText));
+    background: color-mix(in srgb, var(--accent, var(--sr-story-accent, Highlight)) 3%, var(--reading-surface, var(--sr-story-surface, Canvas)));
+  }
+}
+@container sr-actions (max-width: 600px) {
+  .sr-action-suggestions-items { flex-direction: column; }
+  .sr-action-suggestions .sr-action-suggestion { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sr-action-suggestions .sr-action-suggestion { transition: none; }
+}

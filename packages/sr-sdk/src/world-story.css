@@ -11,8 +11,10 @@
   --_story-danger: var(--sr-story-danger, #a33e52);
   --_story-speech: var(--sr-story-speech, #a65b00);
   --_story-bottom-inset: max(0px, var(--sr-story-bottom-inset, 0px));
-  /* Stable reading space; composer toggles must not change message geometry. */
-  --_story-reading-bottom-space: 128px;
+  /* A composed stage can reserve the Host inset outside the reading surface. */
+  --_story-content-bottom-inset: max(0px, var(--sr-story-content-bottom-inset, var(--sr-story-bottom-inset, 0px)));
+  /* Standalone stories retain stable reading space when the composer toggles. */
+  --_story-reading-bottom-space: max(0px, var(--sr-story-reading-bottom-space, 128px));
   box-sizing: border-box;
   width: 100%;
   height: 100%;
@@ -127,7 +129,7 @@
 .sr-story .sr-error { color: var(--_story-danger); }
 .sr-story .sr-error button { color: inherit; border: 0; background: transparent; text-decoration: underline; text-underline-offset: 3px; font: inherit; padding: 8px; cursor: pointer; }
 .sr-story .sr-story-empty { margin-top: 24px; text-align: center; }
-.sr-story .sr-story-latest { position: absolute; bottom: calc(16px + var(--_story-bottom-inset)); inset-inline: 16px; display: flex; justify-content: center; pointer-events: none; }
+.sr-story .sr-story-latest { position: absolute; bottom: calc(16px + var(--_story-content-bottom-inset)); inset-inline: 16px; display: flex; justify-content: center; pointer-events: none; }
 .sr-story .sr-story-latest .sr-more {
   box-sizing: border-box; display: grid; place-items: center; pointer-events: auto;
   width: var(--touch-target, 32px); height: var(--touch-target, 32px); min-height: var(--touch-target, 32px); padding: 0;
@@ -137,7 +139,6 @@
 }
 .sr-story .sr-story-latest .sr-more:active { background: color-mix(in srgb, var(--_story-surface) 75%, transparent); }
 .sr-story .sr-story-content > .sr-thinking { margin: 0; }
-.sr-story .sr-suggestions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; box-sizing: border-box; width: 100%; margin: 16px 0 0; }
 .sr-story .sr-reasoning { margin: 0 0 12px; min-width: 0; }
 .sr-story .sr-reasoning summary {
   box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: fit-content;
@@ -153,22 +154,12 @@
 .sr-story .sr-reasoning-content { box-sizing: border-box; height: 192px; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; padding: 12px 16px; border: 1px solid var(--_story-line); border-radius: 12px; background: var(--_story-surface); color: var(--_story-muted); font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sr-story .sr-processing { margin: 16px 0 0; }
 .sr-story .sr-processing pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-.sr-story .sr-suggestions button {
-  appearance: none; box-sizing: border-box; min-width: 0; max-width: 100%; min-height: var(--touch-target, 40px);
-  border: 1px solid color-mix(in srgb, var(--_story-line) 35%, transparent); border-radius: 20px;
-  padding: 8px 16px; color: var(--_story-text); background: var(--_story-surface); font: inherit; font-size: 13px;
-  line-height: 1.6; text-align: start; overflow-wrap: anywhere; cursor: pointer;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--shadow-color, var(--_story-line)) 45%, transparent);
-  transition: border-color var(--motion-fast, 130ms) ease, background-color var(--motion-fast, 130ms) ease, box-shadow var(--motion-fast, 130ms) ease;
-}
-.sr-story .sr-suggestions button:not(:disabled):active { background: color-mix(in srgb, var(--_story-accent) 6%, var(--_story-surface)); box-shadow: none; }
-.sr-story .sr-suggestions button:disabled { opacity: .5; cursor: default; box-shadow: none; }
 .sr-story .sr-story-state { flex: 0 0 288px; min-width: 0; min-height: 0; width: 288px; color: var(--_story-text); background: var(--_story-surface); border: 0; border-inline-start: 1px solid var(--_story-line); }
 .sr-story aside.sr-story-state { display: flex; flex-direction: column; }
 .sr-story .sr-state-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 18px; flex: none; min-height: 56px; box-sizing: border-box; }
 .sr-story .sr-state-heading h2 { margin: 0; font-size: 13px; font-weight: 550; }
 .sr-story .sr-state-content { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 18px 24px; }
-.sr-story aside.sr-story-state .sr-state-content { padding-bottom: calc(24px + var(--_story-bottom-inset)); scroll-padding-bottom: calc(16px + var(--_story-bottom-inset)); }
+.sr-story aside.sr-story-state .sr-state-content { padding-bottom: calc(24px + var(--_story-content-bottom-inset)); scroll-padding-bottom: calc(16px + var(--_story-content-bottom-inset)); }
 .sr-story .sr-state-group { padding: 8px 0 16px; }
 .sr-story .sr-state-group + .sr-state-group { border-top: 1px solid var(--_story-line); }
 .sr-story .sr-state-group summary { padding: 10px 0; color: var(--_story-muted); font-size: 11px; font-weight: 550; cursor: pointer; }
@@ -196,7 +187,6 @@
 .sr-story .sr-message.user .sr-message-markdown:empty + .sr-rp-instruction-panel { margin-top: 0; }
 .sr-story .sr-story-toolbar button:focus-visible,
 .sr-story .sr-more:focus-visible,
-.sr-story .sr-suggestions button:focus-visible,
 .sr-story .sr-story-state :where(button, summary):focus-visible,
 .sr-story .sr-rich a:focus-visible,
 .sr-story .sr-reasoning summary:focus-visible,
@@ -210,13 +200,8 @@
   .sr-story .sr-story-latest .sr-more:not(:disabled):not(:active):hover {
     background: color-mix(in srgb, var(--_story-surface) 65%, transparent);
   }
-  .sr-story .sr-suggestions button:not(:disabled):not(:active):hover {
-    border-color: color-mix(in srgb, var(--_story-line) 55%, transparent);
-    background: color-mix(in srgb, var(--_story-accent) 3%, var(--_story-surface));
-  }
 }
 @media (pointer: coarse) {
-  .sr-story .sr-suggestions button,
   .sr-story .sr-reasoning summary { min-height: 44px; }
 }
 @container sr-story (max-width: 600px) {
@@ -225,9 +210,7 @@
   .sr-story .sr-message.user { max-width: 86%; padding: 8px 16px; border-radius: 20px; }
   .sr-story .sr-story-toolbar button,
   .sr-story .sr-more,
-  .sr-story .sr-suggestions button,
   .sr-story .sr-error button { min-height: 44px; }
-  .sr-story .sr-suggestions { flex-direction: column; }
 }
 @container sr-story (max-width: 340px) {
   .sr-story .sr-chat-messages { padding-inline: 12px; }
@@ -239,6 +222,5 @@
   .sr-story .sr-story-toolbar button,
   .sr-story .sr-more,
   .sr-story .sr-state-heading button,
-  .sr-story .sr-state-error button,
-  .sr-story .sr-suggestions button { transition: none; }
+  .sr-story .sr-state-error button { transition: none; }
 }

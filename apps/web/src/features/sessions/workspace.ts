@@ -33,6 +33,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
   let session:Session|null=null,config:RuntimeConfig|null=null,world:WorkspaceSnapshot['world']=null;
   let capabilities:SessionCapabilities|null=null,configRevision=0,savedSettingsRevision=0;
   let tip:string|null=null,tipRevision=0,connected=false,usageRevision=0;
+  let publicationDepth=0,publicationPending=false;
   let state:ReturnType<typeof createStateController>|null=null;
   const subscriptions:Array<()=>void>=[];
   const channel=dependencies.channel??createSessionEventChannel({sessionId});
@@ -83,7 +84,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
     }).finally(()=>{sessionRequest=null;});
     return sessionRequest;
   };
-  const narrative=createNarrativeController({sessionId,request,getSession:refreshSession,
+  const narrative=createNarrativeController({sessionId,request,getSession:refreshSession,batch:batchPublish,
     onTipChanged:updateTip,
     onAccepted:accepted=>{for(const id of accepted.deletedMessageIds)appliedDeletions.add(id);history.acceptExecution(accepted);sprites.remove(accepted.deletedMessageIds,accepted.tipEntryId);suggestions.begin(accepted.runId,accepted.assistantEntryId);if(accepted.deletedMessageIds.length){usageRevision++;void state?.read().catch(()=>{});}},
     onTerminal:event=>{
@@ -117,30 +118,47 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
       }
     }
     return {session,config,capabilities,sprites:sprites.getSnapshot(),world,loading,error,worldError,notice:notice??ns.error,sending:ns.sending,stopping:ns.stopping,usageRevision,latestUsage:ns.usage,
-      stage:{sessionId,connected,activeRunId:ns.activeRunId,activeAssistantEntryId:ns.activeRunId?ns.run?.assistantEntryId??null:null,sending:ns.sending,runs,streamIncomplete:ns.incomplete,suggestions:suggestions.getSnapshot().suggestions,
+      stage:{sessionId,connected,activeRunId:ns.activeRunId,activeAssistantEntryId:ns.activeRunId?ns.run?.assistantEntryId??null:null,sending:ns.sending,runs,streamIncomplete:ns.incomplete,suggestions:{items:suggestions.getSnapshot().suggestions?.items??[]},
         history:{loading:hs.loading,loadingMore:hs.loadingMore,hasMore:hs.hasMore,error:hs.error},state:ss?.values??emptyState(),stateLoading:ss?.loading??true,stateError:ss?.error??null}};
   }
-  function publish(){if(disposed)return;snapshot=project();for(const listener of listeners){try{listener();}catch{/* Display observers are isolated. */}}}
+  function publish(){
+    if(disposed)return;
+    if(publicationDepth){publicationPending=true;return;}
+    snapshot=project();
+    for(const listener of listeners){try{listener();}catch{/* Display observers are isolated. */}}
+  }
+  /** A receipt changes several feature projections before any observer sees it. */
+  function batchPublish(update:()=>void){
+    publicationDepth++;
+    try{update();}finally{
+      publicationDepth--;
+      if(!publicationDepth&&publicationPending){publicationPending=false;publish();}
+    }
+  }
   snapshot=project();
   subscriptions.push(history.subscribe(publish),narrative.subscribe(publish),suggestions.subscribe(publish));
   subscriptions.push(channel.subscribe('*',event=>{
     if(disposed||isReplyAssist(event))return;
-    try{
-      if(event.event.startsWith('run.') && narrative.accept(event as NarrativeEvent)===false)return;
-      if(event.event==='character_sprite.changed')sprites.accept(event.data);
-      if(event.event==='run.created')sprites.remove(event.data.deletedMessageIds,event.data.tipEntryId);
-      if(event.event==='message.deleted'){
-        if(appliedDeletions.has(event.data.messageId))return;
-        appliedDeletions.add(event.data.messageId);
-        narrative.acceptDeletion(event.data);
-        history.acceptExecution({...event.data,deletedMessageIds:[event.data.messageId]});
-        sprites.remove([event.data.messageId],event.data.tipEntryId);
-        updateTip(event.data.tipEntryId);suggestions.clear();usageRevision++;
-      }
-    }catch{notice="sessions:narrativeEventFailed";}
-    try{suggestions.accept(event);}catch{notice="sessions:suggestionsUnavailable";}
-    try{if(event.event==='state.changed')state?.accept(event);}catch{notice="sessions:stateSyncUnavailable";}
-    publish();
+    let forward=true;
+    batchPublish(()=>{
+      try{
+        if(event.event.startsWith('run.') && narrative.accept(event as NarrativeEvent)===false){forward=false;return;}
+        if(event.event==='character_sprite.changed')sprites.accept(event.data);
+        if(event.event==='run.created')sprites.remove(event.data.deletedMessageIds,event.data.tipEntryId);
+        if(event.event==='message.deleted'){
+          if(appliedDeletions.has(event.data.messageId)){forward=false;return;}
+          appliedDeletions.add(event.data.messageId);
+          narrative.acceptDeletion(event.data);
+          history.acceptExecution({...event.data,deletedMessageIds:[event.data.messageId]});
+          sprites.remove([event.data.messageId],event.data.tipEntryId);
+          updateTip(event.data.tipEntryId);suggestions.clear();usageRevision++;
+        }
+      }catch{notice="sessions:narrativeEventFailed";}
+      try{suggestions.accept(event);}catch{notice="sessions:suggestionsUnavailable";}
+      try{if(event.event==='state.changed')state?.accept(event);}catch{notice="sessions:stateSyncUnavailable";}
+      publish();
+    });
+    if(!forward)return;
     for(const listener of eventListeners){try{listener(event);}catch{/* A frame listener cannot block business consumers. */}}
   }));
   let synchronization:Promise<void>|null=null,repeat=false,resetHistory=false;

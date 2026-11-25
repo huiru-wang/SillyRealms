@@ -21,6 +21,8 @@ export type NarrativeOptions = {
   sessionId: string;
   request: HttpRequest;
   getSession: () => Promise<{tipEntryId: string | null}>;
+  /** The workspace groups acceptance side effects into one display publication. */
+  batch?: (update: () => void) => void;
   onAccepted?: (accepted: AcceptedRun) => void;
   onTipChanged?: (tipEntryId: string | null) => void;
   onTerminal?: (event: TerminalEvent) => void;
@@ -104,6 +106,14 @@ export function createNarrativeController(options: NarrativeOptions) {
     receipts.add(accepted.assistantEntryId);
     callback(() => options.onAccepted?.(accepted));
   };
+  const acceptReceipt = (accepted: AcceptedRun, patch: Partial<NarrativeSnapshot>, updateTip = false) => {
+    const apply = () => {
+      acknowledge(accepted);
+      emit(patch);
+      if (updateTip) callback(() => options.onTipChanged?.(accepted.tipEntryId));
+    };
+    if (options.batch) options.batch(apply); else apply();
+  };
   async function submit(text?: string, regeneration?: RegenerateRequest): Promise<AcceptedRun> {
     if (disposed) throw new Error("sessions:clientClosed");
     if (!regeneration && !text?.trim()) throw new Error("sessions:emptyInput");
@@ -116,14 +126,11 @@ export function createNarrativeController(options: NarrativeOptions) {
         method: 'POST', body: JSON.stringify({...regeneration, ...(regeneration ? {} : {input: {text}}), expectedTipEntryId: session.tipEntryId}),
       });
       if (revision === eventRevision && !settled.has(accepted.assistantEntryId)) {
-        acknowledge(accepted);
         continuous = false;
-        emit({run: {runId: accepted.runId, assistantEntryId: accepted.assistantEntryId, status: 'running', phase: 'preparing', messages: []},
-          activeRunId: accepted.runId, drafts: [{...accepted.userMessage, runId: accepted.runId, saved: true}], incomplete: false, usage: undefined});
-        callback(() => options.onTipChanged?.(accepted.tipEntryId));
+        acceptReceipt(accepted, {run: {runId: accepted.runId, assistantEntryId: accepted.assistantEntryId, status: 'running', phase: 'preparing', messages: []},
+          activeRunId: accepted.runId, drafts: [{...accepted.userMessage, runId: accepted.runId, saved: true}], incomplete: false, usage: undefined}, true);
       } else if (snapshot.run?.assistantEntryId === accepted.assistantEntryId && !settled.has(accepted.assistantEntryId)) {
-        acknowledge(accepted);
-        emit({drafts: withUserMessage(accepted.runId, accepted.userMessage)});
+        acceptReceipt(accepted, {drafts: withUserMessage(accepted.runId, accepted.userMessage)});
       }
       return accepted;
     } catch (error) {
@@ -160,13 +167,12 @@ export function createNarrativeController(options: NarrativeOptions) {
       eventRevision++;
       if (event.event === 'run.created') {
         const current = snapshot.run?.assistantEntryId === execution ? snapshot.run : null;
-        acknowledge({runId: id, assistantEntryId: execution, userEntryId: event.data.messages[0].id, userMessage: event.data.messages[0], tipEntryId: event.data.tipEntryId, deletedMessageIds: event.data.deletedMessageIds});
         continuous = true;
-        emit({...(current ? {} : {
-          run: {runId: id, assistantEntryId: execution, status: 'running', phase: 'preparing', messages: []},
-          activeRunId: id, stopping: false, usage: undefined,
-        }), drafts: current ? withUserMessage(id, event.data.messages[0]) : [{...event.data.messages[0], runId: id, saved: true}], incomplete: false, error: null});
-        if (!current) callback(() => options.onTipChanged?.(event.data.tipEntryId));
+        acceptReceipt({runId: id, assistantEntryId: execution, userEntryId: event.data.messages[0].id, userMessage: event.data.messages[0], tipEntryId: event.data.tipEntryId, deletedMessageIds: event.data.deletedMessageIds},
+          {...(current ? {} : {
+            run: {runId: id, assistantEntryId: execution, status: 'running', phase: 'preparing', messages: []},
+            activeRunId: id, stopping: false, usage: undefined,
+          }), drafts: current ? withUserMessage(id, event.data.messages[0]) : [{...event.data.messages[0], runId: id, saved: true}], incomplete: false, error: null}, !current);
         return;
       }
       const run = snapshot.run ?? {runId: id, assistantEntryId: execution, status: 'running' as const, messages: []};

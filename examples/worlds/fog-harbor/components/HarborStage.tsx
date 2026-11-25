@@ -1,10 +1,10 @@
 import React from 'react';
-import {SR, useSRAssetUrl, useSRComposerButtons, useSRSession, useSRStageSnapshot, useSRState} from '@sillyrealms/sdk';
+import {SR, useSRActionSuggestions, useSRAssetUrl, useSRComposerButtons, useSRSession, useSRStageSnapshot, useSRState} from '@sillyrealms/sdk';
 
 // The platform owns the conversation and composer. This component only combines
-// the official story renderer with a reactive view of three declared state roots.
+// the official story and action components with three reactive state roots.
 const styles = `
-.fh-stage{height:100%;min-height:0;min-width:0;display:flex;flex-direction:column;color:var(--sr-story-text,var(--text,#263138));background:var(--sr-story-bg,var(--bg,#f7f7f3));font-family:var(--font-ui,system-ui,sans-serif);--fh-muted:var(--sr-story-muted,var(--text-muted,#727e80));--fh-line:var(--sr-story-line,var(--border,#e2e5df));--fh-accent:#b58c58}
+.fh-stage{box-sizing:border-box;height:100%;min-height:0;min-width:0;display:flex;flex-direction:column;overflow:hidden;padding-bottom:var(--sr-story-bottom-inset,0px);color:var(--sr-story-text,var(--text,#263138));background:var(--sr-story-bg,var(--bg,#f7f7f3));font-family:var(--font-ui,system-ui,sans-serif);--fh-muted:var(--sr-story-muted,var(--text-muted,#727e80));--fh-line:var(--sr-story-line,var(--border,#e2e5df));--fh-accent:#b58c58}
 .fh-stage *{box-sizing:border-box}
 .fh-stage-header{flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 22px;border-bottom:1px solid var(--fh-line);min-height:64px}
 .fh-stage-brand{display:flex;align-items:center;gap:11px;min-width:0}
@@ -16,8 +16,10 @@ const styles = `
 .fh-notes-toggle{display:none;appearance:none;min-height:32px;border:1px solid var(--fh-line);border-radius:8px;padding:5px 11px;color:inherit;background:transparent;font-size:12px}
 .fh-notes-toggle:focus-visible{outline:2px solid var(--focus,#b58c58);outline-offset:3px}
 .fh-stage-body{flex:1;min-height:0;min-width:0;display:grid;grid-template-columns:minmax(0,1fr) 232px}
-.fh-story{min-height:0;min-width:0}
-.fh-notes{min-width:0;overflow:auto;overscroll-behavior:contain;padding:23px 20px calc(26px + var(--sr-story-bottom-inset,0px));border-left:1px solid var(--fh-line);background:color-mix(in srgb,var(--fh-accent) 3%,transparent);scrollbar-width:thin}
+.fh-reading{min-height:0;min-width:0;display:flex;flex-direction:column}
+.fh-story{flex:1;min-height:0;min-width:0;--sr-story-reading-bottom-space:16px;--sr-story-content-bottom-inset:0px}
+.fh-actions{flex:none;min-height:0;max-height:clamp(calc(var(--control-height,36px) + 20px),30%,240px);overflow:auto;overscroll-behavior:contain;padding:10px 16px}
+.fh-notes{min-width:0;overflow:auto;overscroll-behavior:contain;padding:23px 20px 26px;border-left:1px solid var(--fh-line);background:color-mix(in srgb,var(--fh-accent) 3%,transparent);scrollbar-width:thin}
 .fh-notes-heading{display:flex;align-items:center;gap:10px;margin-bottom:24px}
 .fh-notes-heading img{display:block;width:34px;height:34px;border-radius:50%;border:1px solid color-mix(in srgb,var(--fh-accent) 25%,transparent)}
 .fh-notes-heading h2{font-size:12px;font-weight:600;margin:0;letter-spacing:.06em}
@@ -34,11 +36,12 @@ const styles = `
 .fh-notes-empty,.fh-notes-error{margin:0;font-size:12px;line-height:1.8;color:var(--fh-muted)}
 .fh-notes-error{margin-bottom:14px;color:var(--danger,#b65349)}
 .fh-notes-foot{margin:24px 0 0;padding-top:13px;border-top:1px solid var(--fh-line);font-size:10px;line-height:1.8;color:var(--fh-muted)}
-@media(max-width:760px){.fh-stage-header{padding:10px 14px;min-height:60px}.fh-stage-brand h1{font-size:19px}.fh-stage-status{display:none}.fh-notes-toggle{display:block}.fh-stage-body{display:flex;flex-direction:column}.fh-story{flex:1}.fh-notes{order:-1;flex:none;max-height:38%;padding:14px 16px;border-left:0;border-bottom:1px solid var(--fh-line)}.fh-notes[data-open="false"]{display:none}.fh-notes-heading{display:none}.fh-notes-divider{margin:12px 0}.fh-notes-goal{font-size:16px}.fh-notes-money strong{font-size:23px}.fh-notes-foot{display:none}.fh-notes-clues{gap:6px}}
+@media(max-width:760px){.fh-stage-header{padding:10px 14px;min-height:60px}.fh-stage-brand h1{font-size:19px}.fh-stage-status{display:none}.fh-notes-toggle{display:block}.fh-stage-body{display:flex;flex-direction:column}.fh-reading{flex:1}.fh-notes{order:-1;flex:none;max-height:38%;padding:14px 16px;border-left:0;border-bottom:1px solid var(--fh-line)}.fh-notes[data-open="false"]{display:none}.fh-notes-heading{display:none}.fh-notes-divider{margin:12px 0}.fh-notes-goal{font-size:16px}.fh-notes-money strong{font-size:23px}.fh-notes-foot{display:none}.fh-notes-clues{gap:6px}}
 `;
 
 export default function HarborStage() {
   const snapshot = useSRStageSnapshot();
+  const {items} = useSRActionSuggestions();
   const session = useSRSession();
   const portrait = useSRAssetUrl('sr-asset://assets/traveler.svg');
   const [coins] = useSRState<number>('coins', 0);
@@ -72,7 +75,10 @@ export default function HarborStage() {
       </button>
     </header>
     <div className="fh-stage-body">
-      <section className="fh-story" aria-label="雾港的故事"><SR.WorldStory showState={false}/></section>
+      <div className="fh-reading">
+        <section className="fh-story" aria-label="雾港的故事"><SR.WorldStory showState={false}/></section>
+        {items.length > 0 && <div className="fh-actions"><SR.ActionSuggestions/></div>}
+      </div>
       <aside className="fh-notes" id="harbor-notebook" data-open={notesOpen} aria-label="旅人手记">
         <div className="fh-notes-heading">{portrait && <img src={portrait} alt=""/>}<div><h2>旅人手记</h2><p>THE TRAVELER'S NOTES</p></div></div>
         {snapshot.stateError && <p className="fh-notes-error" role="status">手记暂时无法同步，请稍后重试。</p>}

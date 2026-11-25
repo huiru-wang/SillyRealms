@@ -18,8 +18,10 @@ import type {SessionEvent, StageSnapshot} from '../../../packages/sr-sdk/src/sta
 import {StoryContext, type MessageComponent, type MessageMatch, type MessageRule} from '../../../packages/sr-sdk/src/story-context';
 import {MessageMatcher} from './message-matcher';
 import {FrameLocale, StageBridge, stageHostOrigin} from './stage-frame-protocol';
+import {DefaultStage} from './default-stage';
 import './frame.css';
 import '@sillyrealms/sdk/world-story.css';
+import '@sillyrealms/sdk/action-suggestions.css';
 
 const bridge = new StageBridge(), runtime = new StageRuntime(bridge.command);
 let port: MessagePort | undefined, matcher: MessageMatcher | undefined, locale: FrameLocale | undefined;
@@ -68,7 +70,7 @@ function render(payload: Record<string, any>, buttons: StageComposerButtons) {
     '@sillyrealms/sdk': SDK,
   }, (source, module, require) => new Function('module', 'exports', 'require', 'React', source)(module, module.exports, require, React));
   const custom = typeof payload.main === 'string' && (Object.hasOwn(code, payload.main) || Object.hasOwn(errors, payload.main));
-  const Component = custom ? load(payload.main) as React.ComponentType : SDK.SR.WorldStory;
+  const Component = custom ? load(payload.main) as React.ComponentType : DefaultStage;
   const rules: MessageRule[] = payload.rules ?? [];
   const components: Record<string, MessageComponent> = Object.create(null);
   const referenced = new Set(rules.flatMap(rule => rule.replacement.type === 'component' ? [rule.replacement.component] : []));

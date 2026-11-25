@@ -6,11 +6,124 @@
 
 | API 与环境 | 调用示例 | 使用方法和限制 |
 | --- | --- | --- |
-| `SR.WorldStory` · 舞台 | `<SR.WorldStory showState={false} />` | 默认 `showState=true`。绘制当前会话、消息匹配组件、历史分页与行动建议，不显示「故事」标题。`showState=false` 会同时移除状态面板入口及整条工具栏，适合已有自定义侧栏的舞台。点击建议填入宿主草稿；宿主仍拥有输入框。自定义舞台自行决定插入位置。 |
+| `SR.WorldStory` · 舞台 | `<SR.WorldStory showState={false} />` | 默认 `showState=true`。绘制当前会话正文、消息匹配组件与历史分页，不显示「故事」标题。`showState=false` 会同时移除状态面板入口及整条工具栏，适合已有自定义侧栏的舞台。行动建议由独立组件显示；宿主仍拥有输入框。 |
+| `SR.ActionSuggestions` · 舞台 | `<SR.ActionSuggestions />` | 读取当前行动建议，点击后替换并展开宿主草稿。组件不定位消息、不读取历史，也不直接发送；在 Stage 顶层确认 items 非空后，连同整个行动区容器一起挂载。 |
 | `WorldDocumentRenderer` · 舞台 | `<WorldDocumentRenderer content={'## 店规\n先入座'} density="chat" className="notice" />` | `WorldDocumentRendererProps` 包含必填的字符串 content、可选 density（reading，默认；或 chat）和 className。舞台入口使用当前 iframe 内的内联文本渲染。 |
 | `WorldDocumentContent` · 舞台、预览 | `<WorldDocumentContent content={'<h2>店规</h2><p>今日有雨</p>'} />` | 字符串可含 Markdown 或 HTML。使用文档清洗规则，可保留允许的作者样式。嵌入按钮、脚本和表单不能用来实现交互，交互请直接写 React 组件。 |
 | `RichText` · 舞台、预览 | `<RichText text="**掌柜**推开了门。" />` | 参数名为 `text`，内联显示经过清洗的 Markdown/HTML，适合短说明和普通正文。需要保留文档级安全样式时用 `WorldDocumentContent`。 |
 | `SRAssetProvider` · 舞台或宿主集成 | `<SRAssetProvider baseUrl={base}><Cover /></SRAssetProvider>` | `baseUrl: string \| null` 与 children 必需。平台已经为卡内组件提供上下文。开发独立渲染宿主时，用当前世界的资源端点包裹组件；覆盖上下文会影响其所有后代。 |
+
+## 行动建议与舞台组合
+
+`useSRActionSuggestions()` 返回只读的 `{items: readonly string[]}`，初始为空数组。详情介绍和开局预览没有会话 Provider，不能使用这个 Hook 或行动组件。宿主负责建议更新、接受新执行后的清空和历史恢复；组件只读取最终数据，具体生命周期见[会话与历史](session.md#usesractionsuggestions)。
+
+无自定义 Stage 时，平台使用正文与行动区的默认组合。有自定义 Stage 时，平台只渲染作者入口；仅放入 `SR.WorldStory` 不会自动出现行动建议。作者可以按下面的完整示例组合官方组件：
+
+```tsx
+import React from 'react';
+import { SR, useSRActionSuggestions } from '@sillyrealms/sdk';
+
+const styles = `
+.story-stage {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: var(--sr-story-bottom-inset, 0px);
+}
+.story-reading {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  --sr-story-reading-bottom-space: 16px;
+  --sr-story-content-bottom-inset: 0px;
+}
+.story-actions {
+  box-sizing: border-box;
+  flex: none;
+  min-height: 0;
+  max-height: clamp(calc(var(--control-height, 36px) + 20px), 30%, 240px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 10px 16px;
+}
+`;
+
+export default function StoryStage() {
+  const { items } = useSRActionSuggestions();
+  return <main className="story-stage">
+    <style>{styles}</style>
+    <div className="story-reading"><SR.WorldStory /></div>
+    {items.length > 0 && (
+      <div className="story-actions"><SR.ActionSuggestions /></div>
+    )}
+  </main>;
+}
+```
+
+WorldStory 与行动区是兄弟组件。整个带背景、边框、padding 或高度的行动区都要放在条件里；items 为空时没有容器、空框或占位。正文占剩余空间并保留自己的滚动。行动区限高通常按容器的 30%，最高 240px；可用高度很小时，限高允许至少一行标准按钮加外层留白，避免只露出无法操作的窄条。这只是 max-height 的下限，不是常驻 min-height。长内容独立滚动，不增加「故事」或行动项顶栏。完整作者 Stage 可以自行调整布局，也可以用同一 Hook 编写自己的视图；无需新增世界卡字段、renderer 绑定或正则。
+
+组合布局由外壳一次性避让宿主输入区。两个公开 CSS 变量控制 WorldStory 的局部留白：
+
+| 变量 | 默认值与用途 |
+| --- | --- |
+| `--sr-story-reading-bottom-space` | 独立使用时默认 128px。已由外壳避让输入区的组合可设为 16px，保留小段阅读尾白。 |
+| `--sr-story-content-bottom-inset` | 默认跟随 `--sr-story-bottom-inset`。组合外壳已避让时设为 0px，正文局部控件不重复抬高；fixed 状态对话框仍按原舞台视口 inset 避让。 |
+
+行动组件使用公共主题变量，样式独立于 WorldStory。平台 frame 已加载 `@sillyrealms/sdk/action-suggestions.css`，世界卡不要导入 CSS 子路径；外部宿主集成时才需要自行加载该样式。官方组件自身没有外层 margin/padding，行动区高度、留白和滚动由组合决定。
+
+## 自定义行动视图
+
+作者组件可以直接读 Hook，然后选择调用现有 `session.setDraft(text)` 或 `session.send(text)`。以下视图显示「直接行动」，提交普通文本，不先填入草稿；若希望玩家先编辑，将调用改为 setDraft，并同步改按钮文案。
+
+```tsx
+import React from 'react';
+import {
+  useSRActionSuggestions, useSRSession, useSRStageSnapshot,
+} from '@sillyrealms/sdk';
+
+export default function DirectActions() {
+  const { items } = useSRActionSuggestions();
+  const session = useSRSession();
+  const snapshot = useSRStageSnapshot();
+  const busy = React.useRef(false);
+  const [pending, setPending] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const disabled = pending || !snapshot.connected ||
+    snapshot.sending || snapshot.activeRunId !== null;
+
+  async function choose(text: string) {
+    if (busy.current || disabled) return;
+    busy.current = true;
+    setPending(true);
+    setError('');
+    try {
+      await session.send(text);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '行动提交失败');
+    } finally {
+      busy.current = false;
+      setPending(false);
+    }
+  }
+
+  if (!items.length) return null;
+  return <section aria-label="行动建议">
+    {items.map((text, index) => (
+      <button key={index} type="button" disabled={disabled}
+        onClick={() => void choose(text)}>
+        直接行动：{text}
+      </button>
+    ))}
+    {error && <p role="alert">{error}</p>}
+  </section>;
+}
+```
+
+上层 Stage 仍按 items 条件挂载整个行动区。pending、错误和防双击锁属于视图局部状态，不进入建议 Hook。通用连接、运行和提交状态从现有快照读取；实际命令仍由 Host 检查，异步失败需要反馈。send 成功表示已受理，不表示模型完成，也不会覆盖或清空玩家现有草稿。不要在挂载 effect 中自动发送，或通过事件订阅另建建议缓存。
 
 ## 资源 Hook
 

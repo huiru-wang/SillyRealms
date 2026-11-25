@@ -3,15 +3,13 @@ import {useTranslation} from 'react-i18next';
 import {MessageContent} from '../message-content.js';
 import {useStoryConfiguration} from '../story-context.js';
 import {captureScrollAnchor, restoreScrollAnchor} from '../story-scroll.js';
-import type {StageRun, Suggestions} from '../stage-contract.js';
-import {useSRHistory, useSRSession, useSRStageSnapshot} from './context.js';
+import type {StageRun} from '../stage-contract.js';
+import {useSRHistory, useSRStageSnapshot} from './context.js';
 import {messageNotice, runNotice, streamNotice, stageErrorMessage} from './feedback.js';
 import {StatePanel} from './state-panel.js';
 import {MessageReasoning} from './message-reasoning.js';
 
-const StoryRun = React.memo(function StoryRun({run, suggestions, connected, onChoose}: {
-  run: StageRun; suggestions: Suggestions | null; connected: boolean; onChoose(text: string): void;
-}) {
+const StoryRun = React.memo(function StoryRun({run}: {run: StageRun}) {
   const {t} = useTranslation('stage');
   const {debug} = useStoryConfiguration(), notice = runNotice(run);
   return <>{run.messages.map(message => {
@@ -20,10 +18,6 @@ const StoryRun = React.memo(function StoryRun({run, suggestions, connected, onCh
       aria-label={t(message.role === 'user' ? 'story.myMessage' : 'story.storyMessage')}>
       {message.role === 'assistant' && <MessageReasoning message={message} status={run.status}/>}
       <div className="sr-story-content"><MessageContent message={message} runId={run.runId}/>{hint && <p className="sr-thinking" role="status">{t(hint)}</p>}</div>
-      {message.role === 'assistant' && suggestions?.messageId === message.id &&
-        <section className="sr-suggestions" aria-label={t('story.suggestions')}>{suggestions.items.map((item, index) =>
-          <button key={index} type="button" disabled={!connected} onClick={() => onChoose(item)}>{item}</button>
-        )}</section>}
       {message.role === 'assistant' && debug === true && message.output &&
         <details className="sr-thinking sr-processing"><summary>{t('story.processingResults')}</summary><pre>{JSON.stringify(message.output, null, 2)}</pre></details>}
     </article>;
@@ -34,8 +28,8 @@ const StoryRun = React.memo(function StoryRun({run, suggestions, connected, onCh
 export function WorldStory({showState = true}: {showState?: boolean} = {}) {
   const {t,i18n} = useTranslation('stage');
   const displayError = (value: string) => stageErrorMessage(value, key => t(key), key => i18n.exists(key, {ns: 'stage'}));
-  const snapshot = useSRStageSnapshot(), history = useSRHistory(), session = useSRSession();
-  const {runs, connected, suggestions} = snapshot;
+  const snapshot = useSRStageSnapshot(), history = useSRHistory();
+  const {runs} = snapshot;
   const continuityNotice = streamNotice(snapshot);
   const panelId = useId(), [actionError, setActionError] = useState('');
   const [stateOpen, setStateOpen] = useState(false), [docked, setDocked] = useState(false), [showLatest, setShowLatest] = useState(false);
@@ -73,10 +67,6 @@ export function WorldStory({showState = true}: {showState?: boolean} = {}) {
     if (dockedMode.current) dockedPreference.current = false;
     setStateOpen(false); focusStateTrigger();
   }, [rememberReading, focusStateTrigger]);
-  const chooseSuggestion = useCallback((text: string) => {
-    setActionError('');
-    void session.setDraft(text).catch(error => setActionError(error instanceof Error ? error.message : 'story.draftFailed'));
-  }, [session]);
 
   useLayoutEffect(() => {
     initialPositionPending.current = true; stickToEnd.current = true;
@@ -186,7 +176,7 @@ export function WorldStory({showState = true}: {showState?: boolean} = {}) {
         {actionError && <p className="sr-error" role="alert">{displayError(actionError)}</p>}
         {history.loading && !runs.length && <p className="sr-thinking" role="status">{t('story.reading')}</p>}
         {!history.loading && !history.error && !runs.length && <p className="sr-thinking">{t('story.empty')}</p>}
-        {runs.map(run => <StoryRun key={run.runId} run={run} suggestions={suggestions?.runId === run.runId ? suggestions : null} connected={connected} onChoose={chooseSuggestion}/>)}
+        {runs.map(run => <StoryRun key={run.runId} run={run}/>)}
         {continuityNotice && <p className="sr-thinking" role="status">{t(continuityNotice)}</p>}
       </div>
       {showLatest && <div className="sr-story-latest"><button className="sr-more" type="button" onClick={latest}

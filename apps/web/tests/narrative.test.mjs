@@ -187,3 +187,19 @@ test('reconnect to a new execution of the same round drops old transient output 
  assert.deepEqual(client.getSnapshot().drafts,[]);assert.equal(client.getSnapshot().run.assistantEntryId,'new-a');
  assert.equal(client.getSnapshot().incomplete,true);assert.equal(client.getSnapshot().usage,undefined);
 });
+
+
+test('a late HTTP receipt for a completed execution cannot replace a newer accepted execution',async()=>{
+ const post=deferred(),receipts=[];
+ const client=createNarrativeController({sessionId:'s',getSession:async()=>({tipEntryId:null}),
+  request:()=>post.promise,onAccepted:value=>receipts.push(value.assistantEntryId)});
+ const sending=client.send('Input');await nextTurn();
+ client.accept(created());client.accept(completed());
+ client.accept(created('next'));client.accept(delta('New answer',{},'next'));
+ post.resolve(accepted());await sending;
+ assert.equal(client.getSnapshot().run.runId,'next');
+ assert.equal(client.getSnapshot().activeRunId,'next');
+ assert.deepEqual(client.getSnapshot().drafts.map(message=>message.id),['next-u','next-a']);
+ assert.deepEqual(receipts,['r-a','next-a']);
+ client.dispose();
+});

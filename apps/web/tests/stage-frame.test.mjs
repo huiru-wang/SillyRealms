@@ -33,6 +33,26 @@ test('frame events preserve native names without reducing or declaring unsaved m
   assert.equal(runtime.getSnapshot().runs[0].messages[0].saved, true);
 });
 
+test('action data is a frozen Host mirror; raw suggestion events and reset do not infer history', () => {
+  const runtime = new StageRuntime(async () => {});
+  assert.deepEqual(runtime.getSnapshot().suggestions, {items: []});
+  assert.equal(Object.isFrozen(runtime.getSnapshot().suggestions.items), true);
+  const source = {...snapshot(), suggestions: {items: ['Inspect the door']}};
+  runtime.acceptSnapshot(source);
+  source.suggestions.items[0] = 'external mutation';
+  assert.deepEqual(runtime.getSnapshot().suggestions, {items: ['Inspect the door']});
+  assert.throws(() => runtime.getSnapshot().suggestions.items.push('author mutation'), TypeError);
+  const before = runtime.getSnapshot(); let observed;
+  runtime.session.subscribe(event => { observed = event; });
+  runtime.acceptEvent({event: 'action_suggestions.created', data: {
+    sessionId: 'session', runId: 'run', messageId: 'assistant', items: ['Raw event only'],
+  }});
+  assert.equal(observed.data.messageId, 'assistant');
+  assert.equal(runtime.getSnapshot(), before);
+  runtime.reset();
+  assert.deepEqual(runtime.getSnapshot().suggestions, {items: []});
+});
+
 test('state commands read the Host and successful writes never optimistically change the display mirror', async () => {
   const requests = [];
   const runtime = new StageRuntime(async (method, input) => {
