@@ -15,7 +15,7 @@ export function layoutSprites(items: readonly CharacterSpriteItem[], width: numb
   if (!width || height < 220 || !items.length) return [];
   if (width < 1040) {
     const item = items[0];
-    return [{item, side: item.position.endsWith('left') ? 'left' : 'right'}];
+    return [{item, side: 'right'}];
   }
   const slots = new Map(items.map(item => [item.position, item]));
   const middle = [slots.get('center'), slots.get('truecenter'), slots.get('top')].filter((v): v is CharacterSpriteItem => !!v);

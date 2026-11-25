@@ -129,8 +129,14 @@
 .sr-story .sr-error button { color: inherit; border: 0; background: transparent; text-decoration: underline; text-underline-offset: 3px; font: inherit; padding: 8px; cursor: pointer; }
 .sr-story .sr-story-empty { margin-top: 24px; text-align: center; }
 .sr-story .sr-story-latest { position: absolute; bottom: calc(16px + var(--_story-bottom-inset)); inset-inline: 16px; display: flex; justify-content: center; pointer-events: none; }
-.sr-story .sr-story-latest .sr-more { pointer-events: auto; min-height: 40px; padding: 9px 15px; color: var(--_story-text); background: var(--_story-surface); border-color: var(--_story-line); border-radius: 999px; box-shadow: 0 4px 20px #00000012; }
-.sr-story .sr-story-latest span { margin-inline-start: 6px; color: var(--_story-muted); }
+.sr-story .sr-story-latest .sr-more {
+  box-sizing: border-box; display: grid; place-items: center; pointer-events: auto;
+  width: var(--touch-target, 32px); height: var(--touch-target, 32px); min-height: var(--touch-target, 32px); padding: 0;
+  color: var(--_story-text); background: color-mix(in srgb, var(--_story-surface) 40%, transparent);
+  border-color: color-mix(in srgb, var(--_story-line) 45%, transparent); border-radius: 50%;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--shadow-color, var(--_story-line)) 18%, transparent);
+}
+.sr-story .sr-story-latest .sr-more:active { background: color-mix(in srgb, var(--_story-surface) 75%, transparent); }
 .sr-story .sr-story-content > .sr-thinking { margin: 0; }
 .sr-story .sr-suggestions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; box-sizing: border-box; width: 100%; margin: 16px 0 0; }
 .sr-story .sr-reasoning { margin: 0 0 12px; min-width: 0; }
@@ -202,6 +208,9 @@
   .sr-story .sr-more:not(:disabled):hover,
   .sr-story .sr-state-heading button:hover,
   .sr-story .sr-state-error button:hover { color: var(--_story-text); background: color-mix(in srgb, var(--_story-accent) 8%, transparent); }
+  .sr-story .sr-story-latest .sr-more:not(:disabled):not(:active):hover {
+    background: color-mix(in srgb, var(--_story-surface) 65%, transparent);
+  }
   .sr-story .sr-suggestions button:not(:disabled):not(:active):hover {
     border-color: color-mix(in srgb, var(--_story-line) 55%, transparent);
     background: color-mix(in srgb, var(--_story-accent) 3%, var(--_story-surface));

@@ -113,12 +113,12 @@ test('select stable figures by actual stage dimensions and semantic positions',(
   const selected=(items,w,h)=>layoutSprites(items,w,h).map(({side,item})=>[side,item.position]);
   assert.deepEqual(selected(crowd,1280,700),[['left','left'],['right','right']]);
   assert.deepEqual(selected(crowd,375,600),[['right','top']]);
-  assert.deepEqual(selected([sprite('topleft')],320,500),[['left','topleft']]);
+  assert.deepEqual(selected([sprite('topleft')],320,500),[['right','topleft']]);
   assert.deepEqual(selected([sprite('center'),sprite('top')],1280,700),[['left','top'],['right','center']]);
   assert.deepEqual(selected(crowd,820,210),[]);
 });
 
-test('the author group wraps above the left toggle only when its centered width would collide',()=>{
+test('the author group wraps above the right toggle only when its centered width would collide',()=>{
   assert.equal(stackComposerActions(320,70,[],4),false);
   assert.equal(stackComposerActions(320,70,[70,98],4),false);
   assert.equal(stackComposerActions(320,70,[70,99],4),true);

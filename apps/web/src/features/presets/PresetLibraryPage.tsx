@@ -10,7 +10,7 @@ import { samplingFields } from './sampling';
 import {PageHeader} from '../../components/ui/PageHeader';
 import {Switch} from '../../components/ui/Switch';
 import {Select} from '../../components/ui/Select';
-import {Input,Textarea} from '../../components/ui/Field';
+import {Badge,Input,Textarea} from '../../components/ui/Field';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -26,7 +26,7 @@ import styles from './Presets.module.css';
 
 // Primary: node order and prompt content. Save remains the single primary action.
 // Reuse Presets.module.css spacing, typography and Web theme tokens.
-type Dialog = { kind: 'reloadPreset' } | { kind: 'summary' } | { kind: 'node'; node: PresetNode; isNew: boolean; insertAt?: number } | { kind: 'deletePreset' } | { kind: 'deleteNode'; node: PresetNode };
+type Dialog = { kind: 'createPreset' } | { kind: 'reloadPreset' } | { kind: 'summary' } | { kind: 'node'; node: PresetNode; isNew: boolean; insertAt?: number } | { kind: 'deletePreset' } | { kind: 'deleteNode'; node: PresetNode };
 type DropTarget = { id: string; after: boolean };
 type Drag = { id: string; pointerId: number; startY: number; x: number; y: number; active: boolean; target: DropTarget | null; frame: number; handle: HTMLButtonElement; dispose: () => void };
 
@@ -51,16 +51,15 @@ export function PresetLibraryPage() {
   const store = usePresetStore();
   const { draftById, isDirty, editPreset, savePreset, revertPreset, createPreset, duplicatePreset, deletePreset, setDefaultPreset, getDefaultPrompt } = store;
   const { presetId } = useParams<{ presetId?: string }>();
-  const [listType,setListType]=useState<PresetType>('narrative');
-  const type = (presetId && draftById[presetId]?.type) || listType;
-  const reply = type === 'reply_assist';
-  const presets = reply ? store.replyPresets : store.presets;
-  const defaultPresetId = reply ? store.replyDefaultId : store.defaultPresetId;
-  const catalog = reply ? store.replyCatalog : store;
+  const presets = [...store.presets, ...store.replyPresets].sort((a,b)=>b.updatedAt-a.updatedAt || a.id.localeCompare(b.id));
+  const loading = store.loading || store.replyCatalog.loading;
   const {modelsRevision}=useManagement();
   const models=usePagedResource<ModelConfig>('v1/api-model-configs?limit=100',modelsRevision,true);
-  const selectedId = presetId ?? defaultPresetId ?? presets[0]?.id;
+  const selectedId = presetId ?? store.defaultPresetId ?? store.replyDefaultId ?? presets[0]?.id;
   const preset = selectedId && Object.hasOwn(draftById, selectedId) ? draftById[selectedId] : undefined;
+  const type = preset?.type ?? presets.find(item=>item.id===selectedId)?.type ?? 'narrative';
+  const reply = type === 'reply_assist';
+  const defaultPresetId = reply ? store.replyDefaultId : store.defaultPresetId;
   useEffect(()=>{if(selectedId)void store.loadDetail(selectedId);},[selectedId,store.loadDetail]);
   const navigate = useNavigate();
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -169,7 +168,8 @@ export function PresetLibraryPage() {
     await perform(async()=>{await savePreset(preset.id);setError('');setStatus({key:'presetSaved'});});
   }
   function select(id:string){navigate('/presets/'+encodeURIComponent(id));}
-  function create(){void perform(async()=>{const id=await createPreset(type);select(id);requestAnimationFrame(()=>nameRef.current?.select());});}
+  function create(){setError('');setDialog({kind:'createPreset'});}
+  function createForType(type:PresetType){void perform(async()=>{const id=await createPreset(type);setDialog(null);select(id);requestAnimationFrame(()=>nameRef.current?.select());});}
   function changeNode(id: string, transform: (node: PresetNode) => PresetNode) {
     if (preset) editPreset(preset.id, current => ({ ...current, nodes: current.nodes.map(node => node.id === id ? transform(node) : node) }));
   }
@@ -342,20 +342,22 @@ export function PresetLibraryPage() {
 
     <div className={styles.workspace}>
       <section className={styles.library} aria-label={t('presetLibrary')}>
-      <Select aria-label={t('sessions:presetType')} value={type} onChange={event=>{setListType(event.target.value as PresetType);navigate('/presets');}}>
-        <option value="narrative">{t('sessions:narrativePreset')}</option><option value="reply_assist">{t('sessions:assistPreset')}</option>
-      </Select>
-        {catalog.loading&&<p role="status">{t('loadingPresets')}</p>}{catalog.error&&<p role="alert">{errorMessage(catalog.error)}<button onClick={()=>void catalog.reload()}>{t('retry')}</button></p>}
+        {loading&&<p role="status">{t('loadingPresets')}</p>}
+        {store.error&&<p role="alert">{t('sessions:narrativePreset')}: {errorMessage(store.error)}<Button size="compact" onClick={()=>store.reload()}>{t('retry')}</Button></p>}
+        {store.replyCatalog.error&&<p role="alert">{t('sessions:assistPreset')}: {errorMessage(store.replyCatalog.error)}<Button size="compact" onClick={()=>store.replyCatalog.reload()}>{t('retry')}</Button></p>}
         <div className={styles.presetList} data-preset-list tabIndex={0} aria-label={t('presetList')}>
           {presets.map(item => <button key={item.id} type="button" className={styles.presetItem}
             data-preset-item={item.id} aria-pressed={item.id === selectedId} onClick={() => select(item.id)}>
             <span className={styles.itemHeading}><strong data-preset-title title={item.name}>{item.name || t('untitledPreset')}</strong>
               {isDirty(item.id) && <span className={styles.dirtyDot} title={t('unsaved')} aria-label={t('unsaved')} />}
-              {item.id === defaultPresetId && <span className={styles.defaultState}>{t('default')}</span>}
+              {item.id === (item.type === 'reply_assist' ? store.replyDefaultId : store.defaultPresetId) && <span className={styles.defaultState}>{t('default')}</span>}
             </span>
-            <span data-preset-description className={styles.itemDescription} title={item.description || undefined}>{item.description || t('noDescription')}</span>
+            <span className={styles.itemMeta}>
+              <span data-preset-description className={styles.itemDescription} title={item.description || undefined}>{item.description || t('noDescription')}</span>
+              <span className={styles.itemType}><Badge>{t(item.type === 'reply_assist' ? 'sessions:assistPreset' : 'sessions:narrativePreset')}</Badge></span>
+            </span>
           </button>)}
-          {!presets.length && <div className={styles.emptyList}><Layers3 size={24} /><p>{t('noPresetsYet')}</p>
+          {!loading && !store.error && !store.replyCatalog.error && !presets.length && <div className={styles.emptyList}><Layers3 size={24} /><p>{t('noPresetsYet')}</p>
             <Button size="compact" variant="ghost" onClick={create}>{t('createYourFirstPreset')}</Button>
           </div>}
         </div>
@@ -458,6 +460,14 @@ export function PresetLibraryPage() {
     <div className={styles.srOnly} role="status" aria-live="polite">{statusText}</div>
     {status && <div className={styles.toast} aria-hidden="true"><Check size={14} />{statusText}</div>}
 
+    {dialog?.kind === 'createPreset' && <Modal title={t('newPreset')} onClose={()=>setDialog(null)} onBeforeClose={()=>!store.busy}
+      footer={<Button disabled={store.busy} onClick={()=>setDialog(null)}>{t('cancel')}</Button>}>
+      {error&&<p className={styles.formError} role="alert">{errorMessage(error)}</p>}
+      <div className={styles.presetTypeChoices} role="group" aria-label={t('sessions:presetType')}>
+        <Button disabled={store.busy} onClick={()=>createForType('narrative')}>{t('sessions:narrativePreset')}</Button>
+        <Button disabled={store.busy} onClick={()=>createForType('reply_assist')}>{t('sessions:assistPreset')}</Button>
+      </div>
+    </Modal>}
     {preset && dialog && (dialog.kind === 'summary' || dialog.kind === 'node') && <PromptEditorDialog
       replyAssist={reply}
       key={dialog.kind === 'node' ? dialog.node.id : dialog.kind}

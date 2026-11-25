@@ -189,7 +189,13 @@ export function WorldStory({showState = true}: {showState?: boolean} = {}) {
         {runs.map(run => <StoryRun key={run.runId} run={run} suggestions={suggestions?.runId === run.runId ? suggestions : null} connected={connected} onChoose={chooseSuggestion}/>)}
         {continuityNotice && <p className="sr-thinking" role="status">{t(continuityNotice)}</p>}
       </div>
-      {showLatest && <div className="sr-story-latest"><button className="sr-more" type="button" onClick={latest}>{t('story.latest')} <span aria-hidden="true">↓</span></button></div>}
+      {showLatest && <div className="sr-story-latest"><button className="sr-more" type="button" onClick={latest}
+        aria-label={t('story.latest')} title={t('story.latest')}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+          strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+          <path d="M12 5v14m-6-6 6 6 6-6"/>
+        </svg>
+      </button></div>}
     </div>
     {showState && stateOpen && <StatePanel id={panelId} overlay={!docked} close={closeState} restoreFocus={focusStateTrigger}/>}
   </div>;

@@ -31,12 +31,12 @@
 /* Sending is primary. Author shortcuts share the secondary compact button and theme states. */
 .actionRow{width:100%;max-width:var(--composer-width);margin:0 auto var(--space-2);display:grid;align-items:center;row-gap:var(--control-gap)}
 .actionRow>.spriteToggle,.actionRow>.composerButtons{grid-area:1/1}
-.actionRow>.spriteToggle{justify-self:start;z-index:1}
+.actionRow>.spriteToggle{justify-self:end;z-index:1}
 .actionRow[data-has-toggle=true][data-stacked=true]>.spriteToggle{grid-row:2}
 .spriteToggle:global(.sr-button){border-radius:var(--control-compact-height);pointer-events:auto}
 .spriteToggle[aria-pressed=true]{--button-bg:var(--selection-bg);--button-fg:var(--selection-fg);--button-border:var(--selection-border)}
 .collapsedActions{position:relative;max-width:var(--composer-width);margin-inline:auto}
-.collapsedActions>.spriteToggle{position:absolute;left:0}
+.collapsedActions>.spriteToggle{position:absolute;right:0}
 .composerButtons{display:flex;flex-wrap:wrap;justify-content:center;gap:var(--control-gap);width:100%;min-width:0}
 .composerButtons>button{flex:0 0 auto;max-width:min(100%,16em);height:var(--control-compact-height);border-radius:var(--control-compact-height);pointer-events:auto}
 .composerButtons :global(.sr-button-label){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

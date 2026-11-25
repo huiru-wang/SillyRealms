@@ -31,7 +31,7 @@
 
 ## 会话运行与 Stage SDK
 
-- 悬浮立绘由 workspace 与 character-sprites 管理，SessionPage 持有官方左侧胶囊和人物层。沿真实 tip 的父链恢复成功或部分成功的消息快照，成功空数组清场；删除和重新生成按 messageId 隔离。被动历史读取独立于阅读分页。能力、会话显示偏好与消息画面分别处理，WorldStory 保持纯阅读。
+- 悬浮立绘由 workspace 与 character-sprites 管理，SessionPage 持有官方右侧胶囊和人物层；紧凑宽度的单人浮层默认靠右，宽屏仍保留左右槽位。沿真实 tip 的父链恢复成功或部分成功的消息快照，成功空数组清场；删除和重新生成按 messageId 隔离。被动历史读取独立于阅读分页。能力、会话显示偏好与消息画面分别处理，WorldStory 保持纯阅读。
 
 - Server 是唯一业务契约：提交 input.text + expectedTipEntryId，返回 runId/userEntryId/assistantEntryId、真实 tipEntryId、deletedMessageIds 与已保存的 userMessage；HTTP 成功即展示用户消息，run.created 按消息 ID 确认或补偿，保留更晚的运行状态和助手输出。叙事路径 /sessions/:id/narrative，状态路径 /state/global|session|message。不恢复旧路径或伪造请求去重、能力开关和旧运行状态。用量面板复用 V1 UI 和粒度，只读取 Server 已记录用量及 latestContext；系统/摘要/历史组成按实际编译字节和约定消息开销计算，不冒充逐类计费 Token。模型配置变化后刷新 usage，未知数据保留未知。
 - history 只维护已保存 entries 与分页；narrative 只维护活跃运行和临时输出；workspace 组合展示投影。run.delta.snapshot 整体替换临时消息，只有查询确认的 entries 才接管为保存消息。compaction 不渲染为气泡，但其 seq 与真实 tip 必须保留。
