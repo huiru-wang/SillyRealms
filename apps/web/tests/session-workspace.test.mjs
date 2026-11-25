@@ -27,6 +27,7 @@ function setup(initialActive=false){
  const request=async(path,init={})=>{
   calls.push({path,init});
   if(server.onRequest){const special=server.onRequest(path,init);if(special!==undefined)return special;}
+  if(path==='v1/worlds/w/character-sprites')return {worldId:'w',items:[]};
   if(path.startsWith('v1/state/global/'))return {item:{weather:'sun'}};
   if(path.startsWith('v1/state/session/'))return {item:{visited:true}};
   if(path.startsWith('v1/state/message/'))return {item:[{key:'coins',value:server.coins}]};
@@ -39,8 +40,12 @@ function setup(initialActive=false){
  };
  const workspace=createSessionWorkspace('s',{
   request,channel,
-  readSession:async()=>server.onSession?server.onSession():({id:'s',worldId:'w',worldName:'World',cover:null,userCharacterId:'player',presetId:'preset',apiModelConfigId:'model',title:'Session',tipEntryId:server.tip,updatedAt:1}),
-  readRuntimeConfig:async()=>({stage:{origin:'http://stage.test',entryPath:'/frame.html'},debug:false}),
+  readSession:async()=>server.onSession?server.onSession():({id:'s',worldId:'w',worldName:'World',cover:null,userCharacterId:'player',runtimeConfig:{narrativePresetId:'preset',apiModelConfigId:'model',replyAssistPresetId:null,replyAssistGoal:'',fontSize:16},title:'Session',tipEntryId:server.tip,updatedAt:1}),
+  readRuntimeConfig:async id=>{
+   assert.equal(id,'s');
+   const available=await (server.onRuntimeConfig?.()??true);
+   return {stage:{origin:'http://stage.test',entryPath:'/frame.html'},debug:false,capabilities:{characterSprite:{available}}};
+  },
   loadStageWorld:async()=>({world:{id:'w'},modules:{},main:null,rules:[],state:{},assetBaseUrl:null}),
  });
  return {workspace,server,channel,calls};
@@ -55,6 +60,37 @@ test('composition initially restores the active run and persisted user without i
  assert.equal(calls.some(call=>call.init.method==='POST'),false);
  workspace.dispose();assert.equal(channel.closed,true);
  assert.equal(calls.some(call=>call.path.endsWith('/stop')),false);
+});
+test('preset changes refresh sprite availability without restarting the stage or accepting an older response',async t=>{
+ const {workspace,server}=setup();t.after(()=>workspace.dispose());await workspace.start();
+ const {config,session,capabilities}=workspace.getSnapshot();
+ assert.equal(capabilities.characterSprite.available,true);
+ const older=deferred();server.onRuntimeConfig=()=>older.promise;
+ workspace.updateSession({...session,runtimeConfig:{...session.runtimeConfig,narrativePresetId:'older'}});
+ assert.equal(workspace.getSnapshot().capabilities,null);
+ server.onRuntimeConfig=()=>false;
+ workspace.updateSession({...session,runtimeConfig:{...session.runtimeConfig,narrativePresetId:'newer'}});
+ await nextTurn();older.resolve(true);await nextTurn();
+ const latest=workspace.getSnapshot();
+ assert.equal(latest.capabilities.characterSprite.available,false);
+ assert.equal(latest.config,config);
+});
+test('sprite projection survives missing output and reconnect replaces a deleted source with a durable clear',async t=>{
+ const {workspace,server,channel}=setup();t.after(()=>workspace.dispose());
+ const items=[{characterId:'keeper',spriteId:'coat',position:'right'}];
+ const opening=server.runs[0].entries[0];
+ opening.extData.output={characterSprite:{status:'success',items}};
+ server.runs.push(run('r',[{...entry('a',2,'r'),parentId:opening.id}]));server.tip='a';
+ await workspace.start();
+ assert.deepEqual(workspace.getSnapshot().sprites.frame,{messageId:opening.id,items});
+ const notify=id=>channel.emit({event:'character_sprite.changed',data:{sessionId:'s',messageId:id,runId:'r',items}});
+ workspace.setSpritesEnabled(false);
+ notify('old');
+ assert.equal(workspace.getSnapshot().sprites.frame.messageId,'old');
+ const cleared={...entry('new',2,'r'),parentId:opening.id,extData:{output:{characterSprite:{status:'success',items:[]}}}};
+ channel.disconnect();server.runs[1]=run('r',[cleared]);server.tip='new';channel.connect();await nextTurn();
+ workspace.setSpritesEnabled(true);await nextTurn();
+ assert.deepEqual(workspace.getSnapshot().sprites.frame,{messageId:'new',items:[]});
 });
 test('terminal composition uses the true compaction tip and rereads state after settlement',async()=>{
  const {workspace,server,channel,calls}=setup(true);await workspace.start();calls.length=0;
@@ -138,10 +174,10 @@ test('changing the model refreshes usage while other session settings keep the c
  const {workspace}=setup();t.after(()=>workspace.dispose());await workspace.start();
  const initial=workspace.getSnapshot(),revisions=[];
  const unsubscribe=workspace.subscribe(()=>revisions.push(workspace.getSnapshot().usageRevision));t.after(unsubscribe);
- workspace.updateSession({...initial.session,title:'Renamed session',presetId:'another-preset'});
+ workspace.updateSession({...initial.session,title:'Renamed session',runtimeConfig:{...initial.session.runtimeConfig,narrativePresetId:'another-preset'}});
  assert.equal(workspace.getSnapshot().usageRevision,initial.usageRevision);
- workspace.updateSession({...workspace.getSnapshot().session,apiModelConfigId:'another-model'});
- assert.equal(workspace.getSnapshot().session.apiModelConfigId,'another-model');
+ workspace.updateSession({...workspace.getSnapshot().session,runtimeConfig:{...workspace.getSnapshot().session.runtimeConfig,apiModelConfigId:'another-model'}});
+ assert.equal(workspace.getSnapshot().session.runtimeConfig.apiModelConfigId,'another-model');
  assert.equal(workspace.getSnapshot().usageRevision,initial.usageRevision+1);
  workspace.updateSession({...workspace.getSnapshot().session,title:'Another title'});
  assert.deepEqual(revisions,[initial.usageRevision,initial.usageRevision+1,initial.usageRevision+1]);
@@ -175,4 +211,12 @@ test('reconnect replaces a deleted assistant even when lastSeq shrank and the re
  assert.deepEqual(workspace.getSnapshot().stage.runs.at(-1).messages.map(message=>message.id),['r-u']);
  assert.equal(workspace.getSnapshot().stage.activeRunId,null);assert.equal(workspace.getSnapshot().session.tipEntryId,'r-u');
  workspace.dispose();
+});
+
+test('reply-assist events reach the host without being forwarded to stage subscribers',async t=>{
+ const {workspace,channel}=setup();t.after(()=>workspace.dispose());await workspace.start();
+ const host=[],stage=[];
+ workspace.subscribeReplyAssist(event=>host.push(event));workspace.subscribeEvents(event=>stage.push(event));
+ channel.emit({event:'reply_assist.delta',data:{sessionId:'s',requestId:'q',delta:{content:'private draft'}}});
+ assert.equal(host.length,1);assert.deepEqual(stage,[]);
 });

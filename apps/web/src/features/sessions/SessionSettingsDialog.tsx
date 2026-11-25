@@ -8,6 +8,8 @@ import {X} from 'lucide-react';
 
 type Option={id:string;name:string;modelId?:string};
 type Props={
+  replyPreset:string|null;replyPresets:Option[];onReplyPresetChange:(value:string|null)=>void;
+  goal:string;onGoalChange:(value:string)=>void;
   title:string;preset:string;model:string;
   presets:Option[];models:Option[];
   fontSize:number;saving:boolean;error:string;disabled:boolean;canSave:boolean;
@@ -32,15 +34,22 @@ export function SessionSettingsDialog(props:Props){
     </header>
     <div className="host-settings-fields">
       <label>{i18n.t("sessions:title")}<Input value={props.title} onChange={event=>props.onTitleChange(event.target.value)} maxLength={120} disabled={props.disabled}/></label>
-      <label>{i18n.t("common:presets")}<Select aria-label={i18n.t("common:presets")} value={props.preset} onChange={event=>props.onPresetChange(event.target.value)} disabled={props.disabled}><option value="">{i18n.t("sessions:selectPreset")}</option>{props.presets.map(item=><option value={item.id} key={item.id}>{item.name}</option>)}</Select></label>
+      <label>{i18n.t("sessions:narrativePreset")}<Select aria-label={i18n.t("sessions:narrativePreset")} value={props.preset} onChange={event=>props.onPresetChange(event.target.value)} disabled={props.disabled}><option value="">{i18n.t("sessions:selectPreset")}</option>{props.presets.map(item=><option value={item.id} key={item.id}>{item.name}</option>)}</Select></label>
       <label>{i18n.t("sessions:apiModel")}<Select aria-label={i18n.t("sessions:apiModel")} value={props.model} onChange={event=>props.onModelChange(event.target.value)} disabled={props.disabled}><option value="">{i18n.t("sessions:selectModel")}</option>{props.models.map(item=><option value={item.id} key={item.id}>{item.name}{item.modelId?' · '+item.modelId:''}</option>)}</Select></label>
+      <label>{i18n.t("sessions:assistPreset")}
+        <Select aria-label={i18n.t("sessions:assistPreset")} value={props.replyPreset??''} disabled={props.disabled} onChange={event=>props.onReplyPresetChange(event.target.value||null)}>
+          <option value="">{i18n.t("sessions:followAppDefault")}</option>
+          {props.replyPresets.map(item=><option value={item.id} key={item.id}>{item.name}</option>)}
+        </Select>
+      </label>
+      <label>{i18n.t("sessions:assistGoal")}<Textarea value={props.goal} maxLength={2000} disabled={props.disabled} onChange={event=>props.onGoalChange(event.target.value)}/></label>
     </div>
     <section className="host-reading-settings" aria-labelledby="host-reading-title">
       <div className="host-reading-heading">
         <div><strong id="host-reading-title">{i18n.t("sessions:fontSize")}</strong><small>{i18n.t("sessions:fontSizeHint")}</small></div>
         <output htmlFor="host-reading-font-size">{props.fontSize}px</output>
       </div>
-      <input id="host-reading-font-size" className="host-reading-slider" type="range" min={13} max={21} step={1}
+      <input id="host-reading-font-size" className="host-reading-slider" type="range" disabled={props.disabled} min={13} max={21} step={1}
         value={props.fontSize} onChange={event=>props.onFontSizeChange(Number(event.target.value))}
         aria-valuetext={props.fontSize+" " + i18n.t("sessions:pixels")}/>
       <div className="host-reading-range"><span>{i18n.t("sessions:fontSmaller")}</span><span>{i18n.t("sessions:fontLarger")}</span></div>

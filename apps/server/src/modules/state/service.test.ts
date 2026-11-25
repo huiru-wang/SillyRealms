@@ -23,7 +23,7 @@ beforeEach(() => {
   sessions = services.sessions;
   state = services.state;
   for (const id of ['one', 'two']) sessions.create({
-    id, worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player', state: { reputation: 0 },
+    id, worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player', state: { reputation: 0 },
   });
 });
 afterEach(() => { vi.restoreAllMocks(); db.close(); rmSync(dataRoot, { recursive: true, force: true }); });

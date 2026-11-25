@@ -24,7 +24,7 @@ let events: EventHub;
 let access: SessionAccessCheck | undefined;
 let usecases: ReturnType<typeof createUsecases>;
 const sessionInput = (id: string) => ({
-  id, worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player',
+  id, worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player',
 });
 const entryInput = (id: string) => ({ id, runId: 'run', type: 'message', role: 'assistant', payload: { text: id } });
 
@@ -83,6 +83,35 @@ async function failure(response: Response, code: string, status: number) {
 }
 
 describe('session HTTP operations', () => {
+  it('reports the active preset and world sprite capability only for an accessible session', async () => {
+    app = createApp({ events, services, usecases, canAccessSession: id => id === 'one' });
+    const path = '/runtime/config';
+    const response = await request('GET', path);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    const deployment = await data<object>(response);
+    expect(Object.keys(deployment).sort()).toEqual(['debug', 'stage']);
+    const check = async (available: boolean) => {
+      const scoped = await request('GET', path + '?sessionId=one');
+      expect(scoped.headers.get('cache-control')).toBe('no-store');
+      expect(await data(scoped)).toEqual({ ...deployment, capabilities: { characterSprite: { available } } });
+    };
+    await check(false);
+    services.worlds.update('world', { characters: [
+      { id: 'player', name: 'Player', player_selectable: true },
+      { id: 'keeper', name: 'Keeper', sprites: [{ id: 'default', description: 'At rest', asset: 'https://example.test/keeper.png' }] },
+    ] });
+    await check(true);
+    const { config } = narrativePreset();
+    services.presets.update('preset', { config: { ...config, nodes: config.nodes.map(node =>
+      node.id === 'characterSprite' ? { ...node, enabled: false } : node) } });
+    await check(false);
+    services.presets.update('preset', { config: { ...config, nodes: config.nodes.filter(node => node.id !== 'characterSprite') } });
+    await check(false);
+    for (const id of ['blocked', 'missing', '']) {
+      await failure(await request('GET', path + '?sessionId=' + id), 'SESSION_NOT_FOUND', 404);
+    }
+  });
+
   it('serves authorized SSE HEAD requests without allocating a stream or subscription', async () => {
     const originalSubscribe = events.subscribe.bind(events);
     const cleanup = vi.fn();
@@ -115,18 +144,42 @@ describe('session HTTP operations', () => {
     const created = await data<{ item: SessionView; entry: SessionEntry }>(await request('POST', '/sessions', { ...sessionInput('new'), openingId: 'start', title: 'Start' }), 201);
     expect(created.item).toMatchObject({ id: 'new', worldId: 'world', title: 'Start', tipEntryId: created.entry.id, worldName: 'World', cover: null });
     const { item: detail } = await data<{ item: SessionView }>(await request('GET', '/sessions/new'));
-    expect(detail).toMatchObject({ id: 'new', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' });
+    expect(detail).toMatchObject({ id: 'new', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player' });
     expect(detail).not.toHaveProperty('item');
     expect(Object.keys(detail).some(key => key.includes('_'))).toBe(false);
     services.presets.create({ ...narrativePreset('Other'), id: 'other-preset' });
     services.models.create({ id: 'other-model', name: 'Other', providerId: 'provider', modelId: 'other', credentialRef: 'ref' });
     const updated = await data<{ item: SessionView }>(await request('PATCH', '/sessions/new', {
-      title: 'Renamed', presetId: 'other-preset', apiModelConfigId: 'other-model',
+      title: 'Renamed', runtimeConfig: { narrativePresetId: 'other-preset', apiModelConfigId: 'other-model' },
     }));
-    expect(updated.item).toMatchObject({ title: 'Renamed', presetId: 'other-preset', apiModelConfigId: 'other-model' });
+    expect(updated.item).toMatchObject({ title: 'Renamed', runtimeConfig: { narrativePresetId: 'other-preset', apiModelConfigId: 'other-model' } });
     await failure(await request('PATCH', '/sessions/new', { preset_id: 'preset' }), 'INVALID_REQUEST', 400);
     expect(await data(await request('DELETE', '/sessions/new'))).toEqual({ id: 'new' });
     await failure(await request('GET', '/sessions/new'), 'SESSION_NOT_FOUND', 404);
+  });
+
+  it('creates with a reply preset and merges later configuration edits without losing other fields', async () => {
+    const reply = services.presets.create(services.presets.getDefault('reply_assist'));
+    const input = sessionInput('configured');
+    const runtimeConfig = { ...input.runtimeConfig, replyAssistPresetId: reply.id, replyAssistGoal: 'Explore' };
+    const { item } = await data<{ item: SessionView }>(await request('POST', '/sessions', {
+      ...input, openingId: 'start', runtimeConfig,
+    }), 201);
+    expect(item.runtimeConfig).toEqual({ ...runtimeConfig, fontSize: 16 });
+    await failure(await request('PATCH', '/sessions/configured', { runtimeConfig: { fontSize: 22, replyAssistGoal: 'invalid' } }), 'INVALID_REQUEST', 400);
+    await failure(await request('PATCH', '/sessions/configured', { presetId: 'preset' }), 'INVALID_REQUEST', 400);
+    const changed = await data<{ item: SessionView }>(await request('PATCH', '/sessions/configured', { runtimeConfig: { fontSize: 19 } }));
+    expect(changed.item.runtimeConfig).toEqual({ ...runtimeConfig, fontSize: 19 });
+    const saved = await data<{ item: SessionView }>(await request('GET', '/sessions/configured'));
+    expect(saved.item.runtimeConfig).toEqual(changed.item.runtimeConfig);
+    const row = db.prepare('SELECT runtime_config FROM sessions WHERE id=?').get(item.id);
+    expect(JSON.parse(String(row?.runtime_config))).toEqual({
+      narrative_preset_id: 'preset', api_model_config_id: 'model', reply_assist_preset_id: reply.id,
+      replay_assist_goal: 'Explore', font_size: 19,
+    });
+    await failure(await request('POST', '/sessions', { ...input, id: 'bad-config', openingId: 'start',
+      runtimeConfig: { ...runtimeConfig, replyAssistPresetId: 'preset' } }), 'PRESET_TYPE_MISMATCH', 400);
+    expect(services.sessions.get('bad-config')).toBeNull();
   });
 
   it('filters by worldId and advances a scoped cursor across tied timestamps', async () => {
@@ -203,7 +256,7 @@ describe('session HTTP operations', () => {
 
   it('rejects invalid JSON, missing fields and references through the normal error envelope', async () => {
     await failure(await request('POST', '/sessions', {}), 'INVALID_REQUEST', 400);
-    await failure(await request('POST', '/sessions', { ...sessionInput('invalid'), openingId: 'start', presetId: 'missing' }), 'PRESET_NOT_FOUND', 404);
+    await failure(await request('POST', '/sessions', { ...sessionInput('invalid'), openingId: 'start', runtimeConfig: { narrativePresetId: 'missing', apiModelConfigId: 'model' } }), 'PRESET_NOT_FOUND', 404);
     await failure(await request('POST', '/sessions', { ...sessionInput('one'), openingId: 'start' }), 'RESOURCE_CONFLICT', 409);
     await failure(await app.request('/api/v1/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{' }), 'INVALID_JSON', 400);
     await failure(await app.request('/api/v1/sessions', { method: 'POST', body: '{}' }), 'UNSUPPORTED_MEDIA_TYPE', 415);

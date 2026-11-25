@@ -9,6 +9,7 @@ import type { StateService, StateViews } from '../../../../modules/state/service
 import type { CharacterSpriteCatalogItem, World, WorldCard } from '../../../../modules/worlds/service.js';
 import type { NarrativeHistoryMessage } from '../history/index.js';
 import type { ContextMaterialDiagnostic } from '../../diagnostics.js';
+import { encodeMaterialJson, escapeMaterialText, renderMessageRules, renderStateFacts } from './state-material.js';
 
 export type MaterialSources = {
   locale: AppLocale;
@@ -35,11 +36,7 @@ type LoreEntry = NonNullable<WorldCard['data']['lorebook']>['entries'][number];
 type LoadRule = NonNullable<Character['load']>;
 type Conditions = Pick<StateService, 'evaluateWhen'>;
 
-const prose = (value: string) => value.replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 const text = (value: string): PromptVariable => ({ type: 'text', value });
-const encoded = (value: unknown) => JSON.stringify(value).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e')
-  .replaceAll('\u2028', '\\u2028').replaceAll('\u2029', '\\u2029');
-const materialText = (value: string, continuation: string) => prose(value).replace(/\r\n?|\n|\u2028|\u2029/g, '\n' + continuation);
 
 type LoadEvaluation = Pick<ContextMaterialDiagnostic, 'reason' | 'keywordMatch' | 'whenMatch'> & { active: boolean };
 
@@ -76,14 +73,6 @@ export function evaluateLoad(rule: LoadRule, scan: readonly string[], views: Sta
   return { active: true, reason: 'matched', ...checks };
 }
 
-function compareRulePaths(left: string, right: string): number {
-  const a = left.match(/[^.[\]]+|\[\]/g) ?? [], b = right.match(/[^.[\]]+|\[\]/g) ?? [];
-  for (let index = 0; index < Math.min(a.length, b.length); index++) {
-    if (a[index] !== b[index]) return a[index]! < b[index]! ? -1 : 1;
-  }
-  return a.length - b.length;
-}
-
 /** Select material from captured author data; this function never reads or writes storage. */
 export function selectNarrativeMaterials(input: MaterialSources, conditions: Conditions): NarrativeMaterials {
   const { world, views, playerId, history, inputText } = input;
@@ -111,7 +100,6 @@ export function selectNarrativeMaterials(input: MaterialSources, conditions: Con
   const player = characters.find(character => character.id === playerId && character.player_selectable);
   if (!player) throw new AppError('INVALID_SESSION_CHARACTER');
   const playerName = player.name.trim() || 'Default';
-  const render = (value: string) => value.replaceAll('{{user}}', () => playerName);
   const playerActive = active(player, 'characters.' + player.id, { target: selection.characters, name: player.name, role: 'persona' });
   const selected = characters.map((character, index) => ({ character, index }))
     .filter(({ character }) => character.id !== playerId && active(character, 'characters.' + character.id, { target: selection.characters, name: character.name, role: 'character' }))
@@ -130,34 +118,13 @@ export function selectNarrativeMaterials(input: MaterialSources, conditions: Con
     const definitions = scopes?.[scope] ?? {};
     const roots = Object.keys(definitions).filter(name =>
       active({ id: name, load: definitions[name]!.load }, 'state.' + scope + '.' + name));
-    const snapshot = views[scope];
-    const entries = roots.map(name => {
-      const field = definitions[name]!;
-      const lines = [
-        '- ' + materialText(name, '  ') + ':',
-        '    - value: ' + (Object.hasOwn(snapshot, name) ? encoded(snapshot[name]) : '未设置（当前快照无此状态）'),
-        '    - type: ' + field.type,
-        ...(field.min === undefined ? [] : ['    - min: ' + encoded(field.min)]),
-        ...(field.max === undefined ? [] : ['    - max: ' + encoded(field.max)]),
-        '    - description: ' + materialText(render(field.description), '        '),
-      ];
-      if (scope === 'message' && field.rules) {
-        const rules = Object.entries(field.rules).sort(([a], [b]) => compareRulePaths(a, b));
-        if (rules.length) lines.push('    - rules:');
-        for (const [path, rule] of rules) {
-          lines.push('        - ' + materialText(path, '            ') +
-            (path.includes('[]') ? '（元素规则，非直接更新路径）' : '') + ': ' + materialText(render(rule), '            '));
-        }
-      }
-      return lines.join('\n');
-    });
-    return { roots, variable: text(entries.join('\n')) };
+    return { roots, variable: text(renderStateFacts(scope, definitions, roots, views[scope], playerName)) };
   }
   const message = stateMaterial('message');
   const session = stateMaterial('session');
   const global = stateMaterial('global');
   const visibleRoots = { message: new Set(message.roots), session: new Set(session.roots), global: new Set(global.roots) };
-  const authorPrompt = (prompt: string) => prose(parsePromptTemplate(prompt, ['user'], 'author').map(segment => {
+  const authorPrompt = (prompt: string) => escapeMaterialText(parsePromptTemplate(prompt, ['user'], 'author').map(segment => {
     if (segment.type === 'text') return segment.value;
     if (segment.type === 'variable') return playerName;
     return readStateVariable(segment, views, visibleRoots);
@@ -173,10 +140,11 @@ export function selectNarrativeMaterials(input: MaterialSources, conditions: Con
       'history.messages': { type: 'messages', value: history },
       'input.text': text(inputText),
       'state.message': message.variable,
+      'state.update.message': text(renderMessageRules(scopes?.message ?? {}, message.roots, playerName)),
       'state.session': session.variable,
       'state.global': global.variable,
       'characterSprite.catalog': text(input.characterSpriteCatalog?.length
-        ? encoded({ playerCharacterId: playerId, items: input.characterSpriteCatalog.map(({ characterId, characterName, spriteId, description }) =>
+        ? encodeMaterialJson({ playerCharacterId: playerId, items: input.characterSpriteCatalog.map(({ characterId, characterName, spriteId, description }) =>
           ({ characterId, characterName, spriteId, description })) }) : ''),
     },
     activeRoots: message.roots, visibleRoots, diagnostics, selection,

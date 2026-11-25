@@ -1,4 +1,14 @@
 export const sessionsZh = {
+  characterSprites: "立绘",
+  assist: "AI 帮答",
+  followAppDefault: "跟随应用默认",
+  assistPreset: "AI 帮答预设",
+  presetType: "预设类型",
+  narrativePreset: "叙事预设",
+  assistGoal: "AI 帮答目标（可留空）",
+  assistGenerating: "帮答生成中",
+  assistDisconnected: "连接中断，已保留草稿。",
+  assistNarrativeBusy: "当前会话正在生成叙事，请在结束后再使用 AI 帮答。",
   "moreActions": "更多操作",
   "regenerate": "重新生成",
   "create": "创建会话",
@@ -144,6 +154,16 @@ export const sessionsZh = {
 };
 
 export const sessionsEn = {
+  characterSprites: "Sprites",
+  assist: "AI reply assist",
+  followAppDefault: "Use app default",
+  assistPreset: "AI reply preset",
+  presetType: "Preset type",
+  narrativePreset: "Narrative preset",
+  assistGoal: "AI reply goal (optional)",
+  assistGenerating: "Drafting a reply",
+  assistDisconnected: "Connection lost. Your draft has been kept.",
+  assistNarrativeBusy: "A narrative is running. Use AI reply assist when it finishes.",
   "moreActions": "More actions",
   "regenerate": "Regenerate",
   "create": "New session",
@@ -289,6 +309,16 @@ export const sessionsEn = {
 };
 
 export const sessionsJa = {
+  characterSprites: "立ち絵",
+  assist: "AI 返信アシスト",
+  followAppDefault: "アプリの既定値を使用",
+  assistPreset: "AI 返信プリセット",
+  presetType: "プリセットの種類",
+  narrativePreset: "物語プリセット",
+  assistGoal: "AI 返信の目標（任意）",
+  assistGenerating: "返信案を生成中",
+  assistDisconnected: "接続が切れました。下書きを保持しました。",
+  assistNarrativeBusy: "物語の生成が終わってから AI 返信アシストをお使いください。",
   "moreActions": "その他の操作",
   "regenerate": "再生成",
   "create": "セッションを作成",

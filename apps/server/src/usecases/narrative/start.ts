@@ -15,7 +15,7 @@ export function startNarrative(dependencies: NarrativeDependencies, session: Ses
   const { userMessage } = ready, userEntryId = userMessage.id;
   let provider: string | null = null, model: string | null = null;
   try {
-    const configured = dependencies.models.get(session.apiModelConfigId);
+    const configured = dependencies.models.get(session.runtimeConfig.apiModelConfigId);
     provider = configured?.providerId ?? null;
     model = configured?.modelId ?? null;
   } catch { /* The context entry reports the captured domain failure during settlement. */ }

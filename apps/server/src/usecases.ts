@@ -3,6 +3,7 @@ import type { Services } from './services.js';
 import type { EventHub } from './infrastructure/events/event-hub.js';
 import { PiClient } from './infrastructure/pi/client.js';
 import type { ModelClient } from './infrastructure/model/client.js';
+import { createReplyAssist } from './usecases/reply-assist/index.js';
 import { createNarrativeUsecases } from './usecases/narrative/index.js';
 import { createTestModel } from './usecases/test-model.js';
 import { createModelConfigUsecases } from './usecases/model-config.js';
@@ -25,6 +26,7 @@ export function createUsecases({ services, transaction, events, modelClient = ne
   const importWorld = createImportWorld({ worlds, settings });
   return {
     createSession: createSessionUsecase({ worlds, sessions, state: services.state, transaction, events }),
+    replyAssist: createReplyAssist({ ...services, modelClient, events }),
     narrative: createNarrativeUsecases({ ...services, events, modelClient, transaction }),
     testModel: createTestModel({ models: services.models, credentials: services.credentials, modelClient }),
     listProviders: () => modelClient.listProviders(),

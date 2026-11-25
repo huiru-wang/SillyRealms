@@ -5,8 +5,7 @@ import { compileNarrativeContext } from './stages/assemble/index.js';
 import type { CandidateEvaluator } from './stages/compact/plan.js';
 import { projectContextMessages } from './stages/history/index.js';
 import { selectNarrativeMaterials } from './stages/materials/index.js';
-import { buildNarrativeNotes } from './stages/model-notes/index.js';
-import { resolveContextCapabilities, promptSpriteCatalog } from './capabilities.js';
+import { promptSpriteCatalog } from './capabilities.js';
 
 /** Re-evaluate scenario materials and the actual assembled request for every retained history candidate. */
 export function createCandidateEvaluator(
@@ -21,11 +20,8 @@ export function createCandidateEvaluator(
       inputText: projection.inputText, history: projection.history, summary,
       characterSpriteCatalog: promptSpriteCatalog(snapshot.preset.config, snapshot.characterSpriteCatalog),
     }, state);
-    const capabilities = resolveContextCapabilities(snapshot.preset.config, materials, snapshot.characterSpriteCatalog);
     return compileNarrativeContext({
       ...snapshot, ...projection, materials,
-      // Keep the original two-entry window; trimming never backfills older output.
-      modelNotes: buildNarrativeNotes(snapshot.historyEntries, capabilities),
     }, model);
   };
 }

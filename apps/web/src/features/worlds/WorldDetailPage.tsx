@@ -13,7 +13,7 @@ import type {Character,WorldDetail} from './api/worlds';
 import {safeImage} from './resources';
 import {usePagedResource,useResource} from '../../data';
 import {useManagement} from '../../app/ManagementData';
-import type {Session} from '../sessions/types';
+import type {SessionSummary} from '../sessions/types';
 import {CreateSessionDialog} from '../sessions/CreateSessionDialog';
 import {WorldDefaultsForm as WorldConfig} from './WorldForms';
 import {WorldActions} from './WorldActions';
@@ -91,7 +91,7 @@ function RoleStrip({characters,compact,active,onChoose,onInspect,stripRef}:{char
 function SessionSection({worldId}:{worldId:string}){
   const {t} = useTranslation('worlds');
   const {sessionsRevision}=useManagement();
-  const {page,loading,error,more,reload}=usePagedResource<Session>('v1/sessions?worldId='+encodeURIComponent(worldId)+'&limit=20',sessionsRevision);
+  const {page,loading,error,more,reload}=usePagedResource<SessionSummary>('v1/sessions?worldId='+encodeURIComponent(worldId)+'&limit=20',sessionsRevision);
   const retry=()=>page?void more():reload();
   const [menu,setMenu]=useState<string|null>(null);
   return <>

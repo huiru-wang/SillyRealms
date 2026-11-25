@@ -3,7 +3,7 @@ import {createContext,useCallback,useContext,useEffect,useRef,useState,type Reac
 import {api,ApiError,json} from '../../api';
 import {usePagedResource} from '../../data';
 import {useManagement} from '../../app/ManagementData';
-import type {PresetDetail,PresetInput,PresetSummary,WebPreset} from './types';
+import type {PresetType,PresetDetail,PresetInput,PresetSummary,WebPreset} from './types';
 import {fromServer,getPresetValidationError,presetInput} from './adapter';
 export {getPresetValidationError} from './adapter';
 const clone=<T,>(value:T):T=>structuredClone(value);
@@ -12,6 +12,8 @@ const initial:State={savedById:{},draftById:{},conflicts:{}};
 function useStore(){
  const {settings,saveSettings}=useManagement();
  const catalog=usePagedResource<PresetSummary>('v1/presets?type=narrative&limit=100',0,true);
+ const replies=usePagedResource<PresetSummary>('v1/presets?type=reply_assist&limit=100',0,true);
+ const catalogFor=(type:PresetType)=>type==='reply_assist'?replies:catalog;
  const [state,setState]=useState<State>(initial),[busy,setBusy]=useState(false);
  const [detailErrors,setDetailErrors]=useState<Record<string,Error|string>>({}),[detailsLoading,setDetailsLoading]=useState<Record<string,boolean>>({});
  const current=useRef(state),pending=useRef(false),requests=useRef(new Map<string,Promise<void>>());current.current=state;
@@ -31,17 +33,17 @@ function useStore(){
   if(pending.current)throw Error(i18n.t('presets:savingPleaseWait'));pending.current=true;setBusy(true);
   try{return await fn();}finally{pending.current=false;setBusy(false);}
  };
- const insert=(item:PresetDetail)=>{const p=fromServer(item);change(s=>({...s,savedById:{...s.savedById,[p.id]:p},draftById:{...s.draftById,[p.id]:clone(p)}}));catalog.reload();return p.id;};
- const availableName=(base:string)=>{
-  const names=new Set([...(catalog.page?.items??[]).map(p=>p.name),...Object.values(current.current.savedById).map(p=>p.name)]);
+ const insert=(item:PresetDetail)=>{const p=fromServer(item);change(s=>({...s,savedById:{...s.savedById,[p.id]:p},draftById:{...s.draftById,[p.id]:clone(p)}}));catalogFor(p.type).reload();return p.id;};
+ const availableName=(base:string,type:PresetType)=>{
+  const names=new Set([...(catalogFor(type).page?.items??[]).map(p=>p.name),...Object.values(current.current.savedById).filter(p=>p.type===type).map(p=>p.name)]);
   let name=base,index=1;while(names.has(name))name=base+' ('+(index++)+')';return name;
  };
- const createPreset=()=>mutate(async()=>{
-  const defaults=await api<{item:PresetInput}>('v1/presets/default?type=narrative');
-  const {item}=await api<{item:PresetDetail}>('v1/presets',{method:'POST',body:json({...defaults.item,name:availableName(i18n.t('presets:untitledPreset'))})});return insert(item);
+ const createPreset=(type:PresetType)=>mutate(async()=>{
+  const defaults=await api<{item:PresetInput}>('v1/presets/default?type='+type);
+  const {item}=await api<{item:PresetDetail}>('v1/presets',{method:'POST',body:json({...defaults.item,name:availableName(i18n.t('presets:untitledPreset'),type)})});return insert(item);
  });
- const getDefaultPrompt=async(nodeId:string)=>{
-  const {item}=await api<{item:PresetInput}>('v1/presets/default?type=narrative');
+ const getDefaultPrompt=async(nodeId:string,type:PresetType)=>{
+  const {item}=await api<{item:PresetInput}>('v1/presets/default?type='+type);
   const node=item.config.nodes.find(node=>node.id===nodeId);if(!node)throw Error(i18n.t('presets:defaultPromptNotFound'));return node.prompt;
  };
  const importPreset=(text:string)=>mutate(async()=>insert((await api<{item:PresetDetail}>('v1/presets/import',{method:'POST',body:text})).item));
@@ -51,25 +53,26 @@ function useStore(){
    const {item}=await api<{item:PresetDetail}>('v1/presets/'+encodeURIComponent(id),{method:'PATCH',body:json({...presetInput(submitted),expectedRevision:submitted.revision})});
    const saved=fromServer(item);
    change(s=>({...s,savedById:{...s.savedById,[id]:saved},draftById:{...s.draftById,[id]:JSON.stringify(s.draftById[id])===JSON.stringify(submitted)?clone(saved):{...s.draftById[id],revision:saved.revision}},conflicts:{...s.conflicts,[id]:false}}));
-   catalog.reload();return true;
+   catalogFor(saved.type).reload();return true;
   }catch(error){if(error instanceof ApiError&&error.errorCode==='PRESET_REVISION_CONFLICT')change(s=>({...s,conflicts:{...s.conflicts,[id]:true}}));throw error;}
  });
  const duplicatePreset=(id:string)=>mutate(async()=>{
   const p=current.current.draftById[id];const error=getPresetValidationError(p);if(error)throw Error(error);
-  return insert((await api<{item:PresetDetail}>('v1/presets',{method:'POST',body:json({...presetInput(p),name:availableName(i18n.t('presets:copyName',{name:p.name}))})})).item);
+  return insert((await api<{item:PresetDetail}>('v1/presets',{method:'POST',body:json({...presetInput(p),name:availableName(i18n.t('presets:copyName',{name:p.name}),p.type)})})).item);
  });
  const deletePreset=(id:string)=>mutate(async()=>{
+  const type=current.current.savedById[id].type;
   await api('v1/presets/'+encodeURIComponent(id),{method:'DELETE'});
-  change(s=>{const saved={...s.savedById},draft={...s.draftById};delete saved[id];delete draft[id];return {...s,savedById:saved,draftById:draft};});catalog.reload();
+  change(s=>{const saved={...s.savedById},draft={...s.draftById};delete saved[id];delete draft[id];return {...s,savedById:saved,draftById:draft};});catalogFor(type).reload();
  });
- const setDefaultPreset=(id:string)=>mutate(()=>saveSettings({defaultPresetId:id}));
+ const setDefaultPreset=(id:string)=>mutate(()=>saveSettings(current.current.savedById[id].type==='reply_assist'?{defaultReplyAssistPresetId:id}:{defaultPresetId:id}));
  const editPreset=(id:string,fn:(p:WebPreset)=>WebPreset)=>change(s=>({...s,draftById:{...s.draftById,[id]:fn(clone(s.draftById[id]))}}));
  const revertPreset=(id:string)=>change(s=>({...s,draftById:{...s.draftById,[id]:clone(s.savedById[id])}}));
  const isDirty=(id:string)=>JSON.stringify(state.draftById[id])!==JSON.stringify(state.savedById[id]);
  const dirty=Object.keys(state.draftById).some(isDirty);
  useEffect(()=>{if(!dirty)return;const warn=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);},[dirty]);
  const summaries=catalog.page?.items??[];
- return {...state,presets:summaries,defaultPresetId:settings.value?.item.defaultPresetId??null,
+ return {...state,presets:summaries,replyPresets:replies.page?.items??[],replyDefaultId:settings.value?.item.defaultReplyAssistPresetId??null,replyCatalog:replies,defaultPresetId:settings.value?.item.defaultPresetId??null,
   loading:catalog.loading,error:catalog.error,busy,reload:catalog.reload,loadDetail,detailErrors,detailsLoading,
   getDefaultPrompt,importPreset,createPreset,savePreset,duplicatePreset,deletePreset,setDefaultPreset,editPreset,revertPreset,isDirty};
 }

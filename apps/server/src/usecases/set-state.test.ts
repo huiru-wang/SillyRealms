@@ -24,7 +24,7 @@ beforeEach(() => {
     stateDefinition: { schema_version: 2, scopes: {} }, state: { day: 1, weather: 'rain' },
   });
   for (const id of ['one', 'two']) services.sessions.create({
-    id, worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player',
+    id, worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player',
     state: { reputation: 0, coins: 1 },
   });
   setState = createSetState({ worlds: services.worlds, sessions: services.sessions, state: services.state, cache: services.cache, transaction: bindTransaction(db), events });
@@ -288,10 +288,10 @@ describe('effective state events', () => {
     for (let index = 0; index < 101; index++) {
       const id = 'extra-' + index;
       ids.push(id);
-      services.sessions.create({ id, worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' });
+      services.sessions.create({ id, worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player' });
     }
     services.worlds.create({ id: 'other', specVersion: '0.1', name: 'Other', characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'start', name: 'Start', content: 'Begin' }] });
-    services.sessions.create({ id: 'foreign', worldId: 'other', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' });
+    services.sessions.create({ id: 'foreign', worldId: 'other', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player' });
     const foreign = vi.fn();
     events.subscribe('foreign', foreign);
     for (const id of ids) events.subscribe(id, event => received.push({ id, event }));

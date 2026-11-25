@@ -1,6 +1,6 @@
 # Server 会话事件
 
-Server 的叙事用例和会话 SSE 共用一个 EventHub。业务消息遵循 Server 自有契约，pi 只负责 SDK 适配；消息结算属于 `usecases/narrative/`，传输位于 `infrastructure/events/`。本页定义服务端事件；各前端能力按已接入的契约消费。新增立绘事件的 Stage SDK 桥接与官方组件尚未接入。
+Server 的叙事用例和会话 SSE 共用一个 EventHub。业务消息遵循 Server 自有契约，pi 只负责 SDK 适配；消息结算属于 `usecases/narrative/`，传输位于 `infrastructure/events/`。本页定义服务端事件；各前端能力按已接入的契约消费。Web 宿主消费立绘事件，并通过现有会话事件订阅转发给舞台。
 
 EventHub 按 sessionId 同步通知监听器。事件仅包含 event 和 JSON 对象 data；不生成 SSE `id:`，没有确认或回放。单个订阅者失败不影响业务执行或其他连接。SSE 不读取数据库、不判断运行是否结束。
 
@@ -228,7 +228,7 @@ SSE 不重复传输行错误诊断。部分成功时仍发送完整有效数组�
 - `GET /api/v1/sessions/:sessionId/entries/:messageId/character-sprites` 精确返回该消息的 status/items/errors，未产生结果时为 null，不向前继承。
 - 包内素材继续通过 `GET /api/v1/worlds/:worldId/resources/*` 访问；在线素材按既有资源解析规则使用。事件只携带 ID 和位置，不携带图片字节、地址或本机路径。
 
-事件复用现有会话 SSE，不增加连接、回放或专用资源下载入口。当前实现为服务端契约，Stage 立绘 SDK 门面与官方显示组件另行接入。接口详情见 [Server HTTP](server-http.md)。
+事件复用现有会话 SSE，不增加连接、回放或专用资源下载入口。官方悬浮层按 messageId 消费完整快照。接口详情见 [Server HTTP](server-http.md)。
 
 ## 预留事件
 
@@ -258,3 +258,15 @@ SSE 不重复传输行错误诊断。部分成功时仍发送完整有效数组�
 事件传输仍为 `/api/v1/sessions/:id/events`，没有 narrative/events、SSE id 或回放。轮次查询位于 narrative/runs：客户端重连后按已有 seq 补查新增 entries，若末轮曾在运行则覆盖其末条 seq；退出后重新进入则读取最新 5 轮。未落库的断线分片无需补齐，现有最终 snapshot 保持替换语义。
 
 每个 run 首条 entry 的 extData.narrative 保存 `{status,assistantEntryId?,finishedAt,stopReason?}`，正常完成为 completed，其他结算为 stopped，stopReason 与本事件契约相同；写入失败不回滚已存消息。metrics.requests 改为 provider/modelId/requestId/usage/时间信息，不再存 status。助手 extData.output 单独保存后处理结果；终态仅代表正文主流程结果，能力诊断通过 runs 分页读取。
+
+## AI 帮答
+
+宿主订阅现有会话 SSE，以 sessionId、requestId 匹配本页请求。三个事件都包含毫秒 timestamp。
+
+| 事件 | 正文 |
+| --- | --- |
+| reply_assist.delta | delta.content 为新增正文 |
+| reply_assist.completed | snapshot.content 为完整草稿，整体替换缓冲 |
+| reply_assist.stopped | stop_reason 及 snapshot.content，保留可用的部分正文 |
+
+受理前的错误由 HTTP 返回。终态在会话锁释放后发布，断线后草稿没有历史回放。宿主不向 Stage 转发这三个事件。

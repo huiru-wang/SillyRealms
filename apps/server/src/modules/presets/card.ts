@@ -5,6 +5,7 @@ import type { PresetValue } from './types.js';
 
 /** Portable preset document. These established protocol keys are not database columns. */
 export type PresetDocument = {
+  type?: PresetValue['type'];
   name: string;
   description: string | null;
   config_json: { schemaVersion: 3; nodes: PresetValue['config']['nodes'] };
@@ -12,12 +13,13 @@ export type PresetDocument = {
     strategy: PresetValue['config']['contextStrategy']['strategy'];
     max_context_tokens: number;
     max_output_tokens: number;
-    summary_prompt: string;
+    summary_prompt?: string;
   };
   model_parameters: ReturnType<typeof encodeParameters>;
 };
 
 const documentSchema = z.object({
+  type: z.enum(['narrative', 'reply_assist']).default('narrative'),
   name: z.unknown(),
   description: z.unknown().optional(),
   config_json: z.object({ schemaVersion: z.literal(3), nodes: z.unknown() }).strict(),
@@ -25,15 +27,16 @@ const documentSchema = z.object({
     strategy: z.unknown(),
     max_context_tokens: z.unknown(),
     max_output_tokens: z.unknown(),
-    summary_prompt: z.unknown(),
+    summary_prompt: z.unknown().optional(),
   }).strict(),
   model_parameters: encodedParametersSchema,
 }).strict();
 
 export function parsePresetDocument(input: unknown): PresetValue {
   const value = documentSchema.parse(input);
+  if (value.type === 'reply_assist') z.undefined().parse(value.context_strategy.summary_prompt);
   return presetValueSchema.parse({
-    type: 'narrative',
+    type: value.type,
     name: value.name,
     description: value.description,
     config: {
@@ -53,14 +56,14 @@ export function parsePresetDocument(input: unknown): PresetValue {
 export function toPresetDocument(value: PresetValue): PresetDocument {
   const { config } = value;
   return {
-    name: value.name,
+    type: value.type, name: value.name,
     description: value.description,
     config_json: { schemaVersion: 3, nodes: structuredClone(config.nodes) },
     context_strategy: {
       strategy: config.contextStrategy.strategy,
       max_context_tokens: config.contextStrategy.maxContextTokens,
       max_output_tokens: config.contextStrategy.maxOutputTokens,
-      summary_prompt: config.contextStrategy.summaryPrompt,
+      ...(value.type === 'narrative' ? { summary_prompt: config.contextStrategy.summaryPrompt } : {}),
     },
     model_parameters: encodeParameters(config.modelParameters),
   };

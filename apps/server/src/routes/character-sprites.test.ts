@@ -33,7 +33,7 @@ beforeEach(() => {
     characters: [{ id: 'player', name: 'Player', player_selectable: true }],
     openings: [{ id: 'opening', name: 'Opening', content: 'Begin' }] });
   for (const id of ['one', 'other']) services.sessions.create({
-    id, worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player',
+    id, worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player',
   });
   shutdown = new AbortController();
   allowed = true;

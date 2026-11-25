@@ -1,14 +1,24 @@
+import { AppError } from '../../errors.js';
 import { z } from 'zod';
 import { parsePromptTemplate } from '../../lib/prompt-template.js';
 
-export const systemNodeIds = ['main', 'personaInfo', 'characterInfo', 'worldInfo', 'chatHistory', 'userInput'] as const;
-export const postprocessNodeIds = ['worldState', 'actionSuggestions', 'characterSprite'] as const;
+export const systemNodeIds = ['main', 'personaInfo', 'characterInfo', 'worldInfo', 'worldState', 'chatHistory', 'userInput'] as const;
+export const postprocessNodeIds = ['stateUpdate', 'actionSuggestions', 'characterSprite'] as const;
 const builtinIds: readonly string[] = [...systemNodeIds, ...postprocessNodeIds];
 export const systemVariableNames = [
   'system.language', 'user', 'persona.prompt', 'characters.prompts', 'world.lore',
   'history.summary', 'history.messages', 'input.text', 'state.message', 'state.session', 'state.global',
-  'characterSprite.catalog',
+  'characterSprite.catalog', 'state.update.message',
 ] as const;
+
+/** The rule projection belongs exclusively to the state-update instruction. */
+export function parsePresetNodePrompt(nodeId: string, prompt: string) {
+  const segments = parsePromptTemplate(prompt, systemVariableNames);
+  if (nodeId !== 'stateUpdate' && segments.some(part => part.type === 'variable' && part.name === 'state.update.message')) {
+    throw new AppError('INVALID_NARRATIVE_TEMPLATE', 'state.update.message 只能用于状态更新节点');
+  }
+  return segments;
+}
 
 export const presetNodeSchema = z.object({
   id: z.string().trim().min(1),
@@ -19,7 +29,7 @@ export const presetNodeSchema = z.object({
   prompt: z.string(),
 }).strict();
 
-export const narrativeConfigSchema = z.object({
+const configShape = z.object({
   schemaVersion: z.literal(1),
   nodes: z.array(presetNodeSchema),
   contextStrategy: z.object({
@@ -36,7 +46,9 @@ export const narrativeConfigSchema = z.object({
     thinkingEnabled: z.boolean().default(false),
     thinkingLevel: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
   }).strict(),
-}).strict().superRefine(({ nodes, contextStrategy }, context) => {
+}).strict();
+
+export const narrativeConfigSchema = configShape.superRefine(({ nodes, contextStrategy }, context) => {
   if (contextStrategy.strategy === 'rolling_summary' && !contextStrategy.summaryPrompt.trim()) {
     context.addIssue({ code: 'custom', path: ['contextStrategy', 'summaryPrompt'], message: '滚动摘要的提示词不能为空' });
   }
@@ -63,7 +75,7 @@ export const narrativeConfigSchema = z.object({
 
     let variables: string[];
     try {
-      variables = parsePromptTemplate(node.prompt, systemVariableNames)
+      variables = parsePresetNodePrompt(node.id, node.prompt)
         .flatMap(segment => segment.type === 'variable' ? [segment.name] : []);
     }
     catch (error) {
@@ -86,12 +98,37 @@ export const narrativeConfigSchema = z.object({
     invalid('系统节点必须保持既定相对顺序；自定义节点可以插入任意位置');
 });
 
-export const presetValueSchema = z.object({
-  type: z.literal('narrative'),
-  name: z.string().trim().min(1),
-  description: z.string().nullable().default(null),
-  config: narrativeConfigSchema,
-}).strict();
+const replyNodeIds = ['main', 'sessionGoal', 'personaInfo', 'characterInfo', 'worldInfo', 'currentState', 'chatHistory'];
+export const replyVariableNames = ['system.language', 'user', 'persona.prompt', 'characters.prompts', 'world.lore',
+  'history.summary', 'history.messages', 'state.message', 'state.session', 'state.global', 'session.reply.assist.goal'] as const;
+
+const replyConfigSchema = configShape.extend({
+  contextStrategy: configShape.shape.contextStrategy.extend({ strategy: z.literal('sliding_window'), summaryPrompt: z.literal('').default('') }),
+}).superRefine(({ nodes }, context) => {
+  const invalid = (message: string) => context.addIssue({ code: 'custom', message, path: ['nodes'] });
+  if (new Set(nodes.map(node => node.id)).size !== nodes.length) invalid('节点 ID 不能重复');
+  if (nodes.filter(node => node.kind === 'system').map(node => node.id).join(',') !== replyNodeIds.join(',')) invalid('帮答系统节点顺序无效');
+  for (const node of nodes) {
+    if (replyNodeIds.includes(node.id)) {
+      if (node.kind !== 'system' || node.role !== (node.id === 'chatHistory' ? 'auto' : 'system')) invalid('帮答系统节点角色无效');
+    } else if (builtinIds.includes(node.id) || node.kind !== 'text' || node.role === 'auto') invalid('帮答自定义节点无效');
+    if (node.id === 'main' && (!node.enabled || !node.prompt.trim())) invalid('帮答主提示词必须启用且非空');
+    try {
+      const segments = parsePromptTemplate(node.prompt, replyVariableNames);
+      for (const name of ['history.summary', 'history.messages']) {
+        if (segments.filter(part => part.type === 'variable' && part.name === name).length !== (node.id === 'chatHistory' ? 1 : 0))
+          invalid(name + ' 必须且只能在聊天历史节点中出现一次');
+      }
+    } catch (error) { invalid(error instanceof Error ? error.message : '提示词模板无效'); }
+  }
+});
+
+const sharedValue = z.object({ name: z.string().trim().min(1), description: z.string().nullable().default(null) });
+export const presetValueSchema = z.discriminatedUnion('type', [
+  sharedValue.extend({ type: z.literal('narrative'), config: narrativeConfigSchema }).strict(),
+  sharedValue.extend({ type: z.literal('reply_assist'), config: replyConfigSchema,
+    apiModelConfigId: z.string().trim().min(1).nullable().default(null) }).strict(),
+]);
 
 export type NarrativePresetConfig = z.infer<typeof narrativeConfigSchema>;
 export type PresetNode = z.infer<typeof presetNodeSchema>;

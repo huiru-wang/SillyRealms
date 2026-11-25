@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../infrastructure/database/connection.js';
+import { ModelService } from '../modules/models/service.js';
 import { PresetService } from '../modules/presets/service.js';
 import { createImportPreset } from './import-preset.js';
 import { createExportPreset } from './export-preset.js';
 
 let db: DatabaseSync, presets: PresetService;
-beforeEach(() => { db = openDatabase(':memory:'); presets = new PresetService(db); });
+beforeEach(() => { db = openDatabase(':memory:'); presets = new PresetService(db, new ModelService(db)); });
 afterEach(() => db.close());
 
 describe('portable preset usecases', () => {
@@ -29,7 +30,7 @@ describe('portable preset usecases', () => {
     const exported = createExportPreset({ presets })(created.id);
     expect(exported.filename).toBe('Current saved name.json');
     expect(exported.document).toMatchObject({ name: updated.name, description: updated.description, config_json: { schemaVersion: 3 } });
-    expect(Object.keys(exported.document).sort()).toEqual(['config_json', 'context_strategy', 'description', 'model_parameters', 'name']);
+    expect(Object.keys(exported.document).sort()).toEqual(['config_json', 'context_strategy', 'description', 'model_parameters', 'name', 'type']);
     const imported = createImportPreset({ presets })(exported.document);
     expect(imported.name).toBe('Current saved name(1)');
     expect(imported.config).toEqual(updated.config);

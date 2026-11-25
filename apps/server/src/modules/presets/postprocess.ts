@@ -4,6 +4,10 @@ import { postprocessNodeIds, type NarrativePresetConfig } from './schema.js';
 export type PostprocessNodeId = typeof postprocessNodeIds[number];
 export type PostprocessPrompts = Partial<Record<PostprocessNodeId, string>>;
 
+export function characterSpriteAvailable(prompts: PostprocessPrompts, catalogSize: number): boolean {
+  return prompts.characterSprite !== undefined && catalogSize > 0;
+}
+
 /** Only explicitly declared, enabled nodes contribute instructions; defaults belong to templates. */
 export function resolvePostprocessPrompts(config: Pick<NarrativePresetConfig, 'nodes'>): PostprocessPrompts {
   const prompts: PostprocessPrompts = {};

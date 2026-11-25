@@ -27,7 +27,7 @@ function seedSessions(services: Services, ids: string[]) {
   const model = services.models.create({ name: 'Test model', providerId: 'test', modelId: 'test-model', credentialRef: 'test-ref' });
   const world = services.worlds.create({ name: 'Test world', specVersion: '0.1', characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'start', name: 'Start', content: 'Begin' }] });
   for (const id of ids) services.sessions.create({
-    id, worldId: world.id, presetId: preset.id, apiModelConfigId: model.id, userCharacterId: 'player',
+    id, worldId: world.id, runtimeConfig: { narrativePresetId: preset.id, apiModelConfigId: model.id }, userCharacterId: 'player',
   });
 }
 
@@ -108,7 +108,7 @@ describe('Server over HTTP', () => {
       openings: [{ id: 'start', name: 'Start', content: 'Begin' }], tags: ['test'], defaultPresetId: preset.id, defaultApiModelConfigId: model.id,
     });
     const session = running.services.sessions.create({
-      worldId: world.id, presetId: preset.id, apiModelConfigId: model.id, userCharacterId: 'player',
+      worldId: world.id, runtimeConfig: { narrativePresetId: preset.id, apiModelConfigId: model.id }, userCharacterId: 'player',
     });
     const entry = running.services.sessions.appendEntry(session.id, {
       runId: 'run-1', type: 'message', role: 'assistant', payload: { text: 'Saved story' }, state: [],

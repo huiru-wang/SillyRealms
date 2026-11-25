@@ -35,7 +35,7 @@ beforeEach(() => {
     characters: [{ id: 'player', name: 'Player', player_selectable: true, prompt: 'Original persona' }],
     openings: [{ id: 'start', name: 'Start', content: 'Opening' }],
   });
-  services.sessions.create({ id: 'session', worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' });
+  services.sessions.create({ id: 'session', worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player' });
   summarize = vi.fn<ContextDependencies['summarize']>(async request => {
     request.onStarted();
     return { ok: true, text: 'Short summary', metrics };

@@ -1,1 +1,5 @@
-export type Session={id:string;worldId:string;worldName:string;cover:string|null;userCharacterId:string;presetId:string;apiModelConfigId:string;title:string|null;tipEntryId:string|null;updatedAt:number};
+export type SessionRuntimeConfig={
+  narrativePresetId:string;apiModelConfigId:string;replyAssistPresetId:string|null;replyAssistGoal:string;fontSize:number;
+};
+export type SessionSummary={id:string;worldId:string;runtimeConfig:SessionRuntimeConfig;worldName:string;cover:string|null;title:string|null;updatedAt:number};
+export type Session=SessionSummary & {userCharacterId:string;tipEntryId:string|null};

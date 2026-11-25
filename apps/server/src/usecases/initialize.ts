@@ -7,7 +7,7 @@ import type { WorldService } from '../modules/worlds/service.js';
 import type { createImportWorld } from './import-world.js';
 
 type Dependencies = {
-  presets: Pick<PresetService, 'ensureBuiltins'>;
+  presets: Pick<PresetService, 'ensureBuiltins' | 'defaultReplyAssistId'>;
   settings: Pick<SettingsService, 'ensure'>;
   worlds: Pick<WorldService, 'get'>;
   initialWorlds: readonly InitialWorld[];
@@ -18,7 +18,7 @@ type Dependencies = {
 export function createInitialize({ presets, settings, worlds, initialWorlds, importWorld, transaction }: Dependencies) {
   return async () => {
     const defaults = transaction(() => settings.ensure({
-      locale: DEFAULT_LOCALE, defaultPresetId: presets.ensureBuiltins(), defaultApiModelConfigId: null,
+      locale: DEFAULT_LOCALE, defaultPresetId: presets.ensureBuiltins(), defaultReplyAssistPresetId: presets.defaultReplyAssistId, defaultApiModelConfigId: null,
     }));
     for (const { id, file, readBytes } of initialWorlds) {
       if (worlds.get(id)) continue;

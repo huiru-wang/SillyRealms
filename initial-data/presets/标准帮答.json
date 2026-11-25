@@ -1,0 +1,74 @@
+{
+  "type": "reply_assist",
+  "name": "标准帮答",
+  "description": "根据当前会话为玩家拟写待发送的输入。",
+  "config_json": {
+    "schemaVersion": 3,
+    "nodes": [
+      {
+        "id": "main",
+        "name": "主提示词",
+        "kind": "system",
+        "role": "system",
+        "prompt": "你为当前玩家「{{user}}」拟写下一条可直接发送的输入，使用{{system.language}}。\n\n依据当前情境、已有对话、玩家身份与可见状态，生成一段自然、具体、便于继续互动的行动或话语。优先回应眼前事件，并在合理时推进当前目标。目标表示希望实现的方向，不代表已经发生的事实。\n\n如果本次提供了已有草稿，保留其中明确的玩家意图，整理为完整的新草稿。通常写一至三句；不得替其他角色决定反应，不得预先宣布行动结果或目标完成。\n\n只输出草稿正文，不加标题、解释、候选列表或外层代码块。",
+        "enabled": true
+      },
+      {
+        "id": "sessionGoal",
+        "name": "当前目标",
+        "kind": "system",
+        "role": "system",
+        "prompt": "{{session.reply.assist.goal}}",
+        "enabled": true
+      },
+      {
+        "id": "personaInfo",
+        "name": "用户信息",
+        "kind": "system",
+        "role": "system",
+        "prompt": "{{persona.prompt}}",
+        "enabled": true
+      },
+      {
+        "id": "characterInfo",
+        "name": "角色信息",
+        "kind": "system",
+        "role": "system",
+        "prompt": "{{characters.prompts}}",
+        "enabled": true
+      },
+      {
+        "id": "worldInfo",
+        "name": "世界书",
+        "kind": "system",
+        "role": "system",
+        "prompt": "{{world.lore}}",
+        "enabled": true
+      },
+      {
+        "id": "currentState",
+        "name": "当前状态",
+        "kind": "system",
+        "role": "system",
+        "prompt": "{{state.global}}\n{{state.session}}\n{{state.message}}",
+        "enabled": true
+      },
+      {
+        "id": "chatHistory",
+        "name": "聊天历史",
+        "kind": "system",
+        "role": "auto",
+        "prompt": "{{history.summary}}\n{{history.messages}}",
+        "enabled": true
+      }
+    ]
+  },
+  "context_strategy": {
+    "strategy": "sliding_window",
+    "max_context_tokens": 12000,
+    "max_output_tokens": 512
+  },
+  "model_parameters": {
+    "thinking_enabled": false
+  }
+}

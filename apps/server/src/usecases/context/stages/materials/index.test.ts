@@ -18,7 +18,7 @@ function sources(): MaterialSources {
     views: { global: { day: 2 }, session: { unlocked: true }, message: { coins: 5 } },
   };
 }
-function variable(input: MaterialSources, name: 'persona.prompt' | 'characters.prompts' | 'world.lore' | 'state.message') {
+function variable(input: MaterialSources, name: 'persona.prompt' | 'characters.prompts' | 'world.lore' | 'state.message' | 'state.update.message') {
   const value = selectNarrativeMaterials(input, conditions).variables[name];
   if (value.type !== 'text') throw new Error('Expected text variable');
   return value.value;
@@ -33,12 +33,35 @@ describe('narrative material selection', () => {
     } } };
     const materials = selectNarrativeMaterials(input, conditions);
     expect(materials.activeRoots).toEqual(['bag', 'box', 'pack']);
-    expect(String(materials.variables['state.message'].value).match(/- rules:/g)).toHaveLength(1);
-    expect(materials.variables['state.message'].value).toContain('pack.items[]（元素规则，非直接更新路径）: Item');
+    expect(String(materials.variables['state.update.message'].value).match(/- rules:/g)).toHaveLength(1);
+    expect(materials.variables['state.message'].value).not.toContain('rules:');
+    expect(materials.variables['state.update.message'].value).toContain('- bag:\n- box:\n- pack:');
+    expect(materials.variables['state.update.message'].value).toContain('pack.items[]（元素规则，非直接更新路径）: Item');
     input.world.stateDefinition = { schema_version: 2, scopes: { message: {
       pack: { ...field, rules: { 'legacy.label': 'Already stored' } },
     } } };
-    expect(variable(input, 'state.message')).toContain('legacy.label: Already stored');
+    expect(variable(input, 'state.update.message')).toContain('legacy.label: Already stored');
+  });
+
+  it('renders falsy facts literally and reserves the type label for message JSON', () => {
+    const input = sources();
+    const fields = {
+      coins: { type: 'number', initial: 0, min: 0, max: 10, description: 'Coins' },
+      open: { type: 'boolean', initial: false, description: 'Open' },
+      box: { type: 'json', initial: null, description: 'Box' },
+    };
+    input.world.stateDefinition = { schema_version: 2, scopes: { global: fields, session: fields, message: fields } };
+    for (const snapshot of Object.values(input.views)) Object.assign(snapshot, { coins: 0, open: false, box: null });
+    const { variables } = selectNarrativeMaterials(input, conditions);
+    for (const scope of ['state.global', 'state.session', 'state.message'] as const) {
+      const facts = variables[scope].value;
+      expect(facts).toContain('value: 0');
+      expect(facts).toContain('value: false');
+      expect(facts).toContain('value: null');
+      expect(facts).not.toMatch(/rules:|min:|max:|type: (?:number|boolean)/);
+      expect(String(facts).includes('type: json')).toBe(scope === 'state.message');
+    }
+    expect(variables['state.update.message'].value).toBe('- coins:\n- open:\n- box:');
   });
 
   it('interpolates only original author prompts and keeps state descriptions literal', () => {
@@ -141,7 +164,8 @@ describe('narrative material selection', () => {
     expect(variables['state.session'].value).toContain('Player name');
     expect(variables['state.session'].value).not.toContain('Write rule');
     expect(variables['state.message'].value).toContain('Local name');
-    expect(variables['state.message'].value).toContain('Write rule');
+    expect(variables['state.message'].value).not.toContain('Write rule');
+    expect(variables['state.update.message'].value).toContain('Write rule');
     expect(activeRoots).toEqual(['name']);
     input.inputText = 'Elsewhere';
     input.views.session.unlocked = false;

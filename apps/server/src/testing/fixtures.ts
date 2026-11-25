@@ -1,18 +1,19 @@
 import type { CreatePresetInput } from '../modules/presets/service.js';
 
-export function narrativePreset(name = 'Story'): CreatePresetInput {
+export function narrativePreset(name = 'Story'): Extract<CreatePresetInput, { type: 'narrative' }> {
   return {
     type: 'narrative', name, description: 'Narrative preset',
     config: {
       schemaVersion: 1,
-      nodes: [...['main', 'personaInfo', 'characterInfo', 'worldInfo', 'chatHistory', 'userInput'].map(id => ({
+      nodes: [...['main', 'personaInfo', 'characterInfo', 'worldInfo', 'worldState', 'chatHistory', 'userInput'].map(id => ({
         id, name: id, kind: 'system' as const, enabled: true,
         role: id === 'chatHistory' ? 'auto' as const : id === 'userInput' ? 'user' as const : 'system' as const,
-        prompt: id === 'chatHistory' ? '{{history.summary}}{{history.messages}}' : id === 'userInput' ? '{{input.text}}' : '',
+        prompt: id === 'chatHistory' ? '{{history.summary}}{{history.messages}}' : id === 'userInput' ? '{{input.text}}'
+          : id === 'worldState' ? '{{state.global}}\n{{state.session}}\n{{state.message}}' : '',
       })),
-      ...(['worldState', 'actionSuggestions', 'characterSprite'] as const).map(id => ({
+      ...(['stateUpdate', 'actionSuggestions', 'characterSprite'] as const).map(id => ({
         id, name: id, kind: 'postprocess' as const, role: 'system' as const, enabled: true,
-        prompt: id === 'worldState' ? '{{state.global}}\n{{state.session}}\n{{state.message}}'
+        prompt: id === 'stateUpdate' ? '{{state.update.message}}'
           : id === 'characterSprite' ? '基于 {{characterSprite.catalog}} 输出完整立绘快照。' : '生成下一步行动建议。',
       }))],
       contextStrategy: {

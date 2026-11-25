@@ -1,19 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { AppError } from '../errors.js';
 import type { TransactionRunner } from '../infrastructure/database/transaction.js';
 import type { EventHub } from '../infrastructure/events/event-hub.js';
-import type { SessionEntry, SessionService } from '../modules/sessions/service.js';
+import { createSessionSchema, type SessionEntry, type SessionService } from '../modules/sessions/service.js';
 import { StateValidationError, type StateService } from '../modules/state/service.js';
 import type { WorldService } from '../modules/worlds/service.js';
 
-const identifier = z.string().min(1).refine(value => value === value.trim());
-const inputSchema = z.object({
-  id: identifier.optional(), worldId: identifier, openingId: identifier,
-  userCharacterId: identifier, presetId: identifier, apiModelConfigId: identifier,
-  title: z.string().nullable().optional(),
-}).strict();
-export type CreateSessionInput = z.infer<typeof inputSchema>;
+const inputSchema = createSessionSchema.omit({ state: true }).extend({ openingId: createSessionSchema.shape.worldId });
+export type CreateSessionInput = z.input<typeof inputSchema>;
 export type SessionCreatedEvent = {
   event: 'session.created';
   data: { sessionId: string; tipEntryId: string; timestamp: number; entry: SessionEntry };
@@ -45,7 +40,7 @@ export function createSessionUsecase({ worlds, sessions, state, transaction, eve
       }
       const session = sessions.create({
         id: value.id, worldId: world.id, userCharacterId: value.userCharacterId,
-        presetId: value.presetId, apiModelConfigId: value.apiModelConfigId,
+        runtimeConfig: value.runtimeConfig,
         title: value.title === undefined ? opening.name : value.title, state: snapshots.session,
       });
       const timestamp = Date.now(), playerName = character.name;

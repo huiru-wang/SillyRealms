@@ -32,10 +32,13 @@ export function createDeletePreset(
   return (id: string) => transaction(() => {
     const locations: string[] = [];
     if (settings.getOptional()?.defaultPresetId === id) locations.push('应用设置中的默认预设');
+    if (settings.getOptional()?.defaultReplyAssistPresetId === id) locations.push('应用设置中的 AI 帮答预设');
     const worldRefs = worlds.listUsingDefaultPreset(id);
     if (worldRefs.length) locations.push('世界卡' + referenceNames(worldRefs) + '的默认预设');
     const sessionRefs = sessions.listUsingPreset(id);
     if (sessionRefs.length) locations.push('会话' + referenceNames(sessionRefs) + '的叙事预设');
+    const replyRefs = sessions.listUsingPreset(id, 'reply_assist');
+    if (replyRefs.length) locations.push('会话' + referenceNames(replyRefs) + '的 AI 帮答预设');
     if (locations.length) throw new AppError('REFERENCE_CONFLICT', locations.join('；'));
     if (!presets.delete(id)) throw new AppError('PRESET_NOT_FOUND');
   });

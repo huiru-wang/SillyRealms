@@ -29,7 +29,15 @@
 .preview{display:block;border:0;width:100%;height:100%;min-width:0;min-height:0}
 .preview :global(iframe){display:block;width:100%;height:100%;border:0}
 /* Sending is primary. Author shortcuts share the secondary compact button and theme states. */
-.composerButtons{display:flex;flex-wrap:wrap;justify-content:center;gap:var(--control-gap);width:100%;max-width:var(--composer-width);margin:0 auto var(--space-2)}
+.actionRow{width:100%;max-width:var(--composer-width);margin:0 auto var(--space-2);display:grid;align-items:center;row-gap:var(--control-gap)}
+.actionRow>.spriteToggle,.actionRow>.composerButtons{grid-area:1/1}
+.actionRow>.spriteToggle{justify-self:start;z-index:1}
+.actionRow[data-has-toggle=true][data-stacked=true]>.spriteToggle{grid-row:2}
+.spriteToggle:global(.sr-button){border-radius:var(--control-compact-height);pointer-events:auto}
+.spriteToggle[aria-pressed=true]{--button-bg:var(--selection-bg);--button-fg:var(--selection-fg);--button-border:var(--selection-border)}
+.collapsedActions{position:relative;max-width:var(--composer-width);margin-inline:auto}
+.collapsedActions>.spriteToggle{position:absolute;left:0}
+.composerButtons{display:flex;flex-wrap:wrap;justify-content:center;gap:var(--control-gap);width:100%;min-width:0}
 .composerButtons>button{flex:0 0 auto;max-width:min(100%,16em);height:var(--control-compact-height);border-radius:var(--control-compact-height);pointer-events:auto}
 .composerButtons :global(.sr-button-label){white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .composerArea{--composer-width:600px;position:absolute;z-index:2;inset:auto 0 0;min-width:0;padding:10px 24px max(20px,env(safe-area-inset-bottom));pointer-events:none}

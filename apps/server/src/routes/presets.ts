@@ -20,8 +20,8 @@ export function createPresetRoutes(presets: PresetService, usecases?: PresetUsec
   const routes = new Hono();
 
   routes.get('/default', c => {
-    if ((c.req.query('type') ?? 'narrative') !== 'narrative') throw new AppError('INVALID_REQUEST');
-    return success(c, { item: presets.getDefault() });
+    const type = z.enum(['narrative', 'reply_assist']).parse(c.req.query('type') ?? 'narrative');
+    return success(c, { item: presets.getDefault(type) });
   });
   routes.post('/import', async c => {
     if (!usecases) throw new AppError('SERVICE_UNAVAILABLE');

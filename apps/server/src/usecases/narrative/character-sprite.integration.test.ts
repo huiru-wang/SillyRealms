@@ -50,7 +50,7 @@ beforeEach(async () => {
     ],
     openings: [{ id: 'opening', name: 'Opening', content: 'Opening' }],
   });
-  services.sessions.create({ id: 'session', worldId: 'world', presetId: 'preset', apiModelConfigId: 'model',
+  services.sessions.create({ id: 'session', worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' },
     userCharacterId: 'player' });
   services.sessions.appendEntry('session', { id: 'opening', runId: 'opening-run', type: 'message', role: 'assistant',
     payload: { message: { role: 'assistant', content: 'Opening', timestamp: 1 } } });

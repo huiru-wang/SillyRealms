@@ -5,6 +5,7 @@
 - 仓库：/Users/wanghuiru/Workspace/SillyRealms
 - 适用代码：当前 apps/server、apps/web、packages/sr-sdk。
 - 本版按最新需求采用「同一世界原地覆盖指定版本」。不采用上一轮建议的多版本安装或 world_packages 分组。
+- 集中托管发布与评论的独立补充方案见 [SR 世界卡集中发布与 Discord 评论方案](world-card-publishing-hub.md)；本地更新触发策略与覆盖语义保持本方案。
 
 ## 1. 已确定的产品范围
 
@@ -595,6 +596,8 @@ previewContentIdentity 增加 metadata.release.version；更新版本改变，�
 建议集中定义必要错误：未取得目录、目标版本不存在、来源/身份不匹配、目录或 revision 冲突、下载/哈希失败、世界忙、玩家角色不兼容、状态定义不兼容、替换/补偿失败。错误显示具体原因，不泄漏本地文件路径或原始网络凭据。
 
 ## 13. 创作者操作说明
+
+本节描述创作者自行维护发行源的流程。采用 [集中发布方案](world-card-publishing-hub.md) 时，固定地址、最终包存储、哈希及版本目录由发布中心生成，创作者只需上传卡包和填写版本说明；公开协议保持一致。
 
 ### 13.1 首次准备
 

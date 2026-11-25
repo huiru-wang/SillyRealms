@@ -61,21 +61,21 @@ export function createHistoryController({sessionId, request}: Options) {
     }
     return [...runs.values()].sort((a, b) => a.firstSeq - b.firstSeq);
   };
-  const call = async <T,>(path: string): Promise<T> => {
+  const call = async <T,>(path: string, signal?: AbortSignal): Promise<T> => {
     if (disposed) throw new DOMException('History controller disposed', 'AbortError');
     const controller = new AbortController(); pending.add(controller);
     try {
-      const result = await request<T>(path, {signal: controller.signal});
+      const result = await request<T>(path, {signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal});
       if (disposed) throw new DOMException('History controller disposed', 'AbortError');
       return result;
     } finally { pending.delete(controller); }
   };
-  const query = (options: RunQuery = {}): Promise<RunPage> => {
+  const query = (options: RunQuery = {}, signal?: AbortSignal): Promise<RunPage> => {
     const params = new URLSearchParams();
     if (options.cursor !== undefined) params.set('cursor', options.cursor);
     if (options.afterSeq !== undefined) params.set('afterSeq', String(options.afterSeq));
     if (options.limit !== undefined) params.set('limit', String(options.limit));
-    return call<RunPage>(base + '/narrative/runs' + (params.size ? '?' + params.toString() : ''));
+    return call<RunPage>(base + '/narrative/runs' + (params.size ? '?' + params.toString() : ''), signal);
   };
   const activeFrom = (page: RunPage) => {
     const id = page.activeRunId;

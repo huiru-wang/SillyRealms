@@ -1,4 +1,4 @@
-import { resolvePostprocessPrompts, systemVariableNames } from '../../../../modules/presets/service.js';
+import { parsePresetNodePrompt, postprocessNodeIds, resolvePostprocessPrompts, systemVariableNames } from '../../../../modules/presets/service.js';
 import { AppError } from '../../../../errors.js';
 import type { ModelInfo, ModelMessage, ModelParameters } from '../../../../infrastructure/model/client.js';
 import type { ContextSnapshot } from '../../capture.js';
@@ -7,9 +7,8 @@ import { resolveContextCapabilities } from '../../capabilities.js';
 import type { ContextDiagnostics, ContextNodeDiagnostic } from '../../diagnostics.js';
 import { contextBudget } from '../../lib/budget.js';
 import { estimateInputTokens } from '../../lib/estimate.js';
-import { parsePromptTemplate } from '../../../../lib/prompt-template.js';
 import { readStateVariable } from '../../lib/state-variable.js';
-import { renderModelNotes } from '../model-notes/index.js';
+import { buildNarrativeNotes, renderModelNotes } from '../model-notes/index.js';
 import { postprocessProtocol } from './protocol.js';
 
 export type ContextComposition = { systemBytes: number; summaryBytes: number; historyBytes: number };
@@ -24,7 +23,7 @@ export type CompiledNarrativeContext = {
   modelParameters: ModelParameters;
   estimatedInputTokens: number;
   inputBudget: number;
-  activeRoots: string[];
+  allowedStateUpdateRoots: string[];
   characterSpriteCatalog: readonly CharacterSpriteCatalogItem[];
   context: {
     apiModelConfigId: string;
@@ -38,11 +37,10 @@ export type CompiledNarrativeContext = {
 export function compileNarrativeContext(snapshot: ContextSnapshot, model: Pick<ModelInfo, 'contextWindow' | 'maxTokens'>): CompiledNarrativeContext {
   const config = snapshot.preset.config, messages: ModelMessage[] = [];
   const nodes: ContextNodeDiagnostic[] = [], composition = emptyComposition();
-  const capabilities = resolveContextCapabilities(config, snapshot.materials, snapshot.characterSpriteCatalog);
-  const enabledSources: Record<string, boolean> = {
-    'state-update': capabilities.worldState, 'action-suggestions': capabilities.actionSuggestions,
-    'character-sprite': capabilities.characterSprite,
-  };
+  const prompts = resolvePostprocessPrompts(config);
+  const capabilities = resolveContextCapabilities(prompts, snapshot.materials, snapshot.characterSpriteCatalog);
+  // Select the recent assistant entries before applying the candidate's history window.
+  const modelNotes = buildNarrativeNotes(snapshot.historyEntries, capabilities);
   const readVariable = (name: typeof systemVariableNames[number]) => name === 'characterSprite.catalog' && !capabilities.characterSprite
     ? { type: 'text' as const, value: '' } : snapshot.materials.variables[name];
   let inputCount = 0, historyCount = 0, summaryCount = 0;
@@ -54,6 +52,10 @@ export function compileNarrativeContext(snapshot: ContextSnapshot, model: Pick<M
     };
     nodes.push(diagnostic);
     if (!node.enabled) continue;
+    if (node.id === 'worldState' && !capabilities.worldState) {
+      diagnostic.reason = 'no_active_state';
+      continue;
+    }
     const startIndex = messages.length;
     const modelNoteEntryIds: string[] = [];
     let pending = '', pendingComposition = emptyComposition();
@@ -71,7 +73,7 @@ export function compileNarrativeContext(snapshot: ContextSnapshot, model: Pick<M
       pending = '';
       pendingComposition = emptyComposition();
     };
-    for (const segment of parsePromptTemplate(node.prompt, systemVariableNames)) {
+    for (const segment of parsePresetNodePrompt(node.id, node.prompt)) {
       if (segment.type === 'text') { append(segment.value, 'systemBytes'); continue; }
       if (segment.type === 'state') {
         append(readStateVariable(segment, snapshot.views, snapshot.materials.visibleRoots), 'systemBytes');
@@ -94,7 +96,7 @@ export function compileNarrativeContext(snapshot: ContextSnapshot, model: Pick<M
       else {
         flush();
         for (const item of variable.value) {
-          const notes = snapshot.modelNotes.get(item.id)?.filter(note => enabledSources[note.source] !== false);
+          const notes = modelNotes.get(item.id);
           if (notes?.length) modelNoteEntryIds.push(item.id);
           const content = renderModelNotes(item.text, notes);
           messages.push({ role: item.role, content, timestamp: item.timestamp });
@@ -110,8 +112,7 @@ export function compileNarrativeContext(snapshot: ContextSnapshot, model: Pick<M
   }
   if (inputCount !== 1 || historyCount !== 1) throw new AppError('INVALID_NARRATIVE_TEMPLATE');
   if (config.contextStrategy.strategy === 'rolling_summary' && summaryCount !== 1) throw new AppError('INVALID_NARRATIVE_TEMPLATE');
-  const prompts = resolvePostprocessPrompts(config);
-  const render = (prompt: string): string => parsePromptTemplate(prompt, systemVariableNames).map(segment => {
+  const render = (id: string, prompt: string): string => parsePresetNodePrompt(id, prompt).map(segment => {
     if (segment.type === 'text') return segment.value;
     if (segment.type === 'state') return readStateVariable(segment, snapshot.views, snapshot.materials.visibleRoots);
     const variable = readVariable(segment.name);
@@ -123,7 +124,7 @@ export function compileNarrativeContext(snapshot: ContextSnapshot, model: Pick<M
   }).join('');
   const capabilityIndex = messages.length;
   const capabilityParts: string[] = [];
-  for (const id of ['worldState', 'actionSuggestions', 'characterSprite'] as const) {
+  for (const id of postprocessNodeIds) {
     const configured = config.nodes.find(node => node.id === id && node.kind === 'postprocess');
     if (!configured) continue;
     const included = capabilities[id];
@@ -133,10 +134,10 @@ export function compileNarrativeContext(snapshot: ContextSnapshot, model: Pick<M
         : id === 'characterSprite' ? 'no_character_sprites' : 'no_active_state',
       source: 'preset', messageIndexes: included ? [capabilityIndex] : [],
     });
-    if (included) capabilityParts.push(render(prompts[id]!));
+    if (included) capabilityParts.push(render(id, prompts[id]!));
   }
   if (capabilityParts.length) {
-    capabilityParts.push(postprocessProtocol(capabilities, snapshot.materials.activeRoots.length > 0));
+    capabilityParts.push(postprocessProtocol(capabilities));
     nodes.push({ id: 'postprocessProtocol', name: '能力输出协议', kind: 'protocol', role: 'system', enabled: true,
       included: true, reason: 'included', source: 'platform', messageIndexes: [capabilityIndex] });
     const capabilityContent = capabilityParts.join('\n\n');
@@ -146,10 +147,11 @@ export function compileNarrativeContext(snapshot: ContextSnapshot, model: Pick<M
   const { maxTokens, inputBudget } = contextBudget(config, model);
   const estimatedInputTokens = estimateInputTokens(messages);
   return {
-    messages, maxTokens, inputBudget, estimatedInputTokens, activeRoots: [...snapshot.materials.activeRoots],
+    messages, maxTokens, inputBudget, estimatedInputTokens,
+    allowedStateUpdateRoots: capabilities.stateUpdate ? [...snapshot.materials.activeRoots] : [],
     characterSpriteCatalog: snapshot.characterSpriteCatalog,
     context: {
-      apiModelConfigId: snapshot.session.apiModelConfigId, contextWindowTokens: model.contextWindow,
+      apiModelConfigId: snapshot.session.runtimeConfig.apiModelConfigId, contextWindowTokens: model.contextWindow,
       contextComposition: composition,
     },
     diagnostics: {

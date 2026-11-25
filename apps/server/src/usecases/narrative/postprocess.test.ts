@@ -54,7 +54,7 @@ beforeEach(async () => {
       secret: { type: 'number', initial: 99, description: 'Unrelated', rules: { secret: 'Retain' }, load: { mode: 'never' } },
     } } },
   });
-  services.sessions.create({ id: 'session', worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' });
+  services.sessions.create({ id: 'session', worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player' });
   services.sessions.appendEntry('session', {
     id: 'opening', runId: 'opening-run', type: 'message', role: 'assistant',
     payload: { message: { role: 'assistant', content: 'Opening', timestamp: 1 } },
@@ -73,7 +73,7 @@ afterEach(async () => {
   await narrative.shutdown();
   vi.restoreAllMocks(); db.close(); rmSync(root, { recursive: true, force: true });
 });
-function submit() {
+function submit(text = '买汤') {
   const finished = new Promise<NarrativeTerminalEvent>(resolve => {
     const stop = hub.subscribe('session', event => {
       if (event.event === 'run.completed' || event.event === 'run.stopped') {
@@ -81,7 +81,7 @@ function submit() {
       }
     });
   });
-  const accepted = narrative.submit({ sessionId: 'session', input: { text: '买汤' },
+  const accepted = narrative.submit({ sessionId: 'session', input: { text },
     expectedTipEntryId: services.sessions.require('session').tipEntryId });
   return { accepted, finished };
 }
@@ -303,6 +303,53 @@ describe('narrative postprocessing integration', () => {
     expect((await submit().finished).event).toBe('run.completed');
     expect(seen.slice(-3).map(event => event.event)).toEqual(['action_suggestions.created', 'run.usage', 'run.completed']);
     expect(current().coins).toBe(8);
+  });
+
+  it.each(['enabled', 'disabled', 'absent'] as const)('carries scene facts across turns with state updates %s', async mode => {
+    const scene = { 当前日期: '新历2088年01月01日', 当前时刻: '23:00', 当日时段: '侍寝时段', 当前地点: '走廊' };
+    services.worlds.update('world', { stateDefinition: { schema_version: 2, scopes: { message: {
+      世界: { type: 'json', initial: scene, description: '场景时间与地点', rules: { '世界.当前时刻': '按经过的时长推进。' } },
+    } } } });
+    services.sessions.setEntryState('session', 'opening', [{ key: '世界', value: scene }]);
+    const config = services.presets.getDefault().config;
+    services.presets.update('preset', { config });
+    const arrival = { path: '世界.当前地点', value: 'Robin主卧', reason: '抵达主卧' };
+    script('阿柳走进主卧。' + stateBlock(JSON.stringify(arrival)));
+    expect((await submit('走进主卧').finished).event).toBe('run.completed');
+
+    const enabled = mode === 'enabled';
+    if (mode === 'absent') config.nodes = config.nodes.filter(node => node.id !== 'stateUpdate');
+    else config.nodes.find(node => node.id === 'stateUpdate')!.enabled = enabled;
+    services.presets.update('preset', { config });
+    seen = [];
+    const tick = { path: '世界.当前时刻', value: '23:15', reason: '等待十五分钟' };
+    const story = '墙上的钟走过十五分钟。';
+    script(story + stateBlock(JSON.stringify(tick)));
+    const turn = submit('我坐在原处等了十五分钟');
+    expect((await turn.finished).event).toBe('run.completed');
+    const messages = stream.mock.calls[1]![1];
+    const facts = messages.find(message => message.content.startsWith('这些是当前会话'))!.content;
+    expect(facts).toContain(JSON.stringify({ ...scene, 当前地点: 'Robin主卧' }));
+    expect(facts).toContain('type: json');
+    expect(facts).not.toContain('rules:');
+    const instructions = messages.at(-1)!.content;
+    expect(instructions.includes('世界.当前时刻: 按经过的时长推进。')).toBe(enabled);
+    expect(instructions.includes('state_update 使用 JSONL')).toBe(enabled);
+    const arrivalHistory = messages.find(message => message.content.startsWith('阿柳走进主卧。'))!;
+    expect(arrivalHistory.content.includes(stateBlock(JSON.stringify(arrival)))).toBe(enabled);
+    const finalScene = { ...scene, 当前地点: 'Robin主卧', 当前时刻: enabled ? '23:15' : '23:00' };
+    expect(current()).toEqual({ 世界: finalScene });
+    expect(seen.some(event => event.event === 'state.changed')).toBe(enabled);
+    expect(output(turn.accepted).stateUpdate).toMatchObject(enabled
+      ? { status: 'success', updates: [{ status: 'success', ...tick }] }
+      : { status: 'invalid_updates', updates: [{ status: 'invalid_path', errorCode: 'STATE_ROOT_NOT_ACTIVE' }] });
+    expect(saved(turn.accepted).payload.message).toMatchObject({ content: story });
+
+    script('她看了一眼钟。');
+    expect((await submit('看看几点了').finished).event).toBe('run.completed');
+    const next = stream.mock.calls[2]![1];
+    expect(next.find(message => message.content.startsWith('这些是当前会话'))!.content).toContain(JSON.stringify(finalScene));
+    expect(next.find(message => message.content.startsWith(story))!.content.includes(stateBlock(JSON.stringify(tick)))).toBe(enabled);
   });
 
   it('adds historical notes only to the next model request without changing stored prose or replaying updates', async () => {

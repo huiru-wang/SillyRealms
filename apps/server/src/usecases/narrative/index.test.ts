@@ -92,7 +92,7 @@ afterEach(async () => {
 
 function createSession(id: string) {
   return services.sessions.create({
-    id, worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player',
+    id, worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player',
     state: { coins: 2 },
   });
 }

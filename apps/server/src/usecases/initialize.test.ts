@@ -47,6 +47,8 @@ describe('application initialization', () => {
     const first = await initialize();
     expect(first.defaultPresetId).toBe('sr-default-preset');
     expect(first.defaultApiModelConfigId).toBeNull();
+    expect(first.defaultReplyAssistPresetId).toBe('sr-default-reply-assist-preset');
+    expect(services.presets.require(first.defaultReplyAssistPresetId!)).toMatchObject({type:'reply_assist',apiModelConfigId:null});
     const preset = services.presets.require(first.defaultPresetId!);
     expect(preset.config.nodes.length).toBeGreaterThan(0);
     clock.mockReturnValue(2000);
@@ -75,7 +77,7 @@ describe('application initialization', () => {
 
   it('restores missing initial data while preserving explicitly empty defaults', async () => {
     await initialize();
-    const settings = services.settings.update({ defaultPresetId: null, defaultApiModelConfigId: null });
+    const settings = services.settings.update({ defaultPresetId: null, defaultApiModelConfigId: null, defaultReplyAssistPresetId: null });
     services.presets.delete('sr-default-preset');
     expect(await initialize()).toEqual(settings);
     expect(services.presets.list().map(preset => preset.id)).toEqual(['sr-default-preset']);
@@ -216,7 +218,7 @@ describe('application initialization', () => {
     const importWorld = createImportWorld(services);
     const manual = await importWorld({ format: 'zip', bytes: await services.initialWorlds[0]!.readBytes() });
     const session = services.sessions.create({
-      worldId: manual.id, presetId: preset.id, apiModelConfigId: model.id, userCharacterId: 'keeper',
+      worldId: manual.id, runtimeConfig: { narrativePresetId: preset.id, apiModelConfigId: model.id }, userCharacterId: 'keeper',
     });
     await createInitialize({ ...dependencies(), initialWorlds: services.initialWorlds })();
     expect(services.worlds.require('sr-world-xiaofanguan')).toMatchObject({ name: manual.name, ...defaults });

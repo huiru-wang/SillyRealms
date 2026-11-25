@@ -49,3 +49,13 @@ test('deletion and created events validate execution identity and the committed 
  source.emit('run.created',{sessionId:'s',runId:'r',assistantEntryId:'new-a',messages:[{id:'u'}]});
  assert.deepEqual(seen.map(event=>event.event),['message.deleted','run.created']);channel.dispose();
 });
+
+test('sprite events accept complete snapshots and explicit clearing, rejecting duplicate slots and characters',()=>{
+ const source=new Source(),events=[],channel=createSessionEventChannel({sessionId:'s',createSource:()=>source});
+ channel.subscribe('character_sprite',event=>events.push(event.data.items));channel.connect();
+ const item={position:'right',characterId:'keeper',spriteId:'coat'};
+ for(const items of [[item],[],[item,{...item,position:'left'}],[item,{...item,characterId:'other'}],[{...item,position:'below'}]]){
+   source.emit('character_sprite.changed',{sessionId:'s',runId:'r',messageId:'a',items});
+ }
+ assert.deepEqual(events,[[item],[]]);channel.dispose();
+});

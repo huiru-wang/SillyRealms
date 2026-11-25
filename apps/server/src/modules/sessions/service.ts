@@ -26,6 +26,8 @@ export type {
   NarrativeStopReason, EntryRun,
 } from './types.js';
 
+export { createSessionSchema } from './schema.js';
+
 export type {
   NarrativeOutput, StateUpdateOutput, ActionSuggestionsOutput,
   StateUpdateStatus, StateUpdateItem, ActionSuggestionsStatus,
@@ -37,7 +39,7 @@ type Dependencies = { worlds: WorldReader; presets: PresetReader; models: ModelR
 
 function toSession(row: SessionRow): Session {
   return {
-    id: row.id, worldId: row.world_id, presetId: row.preset_id, apiModelConfigId: row.api_model_config_id,
+    id: row.id, worldId: row.world_id, runtimeConfig: row.runtime_config,
     userCharacterId: row.user_character_id, tipEntryId: row.tip_entry_id, title: row.title,
     state: row.state, usage: row.usage_json, createdAt: row.created_at, updatedAt: row.updated_at,
   };
@@ -80,8 +82,7 @@ export class SessionService {
       && character.id === value.userCharacterId && character.player_selectable === true)) {
       throw new AppError('INVALID_SESSION_CHARACTER');
     }
-    this.#dependencies.presets.require(value.presetId);
-    this.#dependencies.models.require(value.apiModelConfigId);
+    this.#validateConfigReferences(value.runtimeConfig);
     return toSession(this.#repository.create({ ...value, id: value.id ?? randomUUID() }));
   }
 
@@ -98,8 +99,8 @@ export class SessionService {
     return this.#repository.countByWorldIds([...new Set(worldIds.map(id => identifier.parse(id)))]);
   }
 
-  listUsingPreset(presetId: string) {
-    return this.#repository.listUsingPreset(presetId);
+  listUsingPreset(presetId: string, type: 'narrative' | 'reply_assist' = 'narrative') {
+    return this.#repository.listUsingPreset(presetId, type);
   }
 
   listIdsByWorld(worldId: string): string[] {
@@ -110,9 +111,14 @@ export class SessionService {
     this.#dependencies.cache.assertSessionWrite(identifier.parse(id));
     const patch = updateSessionSchema.parse(input);
     this.require(id);
-    if (patch.presetId !== undefined) this.#dependencies.presets.require(patch.presetId);
-    if (patch.apiModelConfigId !== undefined) this.#dependencies.models.require(patch.apiModelConfigId);
+    if (patch.runtimeConfig) this.#validateConfigReferences(patch.runtimeConfig);
     return toSession(this.#repository.update(id, patch));
+  }
+
+  #validateConfigReferences(config: Partial<Session['runtimeConfig']>) {
+    if (config.narrativePresetId) this.#dependencies.presets.require(config.narrativePresetId, 'narrative');
+    if (config.apiModelConfigId) this.#dependencies.models.require(config.apiModelConfigId);
+    if (config.replyAssistPresetId) this.#dependencies.presets.require(config.replyAssistPresetId, 'reply_assist');
   }
 
   delete(id: string): boolean {
@@ -181,11 +187,11 @@ export class SessionService {
     if (latest) {
       const request = latest.metrics.requests.at(-1)!;
       const snapshot = latest.metrics.context?.requestId === request.requestId ? latest.metrics.context : undefined;
-      const selected = this.#dependencies.models.get(session.apiModelConfigId);
+      const selected = this.#dependencies.models.get(session.runtimeConfig.apiModelConfigId);
       const tipSeq = session.tipEntryId === null ? 0 : this.#repository.getEntry(sessionId, session.tipEntryId)?.seq ?? 0;
       const stale = latest.seq > tipSeq || !selected || selected.modelId !== request.modelId ||
         (request.provider !== null && selected.providerId !== request.provider) ||
-        (snapshot !== undefined && snapshot.apiModelConfigId !== session.apiModelConfigId);
+        (snapshot !== undefined && snapshot.apiModelConfigId !== session.runtimeConfig.apiModelConfigId);
       latestContext = {
         inputTokens: request.usage?.inputTokens ?? null,
         contextWindowTokens: snapshot?.contextWindowTokens ?? null,

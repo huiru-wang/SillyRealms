@@ -1,4 +1,5 @@
 import { decodeParameters } from './model-parameters.js';
+import type { ModelReader } from '../models/service.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
@@ -11,18 +12,20 @@ import { presetValueSchema } from './schema.js';
 import type { CreatePresetInput, Preset, PresetListOptions, PresetPage, PresetSummary, UpdatePresetInput } from './types.js';
 
 export type { CreatePresetInput, Preset, PresetListOptions, PresetPage, PresetSummary, UpdatePresetInput } from './types.js';
-export { systemVariableNames } from './schema.js';
+export { replyVariableNames, parsePresetNodePrompt, postprocessNodeIds, systemVariableNames } from './schema.js';
 export type { NarrativePresetConfig, PresetNode } from './schema.js';
 export type { PresetDocument } from './card.js';
-export { resolvePostprocessPrompts } from './postprocess.js';
+export { characterSpriteAvailable, resolvePostprocessPrompts } from './postprocess.js';
 export type { PostprocessNodeId, PostprocessPrompts } from './postprocess.js';
 export type PresetReader = Pick<PresetService, 'get' | 'require' | 'list' | 'listPage' | 'getDefault' | 'toDocument'>;
 
-const createSchema = presetValueSchema.extend({ id: z.string().trim().min(1).optional() }).strict();
-const patchSchema = presetValueSchema.extend({ description: z.string().nullable() }).partial().strict()
-  .refine(value => Object.values(value).some(item => item !== undefined), '预设更新不能为空');
+const presetType = z.enum(['narrative', 'reply_assist']);
+const patchSchema = z.object({
+  type: presetType.optional(), name: z.string().optional(), description: z.string().nullable().optional(),
+  config: z.unknown().optional(), apiModelConfigId: z.string().nullable().optional(),
+}).strict().refine(value => Object.values(value).some(item => item !== undefined), '预设更新不能为空');
 const listSchema = z.object({
-  type: z.literal('narrative').default('narrative'),
+  type: presetType.default('narrative'),
   limit: z.number().int().min(1).max(1000).default(100),
   offset: z.number().int().min(0).default(0),
 }).strict();
@@ -34,6 +37,7 @@ function toPreset(record: StoredPreset): Preset {
     revision: record.revision,
     ...presetValueSchema.parse({
       type: record.type,
+      ...(record.type === 'reply_assist' ? { apiModelConfigId: record.api_model_config_id } : {}),
       name: record.name,
       description: record.description,
       config: {
@@ -59,14 +63,22 @@ export class PresetService {
   readonly #templates: ReturnType<typeof builtinPresets>;
   readonly #defaultId: string;
 
-  constructor(db: DatabaseSync, catalog = loadInitialData()) {
+  readonly defaultReplyAssistId: string | null;
+  constructor(db: DatabaseSync, private readonly models: ModelReader, catalog = loadInitialData()) {
     this.#templates = builtinPresets(catalog);
     this.#defaultId = catalog.defaultPresetId;
+    this.defaultReplyAssistId = catalog.defaultReplyAssistPresetId ?? null;
     this.#repository = new PresetRepository(db);
   }
 
-  getDefault(): CreatePresetInput {
-    return structuredClone(this.#templates.get(this.#defaultId)!.value);
+  getDefault(): Extract<CreatePresetInput, { type: 'narrative' }>;
+  getDefault(type: Preset['type']): CreatePresetInput;
+  getDefault(type: Preset['type'] = 'narrative'): CreatePresetInput {
+    const id = type === 'narrative' ? this.#defaultId : this.defaultReplyAssistId;
+    const template = id && this.#templates.get(id);
+    if (!template) throw new AppError('PRESET_NOT_FOUND');
+    if (template.value.type !== type) throw new AppError('PRESET_TYPE_MISMATCH');
+    return structuredClone(template.value);
   }
 
   ensureDefault(): Preset {
@@ -114,9 +126,10 @@ export class PresetService {
     return value ? toPreset(value) : null;
   }
 
-  require(id: string): Preset {
+  require(id: string, expectedType?: Preset['type']): Preset {
     const value = this.get(id);
     if (!value) throw new AppError('PRESET_NOT_FOUND');
+    if (expectedType && value.type !== expectedType) throw new AppError('PRESET_TYPE_MISMATCH');
     return value;
   }
 
@@ -128,14 +141,17 @@ export class PresetService {
     const page = listSchema.parse(options);
     const records = this.#repository.listSummaries({ ...page, limit: page.limit + 1 });
     const items: PresetSummary[] = records.slice(0, page.limit).map(record => ({
-      id: record.id, type: z.literal('narrative').parse(record.type), name: record.name, description: record.description,
+      id: record.id, type: presetType.parse(record.type), name: record.name, description: record.description,
       revision: record.revision, createdAt: record.created_at, updatedAt: record.updated_at,
     }));
     return { items, hasMore: records.length > page.limit };
   }
 
   create(input: CreatePresetInput): Preset {
-    const { id = randomUUID(), ...value } = createSchema.parse(input);
+    const { id: provided, ...fields } = input;
+    const id = provided === undefined ? randomUUID() : z.string().trim().min(1).parse(provided);
+    const value = presetValueSchema.parse(fields);
+    if (value.type === 'reply_assist' && value.apiModelConfigId) this.models.require(value.apiModelConfigId);
     this.#repository.create(id, value);
     return this.require(id);
   }
@@ -144,12 +160,16 @@ export class PresetService {
     const patch = patchSchema.parse(input);
     const current = this.get(id);
     if (!current) return null;
+    if (patch.type && patch.type !== current.type) throw new AppError('PRESET_TYPE_MISMATCH');
     const value = presetValueSchema.parse({
-      type: patch.type ?? current.type,
+      type: current.type,
+      ...(current.type === 'reply_assist' ? { apiModelConfigId: current.apiModelConfigId } : {}),
+      ...(patch.apiModelConfigId === undefined ? {} : { apiModelConfigId: patch.apiModelConfigId }),
       name: patch.name ?? current.name,
       description: patch.description === undefined ? current.description : patch.description,
-      config: patch.config ?? current.config,
+      config: patch.config === undefined ? current.config : patch.config,
     });
+    if (value.type === 'reply_assist' && value.apiModelConfigId) this.models.require(value.apiModelConfigId);
     if (expectedRevision !== undefined && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) throw new AppError('INVALID_REQUEST');
     if (!this.#repository.update(id, value, expectedRevision ?? current.revision)) throw new AppError('PRESET_REVISION_CONFLICT');
     return this.require(id);

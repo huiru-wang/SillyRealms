@@ -10,8 +10,11 @@ export type PresetNode = {
   prompt: string;
   enabled: boolean;
 };
+export type PresetType = 'narrative' | 'reply_assist';
 export type WebPreset = SamplingDraft & {
   id: string;
+  type: PresetType;
+  apiModelConfigId?: string|null;
   name: string;
   description: string;
   contextStrategy: ContextStrategy;
@@ -24,9 +27,10 @@ export type WebPreset = SamplingDraft & {
   revision: number;
 };
 
-export type PresetSummary={id:string;type:'narrative';name:string;description:string|null;revision:number;createdAt:number;updatedAt:number};
+export type PresetSummary={id:string;type:PresetType;name:string;description:string|null;revision:number;createdAt:number;updatedAt:number};
 export type PresetInput={
-  type:'narrative';name:string;description:string|null;
+  apiModelConfigId?:string|null;
+  type:PresetType;name:string;description:string|null;
   config:{schemaVersion:1;nodes:PresetNode[];contextStrategy:{strategy:ContextStrategy;maxContextTokens:number;maxOutputTokens:number;summaryPrompt:string};modelParameters:Partial<Record<SamplingKey, number>> & {thinkingEnabled:boolean;thinkingLevel?:PresetThinkingLevel}};
 };
 export type PresetDetail=PresetSummary & PresetInput;

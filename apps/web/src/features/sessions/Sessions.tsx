@@ -16,14 +16,14 @@ import styles from './Sessions.module.css';
 
 import {CreateSessionDialog} from './CreateSessionDialog';
 import {SessionPage} from './SessionPage';
-import type {Session} from './types';
+import type {SessionSummary} from './types';
 
 export function SessionListPage(){
   useTranslation();
  const [query,setQuery]=useSearchParams(),worldId=query.get('worldId')??'';
  const {sessionsRevision,refreshSessions}=useManagement();
- const list=usePagedResource<Session>('v1/sessions?limit=20'+(worldId?'&worldId='+encodeURIComponent(worldId):''),sessionsRevision);
- const pending=useRef(false);const [creating,setCreating]=useState(false),[confirmation,setConfirmation]=useState<Session|null>(null),[failure,setFailure]=useState(''),[deleting,setDeleting]=useState(false);
+ const list=usePagedResource<SessionSummary>('v1/sessions?limit=20'+(worldId?'&worldId='+encodeURIComponent(worldId):''),sessionsRevision);
+ const pending=useRef(false);const [creating,setCreating]=useState(false),[confirmation,setConfirmation]=useState<SessionSummary|null>(null),[failure,setFailure]=useState(''),[deleting,setDeleting]=useState(false);
  const remove=async()=>{
   if(!confirmation||pending.current)return;pending.current=true;setDeleting(true);setFailure('');
   try{await api('v1/sessions/'+encodeURIComponent(confirmation.id),{method:'DELETE'});refreshSessions();setConfirmation(null);}

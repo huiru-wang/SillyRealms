@@ -377,7 +377,7 @@ export class WorldService {
   }
 
   private checkReferences(content: WorldContent): void {
-    if (content.defaultPresetId !== null) this.#dependencies.presets.require(content.defaultPresetId);
+    if (content.defaultPresetId !== null) this.#dependencies.presets.require(content.defaultPresetId, 'narrative');
     if (content.defaultApiModelConfigId !== null) this.#dependencies.models.require(content.defaultApiModelConfigId);
   }
 }

@@ -49,13 +49,25 @@ export const metricsSchema = z.object({
   }
 });
 
+export const runtimeConfigSchema = z.object({
+  narrativePresetId: identifier,
+  apiModelConfigId: identifier,
+  replyAssistPresetId: identifier.nullable(),
+  replyAssistGoal: z.string().max(2000),
+  fontSize: z.number().int().min(13).max(21),
+}).strict();
+const initialRuntimeConfig = runtimeConfigSchema.extend({
+  replyAssistPresetId: runtimeConfigSchema.shape.replyAssistPresetId.default(null),
+  replyAssistGoal: runtimeConfigSchema.shape.replyAssistGoal.default(''),
+  fontSize: runtimeConfigSchema.shape.fontSize.default(16),
+});
 export const createSessionSchema = z.object({
-  id: identifier.optional(), worldId: identifier, presetId: identifier,
-  apiModelConfigId: identifier, userCharacterId: identifier,
+  id: identifier.optional(), worldId: identifier, runtimeConfig: initialRuntimeConfig,
+  userCharacterId: identifier,
   title: z.string().nullable().optional(), state: jsonObject.optional(),
 }).strict();
 export const updateSessionSchema = z.object({
-  presetId: identifier.optional(), apiModelConfigId: identifier.optional(),
+  runtimeConfig: runtimeConfigSchema.partial().optional(),
   title: z.string().nullable().optional(),
 }).strict();
 const internalExtData = jsonObject

@@ -24,6 +24,26 @@ describe('V2 database lifecycle and constraints', () => {
   // rebuilt table does not reproduce the exact SQL text of the validated old schema.
   function legacySettings(database: DatabaseSync, includeLocale = false) {
     database.exec(`
+DROP INDEX idx_presets_model;
+ALTER TABLE presets DROP COLUMN api_model_config_id;
+DROP TABLE sessions;
+CREATE TABLE sessions (
+    id                  TEXT PRIMARY KEY NOT NULL,
+    world_id            TEXT NOT NULL REFERENCES worlds(id) ON DELETE RESTRICT,
+    preset_id           TEXT NOT NULL REFERENCES presets(id) ON DELETE RESTRICT,
+    api_model_config_id TEXT NOT NULL REFERENCES api_model_configs(id) ON DELETE RESTRICT,
+    user_character_id   TEXT NOT NULL,
+    tip_entry_id        TEXT,
+    title               TEXT,
+    state               TEXT NOT NULL CHECK(json_valid(state) AND json_type(state) = 'object'),
+    usage_json          TEXT CHECK(usage_json IS NULL OR (json_valid(usage_json) AND json_type(usage_json) = 'object')),
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL
+);
+CREATE INDEX idx_sessions_world_updated ON sessions(world_id, updated_at, id);
+CREATE INDEX idx_sessions_updated ON sessions(updated_at, id);
+CREATE INDEX idx_session_preset ON sessions(preset_id);
+CREATE INDEX idx_session_model ON sessions(api_model_config_id);
 DROP TABLE app_settings;
 CREATE TABLE app_settings (
     id                          INTEGER PRIMARY KEY CHECK(id = 1),
@@ -112,8 +132,8 @@ CREATE TABLE app_settings (
     previous.close();
 
     const upgraded = openDatabase(path);
-    expect(upgraded.prepare('SELECT * FROM app_settings').get()).toEqual({ ...originalSettings, locale: 'zh-CN' });
-    expect(upgraded.prepare('SELECT * FROM presets').get()).toEqual(originalPreset);
+    expect(upgraded.prepare('SELECT * FROM app_settings').get()).toEqual({ ...originalSettings, locale: 'zh-CN', default_reply_assist_preset_id: null });
+    expect(upgraded.prepare('SELECT * FROM presets').get()).toEqual({ ...originalPreset, api_model_config_id: null });
     expect(upgraded.prepare('SELECT * FROM worlds').get()).toEqual(originalWorld);
     expect(upgraded.prepare('PRAGMA user_version').get()?.user_version).toBe(DATABASE_VERSION);
     expect(() => upgraded.prepare("UPDATE app_settings SET locale='fr'").run()).toThrow();
@@ -126,7 +146,7 @@ CREATE TABLE app_settings (
     reopened.close();
   });
 
-  it.each(['zh-CN', 'en'])('upgrades a V5 %s database to Japanese support without changing any saved rows', locale => {
+  it.each(['zh-CN', 'en'])('upgrades a V5 %s database to Japanese support and discards only the old sessions and entries', locale => {
     const path = file();
     const previous = openDatabase(path);
     legacySettings(previous, true);
@@ -145,7 +165,13 @@ CREATE TABLE app_settings (
     previous.prepare('INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,timestamp,payload,state,ext_data,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .run('entry', 's', null, 'run', 1, 'message', 'assistant', 17, '{"message":{"content":"Keep narrative"}}', '[{"key":"coins","value":7}]', '{"keep":true}', 18, 19);
     const tables = ['api_model_configs', 'presets', 'app_settings', 'worlds', 'world_tags', 'sessions', 'entries'];
-    const records = new Map(tables.map(table => [table, previous.prepare('SELECT * FROM ' + table).all()]));
+    const records = new Map(tables.map(table => [table, previous.prepare('SELECT * FROM ' + table).all().map(row => ({
+      ...row,
+      ...(table === 'app_settings' ? { default_reply_assist_preset_id: null } : {}),
+      ...(table === 'presets' ? { api_model_config_id: null } : {}),
+    }))]));
+    records.set('sessions', []);
+    records.set('entries', []);
     expect(() => previous.prepare("UPDATE app_settings SET locale='ja'").run()).toThrow();
     previous.close();
 
@@ -211,7 +237,8 @@ CREATE TABLE app_settings (
     expect(() => db.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('p2', 'narrative', 'Other', null, '[]', 1, 1)).toThrow();
     db.prepare("INSERT INTO worlds(id,spec_version,name,characters_json,openings_json,state,created_at,updated_at) VALUES('w','0.1','World','[]','[]','{}',1,1)").run();
     db.prepare("INSERT INTO world_tags VALUES('w','adventure',0)").run();
-    db.prepare("INSERT INTO sessions(id,world_id,preset_id,api_model_config_id,user_character_id,state,created_at,updated_at) VALUES('s','w','p','m','player','{}',1,1)").run();
+    db.prepare("INSERT INTO sessions(id,world_id,runtime_config,user_character_id,state,created_at,updated_at) VALUES('s','w',?,'player','{}',1,1)").run(
+      JSON.stringify({ narrative_preset_id: 'p', api_model_config_id: 'm', reply_assist_preset_id: null, replay_assist_goal: '', font_size: 16 }));
     expect(db.prepare("SELECT usage_json FROM sessions WHERE id='s'").get()?.usage_json).toBeNull();
     expect(() => db.prepare("DELETE FROM worlds WHERE id='w'").run()).toThrow();
     expect(() => db.prepare("DELETE FROM presets WHERE id='p'").run()).toThrow();

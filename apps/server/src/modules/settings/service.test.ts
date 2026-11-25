@@ -8,8 +8,8 @@ import { SettingsService } from './service.js';
 let db: DatabaseSync, presets: PresetService, models: ModelService, settings: SettingsService;
 beforeEach(() => {
   db = openDatabase(':memory:');
-  presets = new PresetService(db);
   models = new ModelService(db);
+  presets = new PresetService(db, models);
   settings = new SettingsService(db, { presets, models });
 });
 afterEach(() => db.close());

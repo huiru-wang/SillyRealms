@@ -4,3 +4,5 @@ export type {
   ContextDiagnostics, ContextMaterialDiagnostic, ContextNodeDiagnostic,
   PrepareContextInput, PreparedContext, SummaryModelRequest, SummaryModelResult, SummaryReceipt,
 } from './types.js';
+export { prepareReplyAssistContext } from './prepare-reply-assist.js';
+export type { ReplyAssistSources, ReplyAssistInput } from './prepare-reply-assist.js';

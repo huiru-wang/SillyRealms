@@ -1,18 +1,21 @@
 import {errorKey} from '../../i18n/errors.ts';
 import {api} from '../../api.ts';
 import type {HttpRequest} from '../../transport/http.ts';
-import {createSessionEventChannel} from '../../transport/session-events.ts';
+import {createSessionEventChannel,isReplyAssist,type ReplyAssistEvent} from '../../transport/session-events.ts';
 import {createNarrativeController} from '../narrative/index.ts';
 import {createHistoryController,projectRun} from '../history/index.ts';
 import {createSuggestionsController} from '../suggestions/index.ts';
 import {createStateController} from '../state/index.ts';
+import {createSpriteController,type SpriteDisplay} from '../character-sprites/controller.ts';
 import {loadStageWorld} from '../worlds/stage-world.ts';
-import {readSession,readRuntimeConfig,type RuntimeConfig} from './client.ts';
+import {readSession,readRuntimeConfig,type RuntimeConfig,type SessionCapabilities} from './client.ts';
 import type {Session} from './types.ts';
 import type {StageSnapshot,StageRun,StageCommandMap,SessionEvent,NarrativeEvent,Usage} from '../../../../../packages/sr-sdk/src/stage-contract.ts';
 
 export type WorkspaceSnapshot={
   session:Session|null;config:RuntimeConfig|null;world:Awaited<ReturnType<typeof loadStageWorld>>|null;
+  capabilities:SessionCapabilities|null;
+  sprites:SpriteDisplay;
   loading:boolean;error:string|null;worldError:string|null;notice:string|null;
   stage:StageSnapshot;sending:boolean;stopping:boolean;usageRevision:number;latestUsage:Usage|null|undefined;
 };
@@ -28,31 +31,75 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
   const abort=new AbortController(),listeners=new Set<()=>void>(),eventListeners=new Set<(event:SessionEvent)=>void>();
   let disposed=false,started=false,loading=true,error:string|null=null,worldError:string|null=null,notice:string|null=null;
   let session:Session|null=null,config:RuntimeConfig|null=null,world:WorkspaceSnapshot['world']=null;
+  let capabilities:SessionCapabilities|null=null,configRevision=0,savedSettingsRevision=0;
   let tip:string|null=null,tipRevision=0,connected=false,usageRevision=0;
   let state:ReturnType<typeof createStateController>|null=null;
   const subscriptions:Array<()=>void>=[];
   const channel=dependencies.channel??createSessionEventChannel({sessionId});
   const history=createHistoryController({sessionId,request});
+  const sprites=createSpriteController({sessionId,request,history,changed:publish,
+    readTip:async signal=>(await getSessionRecord(sessionId,signal)).tipEntryId});
   const suggestions=createSuggestionsController(sessionId);
   const appliedDeletions=new Set<string>();
   let snapshot:WorkspaceSnapshot;
+  function bindSprites(){
+    return sprites.bind(capabilities?.characterSprite.available ? session?.worldId??null : null);
+  }
+  async function refreshRuntimeConfig(){
+    const revision=++configRevision;
+    try{
+      const settings=await getRuntimeConfig(sessionId,abort.signal);
+      if(disposed||revision!==configRevision)return;
+      // StageHost binds its iframe lifetime to the deployment configuration object.
+      if(!config||config.debug!==settings.debug||config.stage.origin!==settings.stage.origin||config.stage.entryPath!==settings.stage.entryPath){
+        config={stage:settings.stage,debug:settings.debug};
+      }
+      capabilities=settings.capabilities;
+      const bindingChanged=bindSprites();
+      if(bindingChanged&&!loading&&capabilities?.characterSprite.available)restoreSpriteFrame();
+      publish();
+    }catch(reason){
+      if(disposed||revision!==configRevision)return;
+      capabilities=null;
+      bindSprites();
+      publish();
+      throw reason;
+    }
+  }
+  function reloadCapabilities(){
+    void refreshRuntimeConfig().catch(reason=>{notice=errorKey(reason,"sessions:syncFailed");publish();});
+  }
   const updateTip=(value:string|null)=>{tip=value;tipRevision++;if(session)session={...session,tipEntryId:value};};
   let sessionRequest:Promise<Session>|null=null;
   const refreshSession=():Promise<Session>=>{
     if(sessionRequest)return sessionRequest;
-    const revision=tipRevision;
+    const revision=tipRevision,settingsRevision=savedSettingsRevision;
     sessionRequest=getSessionRecord(sessionId,abort.signal).then(value=>{
       if(disposed)throw Error("sessions:closed");
       if(revision===tipRevision)tip=value.tipEntryId;
-      session={...value,tipEntryId:tip};publish();return session;
+      const current=settingsRevision!==savedSettingsRevision&&session?session:value;
+      if(config&&session&&session.runtimeConfig.narrativePresetId!==current.runtimeConfig.narrativePresetId){capabilities=null;reloadCapabilities();}
+      session={...current,tipEntryId:tip};bindSprites();publish();return session;
     }).finally(()=>{sessionRequest=null;});
     return sessionRequest;
   };
   const narrative=createNarrativeController({sessionId,request,getSession:refreshSession,
     onTipChanged:updateTip,
-    onAccepted:accepted=>{for(const id of accepted.deletedMessageIds)appliedDeletions.add(id);history.acceptExecution(accepted);suggestions.begin(accepted.runId,accepted.assistantEntryId);if(accepted.deletedMessageIds.length){usageRevision++;void state?.read().catch(()=>{});}},
-    onTerminal:()=>{if(disposed)return;usageRevision++;void synchronize();},
+    onAccepted:accepted=>{for(const id of accepted.deletedMessageIds)appliedDeletions.add(id);history.acceptExecution(accepted);sprites.remove(accepted.deletedMessageIds,accepted.tipEntryId);suggestions.begin(accepted.runId,accepted.assistantEntryId);if(accepted.deletedMessageIds.length){usageRevision++;void state?.read().catch(()=>{});}},
+    onTerminal:event=>{
+      if(disposed)return;
+      const id=event.data.assistantEntryId;
+      if(tip===id&&sprites.getSnapshot().frame?.messageId!==id&&event.data.savedMessageIds.includes(id)){
+        void sprites.restore(tip,sprites.checkpoint(),id);
+      }
+      usageRevision++;void synchronize();
+    },
   });
+  function restoreSpriteFrame(){
+    const checkpoint=sprites.checkpoint();
+    void refreshSession().then(current=>sprites.restore(current.tipEntryId,checkpoint))
+      .catch(reason=>{if(!disposed){notice=errorKey(reason,"sessions:syncFailed");publish();}});
+  }
   let historySource: ReturnType<typeof history.getSnapshot>['runs'] | undefined;
   let savedRuns: StageRun[] = [];
   function project():WorkspaceSnapshot{
@@ -69,7 +116,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
         runs[index]=settled?saved:{...ns.run,messages:[...saved.messages,...extra]};
       }
     }
-    return {session,config,world,loading,error,worldError,notice:notice??ns.error,sending:ns.sending,stopping:ns.stopping,usageRevision,latestUsage:ns.usage,
+    return {session,config,capabilities,sprites:sprites.getSnapshot(),world,loading,error,worldError,notice:notice??ns.error,sending:ns.sending,stopping:ns.stopping,usageRevision,latestUsage:ns.usage,
       stage:{sessionId,connected,activeRunId:ns.activeRunId,activeAssistantEntryId:ns.activeRunId?ns.run?.assistantEntryId??null:null,sending:ns.sending,runs,streamIncomplete:ns.incomplete,suggestions:suggestions.getSnapshot().suggestions,
         history:{loading:hs.loading,loadingMore:hs.loadingMore,hasMore:hs.hasMore,error:hs.error},state:ss?.values??emptyState(),stateLoading:ss?.loading??true,stateError:ss?.error??null}};
   }
@@ -77,14 +124,17 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
   snapshot=project();
   subscriptions.push(history.subscribe(publish),narrative.subscribe(publish),suggestions.subscribe(publish));
   subscriptions.push(channel.subscribe('*',event=>{
-    if(disposed)return;
+    if(disposed||isReplyAssist(event))return;
     try{
       if(event.event.startsWith('run.') && narrative.accept(event as NarrativeEvent)===false)return;
+      if(event.event==='character_sprite.changed')sprites.accept(event.data);
+      if(event.event==='run.created')sprites.remove(event.data.deletedMessageIds,event.data.tipEntryId);
       if(event.event==='message.deleted'){
         if(appliedDeletions.has(event.data.messageId))return;
         appliedDeletions.add(event.data.messageId);
         narrative.acceptDeletion(event.data);
         history.acceptExecution({...event.data,deletedMessageIds:[event.data.messageId]});
+        sprites.remove([event.data.messageId],event.data.tipEntryId);
         updateTip(event.data.tipEntryId);suggestions.clear();usageRevision++;
       }
     }catch{notice="sessions:narrativeEventFailed";}
@@ -95,13 +145,14 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
   }));
   let synchronization:Promise<void>|null=null,repeat=false,resetHistory=false;
   function synchronize(reset = false):Promise<void>{
+    if(reset)sprites.resetHistory();
     resetHistory ||= reset;
     if(disposed)return Promise.resolve();
     if(synchronization){repeat=true;return synchronization;}
     synchronization=(async()=>{
       do{
         repeat=false;
-        const checkpoint=suggestions.checkpoint(),narrativeCheckpoint=narrative.checkpoint();
+        const checkpoint=suggestions.checkpoint(),narrativeCheckpoint=narrative.checkpoint(),spriteCheckpoint=sprites.checkpoint();
         try{
           await refreshSession();
           const reset=resetHistory;resetHistory=false;
@@ -114,6 +165,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
           suggestions.restore(latest,checkpoint);
           // Catch-up can discover a newer persisted tip without a terminal event on this connection.
           await refreshSession();
+          void sprites.restore(tip,spriteCheckpoint);
           await state?.read();
           notice=null;
         }catch(reason){if(!disposed)notice=errorKey(reason,"sessions:syncFailed");}
@@ -124,7 +176,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
   }
   subscriptions.push(channel.subscribeConnection(value=>{
     if(disposed)return;connected=value.connected;narrative.setConnected(connected);publish();
-    if(connected&&started){usageRevision++;void synchronize(true);}
+    if(connected&&started){usageRevision++;if(config)reloadCapabilities();void synchronize(true);}
   }));
   async function loadWorld(){
     if(!session||disposed)return;worldError=null;publish();
@@ -134,8 +186,8 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
   async function start(){
     if(started||disposed)return;started=true;channel.connect();
     try{
-      const [current,settings]=await Promise.all([refreshSession(),getRuntimeConfig(abort.signal)]);
-      if(disposed)return;config=settings;
+      const [current]=await Promise.all([refreshSession(),refreshRuntimeConfig()]);
+      if(disposed)return;
       state=createStateController({sessionId,worldId:current.worldId,getTipEntryId:()=>tip,request});
       subscriptions.push(state.subscribe(publish));
       await Promise.allSettled([loadWorld(),synchronize()]);
@@ -157,7 +209,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
         break;
       case 'narrative.stop':{const value=input as StageCommandMap['narrative.stop']['input'];result=await narrative.stop(value.runId,value.assistantEntryId);break;}
       case 'history.loadMore':await history.loadOlder();break;
-      case 'history.refresh':await synchronize(true);break;
+      case 'history.refresh':await refresh();break;
       case 'history.query':result=await history.query(input as StageCommandMap['history.query']['input']);break;
       case 'state.read':if(!state)throw Error("sessions:notReady");result=await state.read();break;
       case 'state.write':if(!state)throw Error("sessions:notReady");result=await state.write((input as StageCommandMap['state.write']['input']).updates);break;
@@ -165,18 +217,27 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
     }
     publish();return result as StageCommandMap[K]['output'];
   }
+  async function refresh(){await Promise.all([synchronize(true),refreshRuntimeConfig()]);}
   return {
-    start,command,refresh:()=>synchronize(true),reloadWorld:loadWorld,
+    setSpritesEnabled(enabled:boolean){
+      sprites.setEnabled(enabled);
+      if(enabled)restoreSpriteFrame();
+    },
+    subscribeReplyAssist:(listener:(event:ReplyAssistEvent)=>void)=>channel.subscribe('reply_assist',event=>{if(isReplyAssist(event))listener(event);}),
+    subscribeConnection:channel.subscribeConnection,
+    start,command,refresh,reloadWorld:loadWorld,
     getSnapshot:()=>snapshot,
     subscribe:(listener:()=>void)=>{listeners.add(listener);return()=>{listeners.delete(listener);};},
     subscribeEvents:(listener:(event:SessionEvent)=>void)=>{eventListeners.add(listener);return()=>{eventListeners.delete(listener);};},
     updateSession(value:Session){
       if(disposed||value.id!==sessionId)return;
-      if(session&&session.apiModelConfigId!==value.apiModelConfigId)usageRevision++;
+      savedSettingsRevision++;
+      if(session?.runtimeConfig.narrativePresetId!==value.runtimeConfig.narrativePresetId){capabilities=null;bindSprites();reloadCapabilities();}
+      if(session&&session.runtimeConfig.apiModelConfigId!==value.runtimeConfig.apiModelConfigId)usageRevision++;
       session={...value,tipEntryId:tip};publish();
     },
     clearNotice(){notice=null;narrative.clearError();publish();},
-    dispose(){if(disposed)return;disposed=true;abort.abort();channel.dispose();narrative.dispose();history.dispose();suggestions.dispose();state?.dispose();for(const unsubscribe of subscriptions)unsubscribe();listeners.clear();eventListeners.clear();},
+    dispose(){if(disposed)return;disposed=true;abort.abort();channel.dispose();sprites.dispose();narrative.dispose();history.dispose();suggestions.dispose();state?.dispose();for(const unsubscribe of subscriptions)unsubscribe();listeners.clear();eventListeners.clear();},
   };
 }
 export type SessionWorkspace=ReturnType<typeof createSessionWorkspace>;

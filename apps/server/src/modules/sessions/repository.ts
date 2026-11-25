@@ -1,15 +1,15 @@
 import { transaction } from '../../infrastructure/database/transaction.js';
 import type { DatabaseSync } from 'node:sqlite';
-import { readStoredMetrics } from './schema.js';
+import { readStoredMetrics, runtimeConfigSchema } from './schema.js';
 import { AppError } from '../../errors.js';
 import { encodeJson, type JsonObject, type JsonValue } from '../../infrastructure/database/connection.js';
 import type {
-  AppendEntryInput, CreateSessionInput, EntryMetrics,
+  AppendEntryInput, CreateSessionInput, SessionRuntimeConfig, EntryMetrics,
   SessionListOptions, UpdateEntryInput, UpdateSessionInput, EntryRunListOptions, NarrativeOutcome,
 } from './types.js';
 
 export type SessionRow = {
-  id: string; world_id: string; preset_id: string; api_model_config_id: string;
+  id: string; world_id: string; runtime_config: SessionRuntimeConfig;
   user_character_id: string; tip_entry_id: string | null; title: string | null;
   state: JsonObject; usage_json: JsonObject | null; created_at: number; updated_at: number;
 };
@@ -19,10 +19,23 @@ export type EntryRow = {
   metrics_json: EntryMetrics | null; created_at: number; updated_at: number;
 } & ({ type: 'message'; role: 'user' | 'assistant' } | { type: 'compaction'; role: null });
 
+function encodeConfig(config: SessionRuntimeConfig) {
+  return encodeJson({
+    narrative_preset_id: config.narrativePresetId, api_model_config_id: config.apiModelConfigId,
+    reply_assist_preset_id: config.replyAssistPresetId, replay_assist_goal: config.replyAssistGoal,
+    font_size: config.fontSize,
+  }, 'object');
+}
+
 function decodeSession(row: Record<string, unknown>): SessionRow {
+  const config = JSON.parse(String(row.runtime_config));
   return {
-    id: String(row.id), world_id: String(row.world_id), preset_id: String(row.preset_id),
-    api_model_config_id: String(row.api_model_config_id), user_character_id: String(row.user_character_id),
+    id: String(row.id), world_id: String(row.world_id), user_character_id: String(row.user_character_id),
+    runtime_config: runtimeConfigSchema.parse({
+      narrativePresetId: config.narrative_preset_id, apiModelConfigId: config.api_model_config_id,
+      replyAssistPresetId: config.reply_assist_preset_id, replyAssistGoal: config.replay_assist_goal,
+      fontSize: config.font_size,
+    }),
     tip_entry_id: row.tip_entry_id === null ? null : String(row.tip_entry_id),
     title: row.title === null ? null : String(row.title),
     state: JSON.parse(String(row.state)) as JsonObject,
@@ -63,13 +76,13 @@ export class SessionRepository {
     return row ? decodeSession(row) : null;
   }
 
-  create(value: CreateSessionInput & { id: string }): SessionRow {
+  create(value: CreateSessionInput & { id: string; runtimeConfig: SessionRuntimeConfig }): SessionRow {
     const state = encodeJson(value.state ?? {}, 'object');
     const now = Date.now();
     this.#db.prepare(
-      'INSERT INTO sessions(id,world_id,preset_id,api_model_config_id,user_character_id,tip_entry_id,title,state,usage_json,created_at,updated_at) ' +
-      'VALUES(?,?,?,?,?,NULL,?,?,NULL,?,?)',
-    ).run(value.id, value.worldId, value.presetId, value.apiModelConfigId, value.userCharacterId, value.title ?? null, state, now, now);
+      'INSERT INTO sessions(id,world_id,runtime_config,user_character_id,tip_entry_id,title,state,usage_json,created_at,updated_at) ' +
+      'VALUES(?,?,?,?,NULL,?,?,NULL,?,?)',
+    ).run(value.id, value.worldId, encodeConfig(value.runtimeConfig), value.userCharacterId, value.title ?? null, state, now, now);
     return this.#requireSession(value.id);
   }
 
@@ -92,8 +105,9 @@ export class SessionRepository {
     return { items: rows.slice(0, options.limit), hasMore: rows.length > options.limit };
   }
 
-  listUsingPreset(presetId: string) {
-    return this.#db.prepare('SELECT id, title FROM sessions WHERE preset_id = ? ORDER BY title, id')
+  listUsingPreset(presetId: string, type: 'narrative' | 'reply_assist') {
+    const column = type === 'reply_assist' ? 'reply_preset_ref' : 'narrative_preset_ref';
+    return this.#db.prepare('SELECT id, title FROM sessions WHERE ' + column + ' = ? ORDER BY title, id')
       .all(presetId).map(row => ({ id: String(row.id), name: row.title === null ? null : String(row.title) }));
   }
 
@@ -118,9 +132,9 @@ export class SessionRepository {
     return transaction(this.#db, () => {
       const current = this.#requireSession(id);
       if (!Object.values(patch).some(value => value !== undefined)) return current;
-      this.#db.prepare('UPDATE sessions SET preset_id=?,api_model_config_id=?,title=?,updated_at=? WHERE id=?')
-        .run(patch.presetId ?? current.preset_id, patch.apiModelConfigId ?? current.api_model_config_id,
-          patch.title !== undefined ? patch.title : current.title, Date.now(), id);
+      const config = runtimeConfigSchema.parse({ ...current.runtime_config, ...patch.runtimeConfig });
+      this.#db.prepare('UPDATE sessions SET runtime_config=?,title=?,updated_at=? WHERE id=?')
+        .run(encodeConfig(config), patch.title === undefined ? current.title : patch.title, Date.now(), id);
       return this.#requireSession(id);
     });
   }

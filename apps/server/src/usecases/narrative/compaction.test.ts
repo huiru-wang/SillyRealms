@@ -38,7 +38,7 @@ beforeEach(async () => {
   services.worlds.create({ id: 'world', name: 'World', specVersion: '0.1',
     characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'opening', name: 'Opening', content: 'Start' }],
   });
-  services.sessions.create({ id: 'session', worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' });
+  services.sessions.create({ id: 'session', worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player' });
   hub = new EventHub(); seen = [];
   hub.subscribe('session', event => seen.push(structuredClone(event) as NarrativeEvent));
   stream = vi.fn<ModelClient['stream']>(async function* () { yield { type: 'request_started' }; yield done(); });
@@ -242,7 +242,7 @@ describe('summary execution and accounting', () => {
 
   it('discards an unfinished summary on shutdown and does not lock another session', async () => {
     seed();
-    services.sessions.create({ id: 'other', worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' });
+    services.sessions.create({ id: 'other', worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player' });
     let started!: () => void;
     const waiting = new Promise<void>(resolve => { started = resolve; });
     stream.mockImplementationOnce(async function* () {

@@ -14,8 +14,8 @@ import {usePresetStore} from '../presets/PresetStore';
 import type {ModelConfig} from '../models/types';
 import {DEFAULT_LOCALE,SUPPORTED_LOCALES,isAppLocale,languageNames} from '@sillyrealms/sdk/locale';
 
-type Defaults=Pick<AppSettings,'defaultPresetId'|'defaultApiModelConfigId'>;
-const defaults=(value:AppSettings):Defaults=>({defaultPresetId:value.defaultPresetId,defaultApiModelConfigId:value.defaultApiModelConfigId});
+type Defaults=Pick<AppSettings,'defaultPresetId'|'defaultApiModelConfigId'|'defaultReplyAssistPresetId'>;
+const defaults=(value:AppSettings):Defaults=>({defaultReplyAssistPresetId:value.defaultReplyAssistPresetId,defaultPresetId:value.defaultPresetId,defaultApiModelConfigId:value.defaultApiModelConfigId});
 export function SettingsPage(){
  const {t}=useTranslation('settings');
  const {theme,toggleTheme}=useOutletContext<{theme:Theme;toggleTheme:()=>void}>();
@@ -29,6 +29,7 @@ export function SettingsPage(){
  const save=async()=>{
   if(!draft||!baseline||pending.current)return;
   const patch:Partial<Defaults>={};
+  if(draft.defaultReplyAssistPresetId!==baseline.defaultReplyAssistPresetId)patch.defaultReplyAssistPresetId=draft.defaultReplyAssistPresetId;
   if(draft.defaultPresetId!==baseline.defaultPresetId)patch.defaultPresetId=draft.defaultPresetId;
   if(draft.defaultApiModelConfigId!==baseline.defaultApiModelConfigId)patch.defaultApiModelConfigId=draft.defaultApiModelConfigId;
   if(!Object.keys(patch).length)return;
@@ -60,11 +61,16 @@ export function SettingsPage(){
    </Panel>
    <Panel className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><SlidersHorizontal size={18}/></span><div><h2>{t('defaults')}</h2><p>{t('defaultsHint')}</p></div></div>
     {presets.error&&<ErrorNotice message={presets.error} onRetry={presets.reload}/>}
+    {presets.replyCatalog.error&&<ErrorNotice message={presets.replyCatalog.error} onRetry={presets.replyCatalog.reload}/>}
     {models.error&&<ErrorNotice message={models.error} onRetry={models.reload}/>}
     {!draft?(settings.loading?<Loading text={t('loading')}/>:null):<div className="settings-rows">
      <label className="settings-row"><span><strong>{t('defaultPreset')}</strong></span><Select aria-label={t('defaultPreset')} disabled={saving||localeSaving} value={draft.defaultPresetId??''} onChange={event=>set({defaultPresetId:event.target.value||null})}>
       <option value="">{t('unset')}</option>{draft.defaultPresetId&&!presets.presets.some(p=>p.id===draft.defaultPresetId)&&<option value={draft.defaultPresetId}>{t('currentPreset')}</option>}{presets.presets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
      </Select></label>
+     <label className="settings-row"><strong>{t('sessions:assistPreset')}</strong>
+      <Select aria-label={t('sessions:assistPreset')} value={draft.defaultReplyAssistPresetId??''} disabled={saving||localeSaving} onChange={event=>set({defaultReplyAssistPresetId:event.target.value||null})}>
+       <option value="">{t('unset')}</option>{presets.replyPresets.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}
+      </Select></label>
      <label className="settings-row"><span><strong>{t('defaultModel')}</strong></span><Select aria-label={t('defaultModel')} disabled={saving||localeSaving} value={draft.defaultApiModelConfigId??''} onChange={event=>set({defaultApiModelConfigId:event.target.value||null})}>
       <option value="">{t('unset')}</option>{draft.defaultApiModelConfigId&&!models.page?.items.some(m=>m.id===draft.defaultApiModelConfigId)&&<option value={draft.defaultApiModelConfigId}>{t('currentModel')}</option>}{models.page?.items.map(m=><option key={m.id} value={m.id}>{m.name} · {m.modelId}</option>)}
      </Select></label>

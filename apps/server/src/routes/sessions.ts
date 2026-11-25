@@ -12,7 +12,7 @@ import type { WorldService } from '../modules/worlds/service.js';
 import type { AppendEntry } from '../usecases/append-entry.js';
 import type { CreateSession, CreateSessionInput } from '../usecases/create-session.js';
 
-export type SessionSummary = Pick<Session, 'id' | 'worldId' | 'presetId' | 'apiModelConfigId' | 'title' | 'updatedAt'>
+export type SessionSummary = Pick<Session, 'id' | 'worldId' | 'runtimeConfig' | 'title' | 'updatedAt'>
   & { worldName: string; cover: string | null };
 export type SessionView = SessionSummary & Pick<Session, 'userCharacterId' | 'tipEntryId' | 'createdAt'>;
 
@@ -26,7 +26,7 @@ function projectSessions(items: readonly Session[], worlds: WorldService): Sessi
       cache.set(item.worldId, world);
     }
     return {
-      id: item.id, worldId: item.worldId, presetId: item.presetId, apiModelConfigId: item.apiModelConfigId,
+      id: item.id, worldId: item.worldId, runtimeConfig: item.runtimeConfig,
       title: item.title, updatedAt: item.updatedAt, ...world,
     };
   });
@@ -47,9 +47,10 @@ export type SessionRouteOptions = {
   createSession: CreateSession;
   canAccessSession?: SessionAccessCheck;
   shutdownSignal: AbortSignal;
+  streamShutdownSignal?: AbortSignal;
 };
 
-export function createSessionRoutes({ events, sessions, worlds, appendEntry, createSession, canAccessSession, shutdownSignal }: SessionRouteOptions) {
+export function createSessionRoutes({ events, sessions, worlds, appendEntry, createSession, canAccessSession, shutdownSignal, streamShutdownSignal = shutdownSignal }: SessionRouteOptions) {
   const routes = new Hono();
   const access = (sessionId: string, request: Request) =>
     requireSessionAccess(sessions, sessionId, request, canAccessSession, shutdownSignal);
@@ -147,7 +148,7 @@ export function createSessionRoutes({ events, sessions, worlds, appendEntry, cre
         'x-accel-buffering': 'no',
       },
     });
-    return createSessionEventsResponse(events, id, c.req.raw.signal, shutdownSignal);
+    return createSessionEventsResponse(events, id, c.req.raw.signal, streamShutdownSignal);
   });
   return routes;
 }

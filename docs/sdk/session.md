@@ -64,6 +64,8 @@ export default function RetryLatest() {
 
 ## useSRComposerButtons(buttons)
 
+会话宿主自行展示官方「立绘」胶囊。作者可照常声明最多五个快捷按钮；立绘变化可通过现有会话事件订阅接收 `character_sprite.changed`。
+
 在当前会话舞台顶层调用一次，按显示顺序传入完整的 `SRComposerButton[]`。每项提供稳定且唯一的 `id`、纯文本 `label`、可选的 `disabled` 和 `onClick()`。回调在舞台内运行，支持异步操作，回调抛出的错误会在会话页提示。下面的舞台在战斗时提供“防御”，并始终提供“查看状态”。
 
 ```tsx

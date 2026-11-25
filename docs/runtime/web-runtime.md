@@ -29,18 +29,26 @@ SSE 跟随会话页面，MessagePort 跟随 iframe。重新加载舞台只替换
 - 重新生成：`POST .../narrative/runs/regenerate`，正文 `{userEntryId,assistantEntryId,expectedTipEntryId}`；Host 提供当前 tip，assistantEntryId=null 表示最新用户无回复时重试。
 - 停止：`POST .../narrative/runs/:runId/stop`，正文 `{assistantEntryId}`；请求取消不等于已收到终态。
 - 历史和状态：使用 narrative/runs 的完整轮次、nextCursor、nextAfterSeq、activeRunId，以及三作用域 state 路径。真实 tip 从 session、摘要事件和终态取得，不能以最后可见 assistant 替代 compaction tip。
-- 当前事件：message.deleted、run.created/summarizing/summarized/delta/usage/completed/stopped、state.changed、action_suggestions.created。旧 run.phase/run.failed、usage.updated、action_suggestions.changed 均不参与 V2。
+- 当前事件：message.deleted、run.created/summarizing/summarized/delta/usage/completed/stopped、state.changed、action_suggestions.created、character_sprite.changed。旧 run.phase/run.failed、usage.updated、action_suggestions.changed 均不参与 V2。
 - 临时输出按 messageId 归属，delta 追加，snapshot 整体替换。snapshot 不表示已保存；终态先按 savedMessageIds 移除未保存输出，再补查 runs 页，持久 entries 按相同 ID 接管，未保存输出不冒充历史。
 - action_suggestions.created 是完整集合，run.created 清空旧建议。恢复只认最新 run 的实际完成结果，不能寻找更早建议填补空结果。建议只读取 output.actionSuggestions 的整体 status/items；history 将 output 透传给 Stage，状态成功/失败诊断来自同一 stateUpdate.updates 列表中的 status。两类结果没有 results；旧格式由服务端读取时归一化，前端不重复兼容。
 - 状态 path:"" 替换完整 scope；null 是普通字段值。PATCH success 可以表示路径不存在而被忽略；字段请求值不能直接写入本地缓存。按真实事件/补读同步，混合作用域写入按原顺序分组，无跨 scope 原子承诺。
 
 ## 初次读取与连接恢复
 
+宿主通过 `GET /api/v1/runtime/config?sessionId=:id` 取得舞台部署信息及会话的 `capabilities.characterSprite.available`。工作区在预设切换、重连和显式刷新时重读，切换预设期间能力待定。单独的能力变化不重建舞台 iframe。
+
 先注册事件消费者并建立 SSE，读取会话元信息、历史和状态。初次打开、重连、手动刷新读取最新一页并替换旧历史分页缓存（最多 5 轮），需要更早内容再分页。删除可降低 lastSeq，新输出可复用 seq，因此仅补查 afterSeq 无法发现删除。普通终态补查仍可重叠活跃轮次最后 seq，读取只有结束结果变化的轮次。删除/新执行使在途页面失效，读取代次与事件版本共同防止旧结果回填；恢复后重新确认真实 tip。
 
 HTTP 和 SSE 的删除回执按旧消息 ID 幂等处理，服务端确认后才移除旧 AI、清除旧终态和建议；原用户按消息 ID 保留一次。narrative 以新 assistantEntryId 隔离同轮执行，旧结束/停止事件不能影响新执行。迟到 HTTP 不重复应用删除或回退 tip、阶段、终态。历史查询发现同轮新执行时丢弃旧临时输出。
 
 SSE 无回放。丢失过流连续性时，不把后续缺头的 delta 拼成完整正文；等待最终 snapshot 或保存结果。断线不停止运行，退出页面只释放本地订阅。异常提交不自动重发，查询同步后仍保留未确认的输入草稿。
+
+## 悬浮立绘
+
+立绘的显示偏好按浏览器、会话保存，初次默认开启。能力可用时宿主显示官方胶囊，开启后读取世界素材目录并加载实际入选的图片。单轮结果由已保存的助手 messageId 标识，实际画面取真实 tip 沿父链最近的有效快照。进入、重连及显式刷新复用同步后的 entries；超出当前历史页时以独立游标向前读取，保持玩家的历史分页和滚动位置。已知提交的助手 ID 但本地还没有该条消息时可通过指定消息 GET 补读。
+
+工作区通过原有 SSE 消费 `character_sprite.changed`。success、partial_success 均整体替换画面，成功空数组清场，缺失或失败跳过。重新生成后按删除回执和 message.deleted 使旧来源失效；在途历史读取与迟到的旧回复不能复活已删除的人物。隐藏人物只影响显示；会话退出释放请求和订阅。
 
 ## Stage SDK
 
@@ -71,7 +79,7 @@ frame 没有业务 HTTP/模型凭据。SDK 发起 narrative.send/regenerate/stop
 
 作者组件执行、messageRender、图片/音频和消息 DOM 均在独立来源 frame；匹配使用有界 Worker，CSP 允许 worker-src self，保持 connect-src/frame-src none。主站和舞台分别构建为 dist 与 dist-preview，部署规则见 [管理工作区](web-management.md)。
 
-运行页复用输入框、主题、字号、阅读锚点和状态查看器。移动会话详情隐藏主导航底栏以避免遮挡输入；保留返回列表。会话业务配置在生成中禁用，阅读字号可独立调整。
+运行页复用输入框、主题、字号、阅读锚点和状态查看器。移动会话详情隐藏主导航底栏以避免遮挡输入；保留返回列表。会话设置中的阅读字号先在舞台预览，保存到当前会话的运行时配置，取消则恢复。生成期间会话配置写入受锁保护。
 
 ## 界面与叙事语言
 
@@ -106,3 +114,7 @@ Server 当前不提供旧 capabilities 布尔开关接口；设置不显示其�
 ## 输入框重新生成入口
 
 会话输入框在收起按钮右侧提供“更多操作”，点击向上展开“重新生成”。该项作用于最新用户轮次，无 AI 回复时重试同轮；只有开局时禁用。提交时保留旧正文并禁用操作，确认删除后使用正常生成反馈；失败不恢复旧回复。生成中、离线、提交中或历史未同步时不可重新生成。StageRuntime 只代理命令，消息删除、执行幂等、历史同步与状态读取均由 Host workspace 组合各 feature 完成。
+
+## 宿主 AI 帮答
+
+会话设置可以保存本会话的帮答预设和目标。选择「跟随应用默认」后，下次帮答使用应用当前的默认预设。输入框的「更多操作 → AI 帮答」读取原稿，按帧显示正文增量，终态立即校准。生成期间可收起输入区或停止，用户编辑后手动发送。断线保留已收到的文本并尝试停止，离开页面弃用请求。叙事执行中仍允许点击，服务端 409 冲突使用共享 Modal 提示并保留原稿。Stage 没有帮答命令或帮答事件订阅，帮答占用期间 composer.setDraft 也受限。

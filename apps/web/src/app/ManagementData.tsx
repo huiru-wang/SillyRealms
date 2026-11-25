@@ -5,7 +5,7 @@ import {applyLocale} from '../i18n/instance.ts';
 import type {AppLocale} from '@sillyrealms/sdk/locale';
 import {ErrorNotice,Loading} from './ui';
 
-export type AppSettings={defaultPresetId:string|null;defaultApiModelConfigId:string|null;locale:AppLocale};
+export type AppSettings={defaultReplyAssistPresetId:string|null;defaultPresetId:string|null;defaultApiModelConfigId:string|null;locale:AppLocale};
 function useData(){
   const settings=useResource<{item:AppSettings}>('v1/app-settings');
   const [modelsRevision,setModelsRevision]=useState(0),[sessionsRevision,setSessionsRevision]=useState(0);

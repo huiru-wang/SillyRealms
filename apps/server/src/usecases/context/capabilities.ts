@@ -1,23 +1,29 @@
-import { resolvePostprocessPrompts, type NarrativePresetConfig } from '../../modules/presets/service.js';
+import { characterSpriteAvailable, resolvePostprocessPrompts, type PostprocessPrompts, type NarrativePresetConfig } from '../../modules/presets/service.js';
 import type { CharacterSpriteCatalogItem } from '../../modules/worlds/service.js';
 import type { NarrativeMaterials } from './stages/materials/index.js';
 
-export type ContextCapabilities = { worldState: boolean; actionSuggestions: boolean; characterSprite: boolean };
+export type ContextCapabilities = {
+  worldState: boolean;
+  stateUpdate: boolean;
+  stateUpdateNotes: boolean;
+  actionSuggestions: boolean;
+  characterSprite: boolean;
+};
 
 export function promptSpriteCatalog(config: NarrativePresetConfig, catalog: readonly CharacterSpriteCatalogItem[]): readonly CharacterSpriteCatalogItem[] {
   return resolvePostprocessPrompts(config).characterSprite === undefined ? [] : catalog;
 }
 
-/** Apply the same declared-node and material conditions to prompt and history sources. */
+/** Past updates remain useful with read-only facts; a new update also requires message roots. */
 export function resolveContextCapabilities(
-  config: NarrativePresetConfig, materials: NarrativeMaterials, catalog: readonly CharacterSpriteCatalogItem[],
+  prompts: PostprocessPrompts, materials: NarrativeMaterials, catalog: readonly CharacterSpriteCatalogItem[],
 ): ContextCapabilities {
-  const prompts = resolvePostprocessPrompts(config);
-  const hasState = materials.activeRoots.length > 0 ||
-    materials.variables['state.global'].value.length > 0 || materials.variables['state.session'].value.length > 0;
+  const hasState = Object.values(materials.visibleRoots).some(roots => roots.size > 0);
   return {
-    worldState: prompts.worldState !== undefined && hasState,
+    worldState: hasState,
+    stateUpdateNotes: prompts.stateUpdate !== undefined && hasState,
+    stateUpdate: prompts.stateUpdate !== undefined && materials.activeRoots.length > 0,
     actionSuggestions: prompts.actionSuggestions !== undefined,
-    characterSprite: prompts.characterSprite !== undefined && catalog.length > 0,
+    characterSprite: characterSpriteAvailable(prompts, catalog.length),
   };
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CharacterSpriteOutput, SessionEntry } from '../../../../modules/sessions/service.js';
 import { buildNarrativeNotes } from './index.js';
 
-const onlySprites = { worldState: false, actionSuggestions: false, characterSprite: true };
+const onlySprites = { stateUpdateNotes: false, actionSuggestions: false, characterSprite: true };
 const empty = '<character_sprite></character_sprite>';
 function message(id: string, result?: unknown, content = '正文'): SessionEntry {
   return {

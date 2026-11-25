@@ -27,7 +27,7 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
   let metrics: EntryMetrics | null = null;
   let finishReason: ModelFinishReason | undefined, stopReason: NarrativeStopReason | undefined;
   let parentId = userEntryId;
-  let rawContent = '', activeRoots: string[] = [];
+  let rawContent = '', allowedStateUpdateRoots: string[] = [];
   let committedState: StateEvent | null = null, committedSuggestions: string[] = [];
   let characterSpriteCatalog: readonly CharacterSpriteCatalogItem[] = [];
   let committedSprites: CharacterSpriteItem[] | undefined;
@@ -50,7 +50,7 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
     }
     if (context.ok) {
       const compiled = context.request, selected = compiled.model;
-      activeRoots = compiled.activeRoots;
+      allowedStateUpdateRoots = compiled.allowedStateUpdateRoots;
       characterSpriteCatalog = compiled.characterSpriteCatalog;
       const apiKey = await getApiKey(compiled.credentialRef);
       assertRunning(signal);
@@ -94,9 +94,9 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
       if (stopReason === undefined) {
         const committed = dependencies.transaction(() => {
           if (sessions.require(sessionId).tipEntryId !== parentId) throw new AppError('TIP_CONFLICT');
-          log('postprocess.started', { messageId: assistantEntryId, allowedRoots: activeRoots });
+          log('postprocess.started', { messageId: assistantEntryId, allowedRoots: allowedStateUpdateRoots });
           const processed = processNarrativeOutput(rawContent, dependencies.state, {
-            sessionId, parentId, allowedRoots: activeRoots, characterSpriteCatalog,
+            sessionId, parentId, allowedRoots: allowedStateUpdateRoots, characterSpriteCatalog,
           }, (event, data) => log(event, { messageId: assistantEntryId, ...data }));
           sessions.appendNarrativeAssistant(sessionId, { ...input, state: processed.state }, processed.output, writePermit);
           const sprites = processed.output.characterSprite;

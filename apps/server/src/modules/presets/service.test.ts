@@ -13,8 +13,8 @@ let models: ModelService;
 let settings: SettingsService;
 beforeEach(() => {
   db = openDatabase(':memory:');
-  presets = new PresetService(db);
   models = new ModelService(db);
+  presets = new PresetService(db, models);
   settings = new SettingsService(db, { presets, models });
   settings.ensure({ defaultPresetId: null, defaultApiModelConfigId: null });
 });
@@ -25,7 +25,7 @@ describe('typed preset persistence', () => {
     const template = presets.getDefault();
     expect(template).toMatchObject({
       type: 'narrative', name: '标准叙事',
-      config: { schemaVersion: 1, contextStrategy: { maxContextTokens: 32768, maxOutputTokens: 2048 } },
+      config: { schemaVersion: 1, contextStrategy: { maxContextTokens: 65536, maxOutputTokens: 4096 } },
     });
     template.config.nodes[0]!.prompt = 'changed by caller';
     expect(presets.getDefault().config.nodes[0]!.prompt).not.toBe('changed by caller');
@@ -42,14 +42,14 @@ describe('typed preset persistence', () => {
     const document = presets.toDocument(preset('Another default'));
     catalog.presets.push({ id: 'alternative', file: 'alternative.json', document });
     catalog.defaultPresetId = 'alternative';
-    const service = new PresetService(db, catalog);
+    const service = new PresetService(db, models, catalog);
     expect(service.getDefault().name).toBe('Another default');
     expect(service.ensureBuiltins()).toBe('alternative');
     expect(service.require('alternative')).toMatchObject(service.getDefault());
     service.update('alternative', { name: 'Edited' });
     expect(service.getDefault().name).toBe('Another default');
-    catalog.presets[1]!.document = {};
-    expect(() => new PresetService(db, catalog)).toThrow('presets/alternative.json (alternative)');
+    catalog.presets.find(item => item.id === 'alternative')!.document = {};
+    expect(() => new PresetService(db, models, catalog)).toThrow('presets/alternative.json (alternative)');
   });
 
   it('keeps an existing same-name preset while reserving the fixed default identity', () => {
@@ -191,7 +191,7 @@ describe('typed preset persistence', () => {
     misplaced.config.nodes[0]!.prompt = '{{input.text}}';
     expect(() => presets.create(misplaced)).toThrow(/必须且只能/);
     const duplicated = preset('Duplicated');
-    duplicated.config.nodes[4]!.prompt = '{{history.messages}}{{history.messages}}';
+    duplicated.config.nodes.find(node => node.id === 'chatHistory')!.prompt = '{{history.messages}}{{history.messages}}';
     expect(() => presets.create(duplicated)).toThrow(/必须且只能/);
     const literal = preset('Literal');
     literal.config.nodes[0]!.prompt = '\\{{unknown.literal}}';
@@ -262,12 +262,14 @@ describe('declared postprocess prompt resolution', () => {
   it('provides explicit default nodes and variables without hardcoding capabilities into main', () => {
     const config = presets.ensureDefault().config;
     const resolved = resolvePostprocessPrompts(config);
-    expect(resolved.worldState).toContain('【全局状态｜只读】\n{{state.global}}');
-    expect(resolved.worldState).toContain('【消息状态｜可更新】\n{{state.message}}');
+    const facts = config.nodes.find(node => node.id === 'worldState')!;
+    expect(facts).toMatchObject({ kind: 'system', enabled: true });
+    expect(facts.prompt).toContain('【消息状态】\n{{state.message}}');
+    expect(resolved.stateUpdate).toContain('【本轮可更新的消息状态】\n{{state.update.message}}');
     expect(resolved.actionSuggestions).toContain('优先生成三个');
     expect(resolved.characterSprite).toContain('{{characterSprite.catalog}}');
     expect(config.nodes.filter(node => node.kind === 'postprocess').map(node => node.id))
-      .toEqual(['worldState', 'actionSuggestions', 'characterSprite']);
+      .toEqual(['stateUpdate', 'actionSuggestions', 'characterSprite']);
     const main = config.nodes.find(node => node.id === 'main')!.prompt;
     expect(main).toContain('本轮实际构建的能力');
     expect(main).not.toMatch(/state_update|action_suggestions|character_sprite/);
@@ -276,7 +278,7 @@ describe('declared postprocess prompt resolution', () => {
   it('honors disabled and absent nodes without rewriting the preset or injecting defaults', () => {
     const current = presets.ensureDefault();
     const config = structuredClone(current.config);
-    config.nodes = config.nodes.filter(node => node.id !== 'worldState');
+    config.nodes = config.nodes.filter(node => node.id !== 'stateUpdate');
     config.nodes.find(node => node.id === 'actionSuggestions')!.enabled = false;
     config.nodes.find(node => node.id === 'characterSprite')!.prompt = 'Custom {{characterSprite.catalog}}';
     const stored = presets.update(current.id, { config }, current.revision)!;
@@ -300,7 +302,7 @@ describe('declared postprocess prompt resolution', () => {
     expect(() => presets.importDocument(document)).toThrow('状态变量路径无效');
   });
 
-  it.each(['worldState', 'actionSuggestions', 'characterSprite'])('rejects a blank enabled %s prompt but permits it while disabled', id => {
+  it.each(['stateUpdate', 'actionSuggestions', 'characterSprite'])('rejects a blank enabled %s prompt but permits it while disabled', id => {
     const config = presets.getDefault().config;
     const node = config.nodes.find(node => node.id === id)!;
     node.prompt = ' \n\t';
@@ -309,6 +311,15 @@ describe('declared postprocess prompt resolution', () => {
     node.enabled = false;
     expect(presets.create({ ...preset(), config }).config.nodes.find(item => item.id === id)?.prompt).toBe(node.prompt);
     expect(resolvePostprocessPrompts(config)).not.toHaveProperty(id);
+  });
+
+  it.each(['main', 'worldState', 'actionSuggestions', 'characterSprite'])('restricts the update material in %s on save and import', id => {
+    const value = presets.getDefault();
+    value.config.nodes.find(node => node.id === id)!.prompt = '{{state.update.message}}';
+    expect(() => presets.create(value)).toThrow('只能用于状态更新节点');
+    const document = presets.toDocument(presets.getDefault());
+    document.config_json.nodes.find(node => node.id === id)!.prompt = '{{state.update.message}}';
+    expect(() => presets.importDocument(document)).toThrow('只能用于状态更新节点');
   });
 
   it.each(['{{input.text}}', '{{history.messages}}', '{{history.summary}}'])('rejects duplicate conversational material in capability prompt %s', prompt => {

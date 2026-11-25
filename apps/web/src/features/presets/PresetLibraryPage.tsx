@@ -1,6 +1,10 @@
 import {errorMessage} from '../../i18n/errors.ts';
 import {i18n} from '../../i18n/instance.ts';
 import {useTranslation} from 'react-i18next';
+import {useManagement} from '../../app/ManagementData';
+import {usePagedResource} from '../../data';
+import type {ModelConfig} from '../models/types';
+import type {PresetType} from './types';
 import { SamplingRow } from './SamplingRow';
 import { samplingFields } from './sampling';
 import {PageHeader} from '../../components/ui/PageHeader';
@@ -45,8 +49,16 @@ export function PresetLibraryPage() {
   { value: 'max', label: t('maximum') },
 ];
   const store = usePresetStore();
-  const { presets, draftById, defaultPresetId, isDirty, editPreset, savePreset, revertPreset, createPreset, duplicatePreset, deletePreset, setDefaultPreset, getDefaultPrompt } = store;
+  const { draftById, isDirty, editPreset, savePreset, revertPreset, createPreset, duplicatePreset, deletePreset, setDefaultPreset, getDefaultPrompt } = store;
   const { presetId } = useParams<{ presetId?: string }>();
+  const [listType,setListType]=useState<PresetType>('narrative');
+  const type = (presetId && draftById[presetId]?.type) || listType;
+  const reply = type === 'reply_assist';
+  const presets = reply ? store.replyPresets : store.presets;
+  const defaultPresetId = reply ? store.replyDefaultId : store.defaultPresetId;
+  const catalog = reply ? store.replyCatalog : store;
+  const {modelsRevision}=useManagement();
+  const models=usePagedResource<ModelConfig>('v1/api-model-configs?limit=100',modelsRevision,true);
   const selectedId = presetId ?? defaultPresetId ?? presets[0]?.id;
   const preset = selectedId && Object.hasOwn(draftById, selectedId) ? draftById[selectedId] : undefined;
   useEffect(()=>{if(selectedId)void store.loadDetail(selectedId);},[selectedId,store.loadDetail]);
@@ -157,7 +169,7 @@ export function PresetLibraryPage() {
     await perform(async()=>{await savePreset(preset.id);setError('');setStatus({key:'presetSaved'});});
   }
   function select(id:string){navigate('/presets/'+encodeURIComponent(id));}
-  function create(){void perform(async()=>{const id=await createPreset();select(id);requestAnimationFrame(()=>nameRef.current?.select());});}
+  function create(){void perform(async()=>{const id=await createPreset(type);select(id);requestAnimationFrame(()=>nameRef.current?.select());});}
   function changeNode(id: string, transform: (node: PresetNode) => PresetNode) {
     if (preset) editPreset(preset.id, current => ({ ...current, nodes: current.nodes.map(node => node.id === id ? transform(node) : node) }));
   }
@@ -280,9 +292,9 @@ export function PresetLibraryPage() {
       <button type="button" className={styles.nodeMain} data-node-edit aria-label={node.id === 'main' ? t('presets:editNarrativeStyle') : t('presets:editNode',{name:node.name})}
         onClick={() => setDialog({kind: 'node', node, isNew: false})}>
         <span title={node.name}>{node.name}</span>
-        <small>{roleLabel(node.role)} · {custom ? t('custom') : optional ? t('postprocessing') : t('alwaysEnabled')}{!node.enabled && t('disabled')}</small>
+        <small>{roleLabel(node.role)} · {custom ? t('custom') : optional ? t('postprocessing') : reply && node.id !== 'main' ? t('sessions:optional') : t('alwaysEnabled')}{!node.enabled && t('disabled')}</small>
       </button>
-      {custom || optional
+      {custom || optional || (reply && node.id !== 'main')
         ? <Switch checked={node.enabled} label={t('presets:enableNode',{name:node.name})}
           onChange={() => changeNode(node.id, current => ({...current, enabled: !current.enabled}))} />
         : <span className={styles.nodeFixed} title={t('alwaysEnabled')} aria-hidden="true"><LockKeyhole size={14} /></span>}
@@ -323,12 +335,17 @@ export function PresetLibraryPage() {
 
   return <section className={styles.page} data-preset-workspace data-detail={!!presetId}>
     <PageHeader title={t('presets')} className={styles.pageHeader} identityClassName={styles.pageIdentity} actions={<>
+
       <UploadButton aria-label={t('importPreset')} accept=".json,application/json" disabled={store.busy} onChange={event=>{const file=event.target.files?.[0];if(file)void perform(async()=>select(await store.importPreset(await file.text())));}}>{t('import')}</UploadButton>
       <Button variant={presetId?'secondary':'primary'} disabled={store.busy} aria-label={t('newPreset')} icon={<Plus size={16}/>} onClick={create}>{t('newPreset')}</Button>
     </>}/>
 
     <div className={styles.workspace}>
-      <section className={styles.library} aria-label={t('presetLibrary')}>{store.loading&&<p role="status">{t('loadingPresets')}</p>}{store.error&&<p role="alert">{errorMessage(store.error)}<button onClick={()=>void store.reload()}>{t('retry')}</button></p>}
+      <section className={styles.library} aria-label={t('presetLibrary')}>
+      <Select aria-label={t('sessions:presetType')} value={type} onChange={event=>{setListType(event.target.value as PresetType);navigate('/presets');}}>
+        <option value="narrative">{t('sessions:narrativePreset')}</option><option value="reply_assist">{t('sessions:assistPreset')}</option>
+      </Select>
+        {catalog.loading&&<p role="status">{t('loadingPresets')}</p>}{catalog.error&&<p role="alert">{errorMessage(catalog.error)}<button onClick={()=>void catalog.reload()}>{t('retry')}</button></p>}
         <div className={styles.presetList} data-preset-list tabIndex={0} aria-label={t('presetList')}>
           {presets.map(item => <button key={item.id} type="button" className={styles.presetItem}
             data-preset-item={item.id} aria-pressed={item.id === selectedId} onClick={() => select(item.id)}>
@@ -380,7 +397,10 @@ export function PresetLibraryPage() {
           </section>
           <section className={styles.formSection} aria-labelledby={formId + '-model'} data-preset-section="model">
             <div className={styles.sectionHeading}><h3 id={formId + '-model'}>{t('modelParameters')}</h3></div>
-            <p className={styles.samplingHint}>{t('presetsCanBeUsedAcrossModelsOnly')}</p>
+            {reply ? <label className={styles.field}>{t('sessions:apiModel')}
+              <Select aria-label={t('sessions:apiModel')} value={preset.apiModelConfigId??''} onChange={event=>update({apiModelConfigId:event.target.value||null})}>
+                <option value="">{t('settings:unset')}</option>{preset.apiModelConfigId&&!models.page?.items.some(item=>item.id===preset.apiModelConfigId)&&<option value={preset.apiModelConfigId}>{t('sessions:currentModel')}</option>}{models.page?.items.map(model=><option key={model.id} value={model.id}>{model.name} · {model.modelId}</option>)}
+              </Select></label> : <p className={styles.samplingHint}>{t('presetsCanBeUsedAcrossModelsOnly')}</p>}
             <div className={styles.settingsGroup}>
               {samplingFields.map(field => <SamplingRow key={field.key} field={field} value={preset[field.key]}
                 onChange={value => update({ [field.key]: value })} />)}
@@ -391,21 +411,21 @@ export function PresetLibraryPage() {
                 </div>
                 <Switch id={formId + '-thinking'} checked={preset.thinkingEnabled} label={t('enableReasoning')} describedBy={formId + '-thinking-help'} onChange={() => update({ thinkingEnabled: !preset.thinkingEnabled })} />
               </div>
-              <div className={styles.parameterRow}>
+              {preset.thinkingEnabled && <div className={styles.parameterRow}>
                 <div className={styles.settingCopy}>
                   <label htmlFor={formId + '-thinking-level'}>{t('reasoningLevel')}</label>
                   <p id={formId + '-thinking-level-help'}>{t('appliesWhenReasoningIsEnabledUnsupportedLevels')}</p>
                 </div>
-                <Select className={styles.parameterInput} id={formId + '-thinking-level'} aria-label={t('reasoningLevel')} aria-describedby={formId + '-thinking-level-help'} disabled={!preset.thinkingEnabled} value={preset.thinkingLevel??''} onChange={event => update({ thinkingLevel: event.target.value ? event.target.value as PresetThinkingLevel : undefined })}>
+                <Select className={styles.parameterInput} id={formId + '-thinking-level'} aria-label={t('reasoningLevel')} aria-describedby={formId + '-thinking-level-help'} value={preset.thinkingLevel??''} onChange={event => update({ thinkingLevel: event.target.value ? event.target.value as PresetThinkingLevel : undefined })}>
                   <option value="">{t('default')}</option>
                   {THINKING_LEVELS.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}
                 </Select>
-              </div>
+              </div>}
             </div>
           </section>
           <section className={styles.formSection} aria-labelledby={formId + '-context'} data-preset-section="context">
             <div className={styles.sectionHeading}><h3 id={formId + '-context'}>{t('context')}</h3></div>
-            <fieldset className={styles.strategyField}><legend>{t('historyStrategy')}</legend>
+            {!reply && <fieldset className={styles.strategyField}><legend>{t('historyStrategy')}</legend>
               <div className={styles.strategies}>{STRATEGIES.map(strategy => <label key={strategy.id} className={styles.strategyChoice}>
                 <input type="radio" name={'strategy-' + preset.id} value={strategy.id} checked={preset.contextStrategy === strategy.id} onChange={() => update({ contextStrategy: strategy.id })} />
                 <span className={styles.strategyBody}>
@@ -413,14 +433,14 @@ export function PresetLibraryPage() {
                   <small>{strategy.hint}</small>
                 </span>
               </label>)}</div>
-            </fieldset>
+            </fieldset>}
             <div className={styles.budgetRow}>
               <label className={styles.field}>{t('maximumInputContext')}<div className={styles.numberField}><Input aria-label={t('maximumInputContext')} type="number" required min={2} step={1} value={preset.maxContextTokens || ''} onChange={event => update({ maxContextTokens: Number(event.target.value) })} /><span>tokens</span></div></label>
               <label className={styles.field}>{t('maximumOutputLength')}<div className={styles.numberField}><Input aria-label={t('maximumOutputLength')} type="number" required min={1} step={1} value={preset.maxOutputTokens || ''} onChange={event => update({ maxOutputTokens: Number(event.target.value) })} /><span>tokens</span></div></label>
             </div>
-            <button type="button" className={styles.summaryButton} onClick={() => setDialog({ kind: 'summary' })}>
+            {!reply && <button type="button" className={styles.summaryButton} onClick={() => setDialog({ kind: 'summary' })}>
               <FileText size={16} aria-hidden="true" /><span><strong>{t('summaryPrompt')}</strong><small>{preset.contextStrategy === 'sliding_window' ? t('slidingWindowsDoNotUseSummaries') : t('editThePromptUsedToSummarizeHistory')}</small></span><ChevronRight size={16} aria-hidden="true" />
-            </button>
+            </button>}
           </section>
           <section className={styles.formSection} aria-labelledby={formId + '-nodes'} data-preset-section="nodes">
             <div className={styles.sectionHeading}>
@@ -439,6 +459,7 @@ export function PresetLibraryPage() {
     {status && <div className={styles.toast} aria-hidden="true"><Check size={14} />{statusText}</div>}
 
     {preset && dialog && (dialog.kind === 'summary' || dialog.kind === 'node') && <PromptEditorDialog
+      replyAssist={reply}
       key={dialog.kind === 'node' ? dialog.node.id : dialog.kind}
       title={dialog.kind === 'summary' ? t('summaryPrompt') : dialog.isNew ? t('addCustomNode') : dialog.node.name}
       metadata={dialog.kind === 'node' && dialog.node.kind === 'text'}
@@ -446,7 +467,7 @@ export function PresetLibraryPage() {
       initialValue={dialog.kind === 'node' ? dialog.node : {name: '', role: 'system', prompt: preset.summaryPrompt}}
       description={dialog.kind === 'summary' ? t('summarizeEarlierStoryContentWhilePreservingRelationships')
         : dialog.node.kind === 'text' ? t('chooseAMessageRoleWriteThePrompt') : t('editThisNodeSPromptSystemVariables')}
-      onRestore={dialog.kind === 'node' && dialog.node.kind !== 'text' ? () => getDefaultPrompt(dialog.node.id) : undefined}
+      onRestore={dialog.kind === 'node' && dialog.node.kind !== 'text' ? () => getDefaultPrompt(dialog.node.id,type) : undefined}
       onApply={applyPrompt} onClose={() => setDialog(null)} />}
     {preset&&dialog?.kind==='reloadPreset'&&<Modal title={t('loadServerVersion')} onClose={()=>setDialog(null)} footer={<><Button onClick={()=>setDialog(null)}>{t('cancel')}</Button><Button variant="primary" onClick={()=>{void store.loadDetail(preset.id,true);setDialog(null);setError('');}}>{t('discardDraftAndLoad')}</Button></>}><p>{t('unsavedEditsToThisPresetWillBe')}</p></Modal>}
     {preset && dialog?.kind === 'deletePreset'  && <Modal title={t('deletePreset')} onClose={() => setDialog(null)}

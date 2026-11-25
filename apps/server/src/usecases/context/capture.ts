@@ -8,8 +8,7 @@ import type { Session, SessionEntry, SessionService } from '../../modules/sessio
 import type { StateService, StateViews } from '../../modules/state/service.js';
 import type { CharacterSpriteCatalogItem, World, WorldService } from '../../modules/worlds/service.js';
 import { selectNarrativeMaterials, type NarrativeMaterials } from './stages/materials/index.js';
-import { buildNarrativeNotes, type ModelNotes } from './stages/model-notes/index.js';
-import { resolveContextCapabilities, promptSpriteCatalog } from './capabilities.js';
+import { promptSpriteCatalog } from './capabilities.js';
 
 export type ContextSources = {
   settings: Pick<SettingsReader, 'getOptional'>;
@@ -32,7 +31,6 @@ export type ContextSnapshot = {
   inputText: string;
   inputEntryId: string | null;
   materials: NarrativeMaterials;
-  modelNotes: ModelNotes;
 };
 
 /** Capture the current session once, independently of the caller's operation. */
@@ -43,9 +41,9 @@ export function captureContext(services: ContextSources, sessionId: string): Con
   if ((historyEntries.at(-1)?.id ?? null) !== session.tipEntryId) throw new AppError('TIP_CONFLICT');
   const projection = projectContextMessages(historyEntries);
   const world = services.worlds.require(session.worldId);
-  const preset = services.presets.require(session.presetId);
+  const preset = services.presets.require(session.runtimeConfig.narrativePresetId, 'narrative');
   const characterSpriteCatalog = services.worlds.getCharacterSpriteCatalog(session.worldId).items;
-  const modelConfig = services.models.require(session.apiModelConfigId);
+  const modelConfig = services.models.require(session.runtimeConfig.apiModelConfigId);
   const views = services.state.getViews({
     worldId: session.worldId, sessionId: session.id, entryId: session.tipEntryId,
   });
@@ -55,6 +53,5 @@ export function captureContext(services: ContextSources, sessionId: string): Con
     playerId: captured.session.userCharacterId, inputText: captured.inputText,
     characterSpriteCatalog: promptSpriteCatalog(captured.preset.config, captured.characterSpriteCatalog),
   }, services.state);
-  const capabilities = resolveContextCapabilities(captured.preset.config, materials, captured.characterSpriteCatalog);
-  return { ...captured, materials, modelNotes: buildNarrativeNotes(captured.historyEntries, capabilities) };
+  return { ...captured, materials };
 }

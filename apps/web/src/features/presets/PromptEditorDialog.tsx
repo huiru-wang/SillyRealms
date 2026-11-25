@@ -15,6 +15,7 @@ type Props = {
   title: string;
   initialValue: PromptValue;
   metadata?: boolean;
+  replyAssist?: boolean;
   description: string;
   nodeId?: string;
   onRestore?: () => Promise<string>;
@@ -22,7 +23,7 @@ type Props = {
   onClose: () => void;
 };
 
-export function PromptEditorDialog({title, initialValue, metadata = false, description, nodeId, onRestore, onApply, onClose}: Props) {
+export function PromptEditorDialog({title, initialValue, metadata = false, replyAssist = false, description, nodeId, onRestore, onApply, onClose}: Props) {
   const {t} = useTranslation('presets');
   const textVariables = [
   ['system.language', t('presets:applicationLanguage')],
@@ -33,7 +34,7 @@ export function PromptEditorDialog({title, initialValue, metadata = false, descr
   ['history.summary', t('existingSummary')],
   ['state.global', t('globalStateReadOnly')],
   ['state.session', t('sessionStateReadOnly')],
-  ['state.message', t('messageStateAndUpdateRules')],
+  ['state.message', t('messageState')],
 ] as const;
   const [value, setValue] = useState(initialValue);
   const [discard, setDiscard] = useState(false);
@@ -44,7 +45,9 @@ export function PromptEditorDialog({title, initialValue, metadata = false, descr
   const formId = useId();
   const dirty = JSON.stringify(value) !== JSON.stringify(initialValue);
   const variables: ReadonlyArray<readonly [string, string]> = [
-    ...textVariables,
+    ...textVariables.filter(([name])=>!replyAssist || name!=='history.summary' || nodeId==='chatHistory'),
+    ...(replyAssist ? [['session.reply.assist.goal', t('sessions:assistGoal')] as const] : []),
+    ...(nodeId === 'stateUpdate' ? [['state.update.message', t('messageUpdateRules')] as const] : []),
     ...(nodeId === 'chatHistory' ? [['history.messages', t('originalHistoryMessages')] as const] : []),
     ...(nodeId === 'userInput' ? [['input.text', t('currentTurnInput')] as const] : []),
   ];

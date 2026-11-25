@@ -8,7 +8,7 @@ HTTP适配器位于 `apps/server/src/routes/`，可调用业务模块Service或�
 
 Service 公共输入输出采用显式驼峰领域类型，存储行到领域对象的转换位于 Service，存储行及列名留在模块内部。HTTP 使用 V2 管理接口契约；跨模块展示字段由 route 调属主 Service 组合，不放回 Repository JOIN 或相互依赖的 Service 展示逻辑。作者 JSON、状态键及文档协议里的键不做递归改名。
 
-业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；Web 接入世界内容库、预设、模型配置、设置和基础会话和叙事运行页。数据库 user_version=6，只迁移结构匹配的 V2 v1–v5 库（v2 添加预设 revision，v3 添加世界 revision 和 created_at/id 索引，v4 为非 NULL 消息状态添加 (session_id,seq) 索引，v5 添加带 zh-CN 默认值的 app_settings.locale，v6 在同一迁移事务内重建该单例表的 CHECK 约束以接受 ja，逐字段保留默认项、原语言及时间戳），拒绝未知结构和旧 Server 库。createApp传入services时必须同时传入usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureDefault 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
+业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；Web 接入世界内容库、预设、模型配置、设置和基础会话和叙事运行页。数据库 user_version=9，只迁移结构匹配的 V2 v1–v8 库（v2 添加预设 revision，v3 添加世界 revision 和 created_at/id 索引，v4 为非 NULL 消息状态添加 (session_id,seq) 索引，v5 添加带 zh-CN 默认值的 app_settings.locale，v6 在同一迁移事务内重建该单例表的 CHECK 约束以接受 ja，逐字段保留默认项、原语言及时间戳，v7 添加帮答模型绑定、应用默认帮答预设和会话帮答目标，v8 添加可空的 sessions.reply_assist_preset_id，v9 重建 sessions，清空旧会话及其 entries，保留世界、模型、预设和应用设置），拒绝未知结构和旧 Server 库。createApp传入services时必须同时传入usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureBuiltins 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 和 sr-default-reply-assist-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
 
 ## 普通 JSON 响应
 
@@ -91,7 +91,7 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 
 预设列表支持 type、limit、cursor；模型配置列表支持 limit、cursor，也保留显式 offset 分页。cursor 与 offset 不能同时使用；游标绑定对应资源及筛选条件，不能挪到其他查询。Service 只接收类型化分页参数，HTTP 负责游标编码。
 
-预设详情返回 `{id,revision,type,name,description,config,createdAt,updatedAt}`；列表仅返回去掉 config 的摘要，不读取每个预设的配置正文。当前只支持 type=narrative；config 为 `{schemaVersion:1,nodes,contextStrategy,modelParameters}`。CRUD 不再接受 config_json/context_strategy/model_parameters 顶层字段。
+预设详情返回 `{id,revision,type,name,description,config,createdAt,updatedAt}`；列表仅返回去掉 config 的摘要，不读取每个预设的配置正文。类型支持 `narrative` 与 `reply_assist`，创建后固定。列表和默认模板的 type 查询参数默认 narrative。帮答详情另含本机模型绑定 `apiModelConfigId`（可空）。config 为 `{schemaVersion:1,nodes,contextStrategy,modelParameters}`。CRUD 不再接受 config_json/context_strategy/model_parameters 顶层字段。
 
 modelParameters 包含可选有限数值 temperature（0–2）、topP（0–1）、frequencyPenalty 与 presencePenalty（各 −2–2），以及 thinkingEnabled 开关及可选 thinkingLevel（minimal、low、medium、high、xhigh、max）。思考深度不指定时保留默认行为；关闭思考或模型不支持思考时不传思考参数。模型支持思考但不支持所选深度时，仅忽略该深度选择并沿用既有默认深度，保持思考开关语义。便携文档及内部存储分别对应 model_parameters.thinking_enabled / thinking_level，旧记录缺少深度时无需迁移。
 
@@ -99,9 +99,9 @@ modelParameters 包含可选有限数值 temperature（0–2）、topP（0–1�
 
 创建接收 `{name,description,type,config}`（可提供 id）。PATCH 接收修改字段及必填 expectedRevision，成功后 revision 加一；版本过期返回 PRESET_REVISION_CONFLICT/409，保持服务端内容不变。温度可省略，表示未指定；summaryPrompt 只有 rolling_summary 策略要求非空。
 
-能力节点按 worldState → actionSuggestions → characterSprite 的相对顺序保存；节点可缺失或关闭。启用能力节点必须有非空 prompt，禁止引用 input.text/history.messages/history.summary；不在读取时补节点、补默认提示词或转换 state.entries。正式变量包含 {{characterSprite.catalog}}，启用及素材条件见 [预设创作](../creator/presets-and-models.md)。
+叙事预设中的 worldState 是 worldInfo 与 chatHistory 之间必需的 system 节点。{{state.update.message}} 仅可在 stateUpdate 中引用。能力节点按 stateUpdate → actionSuggestions → characterSprite 的相对顺序保存；节点可缺失或关闭。启用能力节点必须有非空 prompt，禁止引用 input.text/history.messages/history.summary；不在读取时补节点、补默认提示词或转换 state.entries。正式变量包含 {{characterSprite.catalog}}，启用及素材条件见 [预设创作](../creator/presets-and-models.md)。
 
-默认模板接口返回 `data.item`，没有 ID/revision，不创建持久化记录。导入仍接收便携文档 `{name,description,config_json:{schemaVersion:3,nodes},context_strategy,model_parameters}`，导入成功返回领域详情。导出使用同一便携文档协议，当前名称加 .json，排除 ID、revision、时间戳；GET/HEAD 下载成功不套包络。文件协议转换属于 presets 模块，不影响 CRUD 配置结构。
+默认模板接口返回 `data.item`，没有 ID/revision，不创建持久化记录。导入接收便携文档 `{type,name,description,config_json:{schemaVersion:3,nodes},context_strategy,model_parameters}`，旧文件缺少 type 时按 narrative 解释。帮答文件使用 sliding_window、输入与输出预算，省略 summary_prompt。模型绑定不随文件传输，导入后为 null。导入成功返回领域详情。导出使用同一便携文档协议，当前名称加 .json，排除 ID、revision、时间戳；GET/HEAD 下载成功不套包络。文件协议转换属于 presets 模块，不影响 CRUD 配置结构。
 
 模型创建接收 `{name,providerId,modelId,apiKey}`，ID 由服务端生成；PATCH 接收上述字段的非空子集，省略 apiKey 保留原值，更换 providerId 必须同时提供新 apiKey。客户端不能传 credentialRef。响应为 `{id,name,providerId,modelId,credentialStatus,createdAt,updatedAt}`，不返回密钥或引用。credentialStatus 为 configured（凭据存在）、missing（未保存或不属于当前存储）、unavailable（存储不可访问），不代表已验证模型调用。
 
@@ -127,7 +127,7 @@ promptCache 是 SDK 提供的最佳估计保留时长，缺失表示未提供，
 
 凭据由独立 credentials 模块保存，默认适配 macOS Keychain，引用按 V2 dataRoot 隔离，数据库只存引用。其他平台默认返回存储不可用，可由启动装配注入 CredentialStore。模型用例协调凭据和配置：写入数据库失败时补偿凭据；删除先检查数据库引用并删记录，再删凭据。凭据清理失败返回 CREDENTIAL_DELETE_FAILED/503，可重试相同 DELETE；补偿失败返回 CREDENTIAL_COMPENSATION_FAILED/500。跨资源流程不是数据库强事务，未提供进程崩溃恢复保证。
 
-默认设置为 `{defaultPresetId,defaultApiModelConfigId}`。PATCH 只更新提交字段，显式 null 清除默认，不存在的引用由属主 Service 报错。默认值在世界导入时复制一次，不批量覆盖已有世界或会话。被默认设置、世界或会话引用的预设/模型不能直接删除。
+默认设置为 `{defaultPresetId,defaultApiModelConfigId,defaultReplyAssistPresetId}`。PATCH 只更新提交字段，显式 null 清除默认，不存在的引用由属主 Service 报错。叙事默认值在世界导入时复制一次，不批量覆盖已有世界或会话。被默认设置、世界或会话引用的预设/模型不能直接删除。
 
 ## 世界与文件
 
@@ -182,6 +182,8 @@ DELETE `/worlds/:id` 未确认关联删除时，有关联会话返回 WORLD_HAS_
 | POST | /sessions/:id/entries | 追加普通消息 |
 | PATCH | /sessions/:id/entries/:entryId | 普通消息正文或 extData 更新 |
 | GET | /sessions/:id/entries/:entryId/character-sprites | 指定消息自身的立绘结果，缺失为 null |
+| POST | /sessions/:id/reply-assist | 提交 {requestId,draftText}，UUID 由宿主生成，草稿上限 100000 字符。成功返回 202 和 {sessionId,requestId,accepted:true} |
+| POST | /sessions/:id/reply-assist/:requestId/stop | 取消匹配的帮答，返回 {sessionId,requestId,stopping:true}。已结束或不匹配返回 404 |
 | POST | /sessions/:id/narrative/runs | 保存用户消息并受理一次叙事生成 |
 | POST | /sessions/:id/narrative/runs/:runId/stop | 显式停止当前匹配的叙事生成 |
 | GET | /sessions/:id/narrative/runs | 每页最多 5 轮的完整历史或 afterSeq 补查 |
@@ -190,7 +192,17 @@ DELETE `/worlds/:id` 未确认关联删除时，有关联会话返回 WORLD_HAS_
 
 会话列表支持 worldId、limit、cursor，不提供关键词搜索。route 解析游标位置后调用 SessionService；列表项的 worldName/cover 通过 WorldService 在 route 组合，同一请求缓存重复世界读取。SessionService 只返回自身的 Session 领域对象。已保存消息通过轮次游标分页读取。整数 query 必须是合法安全整数，再由 Service 校验允许范围。
 
-会话详情 GET 返回 `data.item: SessionView`，包含 worldId、presetId、apiModelConfigId、userCharacterId、tipEntryId、title 等驼峰字段。PATCH 仅支持 title/presetId/apiModelConfigId，世界与玩家身份创建后不再修改。Web 会话页通过独立 features 使用本节的历史、叙事与 SSE 接口。
+会话列表、创建、详情与更新响应均返回会话的 `runtimeConfig`。配置存储在 `sessions.runtime_config`，三个引用由 SQLite 虚拟生成列维护外键约束。
+
+| API 字段 | JSON 存储键 | 含义 |
+|---|---|---|
+| narrativePresetId | narrative_preset_id | 必填，叙事预设 |
+| apiModelConfigId | api_model_config_id | 必填，叙事模型配置 |
+| replyAssistPresetId | reply_assist_preset_id | 帮答预设，默认 null，表示跟随应用默认值 |
+| replyAssistGoal | replay_assist_goal | 帮答目标，最多 2000 字符，默认空字符串 |
+| fontSize | font_size | 故事正文字号，13–21 的整数，默认 16 |
+
+`PATCH /sessions/:id` 接受 `title` 和部分 `runtimeConfig`。例如 `{"runtimeConfig":{"fontSize":18,"replyAssistPresetId":null}}` 只调整字号并恢复跟随应用默认，其他配置在同一事务内保留。
 
 摘要仅由叙事流程生成：POST entries 禁止 type=compaction；PATCH entries 禁止修改 compaction 的 payload/extData，也禁止向普通消息写入 summary 元数据。成功摘要通过 narrative/runs 分页中的 entries 读取，payload.summary 为文本，extData.summary 为 {coveredThroughEntryId,sourceHash}，指标保存在该 entry.metrics；state=null 继承。savedMessageIds 不包含摘要，tipEntryId 可以指向摘要。
 
@@ -209,7 +221,7 @@ DELETE `/worlds/:id` 未确认关联删除时，有关联会话返回 WORLD_HAS_
 
 ### 创建可用会话
 
-`POST /sessions` 接收 `{worldId,openingId,userCharacterId,presetId,apiModelConfigId,id?,title?}`，不接受客户端 state。配置必须明确提交，不隐式替换；title 省略时使用开局名称，显式 null 保留无标题。不存在或不属于该世界的开局返回 INVALID_SESSION_OPENING/422；角色必须属于该世界且 player_selectable=true，否则返回 INVALID_SESSION_CHARACTER/422。模型和预设通过本域服务检查引用。
+`POST /sessions` 接收 `{worldId,openingId,userCharacterId,runtimeConfig,id?,title?}`，不接受客户端 state。配置必须明确提交，不隐式替换；title 省略时使用开局名称，显式 null 保留无标题。不存在或不属于该世界的开局返回 INVALID_SESSION_OPENING/422；角色必须属于该世界且 player_selectable=true，否则返回 INVALID_SESSION_CHARACTER/422。模型和预设通过本域服务检查引用。
 
 create-session 用例在同一个同步事务中校验选择、计算初始快照、创建会话、保存第一条 assistant 消息、写入该 run 的完成结果并推进 tip。任一步失败整体回滚，不留空会话。初始化直接调用属主 Service，不嵌套发布状态事件的用例，不调用模型、凭据服务或作者组件。
 
@@ -445,11 +457,13 @@ HTTP 200 成功包络：
 
 ### 资源与 Stage 边界
 
-目录返回的 asset 交给既有资源解析能力；包内资源继续使用 GET /worlds/:id/resources/*，沿用路径与 MIME 校验，不新建立绘下载路由。当前交付仅为服务端 HTTP/SSE 契约，立绘 Stage SDK 门面、前端组件、胶囊和布局策略尚未接入。
+目录返回的 asset 交给既有资源解析能力；包内资源继续使用 GET /worlds/:id/resources/*，沿用路径与 MIME 校验，不新建立绘下载路由。Web 会话宿主复用该目录与指定消息契约，展示规则见[会话运行接入](web-runtime.md#悬浮立绘)。
 
 ## 舞台部署配置
 
 `GET /runtime/config` 返回 `data:{stage:{origin,entryPath:"/frame.html"},debug}`，Cache-Control 为 no-store。origin 是含端口的完整公开 HTTP(S) 来源。本地默认从启动时枚举的回环及网卡 IPv4 主站来源中精确匹配请求来源，为匹配的主站返回同一主机的 5177 端口；未知来源使用固定默认值。显式配置部署来源时使用固定配置。来源不能与 Web 同源；HTTPS Web 不允许 HTTP 舞台。debug 是前端调试开关，不返回内部环境变量或凭据。
+
+传入 `?sessionId=:id` 后，服务端校验会话访问权限，并在同一响应的 `data` 中增加 `capabilities.characterSprite.available` 布尔值。当前会话绑定预设的角色立绘节点显式启用，且该世界至少有一项已声明的角色立绘时返回 true。该值与本轮有无立绘输出、玩家显示偏好独立。每次查询读取当前配置；会话不存在或无访问权返回 `404 SESSION_NOT_FOUND`。
 
 默认舞台来源 `http://127.0.0.1:5177`；CLI 配置 SERVER_STAGE_ORIGIN、SERVER_DEBUG=true，以及已有 SERVER_WEB_ORIGIN。舞台由独立静态来源提供，Server 配置接口不启动额外监听器。Web 隔离构建包含 frame.html 和 world-component.html，管理来源仅有 index.html；运行 UI 与 Stage SDK 使用本节叙事和 state 契约。
 

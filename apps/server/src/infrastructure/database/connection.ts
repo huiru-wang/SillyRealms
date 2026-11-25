@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { AppError } from '../../errors.js';
 
-export const DATABASE_VERSION = 6;
+export const DATABASE_VERSION = 9;
 export const DATABASE_APPLICATION_ID = 0x53525632; // SRV2; distinct from the old Server database.
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
@@ -143,6 +143,41 @@ SELECT id,default_preset_id,default_api_model_config_id,created_at,updated_at,lo
 DROP TABLE app_settings_v5;
 `;
 
+const UPGRADE_V7_SQL = `
+ALTER TABLE presets ADD COLUMN api_model_config_id TEXT REFERENCES api_model_configs(id) ON DELETE RESTRICT;
+ALTER TABLE app_settings ADD COLUMN default_reply_assist_preset_id TEXT REFERENCES presets(id) ON DELETE RESTRICT;
+ALTER TABLE sessions ADD COLUMN reply_assist_goal TEXT NOT NULL DEFAULT '';
+CREATE INDEX idx_presets_model ON presets(api_model_config_id);
+`;
+
+const UPGRADE_V8_SQL = 'ALTER TABLE sessions ADD COLUMN reply_assist_preset_id TEXT REFERENCES presets(id) ON DELETE RESTRICT';
+
+// Old sessions and their cascading entries are intentionally discarded once.
+// Virtual keys preserve database reference constraints without storing duplicate configuration.
+const UPGRADE_V9_SQL = `
+DROP TABLE sessions;
+CREATE TABLE sessions (
+    id                  TEXT PRIMARY KEY NOT NULL,
+    world_id            TEXT NOT NULL REFERENCES worlds(id) ON DELETE RESTRICT,
+    runtime_config      TEXT NOT NULL CHECK(json_valid(runtime_config) AND json_type(runtime_config) = 'object'),
+    narrative_preset_ref TEXT GENERATED ALWAYS AS (json_extract(runtime_config,'$.narrative_preset_id')) VIRTUAL NOT NULL REFERENCES presets(id) ON DELETE RESTRICT,
+    reply_preset_ref     TEXT GENERATED ALWAYS AS (json_extract(runtime_config,'$.reply_assist_preset_id')) VIRTUAL REFERENCES presets(id) ON DELETE RESTRICT,
+    model_ref            TEXT GENERATED ALWAYS AS (json_extract(runtime_config,'$.api_model_config_id')) VIRTUAL NOT NULL REFERENCES api_model_configs(id) ON DELETE RESTRICT,
+    user_character_id   TEXT NOT NULL,
+    tip_entry_id        TEXT,
+    title               TEXT,
+    state               TEXT NOT NULL CHECK(json_valid(state) AND json_type(state) = 'object'),
+    usage_json          TEXT CHECK(usage_json IS NULL OR (json_valid(usage_json) AND json_type(usage_json) = 'object')),
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL
+);
+CREATE INDEX idx_sessions_world_updated ON sessions(world_id, updated_at, id);
+CREATE INDEX idx_sessions_updated ON sessions(updated_at, id);
+CREATE INDEX idx_session_preset ON sessions(narrative_preset_ref);
+CREATE INDEX idx_session_model ON sessions(model_ref);
+CREATE INDEX idx_session_reply_preset ON sessions(reply_preset_ref);
+`;
+
 // Apply identical migration SQL to reference, new and upgraded databases.
 function expectedObjects(version: number) {
   const reference = new DatabaseSync(':memory:');
@@ -153,11 +188,14 @@ function expectedObjects(version: number) {
     if (version >= 4) reference.exec(UPGRADE_V4_SQL);
     if (version >= 5) reference.exec(UPGRADE_V5_SQL);
     if (version >= 6) reference.exec(UPGRADE_V6_SQL);
+    if (version >= 7) reference.exec(UPGRADE_V7_SQL);
+    if (version >= 8) reference.exec(UPGRADE_V8_SQL);
+    if (version >= 9) reference.exec(UPGRADE_V9_SQL);
     return new Map(reference.prepare("SELECT name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'")
       .all().map(row => [String(row.name), String(row.sql)]));
   } finally { reference.close(); }
 }
-const schemas = new Map([[1, expectedObjects(1)], [2, expectedObjects(2)], [3, expectedObjects(3)], [4, expectedObjects(4)], [5, expectedObjects(5)], [6, expectedObjects(6)]]);
+const schemas = new Map([[1, expectedObjects(1)], [2, expectedObjects(2)], [3, expectedObjects(3)], [4, expectedObjects(4)], [5, expectedObjects(5)], [6, expectedObjects(6)], [7, expectedObjects(7)], [8, expectedObjects(8)], [9, expectedObjects(9)]]);
 const normalizeSql = (sql: string) => sql.replace(/\s+/g, ' ').trim().toLowerCase();
 
 function inspectDatabase(db: DatabaseSync) {
@@ -206,6 +244,9 @@ export function openDatabase(path: string): DatabaseSync {
           db.exec(UPGRADE_V4_SQL);
           db.exec(UPGRADE_V5_SQL);
           db.exec(UPGRADE_V6_SQL);
+          db.exec(UPGRADE_V7_SQL);
+          db.exec(UPGRADE_V8_SQL);
+          db.exec(UPGRADE_V9_SQL);
           db.exec('PRAGMA application_id=' + DATABASE_APPLICATION_ID);
         } else {
           assertCompatible(current);
@@ -214,6 +255,9 @@ export function openDatabase(path: string): DatabaseSync {
           if (current.version < 4) db.exec(UPGRADE_V4_SQL);
           if (current.version < 5) db.exec(UPGRADE_V5_SQL);
           if (current.version < 6) db.exec(UPGRADE_V6_SQL);
+          if (current.version < 7) db.exec(UPGRADE_V7_SQL);
+          if (current.version < 8) db.exec(UPGRADE_V8_SQL);
+          if (current.version < 9) db.exec(UPGRADE_V9_SQL);
         }
         db.exec('PRAGMA user_version=' + DATABASE_VERSION);
         assertCompatible(inspectDatabase(db));

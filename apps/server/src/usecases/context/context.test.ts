@@ -34,7 +34,7 @@ beforeEach(() => {
     openings: [{ id: 'start', name: 'Start', content: 'Opening stays unused' }], state: { day: 2 },
   });
   services.sessions.create({
-    id: 'session', worldId: 'world', presetId: 'preset', apiModelConfigId: 'model',
+    id: 'session', worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' },
     userCharacterId: 'player', state: { reputation: 3 },
   });
 });
@@ -109,7 +109,7 @@ describe('compiled context composition', () => {
     expect(trimmed.messages[0]!.content).toBe('角色=；预设=');
     expect(trimmed.messages.at(-1)!.content).toContain('建议=。');
     expect(trimmed.messages.at(-2)!.content).toBe(token);
-    expect(trimmed.activeRoots).toEqual([]);
+    expect(trimmed.allowedStateUpdateRoots).toEqual([]);
     const next = captureContext(services, 'session');
     next.preset.config.nodes[0]!.prompt = token;
     expect(compileNarrativeContext(next, model).messages[0]!.content).toBe('new value');
@@ -270,7 +270,7 @@ describe('core narrative compilation', () => {
     const preset = services.presets.require('preset');
     preset.config.nodes[0]!.prompt = 'Main';
     preset.config.nodes.find(node => node.id === 'chatHistory')!.prompt = '{{history.summary}}Before\n{{history.messages}}\nAfter';
-    preset.config.nodes.splice(5, 0, { id: 'custom', name: 'Custom', kind: 'text', role: 'assistant', enabled: true, prompt: 'A custom example' });
+    preset.config.nodes.splice(preset.config.nodes.findIndex(node => node.id === 'userInput'), 0, { id: 'custom', name: 'Custom', kind: 'text', role: 'assistant', enabled: true, prompt: 'A custom example' });
     services.presets.update('preset', { config: preset.config });
     append('u0', 'user', 'Past input');
     append('a0', 'assistant', 'Past answer');
@@ -305,18 +305,19 @@ describe('core narrative compilation', () => {
     config.nodes.push({ id: 'custom', name: 'Profile', kind: 'text', role: 'system', enabled: true,
       prompt: 'Profile {{state.session}}' });
     services.presets.update('preset', { config });
+    append('prior', 'assistant', 'Past answer');
     const snapshot = capture();
     const compiled = compileNarrativeContext(snapshot, model);
-    expect(compiled.activeRoots).toEqual([]);
+    expect(compiled.allowedStateUpdateRoots).toEqual([]);
     expect(compiled.messages.find(item => item.content.startsWith('Profile'))?.content).toContain('value: 3');
-    const last = compiled.messages.at(-1)!.content;
-    expect(last).toContain('value: 2');
-    expect(last).toContain('value: 3');
-    expect(last).toContain('本轮没有可写状态');
+    const facts = compiled.messages.find(item => item.content.includes('value: 2'))!;
+    expect(facts.content).toContain('value: 3');
+    expect(compiled.messages.at(-1)!.content).not.toContain('state_update');
+    expect(compiled.messages.find(item => item.role === 'assistant')?.content).toContain('<state_update>');
     expect(compiled.diagnostics.nodes.find(node => node.id === 'worldState')?.included).toBe(true);
 
     snapshot.preset.config.nodes.find(node => node.id === 'worldState')!.prompt = 'Global only {{state.global}}';
-    const customized = compileNarrativeContext(snapshot, model).messages.at(-1)!.content;
+    const customized = compileNarrativeContext(snapshot, model).messages.find(item => item.content.startsWith('Global only'))!.content;
     expect(customized).toContain('Global only');
     expect(customized).not.toContain('value: 3');
   });
@@ -347,7 +348,7 @@ describe('core narrative compilation', () => {
     services.sessions.setEntryState('session', 'prior', [{ key: 'coins', value: 5 }]);
     const snapshot = capture(), compiled = compileNarrativeContext(snapshot, model);
     const protocol = compiled.messages.at(-1)!;
-    expect(compiled.activeRoots).toEqual(['coins']);
+    expect(compiled.allowedStateUpdateRoots).toEqual(['coins']);
     expect(protocol.role).toBe('system');
     expect(protocol.content).toContain('<state_update>');
     expect(protocol.content).toContain('JSONL');
@@ -359,6 +360,12 @@ describe('core narrative compilation', () => {
     expect(compiled.estimatedInputTokens).toBeGreaterThan(estimateInputTokens(compiled.messages.slice(0, -1)));
     expect(snapshot.history.map(message => message.text)).toEqual(['Earlier visible story']);
     expect(snapshot.materials.variables['history.summary']).toEqual({ type: 'text', value: '' });
+  });
+
+  it.each(['main', 'actionSuggestions'])('rejects the update material outside its owner when compiling %s', id => {
+    const snapshot = capture();
+    snapshot.preset.config.nodes.find(node => node.id === id)!.prompt = '{{state.update.message}}';
+    expect(() => compileNarrativeContext(snapshot, model)).toThrow('只能用于状态更新节点');
   });
 
   it('rejects a capability template that repeats historical material instead of falling back', () => {
@@ -571,7 +578,7 @@ describe('model-only notes in context candidates', () => {
     expect(JSON.stringify(summaryRequest(model, 'Summarize', '', snapshot.history))).not.toContain('note-only-keyword');
     expect(services.sessions.getEntry('session', 'answer')?.payload.message).toMatchObject({ content: 'A quiet room.' });
     expect(snapshot.views.message).toEqual({});
-    const clean = compileNarrativeContext({ ...snapshot, modelNotes: new Map() }, model);
+    const clean = compileNarrativeContext({ ...snapshot, historyEntries: [] }, model);
     expect(compiled.estimatedInputTokens).toBeGreaterThan(clean.estimatedInputTokens);
     expect(compiled.estimatedInputTokens).toBe(estimateInputTokens(compiled.messages));
     const renderedHistory = compiled.messages.find(message => message.role === 'assistant')!.content;
@@ -719,7 +726,8 @@ describe('character sprite context', () => {
     services.presets.update('preset', { config });
     append('prior', 'assistant', 'Earlier scene');
     const snapshot = capture(), compiled = compileNarrativeContext(snapshot, model);
-    expect(compiled.activeRoots).toEqual(['coins']);
+    expect(compiled.allowedStateUpdateRoots).toEqual([]);
+    expect(compiled.diagnostics.activeRoots).toEqual(['coins']);
     expect(compiled.messages.find(item => item.role === 'assistant')?.content).toBe('Earlier scene');
     expect(compiled.messages.at(-1)?.content).toBe('Current input');
     expect(compiled.messages.map(item => item.content).join('\n')).not.toMatch(/state_update|action_suggestions|character_sprite/);
@@ -737,7 +745,7 @@ describe('character sprite context', () => {
     expect(evaluate(snapshot.historyEntries, '').messages.find(item => item.content.startsWith('Recent scene'))?.content)
       .toContain('<state_update>');
     const trimmed = evaluate(snapshot.historyEntries.slice(1), '');
-    expect(trimmed.activeRoots).toEqual([]);
+    expect(trimmed.allowedStateUpdateRoots).toEqual([]);
     expect(trimmed.messages.find(item => item.content.startsWith('Recent scene'))?.content).not.toContain('<state_update>');
   });
 });

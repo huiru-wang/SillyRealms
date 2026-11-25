@@ -80,7 +80,7 @@ function createWorld(id: string) {
 }
 function createSession(id: string, worldId = 'world') {
   return services.sessions.create({
-    id, worldId, presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player', state: { coins: 2 },
+    id, worldId, runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player', state: { coins: 2 },
   });
 }
 function append(id: string, role: 'user' | 'assistant', sessionId = 'session') {

@@ -1,12 +1,24 @@
 import type {SessionEvent} from '../../../../packages/sr-sdk/src/stage-contract.ts';
+import {isSpriteSnapshot} from '../features/character-sprites/items.ts';
+
+type AssistFields={sessionId:string;requestId:string;timestamp:number};
+export type ReplyAssistEvent =
+  | {event:'reply_assist.delta';data:AssistFields & {delta:{content:string}}}
+  | {event:'reply_assist.completed';data:AssistFields & {snapshot:{content:string}}}
+  | {event:'reply_assist.stopped';data:AssistFields & {snapshot:{content:string};stop_reason:string}};
+export type HostSessionEvent=SessionEvent|ReplyAssistEvent;
+export function isReplyAssist(event:HostSessionEvent):event is ReplyAssistEvent {
+  return event.event.startsWith('reply_assist.');
+}
 
 /** Explicit Server names: EventSource has no wildcard event listener. */
 export const SESSION_EVENT_NAMES = [
   'session.created', 'run.created', 'run.summarizing', 'run.summarized',
   'run.delta', 'run.usage', 'run.completed', 'run.stopped',
-  'state.changed', 'action_suggestions.created', 'message.deleted',
+  'reply_assist.delta', 'reply_assist.completed', 'reply_assist.stopped',
+  'state.changed', 'action_suggestions.created', 'character_sprite.changed', 'message.deleted',
 ] as const;
-export type SessionEventNamespace = 'session' | 'message' | 'run' | 'state' | 'action_suggestions' | '*';
+export type SessionEventNamespace = 'session' | 'message' | 'run' | 'state' | 'action_suggestions' | 'character_sprite' | 'reply_assist' | '*';
 export type SessionConnection = {
   sessionId: string;
   status: 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed';
@@ -24,14 +36,21 @@ type Options = {
   url?: string;
 };
 
-function wireEvent(name: typeof SESSION_EVENT_NAMES[number], value: unknown, sessionId: string): SessionEvent | null {
+function wireEvent(name: typeof SESSION_EVENT_NAMES[number], value: unknown, sessionId: string): HostSessionEvent | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const data = value as Record<string, unknown>;
+  if (name === 'reply_assist.delta' || name === 'reply_assist.completed' || name === 'reply_assist.stopped') {
+    if(data.sessionId!==sessionId || typeof data.requestId!=='string' || !data.requestId || typeof data.timestamp!=='number')return null;
+    const payload=name==='reply_assist.delta'?data.delta:data.snapshot;
+    if(!payload || typeof payload!=='object' || !('content' in payload) || typeof payload.content!=='string')return null;
+    if(name==='reply_assist.stopped' && typeof data.stop_reason!=='string')return null;
+    return {event:name,data} as ReplyAssistEvent;
+  }
   if (name === 'state.changed') {
     if (!['global', 'session', 'message'].includes(String(data.scope)) || typeof data.path !== 'string' || !Object.hasOwn(data, 'value')) return null;
   } else {
     if (data.sessionId !== sessionId) return null;
-    if (name.startsWith('run.') || name === 'action_suggestions.created' || name === 'message.deleted') {
+    if (name.startsWith('run.') || name === 'action_suggestions.created' || name === 'character_sprite.changed' || name === 'message.deleted') {
       if (typeof data.runId !== 'string' || !data.runId) return null;
     }
     if ((name.startsWith('run.') || name === 'message.deleted') && (typeof data.assistantEntryId !== 'string' || !data.assistantEntryId)) return null;
@@ -40,6 +59,7 @@ function wireEvent(name: typeof SESSION_EVENT_NAMES[number], value: unknown, ses
     if (name === 'run.created' && (!Array.isArray(data.messages) || data.messages.length !== 1)) return null;
     if (name === 'run.delta' && (typeof data.messageId !== 'string' || !Array.isArray(data.messages) || data.messages.length !== 1)) return null;
     if (name === 'action_suggestions.created' && (typeof data.messageId !== 'string' || !Array.isArray(data.items))) return null;
+    if (name === 'character_sprite.changed' && (typeof data.messageId !== 'string' || !data.messageId.trim() || !isSpriteSnapshot(data.items))) return null;
     if ((name === 'run.completed' || name === 'run.stopped') &&
       (!Array.isArray(data.savedMessageIds) || !(data.tipEntryId === null || typeof data.tipEntryId === 'string'))) return null;
   }
@@ -50,7 +70,7 @@ function wireEvent(name: typeof SESSION_EVENT_NAMES[number], value: unknown, ses
 export function createSessionEventChannel(options: Options) {
   let source: EventSourcePort | null = null, disposed = false;
   let snapshot: SessionConnection = {sessionId: options.sessionId, status: 'idle', connected: false, generation: 0};
-  const listeners = new Map<SessionEventNamespace, Set<(event: SessionEvent) => void>>();
+  const listeners = new Map<SessionEventNamespace, Set<(event: HostSessionEvent) => void>>();
   const connections = new Set<(connection: SessionConnection) => void>();
   const notifyConnection = (status: SessionConnection['status']) => {
     snapshot = {...snapshot, status, connected: status === 'connected',
@@ -59,7 +79,7 @@ export function createSessionEventChannel(options: Options) {
   };
   return {
     getSnapshot: () => snapshot,
-    subscribe(namespace: SessionEventNamespace, listener: (event: SessionEvent) => void) {
+    subscribe(namespace: SessionEventNamespace, listener: (event: HostSessionEvent) => void) {
       const group = listeners.get(namespace) ?? new Set();
       group.add(listener); listeners.set(namespace, group);
       return () => { group.delete(listener); };
@@ -80,7 +100,7 @@ export function createSessionEventChannel(options: Options) {
       opened.addEventListener('error', () => { if (current()) notifyConnection('reconnecting'); });
       for (const name of SESSION_EVENT_NAMES) opened.addEventListener(name, event => {
         if (!current()) return;
-        let parsed: SessionEvent | null;
+        let parsed: HostSessionEvent | null;
         try { parsed = wireEvent(name, JSON.parse(event.data), options.sessionId); } catch { return; }
         if (!parsed) return;
         const namespace = name.slice(0, name.indexOf('.')) as SessionEventNamespace;

@@ -116,7 +116,7 @@ entry.role 与 payload.message.role 一致。同轮已有消息共享 runId；re
 
 ## 上下文与首版能力
 
-世界、玩家身份、预设和模型绑定来自当前会话的 worldId、userCharacterId、presetId 和 apiModelConfigId，不因应用默认项更新而切换；输出语言另取应用设置 locale。快照在凭据或模型异步等待前完成，本轮不受后续配置、语言或消息内容编辑影响。
+世界、玩家身份、预设和模型绑定来自当前会话的 worldId、userCharacterId、runtimeConfig.narrativePresetId 和 runtimeConfig.apiModelConfigId，不因应用默认项更新而切换；输出语言另取应用设置 locale。快照在凭据或模型异步等待前完成，本轮不受后续配置、语言或消息内容编辑影响。
 
 只接受合法的 user/assistant 历史消息，payload.message 的角色须与 entry.role 一致，content 为文本、timestamp 为有效非负数。兼容原来的纯正文 payload；reasoning/tool_calls 不进入正文投影、材料关键词扫描或模型提示词。compaction 独立于普通正文投影；rolling_summary 从新到旧查找覆盖边界与 sourceHash 有效的摘要，忽略无合法元数据、来源被修改或覆盖受保护末轮的摘要；无有效摘要时回到完整原文。实际 tip 为 null 或没有继承消息快照时，message 视图为空；叙事提交不重复初始化 opening，新会话已由创建用例保存首条消息及状态。
 
@@ -126,9 +126,9 @@ entry.role 与 payload.message.role 一致。同轮已有消息共享 runId；re
 
 预设节点和已选中的玩家/NPC prompt、世界书 content 支持 `{{state.<global|session|message>.<路径>}}`：从本轮捕获视图逐段读对象自有属性，只能读取当前裁剪候选按 load 激活的根，不增加写授权。字符串原样填入（作者素材保留原有正文转义），其余值输出紧凑 JSON；缺值或不可见根留空。世界卡导入不检查变量；作者素材中非法的闭合 state 路径留空，不支持的自定义变量和未闭合正文原样保留。只扫描源字段，输入、历史、替换结果和最终消息均不再扫描；状态规则、开局、摘要提示不新增插值。
 
-worldState、actionSuggestions、characterSprite 按固定相对顺序声明。PresetService.resolvePostprocessPrompts 只返回实际存在且 enabled=true 的节点，不补缺失节点、不替换空提示词、不读取旧变量别名。启用能力节点的空提示词在保存/导入时拒绝；模板编译失败明确报错，无默认回退。默认正文来自发行模板或用户显式恢复默认。main 使用遵守本轮实际构建能力的通用措辞。
+stateUpdate、actionSuggestions、characterSprite 按固定相对顺序声明。PresetService.resolvePostprocessPrompts 只返回实际存在且 enabled=true 的节点，不补缺失节点、不替换空提示词、不读取旧变量别名。启用能力节点的空提示词在保存/导入时拒绝；模板编译失败明确报错，无默认回退。默认正文来自发行模板或用户显式恢复默认。main 使用遵守本轮实际构建能力的通用措辞。
 
-worldState 在已启用且任一作用域有适用状态材料时参与。预设模板的 `{{state.global}}`、`{{state.session}}`、`{{state.message}}` 分别应用世界卡加载条件，缺失快照值标为未设置。global/session 是只读背景；只有最终激活的 message 根用于后处理路径授权，与是否有 rules 无关。仅有可写根时构建 state_update 输出协议；只提供已声明规则，不要求覆盖。actionSuggestions 需要实际启用的节点。
+worldState 是 chatHistory 前的固定 system 节点。三域状态依本轮候选的加载条件选择一次，任一域有适用根就渲染事实；缺失快照值标为未设置。stateUpdate 开启且有适用事实时，最近两条可见助手消息沿用历史状态更新旁注。只有最终候选有激活的 message 根时才加入更新节点、固定状态协议，并将这些根授权给后处理。{{state.update.message}} 仅可在该节点中使用，列出根名及作者已有的规则。缺失或关闭更新节点时写授权为空，模型自行输出的更新仍逐行解析并记录校验结果。
 
 characterSprite 还要求世界目录非空。context 首次异步等待前捕获全卡已声明的合法素材，角色 load 只控制角色 prompt，不裁掉立绘目录；成功 request.characterSpriteCatalog 无论节点是否启用都保留，供实际输出校验。正式变量 `{{characterSprite.catalog}}` 只在立绘条件成立时提供角色 ID/姓名、素材 ID/说明、当前玩家角色 ID，不含 asset 地址、完整角色 prompt 或图片。该变量可用于其他预设节点，但关闭或缺失立绘节点时值为空。条件同时控制立绘节点、固定协议和历史来源；详情见 [预设创作](../creator/presets-and-models.md) 与 [世界卡协议](../reference/world-card.md)。
 
@@ -363,3 +363,9 @@ API Key、鉴权 header、明确凭据字段及模型错误中的已知密钥值
 新执行继续使用 run.created/summarizing/summarized/delta/usage/completed/stopped，不加 mode 或 attemptId。run 事件、活跃查询和新终态均带 assistantEntryId，stop 必须匹配该 ID 和 runId。用户消息按原 messageId 去重。删除成功后任何准备或模型失败均不恢复旧回复；部分公开输出保存，无输出只保留用户并允许显式重试。
 
 recordedUsage 保持现存 entries.metrics 求和：被删除 AI 的请求不再计入，保留摘要的计量保留，新输出独立记录。本数值不代表不可回退的历史账单，不新增账本或 schema。没有输出/持久化失败的计量边界与普通生成相同。删除可降低 lastSeq 或使新条目复用 seq；重连需以完整最近轮次替换客户端缓存。
+
+## AI 帮答与会话锁
+
+`usecases/reply-assist/` 在检查配置前按会话取得 RuntimeCache 占用。`prepareReplyAssistContext` 通过 context 的公开入口同步读取帮答模型、参数、可见材料、会话目标和历史。保留真实消息角色，按完整轮裁剪并保护最近情境，可使用来源匹配的旧摘要。生成只调用一次模型，结束时释放占用，再发布终态。
+
+叙事持锁期间帮答返回 409 RUN_ALREADY_ACTIVE。帮答持锁期间叙事发送、重新生成和重复帮答返回 409 REPLY_ASSIST_ALREADY_ACTIVE。会话写入和本地状态写入分别返回 SESSION_WRITE_LOCKED 和 STATE_WRITE_LOCKED。帮答不持有叙事写许可，不阻塞世界全局状态，不生成 entry、摘要或用量。

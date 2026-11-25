@@ -14,7 +14,7 @@ import type { ModelInfo } from '../infrastructure/model/client.js';
 import { createSessionUsecase, type CreateSessionInput } from './create-session.js';
 
 let db: DatabaseSync, dataRoot: string, services: Services, usecases: Usecases, events: EventHub;
-const input: CreateSessionInput = { id: 'session', worldId: 'world', openingId: 'start', userCharacterId: 'player', presetId: 'preset', apiModelConfigId: 'model' };
+const input: CreateSessionInput = { id: 'session', worldId: 'world', openingId: 'start', userCharacterId: 'player', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' } };
 const model: ModelInfo = {
   providerId: 'provider', modelId: 'model', name: 'Model', contextWindow: 64000, maxTokens: 8192,
   api: 'test', input: ['text'], reasoning: false, thinkingLevels: ['off'], thinkingLevelMap: null,
@@ -96,7 +96,7 @@ describe('create a ready session', () => {
 
   it.each([
     { openingId: 'foreign' }, { userCharacterId: 'npc' }, { userCharacterId: 'missing' },
-    { presetId: 'missing' }, { apiModelConfigId: 'missing' }, { worldId: 'missing' },
+    { runtimeConfig: { ...input.runtimeConfig, narrativePresetId: 'missing' } }, { runtimeConfig: { ...input.runtimeConfig, apiModelConfigId: 'missing' } }, { worldId: 'missing' },
   ])('rejects invalid selections without a session or notification: %j', patch => {
     const publish = vi.spyOn(events, 'publish');
     expect(() => usecases.createSession({ ...input, ...patch })).toThrow();
@@ -176,10 +176,12 @@ describe('create a ready session', () => {
         '{"path":"coins","value":20}', '{"path":"energy","value":5}', '{"path":"bag","value":{"gold":5}}',
         '</state_update>', '<action_suggestions>[]</action_suggestions>',
       ].join('\n') }]);
-    expect(context.request.activeRoots).toEqual(['coins', 'bag']);
+    expect(context.request.allowedStateUpdateRoots).toEqual(['coins', 'bag']);
     const instructions = context.request.messages.at(-1)!.content;
-    expect(instructions).toContain('value: 20');
-    expect(instructions).toContain('"gold":5');
+    const facts = context.request.messages.find(message => message.role === 'system' && message.content.includes('value: 20'));
+    expect(facts?.content).toContain('"gold":5');
+    expect(instructions).toContain('coins: Change with the story.');
+    expect(instructions).not.toContain('value: 20');
     expect(services.state.getViews({ worldId: 'world', sessionId: 'session', entryId: user.id }))
       .toEqual({ global: { day: 9 }, session: { visits: 0 }, message: { coins: 20, energy: 5, bag: { gold: 5 } } });
     expect(services.state.requireMessage('session', user.id)).toEqual(result.entry.state);

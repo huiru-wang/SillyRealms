@@ -1,0 +1,31 @@
+.layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  container-type: size;
+  opacity: 1;
+  transition: opacity var(--duration-quick) ease-out;
+}
+.layer[data-enabled=false] { opacity: 0; }
+.portrait {
+  position: absolute;
+  bottom: var(--space-2);
+  width: min(20cqw, 130px);
+  height: 27cqh;
+  object-fit: contain;
+  object-position: center bottom;
+  animation: appear var(--duration-quick) ease-out;
+}
+.portrait[data-side=left] { left: var(--space-2); object-position: left bottom; }
+.portrait[data-side=right] { right: var(--space-2); object-position: right bottom; }
+.portrait[data-raised=true] { bottom: 6cqh; }
+@container (min-width: 1040px) {
+  .portrait { width: min(calc((100cqw - 740px) / 2 - 16px), 300px); height: 45cqh; }
+}
+@keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .layer { transition: none; }
+  .portrait { animation: none; }
+}

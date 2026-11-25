@@ -28,14 +28,14 @@ export function buildModelNotes(entries: readonly SessionEntry[], sources: reado
 }
 
 /** Select the most recent visible assistants first; missing output never revives older notes. */
-export function buildNarrativeNotes(entries: readonly SessionEntry[], capabilities: ContextCapabilities): ModelNotes {
+export function buildNarrativeNotes(entries: readonly SessionEntry[], capabilities: Pick<ContextCapabilities, 'stateUpdateNotes' | 'actionSuggestions' | 'characterSprite'>): ModelNotes {
   const recent = entries.filter(entry => {
     if (entry.type !== 'message' || entry.role !== 'assistant') return false;
     const message = record(entry.payload.message);
     return message?.role === 'assistant' && typeof message.content === 'string' && message.content.trim().length > 0;
   }).slice(-2);
   return buildModelNotes(recent, [
-    ...(capabilities.worldState ? [stateUpdateNotes] : []),
+    ...(capabilities.stateUpdateNotes ? [stateUpdateNotes] : []),
     ...(capabilities.actionSuggestions ? [actionSuggestionNotes] : []),
     ...(capabilities.characterSprite ? [characterSpriteNotes] : []),
   ]);

@@ -13,8 +13,8 @@ import { WorldService } from './modules/worlds/service.js';
 export function createServices(database: DatabaseSync, dataRoot: string, credentialStore?: CredentialStore, initialData = loadInitialData()) {
   const cache = new RuntimeCache();
   const credentials = new CredentialService(dataRoot, credentialStore);
-  const presets = new PresetService(database, initialData);
   const models = new ModelService(database);
+  const presets = new PresetService(database, models, initialData);
   const settings = new SettingsService(database, { presets, models });
   const worlds = new WorldService(database, { presets, models, cache }, dataRoot);
   const sessions = new SessionService(database, { worlds, presets, models, cache });

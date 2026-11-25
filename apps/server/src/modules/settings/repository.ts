@@ -6,6 +6,7 @@ import type { SettingsValues } from './types.js';
 export type StoredAppSettings = {
   id: 1;
   locale: AppLocale;
+  default_reply_assist_preset_id: string | null;
   default_preset_id: string | null;
   default_api_model_config_id: string | null;
   created_at: number;
@@ -22,6 +23,7 @@ export class SettingsRepository {
     return {
       id: 1,
       locale: row.locale as AppLocale,
+      default_reply_assist_preset_id: row.default_reply_assist_preset_id === null ? null : String(row.default_reply_assist_preset_id),
       default_preset_id: row.default_preset_id === null ? null : String(row.default_preset_id),
       default_api_model_config_id: row.default_api_model_config_id === null ? null : String(row.default_api_model_config_id),
       created_at: Number(row.created_at),
@@ -37,14 +39,14 @@ export class SettingsRepository {
 
   ensure(value: SettingsValues): StoredAppSettings {
     const now = Date.now();
-    this.db.prepare('INSERT INTO app_settings(id,locale,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,?,?,?,?,?) ON CONFLICT(id) DO NOTHING')
-      .run(value.locale, value.defaultPresetId, value.defaultApiModelConfigId, now, now);
+    this.db.prepare('INSERT INTO app_settings(id,locale,default_reply_assist_preset_id,default_preset_id,default_api_model_config_id,created_at,updated_at) VALUES(1,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING')
+      .run(value.locale, value.defaultReplyAssistPresetId, value.defaultPresetId, value.defaultApiModelConfigId, now, now);
     return this.get();
   }
 
   update(value: SettingsValues): StoredAppSettings {
-    this.db.prepare('UPDATE app_settings SET locale=?,default_preset_id=?,default_api_model_config_id=?,updated_at=? WHERE id=1')
-      .run(value.locale, value.defaultPresetId, value.defaultApiModelConfigId, Date.now());
+    this.db.prepare('UPDATE app_settings SET locale=?,default_reply_assist_preset_id=?,default_preset_id=?,default_api_model_config_id=?,updated_at=? WHERE id=1')
+      .run(value.locale, value.defaultReplyAssistPresetId, value.defaultPresetId, value.defaultApiModelConfigId, Date.now());
     return this.get();
   }
 }

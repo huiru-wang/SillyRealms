@@ -20,7 +20,7 @@ WEB_ORIGIN=http://203.0.113.10 STAGE_ORIGIN=http://203.0.113.10:8081 ./deploy.sh
 - 成功后保存 `/etc/sillyrealms/deploy.json`。旧版的配置、数据目录、密钥和 systemd 服务可直接复用。备份时同时保存整个数据目录和 `/etc/sillyrealms/`。如果之前自定义过 `SR_CONFIG_DIR`，每次执行都要指定原目录。
 - 自定义路径和端口可设置 `SERVER_DATA_ROOT`、`STATIC_ROOT`、`NGINX_DIR`、`SERVER_PORT`。环境变量优先于已保存的值。Nginx 服务须使用该目录下的 nginx.conf，并在 http 块包含 conf.d/*.conf 和 mime.types。
 - 主站与舞台使用不同的端口或域名。HTTPS 首次部署还需设置 `WEB_TLS_CERT`、`WEB_TLS_KEY`、`STAGE_TLS_CERT`、`STAGE_TLS_KEY`；使用私有 CA 时用 `TLS_CA_FILE` 指定部署检查所需的 CA 文件。公网访问需通过已有的访问控制入口。
-- 数据与主密钥在更新时保留。失败后根据报错修正配置，再执行同一命令。配置和服务若已在本次更新中切换，需要手动恢复或重新部署。
+- 从数据库 v1–v8 首次升级至 v9 会清空旧会话及其消息、会话状态与用量。世界、预设、模型配置、应用设置和主密钥保留。失败后根据报错修正配置，再执行同一命令。配置和服务若已在本次更新中切换，需要手动恢复或重新部署。
 
 ## 检查与日志
 

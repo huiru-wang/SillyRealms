@@ -42,8 +42,17 @@ export type NarrativeEvent =
 export type StateChangedEvent = {event: 'state.changed'; data: {path: string; scope: StateScope; value: StateValue}};
 export type Suggestions = {runId: string; messageId: string; items: string[]};
 export type SuggestionsCreatedEvent = {event: 'action_suggestions.created'; data: Suggestions & {sessionId: string}};
+export type CharacterSpriteItem = {
+  position: 'left' | 'right' | 'center' | 'top' | 'topleft' | 'topright' | 'truecenter';
+  characterId: string;
+  spriteId: string;
+};
+export type CharacterSpriteChangedEvent = {
+  event: 'character_sprite.changed';
+  data: {sessionId: string; runId: string; messageId: string; items: CharacterSpriteItem[]};
+};
 export type MessageDeletedEvent = {event: 'message.deleted'; data: {sessionId: string; runId: string; assistantEntryId: string; messageId: string; tipEntryId: string | null}};
-export type SessionEvent = NarrativeEvent | MessageDeletedEvent | StateChangedEvent | SuggestionsCreatedEvent |
+export type SessionEvent = NarrativeEvent | MessageDeletedEvent | StateChangedEvent | SuggestionsCreatedEvent | CharacterSpriteChangedEvent |
   {event: 'session.created'; data: {sessionId: string; tipEntryId: string; timestamp: number; entry: Entry}};
 
 /** Presentation-only fields: saved is confirmed by persisted entries, never by model finish. */

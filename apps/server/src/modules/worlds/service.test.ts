@@ -166,7 +166,7 @@ describe('world definitions and tags', () => {
     model();
     const world = worlds.create({ ...content(), tags: ['bound'] });
     services.sessions.create({
-      id: 'session', worldId: world.id, presetId: 'story', apiModelConfigId: 'model', userCharacterId: 'player',
+      id: 'session', worldId: world.id, runtimeConfig: { narrativePresetId: 'story', apiModelConfigId: 'model' }, userCharacterId: 'player',
     });
     await expect(worlds.delete(world.id)).rejects.toThrow();
     expect(worlds.get(world.id)?.tags).toEqual(['bound']);

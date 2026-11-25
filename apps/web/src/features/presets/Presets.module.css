@@ -196,19 +196,31 @@
  .page[data-detail="true"] .editorContent{flex:1;padding-bottom:var(--mobile-nav-space);scroll-padding-bottom:var(--mobile-nav-space)}
 }
 
-.samplingHint,.samplingDefault,.samplingScale>div{color:var(--text-secondary);font-size:var(--font-12)}
+.settingsGroup{container:preset-parameters / inline-size}
+.samplingHint,.samplingDefault,.samplingToggle,.samplingScale>div{color:var(--text-secondary);font-size:var(--font-12)}
 .samplingHint{margin:0 0 var(--space-3);line-height:var(--line-body)}
+.samplingRow{
+ display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr) auto;
+ grid-template-areas:"copy controls toggle";column-gap:var(--space-4)
+}
+.samplingRow .settingCopy{grid-area:copy}
 .samplingRow strong{font-size:var(--font-14);font-weight:var(--weight-strong)}
-.samplingControls{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:var(--space-1) var(--space-2);max-width:100%}
-.samplingControls>p{flex-basis:100%;margin:0}
-.samplingInputs{display:flex;align-items:center;gap:var(--space-2);min-width:0}
-.samplingScale{width:clamp(6rem,12vw,10rem);min-width:0}
-.samplingScale>div{display:flex;justify-content:space-between;font-variant-numeric:tabular-nums}
-.samplingNumber{width:6rem;font-variant-numeric:tabular-nums}
-@container library-workspace (max-width:744px){
- .samplingRow{align-items:stretch;flex-direction:column;gap:var(--space-1)}
- .samplingControls{justify-content:flex-start}
- .samplingInputs{flex:1 1 11rem}
- .samplingScale{flex:1}
- .samplingNumber{font-size:var(--font-16)}
+.samplingToggle{grid-area:toggle;display:flex;gap:var(--control-gap);align-items:center}
+.samplingToggle label{cursor:pointer}
+.samplingDefault,.samplingControls{grid-area:controls}
+.samplingControls{
+ display:grid;grid-template-columns:minmax(0,1fr) 8ch;align-items:start;
+ gap:var(--space-1) var(--space-3);font-variant-numeric:tabular-nums;min-width:0
+}
+.samplingControls>p{grid-column:1/-1}
+.samplingScale{min-width:0}
+.samplingScale>input{display:block}
+.samplingScale>div{display:flex;justify-content:space-between}
+.samplingValue{display:grid;min-width:0;font-variant-numeric:tabular-nums}
+.samplingValue>input{text-align:center}
+@container preset-parameters (max-width:36rem){
+ .samplingRow{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"copy toggle" "controls controls";row-gap:var(--space-1)}
+ .samplingRow[data-custom="false"]{grid-template-areas:"copy toggle" "controls toggle";row-gap:0;align-content:center}
+ .samplingToggle{align-self:start}
+ .samplingRow[data-custom="false"] .samplingToggle{align-self:center}
 }

@@ -60,7 +60,7 @@ function worldRoutes(canAccessSession?: SessionAccessCheck) {
   });
 }
 function sessionWithEntry(worldId: string, id: string, config: ReturnType<typeof configuration>) {
-  const session = services.sessions.create({ ...config, id, worldId, userCharacterId: 'player' });
+  const session = services.sessions.create({ runtimeConfig: { narrativePresetId: config.presetId, apiModelConfigId: config.apiModelConfigId }, id, worldId, userCharacterId: 'player' });
   const entry = services.sessions.appendEntry(id, {
     id: id + '-entry', runId: 'opening', type: 'message', role: 'assistant', payload: { content: 'Opening' },
   });
@@ -131,7 +131,7 @@ describe('world routes', () => {
     const second = services.worlds.create({ ...content(), id: 'world-a', tags: ['城市'] });
     services.worlds.create({ ...content(), id: 'world-b', tags: ['荒野'] });
     const config = configuration();
-    for (const id of ['session-one', 'session-two']) services.sessions.create({ ...config, id, worldId: first.id, userCharacterId: 'player' });
+    for (const id of ['session-one', 'session-two']) services.sessions.create({ runtimeConfig: { narrativePresetId: config.presetId, apiModelConfigId: config.apiModelConfigId }, id, worldId: first.id, userCharacterId: 'player' });
     const url = base + '?tag=' + encodeURIComponent('城市') + '&q=' + encodeURIComponent('雾') + '&limit=1';
     const firstPage = await data<Page<WorldListItem>>(await app.request(url));
     expect(firstPage.items).toEqual([{ id: first.id, name: first.name, cover: first.cover, tags: ['城市'], sessionCount: 2, createdAt: 1000, updatedAt: 1000 }]);

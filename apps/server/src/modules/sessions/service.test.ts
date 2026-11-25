@@ -21,7 +21,7 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); db.close(); rmSync(dataRoot, { recursive: true, force: true }); });
 
 function create(id = 'session') {
-  return sessions.create({ id, worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' });
+  return sessions.create({ id, worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player' });
 }
 function append(sessionId: string, id: string, patch: Partial<AppendEntryInput> = {}) {
   return sessions.appendEntry(sessionId, {
@@ -38,7 +38,7 @@ describe('session records and references', () => {
     const created = create();
     expect(created).toMatchObject({ tipEntryId: null, state: {}, usage: null, createdAt: 100, updatedAt: 100 });
     expect(Object.keys(created).sort()).toEqual([
-      'apiModelConfigId', 'createdAt', 'id', 'presetId', 'state', 'tipEntryId', 'title', 'updatedAt', 'usage', 'userCharacterId', 'worldId',
+      'createdAt', 'id', 'runtimeConfig', 'state', 'tipEntryId', 'title', 'updatedAt', 'usage', 'userCharacterId', 'worldId',
     ]);
     sessions.setState(created.id, { coins: 7 });
     vi.mocked(Date.now).mockReturnValue(200);
@@ -50,7 +50,7 @@ describe('session records and references', () => {
   });
 
   it('validates the selected player and keeps identity fixed after creation', () => {
-    expect(() => sessions.create({ worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'npc' })).toThrow('INVALID_SESSION_CHARACTER');
+    expect(() => sessions.create({ worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'npc' })).toThrow('INVALID_SESSION_CHARACTER');
     expect(sessions.list()).toEqual([]);
     const created = create();
     expect(() => sessions.update(created.id, { userCharacterId: 'npc' } as never)).toThrow();
@@ -58,20 +58,20 @@ describe('session records and references', () => {
   });
 
   it('rejects missing world/model/preset references atomically', () => {
-    const input = { id: 'bad', worldId: 'world', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' };
+    const input = { id: 'bad', worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player' };
     expect(() => sessions.create({ ...input, worldId: 'missing' })).toThrow('WORLD_NOT_FOUND');
-    expect(() => sessions.create({ ...input, apiModelConfigId: 'missing' })).toThrow('MODEL_CONFIG_NOT_FOUND');
-    expect(() => sessions.create({ ...input, presetId: 'missing' })).toThrow('PRESET_NOT_FOUND');
+    expect(() => sessions.create({ ...input, runtimeConfig: { ...input.runtimeConfig, apiModelConfigId: 'missing' } })).toThrow('MODEL_CONFIG_NOT_FOUND');
+    expect(() => sessions.create({ ...input, runtimeConfig: { ...input.runtimeConfig, narrativePresetId: 'missing' } })).toThrow('PRESET_NOT_FOUND');
     expect(sessions.list()).toHaveLength(0);
     create();
-    expect(() => sessions.update('session', { title: 'must rollback', presetId: 'missing' })).toThrow('PRESET_NOT_FOUND');
+    expect(() => sessions.update('session', { title: 'must rollback', runtimeConfig: { narrativePresetId: 'missing' } })).toThrow('PRESET_NOT_FOUND');
     expect(sessions.get('session')!.title).toBeNull();
   });
 
   it('counts requested worlds in one service operation, including zero counts', () => {
     services.worlds.create({ id: 'other', specVersion: '0.1', name: 'Other', characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'start', name: 'Start', content: 'Begin' }] });
     create('one'); create('two');
-    sessions.create({ id: 'three', worldId: 'other', presetId: 'preset', apiModelConfigId: 'model', userCharacterId: 'player' });
+    sessions.create({ id: 'three', worldId: 'other', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player' });
     expect(sessions.countByWorldIds(['world', 'other', 'missing', 'world'])).toEqual({ world: 2, other: 1, missing: 0 });
     expect(sessions.countByWorldIds(['other'])).toEqual({ other: 1 });
     expect(sessions.countByWorldIds([])).toEqual({});
@@ -373,9 +373,9 @@ describe('run pages, outcomes and recorded usage', () => {
     expect(sessions.recordedUsage('session').latestContext!.stale).toBe(true);
     services.models.update('model', { providerId: 'provider' });
     services.models.create({ id: 'same-model-elsewhere', name: 'Other', providerId: 'provider', modelId: 'actual-model', credentialRef: 'other-ref' });
-    sessions.update('session', { apiModelConfigId: 'same-model-elsewhere' });
+    sessions.update('session', { runtimeConfig: { apiModelConfigId: 'same-model-elsewhere' } });
     expect(sessions.recordedUsage('session').latestContext!.stale).toBe(true);
-    sessions.update('session', { apiModelConfigId: 'model' });
+    sessions.update('session', { runtimeConfig: { apiModelConfigId: 'model' } });
     expect(sessions.recordedUsage('session').latestContext!.stale).toBe(false);
     // Exercise the read-side stale marker for a disconnected persisted record, without adding rollback support.
     db.prepare('UPDATE sessions SET tip_entry_id=? WHERE id=?').run('opening', 'session');

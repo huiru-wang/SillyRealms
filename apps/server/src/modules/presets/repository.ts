@@ -18,6 +18,7 @@ type StoredConfig = {
 export type StoredPreset = {
   id: string;
   revision: number;
+  api_model_config_id: string | null;
   type: string;
   name: string;
   description: string | null;
@@ -26,7 +27,7 @@ export type StoredPreset = {
   updated_at: number;
 };
 
-export type StoredPresetSummary = Omit<StoredPreset, 'config_json'>;
+export type StoredPresetSummary = Omit<StoredPreset, 'config_json' | 'api_model_config_id'>;
 
 function storedConfig(config: PresetValue['config']): StoredConfig {
   return {
@@ -44,6 +45,7 @@ function storedConfig(config: PresetValue['config']): StoredConfig {
 
 function decode(row: Record<string, unknown>): StoredPreset {
   return {
+    api_model_config_id: row.api_model_config_id === null ? null : String(row.api_model_config_id),
     id: String(row.id), revision: Number(row.revision), type: String(row.type), name: String(row.name),
     description: row.description === null ? null : String(row.description),
     config_json: JSON.parse(String(row.config_json)) as StoredConfig,
@@ -75,19 +77,19 @@ export class PresetRepository {
 
   create(id: string, value: PresetValue): void {
     const now = Date.now();
-    this.db.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)')
-      .run(id, value.type, value.name, value.description, encodeJson(storedConfig(value.config), 'object'), now, now);
+    this.db.prepare('INSERT INTO presets(id,api_model_config_id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)')
+      .run(id, value.type === 'reply_assist' ? value.apiModelConfigId : null, value.type, value.name, value.description, encodeJson(storedConfig(value.config), 'object'), now, now);
   }
 
   createIfAvailable(id: string, value: PresetValue): boolean {
     const now = Date.now();
-    return this.db.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT DO NOTHING')
-      .run(id, value.type, value.name, value.description, encodeJson(storedConfig(value.config), 'object'), now, now).changes > 0;
+    return this.db.prepare('INSERT INTO presets(id,api_model_config_id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING')
+      .run(id, value.type === 'reply_assist' ? value.apiModelConfigId : null, value.type, value.name, value.description, encodeJson(storedConfig(value.config), 'object'), now, now).changes > 0;
   }
 
   update(id: string, value: PresetValue, expectedRevision: number): boolean {
-    return this.db.prepare('UPDATE presets SET type=?,name=?,description=?,config_json=?,updated_at=?,revision=revision+1 WHERE id=? AND revision=?')
-      .run(value.type, value.name, value.description, encodeJson(storedConfig(value.config), 'object'), Date.now(), id, expectedRevision).changes > 0;
+    return this.db.prepare('UPDATE presets SET api_model_config_id=?,type=?,name=?,description=?,config_json=?,updated_at=?,revision=revision+1 WHERE id=? AND revision=?')
+      .run(value.type === 'reply_assist' ? value.apiModelConfigId : null, value.type, value.name, value.description, encodeJson(storedConfig(value.config), 'object'), Date.now(), id, expectedRevision).changes > 0;
   }
 
   delete(id: string): boolean {

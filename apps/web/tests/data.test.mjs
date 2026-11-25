@@ -1,11 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import standardPreset from '../../../initial-data/presets/标准叙事.json' with {type:'json'};
 import {fromServer,presetInput,getPresetValidationError} from '../src/features/presets/adapter.ts';
 
 const detail=()=>({
  id:'preset',revision:4,type:'narrative',name:'Story',description:'',createdAt:1,updatedAt:1,
  config:{schemaVersion:1,contextStrategy:{strategy:'sliding_window',maxContextTokens:100,maxOutputTokens:20,summaryPrompt:''},modelParameters:{thinkingEnabled:false},
- nodes:['main','personaInfo','characterInfo','worldInfo','chatHistory','userInput'].map(id=>({id,name:id,kind:'system',role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true,prompt:''}))},
+ nodes:['main','personaInfo','characterInfo','worldInfo','worldState','chatHistory','userInput'].map(id=>({id,name:id,kind:'system',role:id==='chatHistory'?'auto':id==='userInput'?'user':'system',enabled:true,prompt:''}))},
 });
 
 test('editing does not fill an unspecified temperature or leak revision into editable content',()=>{
@@ -32,6 +33,41 @@ test('thinking depth round-trips all standard choices and stays optional for exi
 test('draft nodes do not mutate a saved server object',()=>{
  const saved=detail(),draft=fromServer(saved);draft.nodes[0].prompt='Changed';
  assert.equal(saved.config.nodes[0].prompt,'');
+});
+test('saving model defaults preserves the standard preset nodes including optional character sprites',()=>{
+ const saved=detail();
+ saved.config.nodes=standardPreset.config_json.nodes;
+ const draft=fromServer(saved);
+ draft.temperature=undefined;
+ assert.equal(getPresetValidationError(draft),null);
+ assert.deepEqual(presetInput(draft).config.nodes,saved.config.nodes);
+
+ const sprite=draft.nodes.find(node=>node.id==='characterSprite');
+ assert.ok(sprite);
+ sprite.enabled=false;
+ assert.equal(getPresetValidationError(draft),null);
+ sprite.role='assistant';
+ assert.ok(getPresetValidationError(draft));
+ draft.nodes=draft.nodes.filter(node=>node.id!=='characterSprite');
+ assert.equal(getPresetValidationError(draft),null);
+ assert.equal(presetInput(draft).config.nodes.some(node=>node.id==='characterSprite'),false);
+});
+test('the state facts are fixed while state updates can be edited, disabled or omitted',()=>{
+ const saved=detail();
+ saved.config.nodes=standardPreset.config_json.nodes;
+ const draft=fromServer(saved);
+ const facts=draft.nodes.find(n=>n.id==='worldState');
+ const update=draft.nodes.find(n=>n.id==='stateUpdate');
+ assert.equal(update.enabled,true);
+ update.enabled=false;
+ update.prompt='Rules: {{state.update.message}}';
+ assert.equal(getPresetValidationError(draft),null);
+ assert.deepEqual(presetInput(draft).config.nodes.find(n=>n.id==='stateUpdate'),update);
+ draft.nodes=draft.nodes.filter(n=>n!==update);
+ assert.equal(getPresetValidationError(draft),null);
+ assert.deepEqual(presetInput(draft).config.nodes.find(n=>n.id==='worldState'),facts);
+ facts.enabled=false;
+ assert.ok(getPresetValidationError(draft));
 });
 test('summary is required only for rolling summary and zero temperature is retained',()=>{
  const draft=fromServer(detail());assert.equal(getPresetValidationError(draft),null);

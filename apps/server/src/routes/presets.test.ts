@@ -73,7 +73,7 @@ describe('preset HTTP operations', () => {
       characters: [{ id: 'player', name: '掌柜', player_selectable: true }],
       openings: [{ id: 'opening', name: '开局', content: '开门' }],
     });
-    const session = { worldId: world.id, userCharacterId: 'player', apiModelConfigId: 'model', presetId: preset.id };
+    const session = { worldId: world.id, userCharacterId: 'player', runtimeConfig: { narrativePresetId: preset.id, apiModelConfigId: 'model' } };
     services.sessions.create({ ...session, id: 'unnamed' });
     services.sessions.create({ ...session, id: 'morning', title: '早市' });
     services.sessions.create({ ...session, id: 'market', title: '早市' });
@@ -201,7 +201,7 @@ describe('preset HTTP operations', () => {
       data: { item: { name: '标准叙事', config: { schemaVersion: 1 } } },
     });
     expect(body.data.item.config.nodes.map((node: { id: string }) => node.id)).toEqual([
-      'main', 'personaInfo', 'characterInfo', 'worldInfo', 'chatHistory', 'userInput', 'worldState', 'actionSuggestions', 'characterSprite',
+      'main', 'personaInfo', 'characterInfo', 'worldInfo', 'worldState', 'chatHistory', 'userInput', 'stateUpdate', 'actionSuggestions', 'characterSprite',
     ]);
     expect(body.data.item).not.toHaveProperty('id');
     expect(services.presets.list()).toEqual([]);
@@ -233,7 +233,7 @@ describe('preset HTTP operations', () => {
     const text = await exported.text();
     expect(Number(exported.headers.get('Content-Length'))).toBe(new TextEncoder().encode(text).byteLength);
     const value = JSON.parse(text);
-    expect(value).toEqual({ ...document, name: '当前预设' });
+    expect(value).toEqual({ ...document, type: 'narrative', name: '当前预设' });
     expect(value).not.toHaveProperty('success');
     expect(value).not.toHaveProperty('id');
     expect(value).not.toHaveProperty('createdAt');

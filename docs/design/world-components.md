@@ -91,6 +91,8 @@ iframe 使用 CSP `connect-src 'none'`，Server 拒绝来自该独立资源来�
 
 ## 会话 WorldStory 消息操作
 
+官方悬浮立绘由会话宿主叠加在舞台视口上，人物层穿透鼠标与触摸操作。WorldStory 和作者自定义舞台共用这一展示。图片保持比例、透明度和原有背景，换图与胶囊开关不占用正文宽度。左右两侧空间充足时各显示一位，优先使用本侧位置，中轴人物补空侧；紧凑宽度采用快照中第一位。人物底部避开实测输入区，键盘导致可用高度不足时暂时隐藏人物。减少动态效果时直接切换图片。
+
 会话宿主页在输入框的“更多操作”上拉菜单中提供重新生成，作用于最新用户轮次，无 AI 回复时重试同轮。开局、生成中、提交中、离线或历史未同步时禁用。
 
 SDK session.regenerate({userEntryId,assistantEntryId}) 通过受限 Host 命令提交，assistantEntryId=null 表示同轮无回复重试。stop(runId,assistantEntryId) 精确指定当前执行。SDK 不删除本地消息、不重复请求或自行恢复业务；Host 在服务端删除确认后更新历史镜像，失败不恢复旧回复。StageSnapshot 暴露 activeAssistantEntryId/sending 供按钮判断，原生事件可包含 message.deleted。
