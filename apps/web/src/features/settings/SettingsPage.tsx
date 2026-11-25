@@ -51,27 +51,28 @@ export function SettingsPage(){
   {saved&&<div className="preset-save-ok" role="status"><Check size={16}/>{t('defaultsSaved')}</div>}
   <div className="settings-stack">
    <Panel className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><MonitorCog size={18}/></span><h2>{t('appearance')}</h2></div>
-    <label className="settings-row"><span><strong>{t('language')}</strong><small>{t('languageHint')}</small></span>
-     <Select aria-label={t('language')} value={settings.value?.item.locale??DEFAULT_LOCALE} disabled={!settings.value||localeSaving||saving} onChange={event=>void changeLanguage(event.target.value)}>
+    <label className="settings-row"><span className="settings-row-label"><strong>{t('language')}</strong></span>
+     <Select aria-label={t('language')} aria-describedby="settings-language-hint" value={settings.value?.item.locale??DEFAULT_LOCALE} disabled={!settings.value||localeSaving||saving} onChange={event=>void changeLanguage(event.target.value)}>
       {SUPPORTED_LOCALES.map(locale=><option key={locale} value={locale}>{languageNames[locale]}</option>)}
      </Select>
+     <small id="settings-language-hint" className="settings-row-hint">{t('languageHint')}</small>
     </label>
     {localeSaving&&<span role="status">{t('savingLanguage')}</span>}
-    <label className="settings-row settings-theme-row"><span><strong>{t('theme')}</strong></span><Select aria-label={t('theme')} value={theme} onChange={event=>{if(event.target.value!==theme)toggleTheme();}}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option></Select></label>
+    <label className="settings-row settings-theme-row"><span className="settings-row-label"><strong>{t('theme')}</strong></span><Select aria-label={t('theme')} value={theme} onChange={event=>{if(event.target.value!==theme)toggleTheme();}}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option></Select></label>
    </Panel>
    <Panel className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><SlidersHorizontal size={18}/></span><div><h2>{t('defaults')}</h2><p>{t('defaultsHint')}</p></div></div>
     {presets.error&&<ErrorNotice message={presets.error} onRetry={presets.reload}/>}
     {presets.replyCatalog.error&&<ErrorNotice message={presets.replyCatalog.error} onRetry={presets.replyCatalog.reload}/>}
     {models.error&&<ErrorNotice message={models.error} onRetry={models.reload}/>}
     {!draft?(settings.loading?<Loading text={t('loading')}/>:null):<div className="settings-rows">
-     <label className="settings-row"><span><strong>{t('defaultPreset')}</strong></span><Select aria-label={t('defaultPreset')} disabled={saving||localeSaving} value={draft.defaultPresetId??''} onChange={event=>set({defaultPresetId:event.target.value||null})}>
+     <label className="settings-row"><span className="settings-row-label"><strong>{t('sessions:narrativePreset')}</strong></span><Select aria-label={t('sessions:narrativePreset')} disabled={saving||localeSaving} value={draft.defaultPresetId??''} onChange={event=>set({defaultPresetId:event.target.value||null})}>
       <option value="">{t('unset')}</option>{draft.defaultPresetId&&!presets.presets.some(p=>p.id===draft.defaultPresetId)&&<option value={draft.defaultPresetId}>{t('currentPreset')}</option>}{presets.presets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
      </Select></label>
-     <label className="settings-row"><strong>{t('sessions:assistPreset')}</strong>
+     <label className="settings-row"><span className="settings-row-label"><strong>{t('sessions:assistPreset')}</strong></span>
       <Select aria-label={t('sessions:assistPreset')} value={draft.defaultReplyAssistPresetId??''} disabled={saving||localeSaving} onChange={event=>set({defaultReplyAssistPresetId:event.target.value||null})}>
        <option value="">{t('unset')}</option>{presets.replyPresets.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}
       </Select></label>
-     <label className="settings-row"><span><strong>{t('defaultModel')}</strong></span><Select aria-label={t('defaultModel')} disabled={saving||localeSaving} value={draft.defaultApiModelConfigId??''} onChange={event=>set({defaultApiModelConfigId:event.target.value||null})}>
+     <label className="settings-row"><span className="settings-row-label"><strong>{t('defaultModel')}</strong></span><Select aria-label={t('defaultModel')} disabled={saving||localeSaving} value={draft.defaultApiModelConfigId??''} onChange={event=>set({defaultApiModelConfigId:event.target.value||null})}>
       <option value="">{t('unset')}</option>{draft.defaultApiModelConfigId&&!models.page?.items.some(m=>m.id===draft.defaultApiModelConfigId)&&<option value={draft.defaultApiModelConfigId}>{t('currentModel')}</option>}{models.page?.items.map(m=><option key={m.id} value={m.id}>{m.name} · {m.modelId}</option>)}
      </Select></label>
      <div className="settings-row settings-row-action"><Button variant="primary" loading={saving} disabled={!dirty||localeSaving} onClick={()=>void save()}>{t('saveDefaults')}</Button></div>
