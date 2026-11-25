@@ -10,7 +10,7 @@ export function stackComposerActions(width: number, toggleWidth: number, buttons
   return groupWidth + 2 * (toggleWidth + gap) > width;
 }
 
-/** Leave the 740px story measure intact. Two figures need at least 150px of room on each side. */
+/** Narrow stages show one figure on the right; wide stages can show one on each side. */
 export function layoutSprites(items: readonly CharacterSpriteItem[], width: number, height: number): PositionedSprite[] {
   if (!width || height < 220 || !items.length) return [];
   if (width < 1040) {

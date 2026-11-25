@@ -172,11 +172,11 @@ export function WorldStory({showState = true}: {showState?: boolean} = {}) {
 
   return <div ref={root} className="sr-story" data-state-mode={docked ? 'docked' : 'overlay'}>
     <div className="sr-story-main">
-      <div className="sr-story-toolbar"><span className="sr-story-heading">{t('story.title')}</span>
-        {showState && <button ref={stateButton} type="button" onClick={() => {
+      {showState && <div className="sr-story-toolbar">
+        <button ref={stateButton} type="button" onClick={() => {
           rememberReading(); const next = !stateOpen; if (docked) dockedPreference.current = next; setStateOpen(next);
-        }} aria-controls={panelId} aria-expanded={stateOpen}>{t('story.state')} <span aria-hidden="true">{stateOpen ? '−' : '+'}</span></button>}
-      </div>
+        }} aria-controls={panelId} aria-expanded={stateOpen}>{t('story.state')} <span aria-hidden="true">{stateOpen ? '−' : '+'}</span></button>
+      </div>}
       <div className="sr-chat-messages" ref={view} tabIndex={0} role="region" aria-label={t('story.content')} aria-busy={history.loading || undefined}
         onScroll={scrolled} onWheel={userScroll} onTouchMove={userScroll}
         onPointerDown={event => { if (event.target === event.currentTarget) userScroll(); }}

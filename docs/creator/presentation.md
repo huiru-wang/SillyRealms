@@ -103,6 +103,7 @@ export default function MyStage() {
 
 ## 组件编写约束
 
+- 舞台直接呈现正文，不另加「故事」「正文」等重复标题栏。日期、地点、当前目标和必要操作可放在紧凑场景栏中。已有自定义状态栏或账页时使用 `<SR.WorldStory showState={false} />`，官方正文不会保留空工具栏。
 - 每个模块默认导出一个组件。卡内模块通过已登记 ID 引用，例如 `import Panel from './Panel'`；这不是磁盘相对文件路径解析。
 - 普通组件使用平台提供的 React 和 `@sillyrealms/sdk` 包根。不能从卡内导入任意 npm 包或 SDK 子路径；不支持动态 import、require、转发导出或循环依赖。
 - 在组件或自定义 Hook 顶层调用 Hook。订阅、定时器和异步查询要在 effect 清理；详情切换可能隐藏并保留组件，隐藏不等于卸载。

@@ -6,7 +6,7 @@
 
 | API 与环境 | 调用示例 | 使用方法和限制 |
 | --- | --- | --- |
-| `SR.WorldStory` · 舞台 | `<SR.WorldStory showState={false} />` | 默认 `showState=true`。绘制当前会话、消息匹配组件、历史分页与行动建议。关掉状态面板适合已有自定义侧栏的舞台。点击建议填入宿主草稿；宿主仍拥有输入框。自定义舞台自行决定插入位置。 |
+| `SR.WorldStory` · 舞台 | `<SR.WorldStory showState={false} />` | 默认 `showState=true`。绘制当前会话、消息匹配组件、历史分页与行动建议，不显示「故事」标题。`showState=false` 会同时移除状态面板入口及整条工具栏，适合已有自定义侧栏的舞台。点击建议填入宿主草稿；宿主仍拥有输入框。自定义舞台自行决定插入位置。 |
 | `WorldDocumentRenderer` · 舞台 | `<WorldDocumentRenderer content={'## 店规\n先入座'} density="chat" className="notice" />` | `WorldDocumentRendererProps` 包含必填的字符串 content、可选 density（reading，默认；或 chat）和 className。舞台入口使用当前 iframe 内的内联文本渲染。 |
 | `WorldDocumentContent` · 舞台、预览 | `<WorldDocumentContent content={'<h2>店规</h2><p>今日有雨</p>'} />` | 字符串可含 Markdown 或 HTML。使用文档清洗规则，可保留允许的作者样式。嵌入按钮、脚本和表单不能用来实现交互，交互请直接写 React 组件。 |
 | `RichText` · 舞台、预览 | `<RichText text="**掌柜**推开了门。" />` | 参数名为 `text`，内联显示经过清洗的 Markdown/HTML，适合短说明和普通正文。需要保留文档级安全样式时用 `WorldDocumentContent`。 |
