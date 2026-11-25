@@ -18,6 +18,7 @@ export type WorldContentRow = {
   stage_component: string | null;
   extensions_json: JsonValue | null;
   default_preset_id: string | null;
+  default_reply_assist_preset_id: string | null;
   default_api_model_config_id: string | null;
 };
 export type WorldRow = WorldContentRow & {
@@ -26,7 +27,7 @@ export type WorldRow = WorldContentRow & {
 const contentColumns = [
   'spec_version', 'name', 'description', 'cover', 'characters_json', 'openings_json',
   'lorebook_json', 'state_definition_json', 'message_render_json', 'components',
-  'stage_component', 'extensions_json', 'default_preset_id', 'default_api_model_config_id',
+  'stage_component', 'extensions_json', 'default_preset_id', 'default_reply_assist_preset_id', 'default_api_model_config_id',
 ] as const;
 const nullableJsonFields = new Set(['description', 'lorebook_json', 'state_definition_json', 'message_render_json', 'extensions_json']);
 
@@ -78,6 +79,7 @@ export class WorldRepository {
       stage_component: row.stage_component === null ? null : String(row.stage_component),
       extensions_json: nullableJson('extensions_json'),
       default_preset_id: row.default_preset_id === null ? null : String(row.default_preset_id),
+      default_reply_assist_preset_id: row.default_reply_assist_preset_id === null ? null : String(row.default_reply_assist_preset_id),
       default_api_model_config_id: row.default_api_model_config_id === null ? null : String(row.default_api_model_config_id),
       state: JSON.parse(String(row.state)) as JsonObject,
       tags: this.db.prepare('SELECT name FROM world_tags WHERE world_id = ? ORDER BY sort_order, name').all(id)
@@ -87,8 +89,9 @@ export class WorldRepository {
     };
   }
 
-  listUsingDefaultPreset(presetId: string) {
-    return this.db.prepare('SELECT id, name FROM worlds WHERE default_preset_id = ? ORDER BY name, id')
+  listUsingDefaultPreset(presetId: string, type: 'narrative' | 'reply_assist') {
+    const column = type === 'reply_assist' ? 'default_reply_assist_preset_id' : 'default_preset_id';
+    return this.db.prepare('SELECT id, name FROM worlds WHERE ' + column + ' = ? ORDER BY name, id')
       .all(presetId).map(row => ({ id: String(row.id), name: String(row.name) }));
   }
 
@@ -112,7 +115,7 @@ export class WorldRepository {
     return rows.map(row => ({ id: String(row.id), name: String(row.name), cover: row.cover === null ? null : String(row.cover), cover_mosaic_enabled: Number(row.cover_mosaic_enabled) === 1, tags: tags.get(String(row.id)) ?? [], created_at: Number(row.created_at), updated_at: Number(row.updated_at) }));
   }
 
-  updateManagement(id: string, patch: { name?: string; extensions_json?: JsonObject; default_preset_id?: string | null; default_api_model_config_id?: string | null }, tags: string[] | undefined, revision: number): WorldRow | null {
+  updateManagement(id: string, patch: { name?: string; extensions_json?: JsonObject; default_preset_id?: string | null; default_reply_assist_preset_id?: string | null; default_api_model_config_id?: string | null }, tags: string[] | undefined, revision: number): WorldRow | null {
     return transaction(this.db, () => {
       const changes = Object.entries(patch);
       const assignments = changes.map(([key]) => key + '=?');

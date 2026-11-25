@@ -34,7 +34,7 @@ export { inspectWorldSource, prepareWorldSourcePackage } from './authoring.js';
 export type { WorldSourceInspection, PreparedWorldSourcePackage } from './authoring.js';
 
 type WorldDependencies = { presets: PresetReader; models: ModelReader; cache: RuntimeCache };
-const nullableTextFields = ['cover', 'stageComponent', 'defaultPresetId', 'defaultApiModelConfigId'] as const;
+const nullableTextFields = ['cover', 'stageComponent', 'defaultPresetId', 'defaultReplyAssistPresetId', 'defaultApiModelConfigId'] as const;
 
 function nonblank(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new AppError('INVALID_WORLD_FIELD', field);
@@ -59,7 +59,7 @@ function normalizeContent(input: WorldContent): WorldContent {
     const value = input[field];
     if (value === null) continue;
     if (typeof value !== 'string') throw new AppError('INVALID_WORLD_FIELD', field);
-    content[field] = field === 'defaultPresetId' || field === 'defaultApiModelConfigId' ? nonblank(value, field) : value;
+    content[field] = field === 'defaultPresetId' || field === 'defaultReplyAssistPresetId' || field === 'defaultApiModelConfigId' ? nonblank(value, field) : value;
   }
   if (content.extensions !== null) validateWorldExtensions(content.extensions);
   const description = input.description;
@@ -88,6 +88,7 @@ function initialContent(input: CreateWorld): WorldContent {
     stageComponent: input.stageComponent ?? null,
     extensions: input.extensions ?? null,
     defaultPresetId: input.defaultPresetId ?? null,
+    defaultReplyAssistPresetId: input.defaultReplyAssistPresetId ?? null,
     defaultApiModelConfigId: input.defaultApiModelConfigId ?? null,
   };
 }
@@ -108,7 +109,7 @@ function toWorld(row: WorldRow): World {
     characters: row.characters_json, openings: row.openings_json, lorebook: row.lorebook_json,
     stateDefinition: row.state_definition_json, messageRender: row.message_render_json,
     components: row.components, stageComponent: row.stage_component, extensions: row.extensions_json,
-    defaultPresetId: row.default_preset_id, defaultApiModelConfigId: row.default_api_model_config_id,
+    defaultPresetId: row.default_preset_id, defaultReplyAssistPresetId: row.default_reply_assist_preset_id, defaultApiModelConfigId: row.default_api_model_config_id,
     state: row.state, tags: row.tags, createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
@@ -119,7 +120,7 @@ function toContentRow(content: WorldContent): WorldContentRow {
     characters_json: content.characters, openings_json: content.openings, lorebook_json: content.lorebook,
     state_definition_json: content.stateDefinition, message_render_json: content.messageRender,
     components: content.components, stage_component: content.stageComponent, extensions_json: content.extensions,
-    default_preset_id: content.defaultPresetId, default_api_model_config_id: content.defaultApiModelConfigId,
+    default_preset_id: content.defaultPresetId, default_reply_assist_preset_id: content.defaultReplyAssistPresetId, default_api_model_config_id: content.defaultApiModelConfigId,
   };
 }
 
@@ -162,8 +163,8 @@ export class WorldService {
     };
   }
 
-  listUsingDefaultPreset(presetId: string) {
-    return this.#repository.listUsingDefaultPreset(presetId);
+  listUsingDefaultPreset(presetId: string, type: 'narrative' | 'reply_assist' = 'narrative') {
+    return this.#repository.listUsingDefaultPreset(presetId, type);
   }
 
   list(options: WorldListOptions = {}): World[] {
@@ -191,6 +192,7 @@ export class WorldService {
       name: z.string().trim().min(1).optional(), tags: z.array(z.string().trim().min(1)).optional(),
       coverMosaicEnabled: z.boolean().optional(),
       defaultPresetId: z.string().trim().min(1).nullable().optional(),
+      defaultReplyAssistPresetId: z.string().trim().min(1).nullable().optional(),
       defaultApiModelConfigId: z.string().trim().min(1).nullable().optional(),
       expectedRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     }).strict().refine(value => Object.keys(value).length > 1, '更新不能为空').parse(input);
@@ -201,6 +203,7 @@ export class WorldService {
       ...(value.name !== undefined ? { name: value.name } : {}),
       ...(value.coverMosaicEnabled !== undefined ? { extensions_json: withCoverMosaic(current.extensions, value.coverMosaicEnabled) } : {}),
       ...(value.defaultPresetId !== undefined ? { default_preset_id: value.defaultPresetId } : {}),
+      ...(value.defaultReplyAssistPresetId !== undefined ? { default_reply_assist_preset_id: value.defaultReplyAssistPresetId } : {}),
       ...(value.defaultApiModelConfigId !== undefined ? { default_api_model_config_id: value.defaultApiModelConfigId } : {}),
     };
     const row = this.#repository.updateManagement(id, patch, value.tags === undefined ? undefined : tagsFrom(value.tags), value.expectedRevision);
@@ -391,6 +394,7 @@ export class WorldService {
 
   private checkReferences(content: WorldContent): void {
     if (content.defaultPresetId !== null) this.#dependencies.presets.require(content.defaultPresetId, 'narrative');
+    if (content.defaultReplyAssistPresetId !== null) this.#dependencies.presets.require(content.defaultReplyAssistPresetId, 'reply_assist');
     if (content.defaultApiModelConfigId !== null) this.#dependencies.models.require(content.defaultApiModelConfigId);
   }
 }

@@ -61,6 +61,23 @@ describe('export world use case', () => {
     await vi.waitFor(async () => expect(await readdir(join(root, 'staging'))).toEqual([]));
   });
 
+  it('keeps local preset references out of portable cards and applies the receiving app defaults', async () => {
+    const appReply = services.presets.create({ ...services.presets.getDefault('reply_assist'), name: 'App reply' });
+    const worldReply = services.presets.create({ ...services.presets.getDefault('reply_assist'), name: 'World reply' });
+    services.settings.update({ defaultReplyAssistPresetId: appReply.id });
+    const world = await importWorld(input());
+    services.worlds.updateManagement(world.id, { defaultReplyAssistPresetId: worldReply.id, expectedRevision: world.revision });
+    const download = await exportWorld(world.id);
+    const bytes = new Uint8Array(await new Response(download.body).arrayBuffer());
+    const entries = await unzipBytes(bytes), card = JSON.parse(entries['world.json']!.toString());
+    expect(JSON.stringify(card)).not.toContain(worldReply.id);
+    expect(card.data).not.toHaveProperty('defaultReplyAssistPresetId');
+    expect(card.data).not.toHaveProperty('default_reply_assist_preset_id');
+    const imported = await importWorld({ format: 'zip', bytes });
+    expect(imported.defaultReplyAssistPresetId).toBe(appReply.id);
+    expect(services.worlds.require(world.id).defaultReplyAssistPresetId).toBe(worldReply.id);
+  });
+
   it.each([true, false])('round-trips the current cover mosaic flag (%s) through JSON and ZIP without changing the original', async enabled => {
     const raw = worldCardFixture();
     const author = { release: '1.0', notes: ['keep', false, 7] };

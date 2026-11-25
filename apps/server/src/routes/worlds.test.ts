@@ -194,6 +194,27 @@ describe('world routes', () => {
     expect(cleared.item.defaultApiModelConfigId).toBeNull();
   });
 
+  it('exposes and saves a reply-assist default without changing existing sessions', async () => {
+    const { presetId, apiModelConfigId } = configuration();
+    const reply = services.presets.create({ ...services.presets.getDefault('reply_assist'), name: 'World reply' });
+    const world = services.worlds.create(content());
+    const session = services.sessions.create({ worldId: world.id, userCharacterId: 'player', runtimeConfig: {
+      narrativePresetId: presetId, apiModelConfigId, replyAssistPresetId: null,
+    } });
+    const fetched = await data<{ item: WorldDetail }>(await app.request(base + '/' + world.id));
+    expect(fetched.item.defaultReplyAssistPresetId).toBeNull();
+    await failure(await jsonRequest('/' + world.id, 'PATCH', { defaultReplyAssistPresetId: presetId }), 'PRESET_TYPE_MISMATCH', 400);
+    await failure(await jsonRequest('/' + world.id, 'PATCH', { defaultReplyAssistPresetId: 'missing' }), 'PRESET_NOT_FOUND', 404);
+    const saved = await data<{ item: WorldDetail }>(await jsonRequest('/' + world.id, 'PATCH', { defaultReplyAssistPresetId: reply.id }));
+    expect(saved.item).toMatchObject({ defaultReplyAssistPresetId: reply.id, revision: 2 });
+    const reloaded = await data<{ item: WorldDetail }>(await app.request(base + '/' + world.id));
+    expect(reloaded.item.defaultReplyAssistPresetId).toBe(reply.id);
+    expect(services.sessions.require(session.id).runtimeConfig.replyAssistPresetId).toBeNull();
+    await failure(await jsonRequest('/' + world.id, 'PATCH', { defaultReplyAssistPresetId: null }), 'WORLD_REVISION_CONFLICT', 409);
+    const cleared = await data<{ item: WorldDetail }>(await jsonRequest('/' + world.id, 'PATCH', { defaultReplyAssistPresetId: null, expectedRevision: 2 }));
+    expect(cleared.item.defaultReplyAssistPresetId).toBeNull();
+  });
+
   it('reports invalid management input and references without partial writes', async () => {
     const world = services.worlds.create({ ...content(), tags: ['keep'] });
     await failure(await jsonRequest('/' + world.id, 'PATCH', { defaultPresetId: 'missing' }), 'PRESET_NOT_FOUND', 404);

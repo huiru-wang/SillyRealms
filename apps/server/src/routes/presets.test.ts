@@ -96,6 +96,24 @@ describe('preset HTTP operations', () => {
     await expectFailure(await remove(), 404, 'PRESET_NOT_FOUND');
   });
 
+  it('reports world reply-assist references before allowing preset deletion', async () => {
+    const reply = services.presets.create({ ...services.presets.getDefault('reply_assist'), name: 'World reply' });
+    const world = services.worlds.create({
+      name: '小饭馆', specVersion: '0.1', defaultReplyAssistPresetId: reply.id,
+      characters: [{ id: 'player', name: '掌柜', player_selectable: true }],
+      openings: [{ id: 'opening', name: '开局', content: '开门' }],
+    });
+    const remove = () => app.request(base + '/' + reply.id, { method: 'DELETE' });
+    const blocked = await remove();
+    expect(blocked.status).toBe(409);
+    expect(await blocked.json()).toMatchObject({
+      errorCode: 'REFERENCE_CONFLICT', errorMessage: expect.stringContaining('世界卡“小饭馆”的 AI 帮答预设'),
+    });
+    expect(services.presets.require(reply.id).id).toBe(reply.id);
+    services.worlds.updateManagement(world.id, { defaultReplyAssistPresetId: null, expectedRevision: world.revision });
+    expect((await remove()).status).toBe(200);
+  });
+
   it('accepts Web create/edit payloads and projects the detail shape it consumes', async () => {
     const input = { ...webPreset(), id: 'story' };
     input.config.nodes[0]!.prompt = 'author_key stays unchanged {{world.lore}}';

@@ -1,3 +1,5 @@
+@import './loading-text.css';
+
 /* Official WorldStory surface. Host-provided --sr-story-* values are inherited.
    Nothing in this entry styles the document root or an author's outer stage. */
 .sr-story {
@@ -123,6 +125,7 @@
 .sr-story .sr-rich hr { border: 0; border-top: 1px solid var(--_story-line); margin: 1.5em 0; }
 .sr-story .sr-more { align-self: center; flex: none; }
 .sr-story .sr-more:disabled { opacity: .6; cursor: progress; }
+.sr-story .sr-more:disabled[aria-busy="true"] { opacity: 1; }
 .sr-story .sr-thinking,
 .sr-story .sr-error,
 .sr-story .sr-story-empty { box-sizing: border-box; width: 100%; max-width: 740px; flex: none; margin: -6px 0 0; font-size: 12px; line-height: 1.7; color: var(--_story-muted); }

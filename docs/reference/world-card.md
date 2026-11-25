@@ -271,6 +271,6 @@ ZIP 只允许根 world.json、components/、assets/；拒绝重复或大小写/U
 
 world:check 使用当前导入和模块检查能力，但不执行组件、调用模型、下载远程素材或评判剧情效果。声明式资源可检查，组件运行中动态拼出的路径仍需实际打开验证。
 
-普通导入创建新世界副本；修改源码、重新打包不会自动更新既有世界或会话。世界导出重建作者卡与资源，不是运行数据库备份。默认预设和模型绑定由应用管理，不能依赖作者本地 ID 让接收者自动取得同样模型。
+普通导入创建新世界副本；修改源码、重新打包不会自动更新既有世界或会话。世界导出重建作者卡与资源，不是运行数据库备份。默认叙事预设、帮答预设和模型绑定由应用管理，不随世界卡导出；不能依赖作者本地 ID 让接收者自动取得同样模型。
 
 参考来源：[解析/导出](../../apps/server/src/modules/worlds/parser.ts) · [资源校验](../../apps/server/src/modules/worlds/assets.ts) · [ZIP 处理](../../apps/server/src/modules/worlds/archive.ts) · [资源路径](../../packages/sr-sdk/src/asset-url.ts)。

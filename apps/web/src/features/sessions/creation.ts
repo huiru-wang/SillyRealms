@@ -2,6 +2,7 @@ type WorldSelection = {
   characters: readonly {id:string;player_selectable?:boolean}[];
   openings: readonly {id:string}[];
   defaultPresetId: string|null;
+  defaultReplyAssistPresetId: string|null;
   defaultApiModelConfigId: string|null;
 };
 
@@ -14,6 +15,7 @@ export function initialSessionSelection(world:WorldSelection, characterId?:strin
     opening:openingId===undefined?(world.openings.length===1?world.openings[0]!.id:''):(world.openings.find(item=>item.id===openingId)?.id??''),
     character:character?.id??'',
     preset:world.defaultPresetId??'',
+    replyPreset:world.defaultReplyAssistPresetId??null,
     model:world.defaultApiModelConfigId??'',
   };
 }

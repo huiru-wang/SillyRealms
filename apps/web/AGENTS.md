@@ -15,7 +15,7 @@
 - 开发端口 5176，代理默认 127.0.0.1:3001，可配置 SR_WEB_SERVER_URL。启动和断点调试见[根目录 README](../../README.md)，部署边界见[管理工作区](../../docs/runtime/web-management.md)。
 - 本轮只运行函数测试和类型检查，不启动服务，不增加浏览器/链路 mock 验证环境。
 
-- 世界与会话共用 CreateSessionDialog；世界默认显式为空时不从应用设置补值，创建必须提交 openingId，由服务端原子初始化状态并保存首条消息。ManagementData 同步目录、会话数量和本次文件清理重试入口。
+- 世界与会话共用 CreateSessionDialog；世界叙事预设/模型默认显式为空时不从应用设置补值；帮答默认从世界详情预填，null 沿会话契约表示跟随应用默认，创建必须提交 openingId，由服务端原子初始化状态并保存首条消息。ManagementData 同步目录、会话数量和本次文件清理重试入口。
 - 世界管理表单分离基线与草稿，只提交变化字段及 expectedRevision，冲突保留修改。资源走 /api/v1/worlds/:id/resources/，不请求 runtime/web-config。
 - 作者预览使用独立 origin（默认 5177）、独立构建 dist-preview 和只读 global bridge；管理页默认 5176。预览无 API 代理，不与管理页同源，不开放模型、消息、会话或写操作。部署约束见管理工作区文档。
 - 世界详情的 WorldComponentCache 在固定 DOM 位置按介绍/开局身份保留最多 10 个作者 iframe，超限 FIFO 淘汰最早打开者，重访/重试不更新顺序。Tab 切换只隐藏，保留内部状态及开局选择；离开详情统一释放。源码请求归预览池共享，单实例淘汰不能取消其他实例加载；重试刷新源码且只重建本实例。组件声明内容决定失效，名称/标签/默认配置及数组引用变化不重建。隐藏通知仅控制媒体、CSS 动画与高度测量，不宣称暂停任意作者代码；不扩展 SDK 权限或会话缓存。
@@ -25,7 +25,7 @@
 - 世界详情以本模块的 WorldDetailPage.tsx / WorldDetailPage.module.css 为 UI 基线，完整保留折叠头部、角色条同步、六个图标 Tab、开局导航、弹窗和滚动交互；禁止用新面板布局替换。只适配 V2 顶层领域字段、分页、刷新和管理写入约束。
 - 世界状态说明由 worlds/state-description 投影已验证的规则路径与默认结构，容器逐级展开、叶子显示规则原文，数组仅一份元素模板；不执行规则、不展示默认值。WorldState 按非空 scope 分组并使用现有主题背景，移动深层详情保留返回位置和展开状态；StateInspector 的开局初始值展示保持独立。
 - OpeningState 只展示 openingStateRows 验证后的 message 初始值，覆盖按完整根替换，不按 rules 补字段。字段 key/value 保持同排，数组按实际元素分批展示，来源只标根节点；与 WorldState 共用 StateBrowser 的帮助和深层导航，滚动恢复分别使用 data-modal-body / data-world-content，Escape 优先收起帮助。
-- 世界入口在头部选择角色，创建确认沿用该角色；提交当前 openingId 和角色，开局名称可作为会话标题；全局会话入口增加开局选择，单个默认选中、多个要求选择。创建后进入会话舞台，消息与正则组件替换统一在独立来源 frame 渲染，不增加开场标记或专用分支。名称标签在更多菜单弹窗编辑，默认项与封面马赛克在世界配置 Tab 编辑。马赛克仅替换列表封面图层，复用共享 Switch/Range；密度草稿由 ManagementData 共享并保存，封面采用 Canvas 缩小采样和最近邻放大，文字/渐变不参与像素化。
+- 世界入口在头部选择角色，创建确认沿用该角色；提交当前 openingId 和角色，开局名称可作为会话标题；全局会话入口增加开局选择，单个默认选中、多个要求选择。创建后进入会话舞台，消息与正则组件替换统一在独立来源 frame 渲染，不增加开场标记或专用分支。名称标签在更多菜单弹窗编辑，叙事预设、帮答预设、模型默认项与封面马赛克在世界配置 Tab 编辑。马赛克仅替换列表封面图层，复用共享 Switch/Range；密度草稿由 ManagementData 共享并保存，封面采用 Canvas 缩小采样和最近邻放大，文字/渐变不参与像素化。
 
 - 隔离 world-preview 服务/构建同时提供 frame.html 与 world-component.html，管理来源拒绝这两个入口。runtime/config 使用明确的 stage.origin/entryPath/debug，不接受 port 推导。SessionPage 挂载 stage-host/StageHost；后者只管理 iframe、受限 bridge 和外观，不保存业务状态，不因 frame 重载停止生成。
 
@@ -39,7 +39,7 @@
 - state feature 负责三作用域读写与消息数组归一化。path:"" 替换整个 scope，null 保留普通值；PATCH success 可能是忽略，写后通过补读/真实事件同步，禁止按提交值乐观造状态。真实 tip 变化后再确认 message 状态。
 - suggestions 拥有当前行动建议展示状态；action_suggestions.created 整体替换，HTTP accepted 与 SSE run.created 经同一接受入口按 assistantEntryId 幂等清空。workspace 同批发布已接受用户消息、空建议及执行状态，迟到确认不能擦除本次新建议。复用 synchronize 的历史读取、restore 和 checkpoint，只检查最新 run 最后一条普通 message；须为有效完成且有 success/partial_success 非空 items 的 assistant，否则为空，不回找旧助手。隐藏 compaction 与历史翻页不参与恢复，不新增 bootstrap、请求或恢复 Store。断线保留当前状态，重连按既有入口同步。读取 actionSuggestions 整体 status/items，旧格式仍由服务端归一化。
 - stage-host 校验 origin/source/nonce、消息大小与命令白名单；session/world/tip 绑定由可信页面提供。frame 无直接业务 HTTP 权限。作者预览保持只读 global；会话 stage 通过受限命令提供 send/regenerate/stop/history/state 写入。
-- V2 frame 与作者类型共用 SDK 根入口。getRuns 使用 narrative/runs 的原生分页契约。StageRuntime 只接收不可变投影、转发命令和原生事件；官方 WorldStory 保留正文/分页/滚动，不展示行动建议，也不独立拉取和归并运行。messageRender 匹配在 frame 的有界 Worker 中执行。
+- V2 frame 与作者类型共用 SDK 根入口。getRuns 使用 narrative/runs 的原生分页契约。StageRuntime 只接收不可变投影、转发命令和原生事件；官方 WorldStory 保留正文/分页/滚动，不展示行动建议，也不独立拉取和归并运行。所有真实等待文案复用 SDK LoadingText（60ms 字素交错、400ms 入场、200ms 停顿后开始 1.2s 扫光/0.8s 停顿）；完整占位，reduced-motion 静态显示，错误和终态保持普通文字。messageRender 匹配在 frame 的有界 Worker 中执行。
 - useSRActionSuggestions 只暴露只读 items，初始 []，不带消息定位、setter、错误或操作资格；Host 完成接受去重、时序与历史恢复后注入。官方默认 Stage 和作者 Stage 都须在 items 非空时才挂载整个行动区 wrapper，与 WorldStory 作为兄弟组合；空时不留背景、边框、padding、固定行或高度。外壳统一处理输入区 inset，正文和行动区各自滚动，不加故事顶栏。SR.ActionSuggestions 默认 setDraft；作者自定义视图可以使用普通 send，不新增建议命令或世界卡绑定。
 - 会话输入框收起按钮右侧的“更多操作”向上展开“重新生成”，仅允许最新用户轮次重新生成，或没有 AI 时重试；只有开局时禁用，提交中、生成中、离线或历史未同步时禁用。不提供历史回退和生成中编辑。设置在生成中禁用会话配置修改，阅读字号在舞台预览，保存到服务端 runtimeConfig。移动会话页隐藏主导航底栏，保留返回会话列表入口。
 - 验证使用函数级注入端口、typecheck 和两个静态构建，不启动真实服务/浏览器/模型或读取 Keychain。集成说明见 ../../docs/runtime/web-runtime.md。

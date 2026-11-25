@@ -20,9 +20,14 @@ describe('V2 database lifecycle and constraints', () => {
     return join(directory, 'nested', 'database.sqlite');
   };
 
+  function legacyWorldDefaults(database: DatabaseSync) {
+    database.exec('DROP INDEX idx_world_reply_preset; ALTER TABLE worlds DROP COLUMN default_reply_assist_preset_id');
+  }
+
   // Recreate the historical table before inserting fixtures. DROP COLUMN on V6's
   // rebuilt table does not reproduce the exact SQL text of the validated old schema.
   function legacySettings(database: DatabaseSync, includeLocale = false) {
+    legacyWorldDefaults(database);
     database.exec(`
 DROP INDEX idx_presets_model;
 ALTER TABLE presets DROP COLUMN api_model_config_id;
@@ -134,7 +139,7 @@ CREATE TABLE app_settings (
     const upgraded = openDatabase(path);
     expect(upgraded.prepare('SELECT * FROM app_settings').get()).toEqual({ ...originalSettings, locale: 'zh-CN', default_reply_assist_preset_id: null, cover_mosaic_density: 24 });
     expect(upgraded.prepare('SELECT * FROM presets').get()).toEqual({ ...originalPreset, api_model_config_id: null });
-    expect(upgraded.prepare('SELECT * FROM worlds').get()).toEqual(originalWorld);
+    expect(upgraded.prepare('SELECT * FROM worlds').get()).toEqual({ ...originalWorld, default_reply_assist_preset_id: null });
     expect(upgraded.prepare('PRAGMA user_version').get()?.user_version).toBe(DATABASE_VERSION);
     expect(() => upgraded.prepare("UPDATE app_settings SET locale='fr'").run()).toThrow();
     upgraded.prepare("UPDATE app_settings SET locale='en'").run();
@@ -169,6 +174,7 @@ CREATE TABLE app_settings (
       ...row,
       ...(table === 'app_settings' ? { default_reply_assist_preset_id: null, cover_mosaic_density: 24 } : {}),
       ...(table === 'presets' ? { api_model_config_id: null } : {}),
+      ...(table === 'worlds' ? { default_reply_assist_preset_id: null } : {}),
     }))]));
     records.set('sessions', []);
     records.set('entries', []);
@@ -192,16 +198,19 @@ CREATE TABLE app_settings (
     reopened.close();
   });
 
-  it('adds V10 density to a verified V9 database without changing any existing rows', () => {
+  it.each([9, 10])('adds world reply defaults to a verified V%s database without changing existing rows', version => {
     const path = file();
     const previous = openDatabase(path);
-    previous.exec('ALTER TABLE app_settings DROP COLUMN cover_mosaic_density; PRAGMA user_version=9');
+    legacyWorldDefaults(previous);
+    if (version === 9) previous.exec('ALTER TABLE app_settings DROP COLUMN cover_mosaic_density');
+    previous.exec('PRAGMA user_version=' + version);
     previous.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)')
       .run('m', 'Model', 'provider', 'model', 'credential-ref', 5, 6);
     previous.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)')
       .run('p', 'narrative', 'Custom preset', 'Keep this', '{}', 7, 8);
     previous.prepare('INSERT INTO app_settings(id,default_preset_id,default_api_model_config_id,created_at,updated_at,locale) VALUES(?,?,?,?,?,?)')
       .run(1, 'p', 'm', 11, 12, 'ja');
+    if (version === 10) previous.prepare('UPDATE app_settings SET cover_mosaic_density=11 WHERE id=1').run();
     previous.prepare('INSERT INTO worlds(id,spec_version,name,characters_json,openings_json,state,extensions_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)')
       .run('w', '0.1', 'World', '[]', '[]', '{"day":2}', '{"cover_mosaic_enabled":true,"creator":"keep"}', 13, 14);
     previous.prepare('INSERT INTO world_tags VALUES(?,?,?)').run('w', 'keep-tag', 0);
@@ -212,14 +221,22 @@ CREATE TABLE app_settings (
       .run('entry', 's', null, 'run', 1, 'message', 'assistant', 17, '{"message":{"content":"Keep narrative"}}', '[{"key":"coins","value":7}]', '{"keep":true}', 18, 19);
     const tables = ['api_model_configs', 'presets', 'app_settings', 'worlds', 'world_tags', 'sessions', 'entries'];
     const records = new Map(tables.map(table => [table, previous.prepare('SELECT * FROM ' + table).all().map(row => ({
-      ...row, ...(table === 'app_settings' ? { cover_mosaic_density: 24 } : {}),
+      ...row,
+      ...(table === 'app_settings' && version === 9 ? { cover_mosaic_density: 24 } : {}),
+      ...(table === 'worlds' ? { default_reply_assist_preset_id: null } : {}),
     }))]));
     previous.close();
 
     const upgraded = openDatabase(path);
     for (const table of tables) expect(upgraded.prepare('SELECT * FROM ' + table).all()).toEqual(records.get(table));
-    expect(upgraded.prepare('PRAGMA user_version').get()?.user_version).toBe(10);
+    expect(upgraded.prepare('PRAGMA user_version').get()?.user_version).toBe(DATABASE_VERSION);
     expect(upgraded.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    expect(() => upgraded.prepare("UPDATE worlds SET default_reply_assist_preset_id='missing' WHERE id='w'").run()).toThrow();
+    upgraded.prepare("INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES('reply','reply_assist','World reply',NULL,'{}',21,22)").run();
+    upgraded.prepare("UPDATE worlds SET default_reply_assist_preset_id='reply' WHERE id='w'").run();
+    expect(() => upgraded.prepare("DELETE FROM presets WHERE id='reply'").run()).toThrow();
+    upgraded.prepare("UPDATE worlds SET default_reply_assist_preset_id=NULL WHERE id='w'").run();
+    upgraded.prepare("DELETE FROM presets WHERE id='reply'").run();
     upgraded.prepare('UPDATE app_settings SET cover_mosaic_density=64 WHERE id=1').run();
     upgraded.close();
 

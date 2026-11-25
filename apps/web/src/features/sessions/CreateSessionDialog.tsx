@@ -32,7 +32,7 @@ export function CreateSessionDialog({onClose,worldId:initialWorldId,lockedWorld=
  useEffect(()=>{
   const item=world.value?.item;if(!item)return;
   const selection=initialSessionSelection(item,worldContext?.characterId,worldContext?.openingId);
-  setOpening(selection.opening);setCharacter(selection.character);setPreset(selection.preset);setModel(selection.model);
+  setOpening(selection.opening);setCharacter(selection.character);setPreset(selection.preset);setReplyPreset(selection.replyPreset);setModel(selection.model);
  },[world.value,worldContext?.characterId,worldContext?.openingId]);
  const roles=world.value?.item.characters.filter(c=>c.player_selectable)??[];
  const selectedRole=roles.find(role=>role.id===character);
@@ -65,12 +65,13 @@ export function CreateSessionDialog({onClose,worldId:initialWorldId,lockedWorld=
   </dl><p>{i18n.t("sessions:openingConfirmation")}</p></>:<p>{i18n.t("sessions:createDescription")}</p>}
   <div className="editor-form">
    {!worldContext&&<><label>{i18n.t("common:title")}<Input aria-label={i18n.t("sessions:title")} value={title} disabled={busy} onChange={e=>setTitle(e.target.value)} placeholder={i18n.t("sessions:optional")}/></label>
-   <label>{i18n.t("common:world")}<Select aria-label={i18n.t("common:world")} value={worldId} disabled={busy||lockedWorld} onChange={e=>{setWorldId(e.target.value);setOpening('');setCharacter('');setPreset('');setModel('');setError('');}}><option value="">{i18n.t("sessions:chooseWorld")}</option>{worldId&&!worlds.page?.items.some(w=>w.id===worldId)&&<option value={worldId}>{world.value?.item.name??i18n.t("sessions:currentWorld")}</option>}{worlds.page?.items.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</Select></label>
+   <label>{i18n.t("common:world")}<Select aria-label={i18n.t("common:world")} value={worldId} disabled={busy||lockedWorld} onChange={e=>{setWorldId(e.target.value);setOpening('');setCharacter('');setPreset('');setReplyPreset(null);setModel('');setError('');}}><option value="">{i18n.t("sessions:chooseWorld")}</option>{worldId&&!worlds.page?.items.some(w=>w.id===worldId)&&<option value={worldId}>{world.value?.item.name??i18n.t("sessions:currentWorld")}</option>}{worlds.page?.items.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</Select></label>
    <label>{i18n.t("sessions:opening")}<Select aria-label={i18n.t("sessions:openingLabel")} value={opening} disabled={busy||world.loading} onChange={e=>setOpening(e.target.value)}><option value="">{i18n.t("sessions:chooseOpening")}</option>{openings.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</Select></label>
    <label>{i18n.t("sessions:playerCharacter")}<Select aria-label={i18n.t("sessions:playerCharacter")} value={character} disabled={busy||world.loading} onChange={e=>{setCharacter(e.target.value);}}><option value="">{i18n.t("sessions:chooseCharacter")}</option>{roles.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</Select></label></>}
    <label>{i18n.t("sessions:narrativePreset")}<Select aria-label={i18n.t("sessions:narrativePreset")} value={preset} disabled={busy} onChange={e=>setPreset(e.target.value)}><option value="">{i18n.t("sessions:choosePreset")}</option>{presets.presets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></label>
    <label>{i18n.t("sessions:assistPreset")}<Select aria-label={i18n.t("sessions:assistPreset")} value={replyPreset??''} disabled={busy} onChange={e=>setReplyPreset(e.target.value||null)}>
     <option value="">{i18n.t("sessions:followAppDefault")}</option>
+    {replyPreset&&!presets.replyPresets.some(p=>p.id===replyPreset)&&<option value={replyPreset}>{i18n.t('worlds:currentPresetListNotLoaded')}</option>}
     {presets.replyPresets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
    </Select></label>
    <label>{i18n.t("common:models")}<Select aria-label={i18n.t("sessions:modelLabel")} value={model} disabled={busy} onChange={e=>setModel(e.target.value)}><option value="">{i18n.t("sessions:chooseModel")}</option>{models.page?.items.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</Select></label>

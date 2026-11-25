@@ -49,10 +49,15 @@ describe('import world use case', () => {
   it('imports a no-spec JSON card, retains exact source bytes and applies current settings defaults', async () => {
     const preset = services.presets.create(narrativePreset());
     const model = services.models.create({ name: 'Model', providerId: 'test', modelId: 'test', credentialRef: 'keychain' });
-    services.settings.update({ defaultPresetId: preset.id, defaultApiModelConfigId: model.id });
+    const reply = services.presets.create({ ...services.presets.getDefault('reply_assist'), name: 'Import reply' });
+    services.settings.update({ defaultPresetId: preset.id, defaultApiModelConfigId: model.id, defaultReplyAssistPresetId: reply.id });
     const bytes = Buffer.from(JSON.stringify(worldCardFixture(), null, 2) + '\n');
     const world = await importWorld({ format: 'json', bytes });
-    expect(world).toMatchObject({ name: '雾港', tags: ['冒险'], state: { coins: 3 }, defaultPresetId: preset.id, defaultApiModelConfigId: model.id });
+    expect(world).toMatchObject({ name: '雾港', tags: ['冒险'], state: { coins: 3 }, defaultPresetId: preset.id, defaultApiModelConfigId: model.id, defaultReplyAssistPresetId: reply.id });
+    services.settings.update({ defaultReplyAssistPresetId: null });
+    expect(services.worlds.require(world.id).defaultReplyAssistPresetId).toBe(reply.id);
+    const withoutReply = await importWorld({ format: 'json', bytes });
+    expect(withoutReply.defaultReplyAssistPresetId).toBeNull();
     expect(await services.worlds.readOriginal(world.id)).toEqual({ format: 'json', bytes });
     expect(await names('staging')).toEqual([]);
     expect(await readdir(services.worlds.paths(world.id).source)).toEqual(['original.json']);

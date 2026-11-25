@@ -75,6 +75,26 @@ describe('world management functions',()=>{
   const updated=services.worlds.updateManagement(world.id,{defaultPresetId:null,expectedRevision:1});
   expect(updated.description).toBe('legacy prose');expect(updated.defaultPresetId).toBeNull();
  });
+ it('saves a typed reply-assist default with revision protection and preserves unrelated content',()=>{
+  const reply=services.presets.create({...services.presets.getDefault('reply_assist'),name:'World reply'});
+  const story=services.presets.create(narrativePreset());
+  const world=services.worlds.create({...content(),extensions:{author:'keep'}});
+  expect(world.defaultReplyAssistPresetId).toBeNull();
+  const before=db.prepare('SELECT characters_json,openings_json,state,extensions_json FROM worlds WHERE id=?').get(world.id);
+  for(const [id,code] of [['missing','PRESET_NOT_FOUND'],[story.id,'PRESET_TYPE_MISMATCH']] as const){
+   expect(()=>services.worlds.updateManagement(world.id,{name:'Lost',defaultReplyAssistPresetId:id,expectedRevision:1})).toThrow(code);
+   expect(services.worlds.require(world.id)).toEqual(world);
+  }
+  const updated=services.worlds.updateManagement(world.id,{defaultReplyAssistPresetId:reply.id,expectedRevision:1});
+  expect(updated).toMatchObject({defaultReplyAssistPresetId:reply.id,revision:2});
+  expect(db.prepare('SELECT default_reply_assist_preset_id FROM worlds WHERE id=?').get(world.id)).toMatchObject({default_reply_assist_preset_id:reply.id});
+  expect(services.worlds.listUsingDefaultPreset(reply.id,'reply_assist')).toEqual([{id:world.id,name:world.name}]);
+  expect(services.worlds.listUsingDefaultPreset(reply.id)).toEqual([]);
+  expect(()=>services.worlds.updateManagement(world.id,{defaultReplyAssistPresetId:null,expectedRevision:1})).toThrow('WORLD_REVISION_CONFLICT');
+  expect(services.worlds.require(world.id)).toEqual(updated);
+  expect(services.worlds.updateManagement(world.id,{defaultReplyAssistPresetId:null,expectedRevision:2})).toMatchObject({defaultReplyAssistPresetId:null,revision:3});
+  expect(db.prepare('SELECT characters_json,openings_json,state,extensions_json FROM worlds WHERE id=?').get(world.id)).toEqual(before);
+ });
  it('validates new definitions before persistence',()=>{
   expect(()=>services.worlds.create({...content(),characters:[]})).toThrow('INVALID_WORLD_CARD');
   expect(()=>services.worlds.create({...content(),description:'unsupported prose'})).toThrow('INVALID_WORLD_CARD');

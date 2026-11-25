@@ -9,6 +9,7 @@
     "./state-validation": "./src/state-validation.ts",
     "./when-expression": "./src/when-expression.ts",
     "./world-story.css": "./src/world-story.css",
+    "./loading-text.css": "./src/loading-text.css",
     "./action-suggestions.css": "./src/action-suggestions.css",
     "./world-document": "./src/world-document/WorldDocumentRenderer.tsx",
     "./locale": "./src/locale.ts"

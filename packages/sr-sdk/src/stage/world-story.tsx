@@ -8,6 +8,7 @@ import {useSRHistory, useSRStageSnapshot} from './context.js';
 import {messageNotice, runNotice, streamNotice, stageErrorMessage} from './feedback.js';
 import {StatePanel} from './state-panel.js';
 import {MessageReasoning} from './message-reasoning.js';
+import {LoadingText} from '../loading-text.js';
 
 const StoryRun = React.memo(function StoryRun({run}: {run: StageRun}) {
   const {t} = useTranslation('stage');
@@ -17,11 +18,11 @@ const StoryRun = React.memo(function StoryRun({run}: {run: StageRun}) {
     return <article key={message.id} className={'sr-message ' + message.role} data-message-id={message.id}
       aria-label={t(message.role === 'user' ? 'story.myMessage' : 'story.storyMessage')}>
       {message.role === 'assistant' && <MessageReasoning message={message} status={run.status}/>}
-      <div className="sr-story-content"><MessageContent message={message} runId={run.runId}/>{hint && <p className="sr-thinking" role="status">{t(hint)}</p>}</div>
+      <div className="sr-story-content"><MessageContent message={message} runId={run.runId}/>{hint && <p className="sr-thinking" role="status">{hint === 'notices.waitingForContent' ? <LoadingText text={t(hint)}/> : t(hint)}</p>}</div>
       {message.role === 'assistant' && debug === true && message.output &&
         <details className="sr-thinking sr-processing"><summary>{t('story.processingResults')}</summary><pre>{JSON.stringify(message.output, null, 2)}</pre></details>}
     </article>;
-  })}{notice && <p className={run.status === 'stopped' ? 'sr-error' : 'sr-thinking'} role="status">{t(notice)}</p>}</>;
+  })}{notice && <p className={run.status === 'stopped' ? 'sr-error' : 'sr-thinking'} role="status">{run.status === 'running' || run.status === 'stopping' ? <LoadingText text={t(notice)}/> : t(notice)}</p>}</>;
 });
 
 /** Rendering and reading position only. The Host supplies history, live output and recovery results. */
@@ -171,10 +172,10 @@ export function WorldStory({showState = true}: {showState?: boolean} = {}) {
         onScroll={scrolled} onWheel={userScroll} onTouchMove={userScroll}
         onPointerDown={event => { if (event.target === event.currentTarget) userScroll(); }}
         onKeyDown={event => { if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) userScroll(); }}>
-        {history.hasMore && <button className="sr-more" type="button" disabled={history.loadingMore} onClick={loadMore}>{t(history.loadingMore ? 'common.loading' : 'story.loadMore')}</button>}
+        {history.hasMore && <button className="sr-more" type="button" disabled={history.loadingMore} aria-busy={history.loadingMore || undefined} onClick={loadMore}>{history.loadingMore ? <LoadingText text={t('common.loading')}/> : t('story.loadMore')}</button>}
         {history.error && <p className="sr-error" role="alert">{displayError(history.error)} <button type="button" onClick={refreshHistory}>{t('story.reloadHistory')}</button></p>}
         {actionError && <p className="sr-error" role="alert">{displayError(actionError)}</p>}
-        {history.loading && !runs.length && <p className="sr-thinking" role="status">{t('story.reading')}</p>}
+        {history.loading && !runs.length && <p className="sr-thinking" role="status"><LoadingText text={t('story.reading')}/></p>}
         {!history.loading && !history.error && !runs.length && <p className="sr-thinking">{t('story.empty')}</p>}
         {runs.map(run => <StoryRun key={run.runId} run={run}/>)}
         {continuityNotice && <p className="sr-thinking" role="status">{t(continuityNotice)}</p>}

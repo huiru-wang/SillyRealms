@@ -1,5 +1,8 @@
 import {WorldStory} from './world-story.js';
 import {ActionSuggestions} from './action-suggestions.js';
+import {LoadingText} from '../loading-text.js';
+export {LoadingText};
+export type {LoadingTextProps} from '../loading-text.js';
 export {RichText} from '../rich-text.js';
 export {SRAssetProvider, useSRAssetUrl, useSRAssetBaseUrl} from '../asset-context.js';
 export {WorldDocumentRenderer} from './document.js';
@@ -19,4 +22,4 @@ export type {
   StageSnapshot, StageRun, StageMessage,
 } from '../stage-contract.js';
 
-export const SR = {WorldStory, ActionSuggestions};
+export const SR = {WorldStory, ActionSuggestions, LoadingText};

@@ -19,6 +19,7 @@ export function createImportWorld({ worlds, settings }: ImportWorldServices) {
       const world = worlds.create({
         ...stage.content, id: stage.id,
         defaultPresetId: defaults.defaultPresetId,
+        defaultReplyAssistPresetId: defaults.defaultReplyAssistPresetId,
         defaultApiModelConfigId: defaults.defaultApiModelConfigId,
       });
       created = world;

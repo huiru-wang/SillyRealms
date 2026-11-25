@@ -16,6 +16,7 @@ export type WorldContent = {
   stageComponent: string | null;
   extensions: JsonValue | null;
   defaultPresetId: string | null;
+  defaultReplyAssistPresetId: string | null;
   defaultApiModelConfigId: string | null;
 };
 
@@ -35,7 +36,7 @@ export type World = WorldContent & {
 export type WorldTag = { name: string; worldCount: number };
 export type WorldSummary = Pick<World, 'id' | 'name' | 'cover' | 'coverMosaicEnabled' | 'tags' | 'createdAt' | 'updatedAt'>;
 export type WorldDetail = Omit<World, 'state'>;
-export type WorldManagementPatch = Partial<Pick<World, 'name' | 'tags' | 'coverMosaicEnabled' | 'defaultPresetId' | 'defaultApiModelConfigId'>> & { expectedRevision: number };
+export type WorldManagementPatch = Partial<Pick<World, 'name' | 'tags' | 'coverMosaicEnabled' | 'defaultPresetId' | 'defaultReplyAssistPresetId' | 'defaultApiModelConfigId'>> & { expectedRevision: number };
 export type WorldListOptions = { q?: string; tag?: string; limit?: number; offset?: number; before?: { createdAt: number; id: string } };
 export type WorldPage = { items: WorldSummary[]; hasMore: boolean };
 
@@ -51,5 +52,5 @@ export type CharacterSpriteCatalog = { worldId: string; items: CharacterSpriteCa
 export const worldContentFields = [
   'specVersion', 'name', 'description', 'cover', 'characters', 'openings',
   'lorebook', 'stateDefinition', 'messageRender', 'components',
-  'stageComponent', 'extensions', 'defaultPresetId', 'defaultApiModelConfigId',
+  'stageComponent', 'extensions', 'defaultPresetId', 'defaultReplyAssistPresetId', 'defaultApiModelConfigId',
 ] as const;

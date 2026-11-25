@@ -8,7 +8,7 @@ HTTP适配器位于 `apps/server/src/routes/`，可调用业务模块Service或�
 
 Service 公共输入输出采用显式驼峰领域类型，存储行到领域对象的转换位于 Service，存储行及列名留在模块内部。HTTP 使用 V2 管理接口契约；跨模块展示字段由 route 调属主 Service 组合，不放回 Repository JOIN 或相互依赖的 Service 展示逻辑。作者 JSON、状态键及文档协议里的键不做递归改名。
 
-业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；Web 接入世界内容库、预设、模型配置、设置和基础会话和叙事运行页。数据库 user_version=10，只迁移结构匹配的 V2 v1–v9 库（v2 添加预设 revision，v3 添加世界 revision 和 created_at/id 索引，v4 为非 NULL 消息状态添加 (session_id,seq) 索引，v5 添加带 zh-CN 默认值的 app_settings.locale，v6 在同一迁移事务内重建该单例表的 CHECK 约束以接受 ja，逐字段保留默认项、原语言及时间戳，v7 添加帮答模型绑定、应用默认帮答预设和会话帮答目标，v8 添加可空的 sessions.reply_assist_preset_id，v9 重建 sessions，清空旧会话及其 entries，保留世界、模型、预设和应用设置；v10 仅为 app_settings 添加 cover_mosaic_density，保留 v9 的全部数据），拒绝未知结构和旧 Server 库。createApp传入services时必须同时传入usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureBuiltins 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 和 sr-default-reply-assist-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
+业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；Web 接入世界内容库、预设、模型配置、设置和基础会话和叙事运行页。数据库 user_version=11，只迁移结构匹配的 V2 v1–v10 库（v2 添加预设 revision，v3 添加世界 revision 和 created_at/id 索引，v4 为非 NULL 消息状态添加 (session_id,seq) 索引，v5 添加带 zh-CN 默认值的 app_settings.locale，v6 在同一迁移事务内重建该单例表的 CHECK 约束以接受 ja，逐字段保留默认项、原语言及时间戳，v7 添加帮答模型绑定、应用默认帮答预设和会话帮答目标，v8 添加可空的 sessions.reply_assist_preset_id，v9 重建 sessions，清空旧会话及其 entries，保留世界、模型、预设和应用设置；v10 仅为 app_settings 添加 cover_mosaic_density，保留 v9 的全部数据；v11 仅为 worlds 添加可空的 default_reply_assist_preset_id，保留 v10 全部数据），拒绝未知结构和旧 Server 库。createApp传入services时必须同时传入usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureBuiltins 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 和 sr-default-reply-assist-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
 
 ## 普通 JSON 响应
 
@@ -129,7 +129,7 @@ promptCache 是 SDK 提供的最佳估计保留时长，缺失表示未提供，
 
 凭据由独立 credentials 模块保存，默认适配 macOS Keychain，引用按 V2 dataRoot 隔离，数据库只存引用。其他平台默认返回存储不可用，可由启动装配注入 CredentialStore。模型用例协调凭据和配置：写入数据库失败时补偿凭据；删除先检查数据库引用并删记录，再删凭据。凭据清理失败返回 CREDENTIAL_DELETE_FAILED/503，可重试相同 DELETE；补偿失败返回 CREDENTIAL_COMPENSATION_FAILED/500。跨资源流程不是数据库强事务，未提供进程崩溃恢复保证。
 
-默认设置为 `{defaultPresetId,defaultApiModelConfigId,defaultReplyAssistPresetId}`。PATCH 只更新提交字段，显式 null 清除默认，不存在的引用由属主 Service 报错。叙事默认值在世界导入时复制一次，不批量覆盖已有世界或会话。被默认设置、世界或会话引用的预设/模型不能直接删除。
+默认设置为 `{defaultPresetId,defaultApiModelConfigId,defaultReplyAssistPresetId}`。PATCH 只更新提交字段，显式 null 清除默认，不存在的引用由属主 Service 报错。叙事预设、帮答预设和模型默认值在世界导入时复制一次，不批量覆盖已有世界或会话。被默认设置、世界或会话引用的预设/模型不能直接删除。
 
 ## 世界与文件
 
@@ -147,9 +147,9 @@ promptCache 是 SDK 提供的最佳估计保留时长，缺失表示未提供，
 
 世界列表支持 q（名称包含匹配，最多 200 字符）、tag（精确标签名）、limit（1–200，默认 24）、cursor；不接受 offset/tagId。按 createdAt/id 倒序进行 keyset 分页，编辑内容或状态不改变顺序。游标绑定名称及标签筛选，不能挪到其他查询。Repository 直接读取摘要列并批量读取本页标签，不解析作者 JSON；sessionCount 由 route 调 SessionService 批量组合，不跨模块 JOIN。
 
-列表项为 `{id,name,cover,coverMosaicEnabled,tags:string[],sessionCount,createdAt,updatedAt}`。详情为 `data.item`，顶层字段包括 id、revision、specVersion、name、description、cover、coverMosaicEnabled、tags、characters、openings、lorebook、stateDefinition、messageRender、components、stageComponent、extensions、defaultPresetId、defaultApiModelConfigId、createdAt、updatedAt。不再包装 item.data 或返回空 warnings；stateDefinition 是作者声明，详情不包含运行 state。description 保留 null、组件对象或已有文本；作者对象内部协议键不递归转换。
+列表项为 `{id,name,cover,coverMosaicEnabled,tags:string[],sessionCount,createdAt,updatedAt}`。详情为 `data.item`，顶层字段包括 id、revision、specVersion、name、description、cover、coverMosaicEnabled、tags、characters、openings、lorebook、stateDefinition、messageRender、components、stageComponent、extensions、defaultPresetId、defaultReplyAssistPresetId、defaultApiModelConfigId、createdAt、updatedAt。不再包装 item.data 或返回空 warnings；stateDefinition 是作者声明，详情不包含运行 state。description 保留 null、组件对象或已有文本；作者对象内部协议键不递归转换。
 
-PATCH 仅接受 name、tags、coverMosaicEnabled、defaultPresetId、defaultApiModelConfigId 的非空子集，以及必填 expectedRevision。只写提交的管理列；标签 trim、去重并保留顺序，与 revision 更新在同一事务中完成。成功 revision 加一；过期返回 WORLD_REVISION_CONFLICT/409，引用不存在或校验失败不部分保存。显式 null 清除默认配置。不提供 POST /worlds、PUT /worlds/:id/tags 或旧 /tags 别名；除上述马赛克保留键外，作者内容与运行状态不通过管理 PATCH 更新。
+PATCH 仅接受 name、tags、coverMosaicEnabled、defaultPresetId、defaultReplyAssistPresetId、defaultApiModelConfigId 的非空子集，以及必填 expectedRevision。只写提交的管理列；标签 trim、去重并保留顺序，与 revision 更新在同一事务中完成。成功 revision 加一；过期返回 WORLD_REVISION_CONFLICT/409，引用不存在或校验失败不部分保存。显式 null 清除世界默认引用；defaultReplyAssistPresetId 仅接受 reply_assist 类型预设，创建会话时预填到 runtimeConfig.replyAssistPresetId，null 继续表示跟随应用默认。默认预设和模型引用是本机配置，不随世界卡导出。不提供 POST /worlds、PUT /worlds/:id/tags 或旧 /tags 别名；除上述马赛克保留键外，作者内容与运行状态不通过管理 PATCH 更新。
 
 `coverMosaicEnabled` 是 `extensions.cover_mosaic_enabled` 的布尔投影，缺省 false。管理写入只合并这一键到 `worlds.extensions_json`，保留其他扩展项，并复用 expectedRevision 的原子更新；不接受任意 extensions 覆盖。列表摘要仅投影该键，不逐世界读取完整内容。正式卡协议为 `data.extensions.cover_mosaic_enabled`，只接受布尔值，普通导出和再次导入保留 true/false；下载原件仍返回最初上传字节。
 

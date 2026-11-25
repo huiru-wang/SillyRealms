@@ -5,6 +5,7 @@ import type {StateScope} from '../stage-contract.js';
 import {useSRStageSnapshot} from './context.js';
 import {stageErrorMessage} from './feedback.js';
 import {stateValue} from './runtime.js';
+import {LoadingText} from '../loading-text.js';
 
 /** A view of the Host-provided snapshot. Opening this panel performs no additional state read. */
 export function StatePanel({close, restoreFocus, overlay, id}: {
@@ -43,7 +44,7 @@ export function StatePanel({close, restoreFocus, overlay, id}: {
     <header className="sr-state-heading"><h2 id={id + '-title'}>{t('state.title')}</h2><button ref={closeButton} type="button" onClick={close} aria-label={t('state.collapseLabel')}>{t('state.collapse')}</button></header>
     <div className="sr-state-content">
       {snapshot.stateError && <p className="sr-state-error" role="alert">{stageErrorMessage(snapshot.stateError, key => t(key), key => i18n.exists(key, {ns: 'stage'}))}</p>}
-      {snapshot.stateLoading && !entries.length ? <p className="sr-state-empty" role="status">{t('state.loading')}</p>
+      {snapshot.stateLoading && !entries.length ? <p className="sr-state-empty" role="status"><LoadingText text={t('state.loading')}/></p>
         : entries.length ? scopes.map(scope => {
           const items = entries.filter(item => item.scope === scope);
           return items.length ? <details className="sr-state-group" key={scope} open><summary>{labels[scope]}</summary><dl>{items.map(item =>

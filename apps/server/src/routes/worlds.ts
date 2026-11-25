@@ -52,7 +52,7 @@ function worldDetail(world: World) {
     description: world.description, cover: world.cover, coverMosaicEnabled: world.coverMosaicEnabled, tags: world.tags, characters: world.characters,
     openings: world.openings, lorebook: world.lorebook, stateDefinition: world.stateDefinition,
     messageRender: world.messageRender, components: world.components, stageComponent: world.stageComponent,
-    extensions: world.extensions, defaultPresetId: world.defaultPresetId,
+    extensions: world.extensions, defaultPresetId: world.defaultPresetId, defaultReplyAssistPresetId: world.defaultReplyAssistPresetId,
     defaultApiModelConfigId: world.defaultApiModelConfigId, createdAt: world.createdAt, updatedAt: world.updatedAt,
   };
 }

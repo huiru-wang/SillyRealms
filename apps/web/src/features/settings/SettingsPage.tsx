@@ -56,10 +56,9 @@ export function SettingsPage(){
   <div className="settings-stack">
    <Panel className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><MonitorCog size={18}/></span><h2>{t('appearance')}</h2></div>
     <label className="settings-row"><span className="settings-row-label"><strong>{t('language')}</strong></span>
-     <Select aria-label={t('language')} aria-describedby="settings-language-hint" value={settings.value?.item.locale??DEFAULT_LOCALE} disabled={!settings.value||localeSaving||saving} onChange={event=>void changeLanguage(event.target.value)}>
+     <Select aria-label={t('language')} value={settings.value?.item.locale??DEFAULT_LOCALE} disabled={!settings.value||localeSaving||saving} onChange={event=>void changeLanguage(event.target.value)}>
       {SUPPORTED_LOCALES.map(locale=><option key={locale} value={locale}>{languageNames[locale]}</option>)}
      </Select>
-     <small id="settings-language-hint" className="settings-row-hint">{t('languageHint')}</small>
     </label>
     {localeSaving&&<span role="status">{t('savingLanguage')}</span>}
     <label className="settings-row settings-theme-row"><span className="settings-row-label"><strong>{t('theme')}</strong></span><Select aria-label={t('theme')} value={theme} onChange={event=>{if(event.target.value!==theme)toggleTheme();}}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option></Select></label>
@@ -76,7 +75,7 @@ export function SettingsPage(){
      {!!coverMosaicError&&<div className={styles.mosaicNotice}><ErrorNotice message={coverMosaicError} onRetry={()=>void saveCoverMosaicDensity()}/></div>}
     </div>
    </Panel>
-   <Panel className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><SlidersHorizontal size={18}/></span><div><h2>{t('defaults')}</h2><p>{t('defaultsHint')}</p></div></div>
+   <Panel className="settings-group"><div className="settings-group-title"><span className="settings-group-icon"><SlidersHorizontal size={18}/></span><h2>{t('defaults')}</h2></div>
     {presets.error&&<ErrorNotice message={presets.error} onRetry={presets.reload}/>}
     {presets.replyCatalog.error&&<ErrorNotice message={presets.replyCatalog.error} onRetry={presets.replyCatalog.reload}/>}
     {models.error&&<ErrorNotice message={models.error} onRetry={models.reload}/>}

@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { AppError } from '../../errors.js';
 
-export const DATABASE_VERSION = 10;
+export const DATABASE_VERSION = 11;
 export const DATABASE_APPLICATION_ID = 0x53525632; // SRV2; distinct from the old Server database.
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
@@ -180,6 +180,11 @@ CREATE INDEX idx_session_reply_preset ON sessions(reply_preset_ref);
 
 const UPGRADE_V10_SQL = "ALTER TABLE app_settings ADD COLUMN cover_mosaic_density INTEGER NOT NULL DEFAULT 24 CHECK(typeof(cover_mosaic_density) = 'integer' AND cover_mosaic_density BETWEEN 8 AND 64)";
 
+const UPGRADE_V11_SQL = `
+ALTER TABLE worlds ADD COLUMN default_reply_assist_preset_id TEXT REFERENCES presets(id) ON DELETE RESTRICT;
+CREATE INDEX idx_world_reply_preset ON worlds(default_reply_assist_preset_id);
+`;
+
 // Apply identical migration SQL to reference, new and upgraded databases.
 function expectedObjects(version: number) {
   const reference = new DatabaseSync(':memory:');
@@ -194,11 +199,12 @@ function expectedObjects(version: number) {
     if (version >= 8) reference.exec(UPGRADE_V8_SQL);
     if (version >= 9) reference.exec(UPGRADE_V9_SQL);
     if (version >= 10) reference.exec(UPGRADE_V10_SQL);
+    if (version >= 11) reference.exec(UPGRADE_V11_SQL);
     return new Map(reference.prepare("SELECT name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'")
       .all().map(row => [String(row.name), String(row.sql)]));
   } finally { reference.close(); }
 }
-const schemas = new Map([[1, expectedObjects(1)], [2, expectedObjects(2)], [3, expectedObjects(3)], [4, expectedObjects(4)], [5, expectedObjects(5)], [6, expectedObjects(6)], [7, expectedObjects(7)], [8, expectedObjects(8)], [9, expectedObjects(9)], [10, expectedObjects(10)]]);
+const schemas = new Map([[1, expectedObjects(1)], [2, expectedObjects(2)], [3, expectedObjects(3)], [4, expectedObjects(4)], [5, expectedObjects(5)], [6, expectedObjects(6)], [7, expectedObjects(7)], [8, expectedObjects(8)], [9, expectedObjects(9)], [10, expectedObjects(10)], [11, expectedObjects(11)]]);
 const normalizeSql = (sql: string) => sql.replace(/\s+/g, ' ').trim().toLowerCase();
 
 function inspectDatabase(db: DatabaseSync) {
@@ -251,6 +257,7 @@ export function openDatabase(path: string): DatabaseSync {
           db.exec(UPGRADE_V8_SQL);
           db.exec(UPGRADE_V9_SQL);
           db.exec(UPGRADE_V10_SQL);
+          db.exec(UPGRADE_V11_SQL);
           db.exec('PRAGMA application_id=' + DATABASE_APPLICATION_ID);
         } else {
           assertCompatible(current);
@@ -263,6 +270,7 @@ export function openDatabase(path: string): DatabaseSync {
           if (current.version < 8) db.exec(UPGRADE_V8_SQL);
           if (current.version < 9) db.exec(UPGRADE_V9_SQL);
           if (current.version < 10) db.exec(UPGRADE_V10_SQL);
+          if (current.version < 11) db.exec(UPGRADE_V11_SQL);
         }
         db.exec('PRAGMA user_version=' + DATABASE_VERSION);
         assertCompatible(inspectDatabase(db));

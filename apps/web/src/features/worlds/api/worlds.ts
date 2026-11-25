@@ -9,6 +9,6 @@ export type WorldDetail={id:string;revision:number;specVersion:string;name:strin
  description:string|{type:'component';component:string}|null;characters:Character[];openings:Opening[];
  lorebook:{entries:LoreEntry[]}|null;stateDefinition:StateSchema|null;
  components:Array<{id:string;path?:string;component?:string}>|null;stageComponent:string|null;messageRender:unknown;extensions:unknown;
- defaultPresetId:string|null;defaultApiModelConfigId:string|null;createdAt:number;updatedAt:number};
-export type WorldPatch=Partial<Pick<WorldDetail,'name'|'tags'|'defaultPresetId'|'defaultApiModelConfigId'|'coverMosaicEnabled'>>;
+ defaultPresetId:string|null;defaultReplyAssistPresetId:string|null;defaultApiModelConfigId:string|null;createdAt:number;updatedAt:number};
+export type WorldPatch=Partial<Pick<WorldDetail,'name'|'tags'|'defaultPresetId'|'defaultReplyAssistPresetId'|'defaultApiModelConfigId'|'coverMosaicEnabled'>>;
 export type Session={id:string;worldId:string;title:string|null;updatedAt:number;cover:string|null};

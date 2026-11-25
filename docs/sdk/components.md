@@ -7,11 +7,20 @@
 | API 与环境 | 调用示例 | 使用方法和限制 |
 | --- | --- | --- |
 | `SR.WorldStory` · 舞台 | `<SR.WorldStory showState={false} />` | 默认 `showState=true`。绘制当前会话正文、消息匹配组件与历史分页，不显示「故事」标题。`showState=false` 会同时移除状态面板入口及整条工具栏，适合已有自定义侧栏的舞台。行动建议由独立组件显示；宿主仍拥有输入框。 |
+| `SR.LoadingText` / `LoadingText` · 舞台、独立宿主 | `<SR.LoadingText text="正在生成故事…" />` | `LoadingTextProps` 接收必填 `text: string` 和可选 `className`，无需会话 Provider。完整文案占位，逐字入场后循环播放字形内高光；空字符串不渲染。 |
 | `SR.ActionSuggestions` · 舞台 | `<SR.ActionSuggestions />` | 读取当前行动建议，点击后替换并展开宿主草稿。组件不定位消息、不读取历史，也不直接发送；在 Stage 顶层确认 items 非空后，连同整个行动区容器一起挂载。 |
 | `WorldDocumentRenderer` · 舞台 | `<WorldDocumentRenderer content={'## 店规\n先入座'} density="chat" className="notice" />` | `WorldDocumentRendererProps` 包含必填的字符串 content、可选 density（reading，默认；或 chat）和 className。舞台入口使用当前 iframe 内的内联文本渲染。 |
 | `WorldDocumentContent` · 舞台、预览 | `<WorldDocumentContent content={'<h2>店规</h2><p>今日有雨</p>'} />` | 字符串可含 Markdown 或 HTML。使用文档清洗规则，可保留允许的作者样式。嵌入按钮、脚本和表单不能用来实现交互，交互请直接写 React 组件。 |
 | `RichText` · 舞台、预览 | `<RichText text="**掌柜**推开了门。" />` | 参数名为 `text`，内联显示经过清洗的 Markdown/HTML，适合短说明和普通正文。需要保留文档级安全样式时用 `WorldDocumentContent`。 |
 | `SRAssetProvider` · 舞台或宿主集成 | `<SRAssetProvider baseUrl={base}><Cover /></SRAssetProvider>` | `baseUrl: string \| null` 与 children 必需。平台已经为卡内组件提供上下文。开发独立渲染宿主时，用当前世界的资源端点包裹组件；覆盖上下文会影响其所有后代。 |
+
+## 等待文字
+
+`LoadingText` 使用 60ms 字素间隔和 400ms 单字动画，从透明、轻微模糊和下移过渡到正常位置。最后一个字完成后等待 200ms，再循环从左向右扫过白色高光：每圈 2 秒，其中扫光 1.2 秒、停顿 0.8 秒。文字底色为中灰色，高光只覆盖文字笔画，完整可视文案从挂载时即占据布局空间。
+
+同一 `text` 的普通重渲染保留动画进度；文案改变时，新文案重新播放一次入场。组件按 Unicode 字素处理组合字符和 emoji；屏幕阅读器只读取完整文案一份，动画不逐字改写可访问文本。启用 `prefers-reduced-motion` 时直接显示静态文字。
+
+WorldStory 的运行阶段、等待正文、历史首读/翻页、思考中与状态面板加载均复用组件；终态、错误与内容完整性提示保留静态。平台舞台经 `@sillyrealms/sdk/world-story.css` 自动加载样式，世界卡不导入 CSS 子路径。独立宿主单独使用组件时，加载 `@sillyrealms/sdk/loading-text.css` 即可。
 
 ## 行动建议与舞台组合
 

@@ -15,7 +15,7 @@ import type {WorldDetail,WorldPatch} from './api/worlds';
 import {parseTags} from './management';
 import styles from './WorldDetailPage.module.css';
 type Props={world:WorldDetail;onSaved:(world:WorldDetail)=>void};
-const draftOf=(world:WorldDetail)=>({name:world.name,tags:world.tags.join('，'),defaultPresetId:world.defaultPresetId??'',defaultApiModelConfigId:world.defaultApiModelConfigId??'',coverMosaicEnabled:world.coverMosaicEnabled});
+const draftOf=(world:WorldDetail)=>({name:world.name,tags:world.tags.join('，'),defaultPresetId:world.defaultPresetId??'',defaultReplyAssistPresetId:world.defaultReplyAssistPresetId??'',defaultApiModelConfigId:world.defaultApiModelConfigId??'',coverMosaicEnabled:world.coverMosaicEnabled});
 export function WorldMetadataForm(props:Props){
   return <WorldForm {...props} kind="metadata"/>;}
 export function WorldDefaultsForm(props:Props){
@@ -37,6 +37,7 @@ function WorldForm({world,onSaved,kind}:Props&{kind:'metadata'|'defaults'}){
   }else{
    if(draft.coverMosaicEnabled!==baseline.coverMosaicEnabled)patch.coverMosaicEnabled=draft.coverMosaicEnabled;
    if((draft.defaultPresetId||null)!==baseline.defaultPresetId)patch.defaultPresetId=draft.defaultPresetId||null;
+   if((draft.defaultReplyAssistPresetId||null)!==baseline.defaultReplyAssistPresetId)patch.defaultReplyAssistPresetId=draft.defaultReplyAssistPresetId||null;
    if((draft.defaultApiModelConfigId||null)!==baseline.defaultApiModelConfigId)patch.defaultApiModelConfigId=draft.defaultApiModelConfigId||null;
   }
   if(!Object.keys(patch).length){setDraft(draftOf(baseline));return;}
@@ -57,7 +58,7 @@ function WorldForm({world,onSaved,kind}:Props&{kind:'metadata'|'defaults'}){
    <label>{t('tags')}<Textarea value={draft.tags} disabled={busy} onChange={e=>change({tags:e.target.value})} rows={2} placeholder={t('separateWithCommasOrLineBreaks')}/></label>
   </div>:<>
    <div className={styles.displaySetting}><label htmlFor="world-cover-mosaic">{t('coverMosaic')}</label><Switch id="world-cover-mosaic" checked={draft.coverMosaicEnabled} disabled={busy} label={t('coverMosaic')} onChange={coverMosaicEnabled=>change({coverMosaicEnabled})}/></div>
-   <p className={styles.stateIntro}>{t('prefillsNewSessionsOnlyCanBeLeft')}</p><DefaultsFields draft={draft} change={change} busy={busy}/>
+   <DefaultsFields draft={draft} change={change} busy={busy}/>
   </>}
   {error&&<ErrorNotice message={error}/>}
   <div className="actions"><Button variant="primary" loading={busy} disabled={!dirty} onClick={()=>void save()}>{t(kind==='metadata'?'worlds:saveMetadata':'worlds:saveConfiguration')}</Button>{dirty&&<Button disabled={busy} variant="ghost" onClick={()=>setReloadConfirm(true)}>{t('discardAndReload')}</Button>}{conflict&&!dirty&&<Button onClick={()=>setReloadConfirm(true)}>{t('reload')}</Button>}</div>
@@ -70,7 +71,8 @@ function DefaultsFields({draft,change,busy}:{draft:ReturnType<typeof draftOf>;ch
  const presets=usePresetStore(),{modelsRevision}=useManagement();
  const models=usePagedResource<ModelConfig>('v1/api-model-configs?limit=100',modelsRevision,true);
  return <><div className="editor-form">
-  <label>{t('preset')}<Select aria-label={t('worldDefaultPreset')} value={draft.defaultPresetId} disabled={busy} onChange={e=>change({defaultPresetId:e.target.value})}><option value="">{t('notSet')}</option>{draft.defaultPresetId&&!presets.presets.some(p=>p.id===draft.defaultPresetId)&&<option value={draft.defaultPresetId}>{t('currentPresetListNotLoaded')}</option>}{presets.presets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></label>
+  <label>{t('sessions:narrativePreset')}<Select aria-label={t('worldDefaultPreset')} value={draft.defaultPresetId} disabled={busy} onChange={e=>change({defaultPresetId:e.target.value})}><option value="">{t('notSet')}</option>{draft.defaultPresetId&&!presets.presets.some(p=>p.id===draft.defaultPresetId)&&<option value={draft.defaultPresetId}>{t('currentPresetListNotLoaded')}</option>}{presets.presets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></label>
   <label>{t('model')}<Select aria-label={t('worldDefaultModel')} value={draft.defaultApiModelConfigId} disabled={busy} onChange={e=>change({defaultApiModelConfigId:e.target.value})}><option value="">{t('notSet')}</option>{draft.defaultApiModelConfigId&&!models.page?.items.some(m=>m.id===draft.defaultApiModelConfigId)&&<option value={draft.defaultApiModelConfigId}>{t('currentModelListNotLoaded')}</option>}{models.page?.items.map(m=><option key={m.id} value={m.id}>{m.name}{m.credentialStatus==='configured'?'':m.credentialStatus==='missing'?t('noSavedCredentials'):t('credentialStorageUnavailable')}</option>)}</Select></label>
- </div>{presets.error&&<ErrorNotice message={presets.error} onRetry={presets.reload}/>}{models.error&&<ErrorNotice message={models.error} onRetry={models.reload}/>}</>;
+  <label>{t('sessions:assistPreset')}<Select aria-label={t('sessions:assistPreset')} value={draft.defaultReplyAssistPresetId} disabled={busy} onChange={e=>change({defaultReplyAssistPresetId:e.target.value})}><option value="">{t('sessions:followAppDefault')}</option>{draft.defaultReplyAssistPresetId&&!presets.replyPresets.some(p=>p.id===draft.defaultReplyAssistPresetId)&&<option value={draft.defaultReplyAssistPresetId}>{t('currentPresetListNotLoaded')}</option>}{presets.replyPresets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></label>
+ </div>{presets.error&&<ErrorNotice message={presets.error} onRetry={presets.reload}/>}{presets.replyCatalog.error&&<ErrorNotice message={presets.replyCatalog.error} onRetry={presets.replyCatalog.reload}/>}{models.error&&<ErrorNotice message={models.error} onRetry={models.reload}/>}</>;
 }

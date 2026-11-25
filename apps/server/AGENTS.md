@@ -28,7 +28,7 @@
 - 会话路由先经 SessionService 检查真实会话，再执行可选 canAccessSession；等待后先检查关闭信号，再确认会话仍存在。访问适配器不能代替会话存在性检查。
 - 普通 HTTP 统一 `{ success, errorCode, errorMessage, data }`，错误集中 errors.ts 映射并保留正确状态码；未知异常不泄漏 SQL、路径或堆栈。SSE/文件下载保留原始正文，传输开始前错误仍用 JSON 失败包络。
 - routes 使用 http/response.ts，HTTP 正文/query/游标处理留在传输层，业务校验留在 Service。跨模块列表/详情展示投影由 route 调公开 Service 组合。接口契约见 `../../docs/runtime/server-http.md`。
-- V2 使用独立数据根目录和数据库，user_version=10；只迁移结构匹配的 V2 v1–v9 库，依次添加预设 revision、世界 revision、导入时间索引、消息状态快照索引、app_settings.locale 及其三语取值约束、帮答引用、会话目标和可空的会话帮答预设；v9 清空旧会话和 entries，改用 sessions.runtime_config 保存会话配置并以虚拟列维护外键；v10 仅为 app_settings 添加 cover_mosaic_density（8–64 整数、默认 24），保留 v9 全部数据。不自动改造/清空旧 Server 库，不导入旧 Server 的建表、恢复或执行逻辑。现有 V2 设置记录保留原值；缺失的 V2 内置预设与设置由启动 initialize 幂等补齐，不导入旧 Server 数据。
+- V2 使用独立数据根目录和数据库，user_version=11；只迁移结构匹配的 V2 v1–v10 库，依次添加预设 revision、世界 revision、导入时间索引、消息状态快照索引、app_settings.locale 及其三语取值约束、帮答引用、会话目标和可空的会话帮答预设；v9 清空旧会话和 entries，改用 sessions.runtime_config 保存会话配置并以虚拟列维护外键；v10 仅为 app_settings 添加 cover_mosaic_density（8–64 整数、默认 24），保留 v9 全部数据；v11 仅为 worlds 添加可空的 default_reply_assist_preset_id，保留既有世界、会话及默认项。不自动改造/清空旧 Server 库，不导入旧 Server 的建表、恢复或执行逻辑。现有 V2 设置记录保留原值；缺失的 V2 内置预设与设置由启动 initialize 幂等补齐，不导入旧 Server 数据。
 - 本轮仅做函数级测试、typecheck、lint，不启动真实服务或执行 HTTP/浏览器链路验证。函数测试使用内存或临时库、临时文件以及最小凭据替身，不访问真实 Keychain；架构测试检查入口/层级/SQL属主，类型测试检查 Reader 不具有写方法。关闭 HTTP/SSE 后再关库。
 
 ## 运行写入锁
