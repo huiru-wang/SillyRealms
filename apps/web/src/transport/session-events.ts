@@ -1,5 +1,6 @@
 import type {SessionEvent} from '../../../../packages/sr-sdk/src/stage-contract.ts';
 import {isSpriteSnapshot} from '../features/character-sprites/items.ts';
+import {isReleaseVersion} from '@sillyrealms/sdk/release-version';
 
 type AssistFields={sessionId:string;requestId:string;timestamp:number};
 export type ReplyAssistEvent =
@@ -16,9 +17,9 @@ export const SESSION_EVENT_NAMES = [
   'session.created', 'run.created', 'run.summarizing', 'run.summarized',
   'run.delta', 'run.usage', 'run.completed', 'run.stopped',
   'reply_assist.delta', 'reply_assist.completed', 'reply_assist.stopped',
-  'state.changed', 'action_suggestions.created', 'character_sprite.changed', 'message.deleted',
+  'state.changed', 'action_suggestions.created', 'character_sprite.changed', 'message.deleted', 'world.updated',
 ] as const;
-export type SessionEventNamespace = 'session' | 'message' | 'run' | 'state' | 'action_suggestions' | 'character_sprite' | 'reply_assist' | '*';
+export type SessionEventNamespace = 'session' | 'message' | 'world' | 'run' | 'state' | 'action_suggestions' | 'character_sprite' | 'reply_assist' | '*';
 export type SessionConnection = {
   sessionId: string;
   status: 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed';
@@ -50,6 +51,9 @@ function wireEvent(name: typeof SESSION_EVENT_NAMES[number], value: unknown, ses
     if (!['global', 'session', 'message'].includes(String(data.scope)) || typeof data.path !== 'string' || !Object.hasOwn(data, 'value')) return null;
   } else {
     if (data.sessionId !== sessionId) return null;
+    if (name === 'world.updated' && (typeof data.worldId !== 'string' || !data.worldId ||
+      !isReleaseVersion(data.version) || !Number.isSafeInteger(data.revision) || Number(data.revision)<1 ||
+      typeof data.timestamp !== 'number' || !Number.isFinite(data.timestamp))) return null;
     if (name.startsWith('run.') || name === 'action_suggestions.created' || name === 'character_sprite.changed' || name === 'message.deleted') {
       if (typeof data.runId !== 'string' || !data.runId) return null;
     }

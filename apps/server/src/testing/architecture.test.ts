@@ -81,6 +81,23 @@ describe('Server architecture boundaries', () => {
     expect(await boundaryMessages('usecases/context/context.test.ts', "import { projectHistory } from './stages/history/index.js';")).toEqual([]);
   });
 
+  it('exposes world updates only through its explicit public entry', async () => {
+    for (const file of ['routes/example.ts', 'routes/example.test.ts', 'usecases/example.ts']) {
+      for (const statement of [
+        "import { refresh } from '../usecases/world-updates/check.js';",
+        "export type { WorldReleaseRecord } from '../usecases/world-updates/types.js';",
+        "const internals = import('../usecases/world-updates/apply.js');",
+        "type Input = import('../usecases/world-updates/types.js').ApplyWorldVersionInput;",
+        "const internals = require('../usecases/world-updates/downloads.js');",
+        "import { createWorldUpdates } from '../usecases/world-updates';",
+      ]) expect(await boundaryMessages(file, statement)).toContain('worldUpdatesEntry');
+      expect(await boundaryMessages(file, "import { createWorldUpdates, type WorldUpdates } from '../usecases/world-updates/index.js';")).toEqual([]);
+    }
+    expect(await boundaryMessages('usecases/world-updates/index.ts', "export { refresh } from './check.js'; export type { WorldReleaseRecord } from './types.js';")).toEqual([]);
+    expect(await boundaryMessages('usecases/world-updates/index.ts', "export * from './types.js';")).toContain('wildcard');
+    expect(await boundaryMessages('usecases/world-updates/downloads.test.ts', "import { isPublicAddress } from './downloads.js';")).toEqual([]);
+  });
+
   it('keeps context stages independent of narrative execution and event transport', async () => {
     for (const target of ['../narrative/index.js', '../narrative/model-call.js', '../create-session.js', '../../infrastructure/events/event-hub.js']) {
       expect(await boundaryMessages('usecases/context/prepare.ts', `import type { Dependency } from '${target}';`)).toContain('contextDependency');

@@ -32,6 +32,27 @@ entry 是已保存的完整首条消息，包含 runId、seq、替换 {{user}} �
 
 创建没有执行叙事，不发布 run.created/run.delta/run.usage/run.completed 或 state.changed。由于首次创建时可能没有 SSE 连接，POST 响应同时提供 item 与 entry；初始显示以响应或历史查询为准，不等待创建事件。失败回滚时不发布任何事件。
 
+## 世界内容更新
+
+在同一 worldId 下成功应用指定发行版后，向该世界每个关联会话发布一次：
+
+~~~ts
+{
+  event: 'world.updated',
+  data: {
+    sessionId: string,
+    worldId: string,
+    version: string,
+    revision: number,
+    timestamp: number
+  }
+}
+~~~
+
+version 为实际安装的 publication.release.version，revision 为已提交的世界修订号，timestamp 为 Unix 毫秒。事件只在正式内容成功替换并提交后发布；检查目录、查看说明、下载准备及失败/回滚不发送。它不带 runId，不属于某轮模型输出，也不增加专用更新 SSE。
+
+接收方继续通过已授权的 `/sessions/:id/events` 连接读取，验证 sessionId 与所属 worldId 后重新获取世界详情、组件及相关资源。发行版本变化重建预览或舞台，保留会话工作区、消息历史和输入草稿。事件本身不重放；初次进入、连接恢复和显式同步重读世界数据，不能只靠曾收到的通知判断版本。完整覆盖边界见[世界版本接口](server-http.md#世界版本与覆盖)。
+
 ## 运行事件契约
 
 生产中的每个 run 事件都包含：

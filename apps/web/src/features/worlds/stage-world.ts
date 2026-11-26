@@ -4,6 +4,7 @@ import type {MessageRule} from '../../../../../packages/sr-sdk/src/story-types.j
 import type {WorldDetail} from './api/worlds.js';
 import {stateManifest,type StateManifest} from '../state/manifest.ts';
 import {worldAssetBaseUrl} from './resources.ts';
+import {previewContentIdentity} from './preview-cache.ts';
 
 type WorldRequest=<T>(path:string,options?:RequestInit)=>Promise<T>;
 export type StageWorld={
@@ -12,6 +13,7 @@ export type StageWorld={
 };
 export type StageWorldDependencies={
   request?:WorldRequest;origin?:string;
+  previous?:StageWorld;
   loadComponents?:(world:WorldDetail,signal?:AbortSignal)=>Promise<CompiledComponents>;
 };
 const requestWorld:WorldRequest=async<T>(path:string,options?:RequestInit)=>(await import('../../api')).api<T>(path,options);
@@ -32,6 +34,10 @@ export async function loadStageWorld(worldId:string,signal?:AbortSignal,dependen
   const world=response?.item;
   if(!world||world.id!==worldId||!Array.isArray(world.characters)||!Array.isArray(world.openings)||
     (world.components!==null&&!Array.isArray(world.components)))throw Error(i18n.t('worlds:invalidWorldResponse'));
+  const previous=dependencies.previous;
+  if(previous&&previewContentIdentity(previous.world)===previewContentIdentity(world)){
+    return {...previous,world};
+  }
   const modules=await (dependencies.loadComponents??loadComponents)(world,signal);
   signal?.throwIfAborted();
   const rendering=world.messageRender&&typeof world.messageRender==='object'?world.messageRender as {rules?:unknown}:null;

@@ -12,7 +12,8 @@
     "./loading-text.css": "./src/loading-text.css",
     "./action-suggestions.css": "./src/action-suggestions.css",
     "./world-document": "./src/world-document/WorldDocumentRenderer.tsx",
-    "./locale": "./src/locale.ts"
+    "./locale": "./src/locale.ts",
+    "./release-version": "./src/release-version.ts"
   },
   "peerDependencies": {
     "react": "19.2.0",

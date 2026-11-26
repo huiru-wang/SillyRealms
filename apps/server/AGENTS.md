@@ -28,8 +28,16 @@
 - 会话路由先经 SessionService 检查真实会话，再执行可选 canAccessSession；等待后先检查关闭信号，再确认会话仍存在。访问适配器不能代替会话存在性检查。
 - 普通 HTTP 统一 `{ success, errorCode, errorMessage, data }`，错误集中 errors.ts 映射并保留正确状态码；未知异常不泄漏 SQL、路径或堆栈。SSE/文件下载保留原始正文，传输开始前错误仍用 JSON 失败包络。
 - routes 使用 http/response.ts，HTTP 正文/query/游标处理留在传输层，业务校验留在 Service。跨模块列表/详情展示投影由 route 调公开 Service 组合。接口契约见 `../../docs/runtime/server-http.md`。
-- V2 使用独立数据根目录和数据库，user_version=11；只迁移结构匹配的 V2 v1–v10 库，依次添加预设 revision、世界 revision、导入时间索引、消息状态快照索引、app_settings.locale 及其三语取值约束、帮答引用、会话目标和可空的会话帮答预设；v9 清空旧会话和 entries，改用 sessions.runtime_config 保存会话配置并以虚拟列维护外键；v10 仅为 app_settings 添加 cover_mosaic_density（8–64 整数、默认 24），保留 v9 全部数据；v11 仅为 worlds 添加可空的 default_reply_assist_preset_id，保留既有世界、会话及默认项。不自动改造/清空旧 Server 库，不导入旧 Server 的建表、恢复或执行逻辑。现有 V2 设置记录保留原值；缺失的 V2 内置预设与设置由启动 initialize 幂等补齐，不导入旧 Server 数据。
+- V2 使用独立数据根目录和数据库，user_version=12；只迁移结构匹配的 V2 v1–v11 库，依次添加预设 revision、世界 revision、导入时间索引、消息状态快照索引、app_settings.locale 及其三语取值约束、帮答引用、会话目标和可空的会话帮答预设；v9 清空旧会话和 entries，改用 sessions.runtime_config 保存会话配置并以虚拟列维护外键；v10 仅为 app_settings 添加 cover_mosaic_density（8–64 整数、默认 24），保留 v9 全部数据；v11 仅为 worlds 添加可空的 default_reply_assist_preset_id，保留既有世界、会话及默认项；v12 仅为 worlds 添加可空 publication_json，保留所有现有数据。不自动改造/清空旧 Server 库，不导入旧 Server 的建表、恢复或执行逻辑。现有 V2 设置记录保留原值；缺失的 V2 内置预设与设置由启动 initialize 幂等补齐，不导入旧 Server 数据。
 - 本轮仅做函数级测试、typecheck、lint，不启动真实服务或执行 HTTP/浏览器链路验证。函数测试使用内存或临时库、临时文件以及最小凭据替身，不访问真实 Keychain；架构测试检查入口/层级/SQL属主，类型测试检查 Reader 不具有写方法。关闭 HTTP/SSE 后再关库。
+
+## 世界卡发行与 OTA
+
+- 世界卡 0.2 使用正式 data.publication / WorldPublication / publication_json，0.1 保持兼容，缺省不推断作者或作品身份。publication 是声明式发行信息，不包含运行状态和检查缓存，也不注入模型提示词。公开协议与作者流程见 ../../docs/reference/world-updates.md、../../docs/creator/world-publishing.md。
+- usecases/world-updates/index.ts 是唯一公开入口；一个 createWorldUpdates 实例由 usecases.ts 创建并供路由、启动、删除与关闭共用。监听后仅自动检查一轮，用户显式刷新可再次请求；普通 GET 和新导入不触发网络。目录、最近尝试和检查任务不进入 RuntimeCache；只有成功原始目录写入 worlds/<worldId>/releases.json，失败保留原文与 mtime。
+- 用例只经 WorldService 读写目录和应用已验证暂存包，文件路径与按世界串行仍归 worlds/files。保存前在同一队列内复核来源和任务有效性；删除事务提交后同步 cancelForWorld 再清文件。app.shutdown 取消网络并等待所有检查及应用/补偿结束。
+- apply-version 下载和验证在锁外，最终替换持有按对象身份验证的 WorldUpdatePermit。只替换 source/package，保留根部 releases 文件、本地 name/tags/mosaic/defaults、worldId/createdAt 及三 scope 状态；当前绑定的 update_url 不随回退改变。state 根/类型、数值范围及已有玩家引用不兼容时拒绝应用。Repository CAS 提交成功且释放占用后，向既有会话发送 world.updated。
+- 正式覆盖与同世界叙事/帮答、新会话、会话和状态写入互斥。读组件、原件、资源、导出在 await 前后校验 revision 及 read epoch；覆盖尝试即使回滚也使旧读取失效。资源响应使用 ETag/no-cache，不向 assetBaseUrl 加入 query。仅忙碌预检查不占用或递增 epoch。
 
 ## 运行写入锁
 

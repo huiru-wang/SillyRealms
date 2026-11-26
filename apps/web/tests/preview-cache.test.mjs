@@ -38,6 +38,9 @@ test('management saves preserve preview identity; world or author source changes
   assert.equal(previewContentIdentity({...structuredClone(world),name:'Renamed',revision:2,tags:['new']}),identity);
   assert.notEqual(previewContentIdentity({...world,id:'two'}),identity);
   assert.notEqual(previewContentIdentity({...world,components:[{id:'entry',component:'edited'}]}),identity);
+  const published={...world,components:[{id:'entry',path:'components/Main.tsx'}],publication:{release:{version:'1.2.0'}}};
+  assert.notEqual(previewContentIdentity({...published,publication:{release:{version:'1.3.0'}}}),previewContentIdentity(published));
+  assert.equal(previewContentIdentity({...published,revision:9,latestVersion:'1.3.0'}),previewContentIdentity(published));
 });
 
 test('new previews share both in-flight source loading and its successful result',async()=>{

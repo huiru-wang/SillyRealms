@@ -54,7 +54,8 @@ export type CharacterSpriteChangedEvent = {
   data: {sessionId: string; runId: string; messageId: string; items: CharacterSpriteItem[]};
 };
 export type MessageDeletedEvent = {event: 'message.deleted'; data: {sessionId: string; runId: string; assistantEntryId: string; messageId: string; tipEntryId: string | null}};
-export type SessionEvent = NarrativeEvent | MessageDeletedEvent | StateChangedEvent | SuggestionsCreatedEvent | CharacterSpriteChangedEvent |
+export type WorldUpdatedEvent = {event: 'world.updated'; data: {sessionId: string; worldId: string; version: string; revision: number; timestamp: number}};
+export type SessionEvent = NarrativeEvent | MessageDeletedEvent | StateChangedEvent | SuggestionsCreatedEvent | CharacterSpriteChangedEvent | WorldUpdatedEvent |
   {event: 'session.created'; data: {sessionId: string; tipEntryId: string; timestamp: number; entry: Entry}};
 
 /** Presentation-only fields: saved is confirmed by persisted entries, never by model finish. */

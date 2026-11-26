@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
 import { getMimeType } from 'hono/utils/mime';
 import { AppError } from '../errors.js';
@@ -10,6 +11,8 @@ import type { SessionService } from '../modules/sessions/service.js';
 import { worldImportLimits, type World, type WorldDownload, type WorldManagementPatch, type WorldService } from '../modules/worlds/service.js';
 import type { ImportWorld } from '../usecases/import-world.js';
 import type { ExportWorld } from '../usecases/export-world.js';
+import type { RuntimeCache } from '../infrastructure/cache/index.js';
+import type { ApplyWorldVersionInput, WorldUpdates, WorldVersionSummary } from '../usecases/world-updates/index.js';
 
 const mediaTypes: Record<string, string> = {
   ts: 'text/plain', tsx: 'text/plain', jsx: 'text/plain',
@@ -48,7 +51,7 @@ async function fileResponse(file: WorldDownload, head: boolean, attachment = fal
 
 function worldDetail(world: World) {
   return {
-    id: world.id, revision: world.revision, specVersion: world.specVersion, name: world.name,
+    id: world.id, revision: world.revision, specVersion: world.specVersion, publication: world.publication, name: world.name,
     description: world.description, cover: world.cover, coverMosaicEnabled: world.coverMosaicEnabled, tags: world.tags, characters: world.characters,
     openings: world.openings, lorebook: world.lorebook, stateDefinition: world.stateDefinition,
     messageRender: world.messageRender, components: world.components, stageComponent: world.stageComponent,
@@ -57,12 +60,49 @@ function worldDetail(world: World) {
   };
 }
 
-export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld, deleteWorld, canAccessSession, shutdownSignal }: {
+export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld, deleteWorld, worldUpdates, cache, canAccessSession, shutdownSignal }: {
   worlds: WorldService; sessions: SessionService; importWorld?: ImportWorld; exportWorld?: ExportWorld;
+  worldUpdates?: WorldUpdates; cache?: RuntimeCache;
   deleteWorld?: DeleteWorld; canAccessSession?: SessionAccessCheck; shutdownSignal?: AbortSignal;
 }): Hono {
   const routes = new Hono();
-  routes.get('/', c => {
+  const fallbackSummary = (world: Pick<World, 'publication'>): WorldVersionSummary => ({
+    currentVersion: world.publication?.release.version ?? null, latestVersion: null,
+    updateStatus: world.publication?.update_url ? 'not_checked' : 'no_source',
+  });
+  async function detail(world: World) {
+    const epoch = cache?.captureWorldRead(world.id);
+    const summaries = await worldUpdates?.getSummaries([world]);
+    cache?.assertWorldRead(world.id, epoch);
+    if (worlds.require(world.id).revision !== world.revision) throw new AppError('WORLD_REVISION_CONFLICT');
+    return { ...worldDetail(world), ...(summaries?.[world.id] ?? fallbackSummary(world)) };
+  }
+  async function contentResponse(
+    worldId: string, path: string, file: WorldDownload & { revision?: number; readEpoch?: number },
+    head: boolean, ifNoneMatch: string | undefined, attachment = false,
+  ): Promise<Response> {
+    let world: World;
+    try {
+      cache?.assertWorldRead(worldId, file.readEpoch);
+      world = worlds.require(worldId);
+      if (file.revision !== undefined && world.revision !== file.revision) throw new AppError('WORLD_REVISION_CONFLICT');
+    } catch (error) {
+      await file.body.cancel().catch(() => {});
+      throw error;
+    }
+    const identity = JSON.stringify([world.id, world.publication?.package_id ?? null,
+      world.publication?.release.version ?? null, world.revision, path, file.size]);
+    const etag = '"' + createHash('sha256').update(identity).digest('hex') + '"';
+    if (ifNoneMatch?.split(',').some(value => value.trim().replace(/^W\//, '') === etag || value.trim() === '*')) {
+      await file.body.cancel();
+      return new Response(null, { status: 304, headers: { ETag: etag, 'Cache-Control': 'no-cache', 'Access-Control-Allow-Origin': '*' } });
+    }
+    const response = await fileResponse(file, head, attachment);
+    response.headers.set('ETag', etag);
+    response.headers.set('Cache-Control', 'no-cache');
+    return response;
+  }
+  routes.get('/', async c => {
     if (c.req.query('offset') !== undefined || c.req.query('tagId') !== undefined) throw new AppError('INVALID_REQUEST');
     const q = (c.req.query('q') ?? '').trim(), tag = (c.req.query('tag') ?? '').trim();
     const scope = JSON.stringify(['worlds', q, tag]);
@@ -75,7 +115,8 @@ export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld, 
     }
     const page = worlds.listPage({ q, tag: tag || undefined, before, limit: numberQuery(c, 'limit') ?? 24 });
     const counts = sessions.countByWorldIds(page.items.map(world => world.id));
-    const items = page.items.map(world => ({ ...world, sessionCount: counts[world.id] ?? 0 }));
+    const summaries = await worldUpdates?.getSummaries(page.items);
+    const items = page.items.map(world => ({ ...world, ...(summaries?.[world.id] ?? fallbackSummary(world)), sessionCount: counts[world.id] ?? 0 }));
     const last = items.at(-1);
     return success(c, { items, hasMore: page.hasMore, nextCursor: page.hasMore && last ? encodeCursor(scope, { createdAt: last.createdAt, id: last.id }) : null });
   });
@@ -94,7 +135,7 @@ export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld, 
     if (extension !== 'json' && extension !== 'zip') throw new AppError('INVALID_WORLD_ORIGINAL_FORMAT');
     if (file.size > worldImportLimits[extension]) throw new AppError('PAYLOAD_TOO_LARGE');
     const world = await importWorld({ format: extension, bytes: new Uint8Array(await file.arrayBuffer()) });
-    return success(c, { item: worldDetail(world) }, 201);
+    return success(c, { item: await detail(world) }, 201);
   });
   routes.get('/:id/export', async c => {
     if (!exportWorld) throw new AppError('SERVICE_UNAVAILABLE');
@@ -103,16 +144,42 @@ export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld, 
     return response;
   });
   routes.get('/:id/original', async c =>
-    fileResponse(await worlds.openOriginal(c.req.param('id'), c.req.raw.signal), c.req.method === 'HEAD', true));
+    contentResponse(c.req.param('id'), 'original', await worlds.openOriginal(c.req.param('id'), c.req.raw.signal),
+      c.req.method === 'HEAD', c.req.header('if-none-match'), true));
   routes.get('/:id/resources/:path{.+}', async c =>
-    fileResponse(await worlds.openPackageFile(c.req.param('id'), c.req.param('path'), c.req.raw.signal), c.req.method === 'HEAD'));
+    contentResponse(c.req.param('id'), c.req.param('path'), await worlds.openPackageFile(c.req.param('id'), c.req.param('path'), c.req.raw.signal),
+      c.req.method === 'HEAD', c.req.header('if-none-match')));
   routes.get('/:id/character-sprites', c => success(c, worlds.getCharacterSpriteCatalog(c.req.param('id'))));
-  routes.get('/:id/components', async c => success(c, await worlds.getComponents(c.req.param('id'))));
-  routes.get('/:id', c => success(c, { item: worldDetail(worlds.require(c.req.param('id'))) }));
+  routes.get('/:id/components', async c => {
+    const id = c.req.param('id'), epoch = cache?.captureWorldRead(id), revision = worlds.require(id).revision;
+    const components = await worlds.getComponents(id);
+    cache?.assertWorldRead(id, epoch);
+    if (worlds.require(id).revision !== revision) throw new AppError('WORLD_REVISION_CONFLICT');
+    c.header('Cache-Control', 'no-cache');
+    return success(c, components);
+  });
+  routes.get('/:id/versions', async c => {
+    if (!worldUpdates) throw new AppError('SERVICE_UNAVAILABLE');
+    c.header('Cache-Control', 'no-store');
+    return success(c, { item: await worldUpdates.getVersions(c.req.param('id')) });
+  });
+  routes.post('/:id/versions/refresh', async c => {
+    if (!worldUpdates) throw new AppError('SERVICE_UNAVAILABLE');
+    return success(c, { item: await worldUpdates.refresh(c.req.param('id')) });
+  });
+  routes.post('/:id/apply-version', async c => {
+    if (!worldUpdates) throw new AppError('SERVICE_UNAVAILABLE');
+    const world = await worldUpdates.applyVersion(c.req.param('id'), await readJson<ApplyWorldVersionInput>(c));
+    return success(c, { item: await detail(world) });
+  });
+  routes.get('/:id', async c => {
+    c.header('Cache-Control', 'no-cache');
+    return success(c, { item: await detail(worlds.require(c.req.param('id'))) });
+  });
   routes.patch('/:id', async c => {
     const item = worlds.updateManagement(c.req.param('id'), await readJson<WorldManagementPatch>(c));
     if (!item) throw new AppError('WORLD_NOT_FOUND');
-    return success(c, { item: worldDetail(item) });
+    return success(c, { item: await detail(item) });
   });
   routes.delete('/:id', async c => {
     if (!deleteWorld) throw new AppError('SERVICE_UNAVAILABLE');

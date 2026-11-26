@@ -21,7 +21,7 @@ export function createReplyAssist(deps: Dependencies) {
     const { requestId, draftText } = submission.parse(body);
     if (closing) throw new AppError('SERVER_SHUTTING_DOWN');
     const session = deps.sessions.require(sessionId);
-    const owner = deps.cache.acquireReplyAssist(sessionId, requestId);
+    const owner = deps.cache.acquireReplyAssist(sessionId, requestId, session.worldId);
     const controller = new AbortController(), { signal } = controller;
     const run: Active = { requestId, controller, completion: Promise.resolve() };
     active.set(sessionId, run);

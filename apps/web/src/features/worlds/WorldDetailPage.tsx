@@ -9,7 +9,10 @@ import {WorldDocumentRenderer} from '@sillyrealms/sdk/world-document';
 import {useSRAssetBaseUrl} from '@sillyrealms/sdk';
 import {WorldAssetsProvider} from '../../world-assets';
 import {Modal} from '../../components/ui/Modal';
-import type {Character,WorldDetail} from './api/worlds';
+import type {Character,WorldDetail,WorldVersionsView} from './api/worlds';
+import {api} from '../../api';
+import {WorldPublication} from './WorldPublication';
+import {worldReleaseIdentity} from './versions';
 import {safeImage} from './resources';
 import {usePagedResource,useResource} from '../../data';
 import {useManagement} from '../../app/ManagementData';
@@ -57,7 +60,7 @@ function restoreRoleAnchor(strip:HTMLDivElement,anchor:RoleAnchor,expected:WeakM
   expected.set(strip,left);
   strip.scrollLeft=left;
 }
-function RoleStrip({characters,compact,active,onChoose,onInspect,stripRef}:{characters:readonly Character[];compact:boolean;active:number;onChoose:(i:number)=>void;onInspect:(i:number)=>void;stripRef:RefObject<HTMLDivElement|null>}){
+function RoleStrip({characters,compact,active,onChoose,onInspect,stripRef,contentKey}:{characters:readonly Character[];compact:boolean;active:number;onChoose:(i:number)=>void;onInspect:(i:number)=>void;stripRef:RefObject<HTMLDivElement|null>;contentKey:string}){
   const {t} = useTranslation('worlds');
   const assetBaseUrl=useSRAssetBaseUrl();
   const navigateRoles=(event:KeyboardEvent<HTMLDivElement>)=>{
@@ -79,7 +82,7 @@ function RoleStrip({characters,compact,active,onChoose,onInspect,stripRef}:{char
     else if(item.right>view.right)strip.scrollLeft+=item.right-view.right+3;
   };
   return <div className={[styles.roleStrip,compact?styles.roleStripCompact:''].join(' ')} ref={stripRef} role="group" aria-label={t('worldCharacters')} data-role-strip={compact?'compact':'expanded'} onKeyDown={navigateRoles}>
-    {characters.map((character,i)=><div key={character.id} className={[styles.role,active===i?styles.roleActive:''].join(' ')} data-role-card={character.id}>
+    {characters.map((character,i)=><div key={contentKey+character.id} className={[styles.role,active===i?styles.roleActive:''].join(' ')} data-role-card={character.id}>
       <button type="button" data-role-index={i} data-role-action="details" className={styles.roleProfile} title={character.name} aria-label={t('worlds:characterIntroduction',{name:character.name})} onClick={()=>onInspect(i)}>
         <span className={styles.roleAvatar} aria-hidden="true">{safeImage(character.avatar,assetBaseUrl)?<img src={safeImage(character.avatar,assetBaseUrl)} alt=""/>:<span>{character.name.slice(0,1)}</span>}</span>
         <span className={styles.roleName}>{character.name}</span>
@@ -107,7 +110,12 @@ type DetailContentProps={section:Section;world:WorldDetail;characterId?:string;o
 const WorldDetailContent=memo(function WorldDetailContent(props:DetailContentProps){
   const {t} = useTranslation('worlds');
   const {section,world}=props;
-  const [openingIndex,setOpeningIndex]=useState(0);
+  const [openingId,setOpeningId]=useState(()=>world.openings[0]?.id??null);
+  const openingIndex=Math.max(0,world.openings.findIndex(item=>item.id===openingId));
+  const setOpeningIndex:Dispatch<SetStateAction<number>>=next=>{
+    const index=typeof next==='function'?next(openingIndex):next;
+    setOpeningId(world.openings[index]?.id??world.openings[0]?.id??null);
+  };
   const opening=world.openings[openingIndex];
   const active=section==='overview'&&world.description&&typeof world.description!=='string'
     ?{id:'introduction',entry:world.description.component,title:t('worldIntroduction')}
@@ -132,7 +140,7 @@ const WorldDetailContent=memo(function WorldDetailContent(props:DetailContentPro
     doc.addEventListener('touchstart',start,{passive:true});doc.addEventListener('touchend',end,{passive:true});
     frameCleanup.current=()=>{doc.removeEventListener('touchstart',start);doc.removeEventListener('touchend',end);};
   }}>
-    <SectionContent key={section} {...props} openingIndex={openingIndex} setOpeningIndex={setOpeningIndex}/>
+    <SectionContent key={section+worldReleaseIdentity(world)} {...props} openingIndex={openingIndex} setOpeningIndex={setOpeningIndex}/>
     <WorldComponentCache world={world} active={active}/>
   </div>;
 });
@@ -168,17 +176,39 @@ export function WorldDetailPage(){
   const resource=useResource<{item:WorldDetail}>(worldId?'v1/worlds/'+encodeURIComponent(worldId):null);
   const {refreshWorlds}=useManagement();
   const world=resource.value?.item;
-  const saved=(item:WorldDetail)=>{resource.replace({item});refreshWorlds();};
+  const currentWorld=useRef(world);currentWorld.current=world;
+  const summaryRead=useRef<AbortController|null>(null);
+  useEffect(()=>()=>summaryRead.current?.abort(),[worldId]);
+  const saved=(item:WorldDetail)=>{summaryRead.current?.abort();currentWorld.current=item;resource.replace({item});refreshWorlds();};
+  const summarize=(view:WorldVersionsView)=>{
+    const current=currentWorld.current;
+    if(!current||current.id!==view.worldId)return;
+    summaryRead.current?.abort();
+    if(view.currentVersion!==current.currentVersion){
+      // Another client may have installed a release since this detail was opened.
+      const controller=new AbortController();summaryRead.current=controller;
+      void api<{item:WorldDetail}>('v1/worlds/'+encodeURIComponent(current.id),{signal:controller.signal}).then(({item})=>{
+        if(!controller.signal.aborted&&currentWorld.current?.id===item.id)saved(item);
+      }).catch(()=>{/* Revision CAS protects an installation until the detail can be read again. */});
+      refreshWorlds();return;
+    }
+    saved({...current,currentVersion:view.currentVersion,latestVersion:view.latestVersion,updateStatus:view.updateStatus});
+  };
   if(!world)return <div className={styles.notFound}>{resource.error?<><h1>{t('couldNotLoadWorld')}</h1><p>{resource.error}</p><Button onClick={resource.reload}>{t('retry')}</Button> <Link to={libraryReturn(query.get('library'))}>{t('backToWorlds')}</Link></>:<p role="status">{t('loadingWorlds')}</p>}</div>;
-  return <WorldAssetsProvider worldId={world.id}><WorldDetailView key={world.id} world={world} onSaved={saved}/></WorldAssetsProvider>;
+  return <WorldAssetsProvider worldId={world.id}><WorldDetailView key={world.id} world={world} onSaved={saved} onSummary={summarize}/></WorldAssetsProvider>;
 }
-function WorldDetailView({world,onSaved}:{world:WorldDetail;onSaved:(world:WorldDetail)=>void}){
+function WorldDetailView({world,onSaved,onSummary}:{world:WorldDetail;onSaved:(world:WorldDetail)=>void;onSummary:(view:WorldVersionsView)=>void}){
   const {t} = useTranslation('worlds');
   const worldId=world.id;
   const assetBaseUrl=useSRAssetBaseUrl();
   const names=world.characters.map(character=>character.name);
   const [roleDialog,setRoleDialog]=useState<number|null>(null);
-  const [selectedRole,setSelectedRole]=useState(()=>world.characters.findIndex(character=>character.player_selectable));
+  const [selectedCharacterId,setSelectedCharacterId]=useState(()=>world.characters.find(character=>character.player_selectable)?.id??null);
+  const selectedIndex=world.characters.findIndex(character=>character.id===selectedCharacterId&&character.player_selectable);
+  const selectedRole=selectedIndex>=0?selectedIndex:world.characters.findIndex(character=>character.player_selectable);
+  const setSelectedRole=(index:number)=>{if(world.characters[index]?.player_selectable)setSelectedCharacterId(world.characters[index].id);};
+  const contentKey=worldReleaseIdentity(world);
+  useEffect(()=>setRoleDialog(null),[contentKey]);
   const [query,setQuery]=useSearchParams();
   const section=sections.find(item=>item.tab===query.get('tab'))?.name??'overview';
   const [progress,setProgress]=useState(0);
@@ -432,19 +462,20 @@ function WorldDetailView({world,onSaved}:{world:WorldDetail;onSaved:(world:World
         </div>
         <div className={styles.worldActionsSlot}><WorldActions world={world} onSaved={onSaved}/></div>
         <div className={styles.overviewTop}>
-          {safeImage(world.cover,assetBaseUrl)?<img className={styles.cover} src={safeImage(world.cover,assetBaseUrl)} alt=""/>:<div className={styles.cover} aria-hidden="true"/>}
+          {safeImage(world.cover,assetBaseUrl)?<img key={contentKey} className={styles.cover} src={safeImage(world.cover,assetBaseUrl)} alt=""/>:<div className={styles.cover} aria-hidden="true"/>}
           <div className={styles.worldText}>
             <h1 title={world.name}>{world.name}</h1>
             <div className={styles.metadata} aria-hidden={reducedMotion?progress>=.5:progress>=.35}>
+              <div className={styles.publicationRow}><WorldPublication world={world} onSummary={onSummary} onApplied={onSaved}/></div>
               <div className={styles.tags}>{world.tags?.map(c=><span key={c}>{c}</span>)}<span className={styles.worldFacts}>{t('worlds:characterCount',{count:names.length})}</span></div>
             </div>
           </div>
         </div>
         <div className={styles.overviewRoles} inert={!overviewRoleVisible} aria-hidden={!overviewRoleVisible}>
-          <RoleStrip characters={world.characters} compact={false} active={selectedRole} onChoose={i=>{if(world.characters[i]?.player_selectable)setSelectedRole(i);}} onInspect={setRoleDialog} stripRef={overviewRoles}/>
+          <RoleStrip characters={world.characters} compact={false} active={selectedRole} onChoose={setSelectedRole} onInspect={setRoleDialog} stripRef={overviewRoles} contentKey={contentKey}/>
         </div>
         <div className={styles.compactRoles} aria-label={t('worldContentNavigation')} inert={!compactVisible} aria-hidden={!compactVisible}>
-          <RoleStrip characters={world.characters} compact active={selectedRole} onChoose={i=>{if(world.characters[i]?.player_selectable)setSelectedRole(i);}} onInspect={setRoleDialog} stripRef={compactRoles}/>
+          <RoleStrip characters={world.characters} compact active={selectedRole} onChoose={setSelectedRole} onInspect={setRoleDialog} stripRef={compactRoles} contentKey={contentKey}/>
         </div>
       </section>
       <div className={styles.workspace} data-world-workspace>

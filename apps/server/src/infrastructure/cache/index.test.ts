@@ -56,3 +56,39 @@ describe('in-memory run write ownership', () => {
     expect(ERRORS.STATE_WRITE_LOCKED.status).toBe(409);
   });
 });
+
+describe('world update admission', () => {
+  it('excludes runs and assists in either direction and preserves permit identity', () => {
+    const cache = new RuntimeCache();
+    const run = cache.acquireRun(owner);
+    expect(() => cache.acquireWorldUpdate('world')).toThrow('WORLD_UPDATE_BUSY');
+    cache.releaseRun(run);
+    const assist = cache.acquireReplyAssist('one', 'assist', 'world');
+    expect(() => cache.acquireWorldUpdate('world')).toThrow('WORLD_UPDATE_BUSY');
+    cache.releaseReplyAssist(assist);
+    const permit = cache.acquireWorldUpdate('world');
+    expect(() => cache.acquireWorldUpdate('world')).toThrow('WORLD_UPDATE_BUSY');
+    expect(() => cache.acquireRun(owner)).toThrow('WORLD_UPDATE_IN_PROGRESS');
+    expect(() => cache.acquireReplyAssist('two', 'assist', 'world')).toThrow('WORLD_UPDATE_IN_PROGRESS');
+    expect(() => cache.assertWorldWrite('world', { ...permit })).toThrow('WORLD_UPDATE_IN_PROGRESS');
+    expect(() => cache.assertWorldWrite('world', permit)).not.toThrow();
+    expect(() => cache.assertSessionWrite('idle', undefined, 'world')).toThrow('SESSION_WRITE_LOCKED');
+    expect(() => cache.assertStateWrite('idle', undefined, 'world')).toThrow('STATE_WRITE_LOCKED');
+    expect(() => cache.assertGlobalStateWrite('world')).toThrow('STATE_WRITE_LOCKED');
+    cache.releaseWorldUpdate({ ...permit });
+    expect(() => cache.assertWorldRead('world')).toThrow('WORLD_UPDATE_IN_PROGRESS');
+    expect(() => cache.assertWorldRead('another')).not.toThrow();
+    cache.releaseWorldUpdate(permit);
+    expect(() => cache.assertWorldWrite('world', permit)).toThrow('WORLD_UPDATE_IN_PROGRESS');
+    expect(() => cache.acquireRun(owner)).not.toThrow();
+  });
+
+  it('invalidates earlier reads even if an update rolls back to the same database revision', () => {
+    const cache = new RuntimeCache();
+    const epoch = cache.captureWorldRead('world');
+    const update = cache.acquireWorldUpdate('world');
+    cache.releaseWorldUpdate(update);
+    expect(() => cache.assertWorldRead('world', epoch)).toThrow('WORLD_REVISION_CONFLICT');
+    expect(() => cache.assertWorldRead('world', cache.captureWorldRead('world'))).not.toThrow();
+  });
+});

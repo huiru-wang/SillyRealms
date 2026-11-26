@@ -11,7 +11,7 @@ import type { WorldService } from '../modules/worlds/service.js';
 type Dependencies = {
   cache: RuntimeCache;
   worlds: Pick<WorldService, 'setState'>;
-  sessions: Pick<SessionService, 'setState' | 'setEntryState' | 'listIdsByWorld'>;
+  sessions: Pick<SessionService, 'setState' | 'setEntryState' | 'listIdsByWorld' | 'require'>;
   state: Pick<StateService, 'requireGlobal' | 'requireSession' | 'requireMessage' | 'prepareGlobalPatch' | 'prepareSessionPatch' | 'prepareMessagePatch' | 'getCurrentMessage' | 'describeChange'>;
   transaction: TransactionRunner;
   events: EventHub;
@@ -48,7 +48,7 @@ function writeFailure(scope: StateScope, path: string, error: unknown): StateWri
 export function createSetState({ worlds, sessions, state, transaction, events, cache }: Dependencies) {
   function assertWrite(scope: StateScope, ownerId: string): void {
     if (scope === 'global') cache.assertGlobalStateWrite(ownerId);
-    else cache.assertStateWrite(ownerId);
+    else cache.assertStateWrite(ownerId, undefined, sessions.require(ownerId).worldId);
   }
 
   function commit<T>(scope: StateScope, ownerId: string, path: string, write: () => T) {

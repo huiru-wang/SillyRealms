@@ -125,6 +125,13 @@ export function createSpriteController({sessionId, request, history, readTip, ch
   }
   return {
     bind, restore, checkpoint: () => revision, getSnapshot: () => view,
+    reloadCatalog() {
+      catalogRead?.abort();
+      catalogRead = null;
+      catalogLoaded = false;
+      update({catalog: []});
+      void loadCatalog();
+    },
     setEnabled(value: boolean) {
       if (view.enabled === value) return;
       invalidate();

@@ -24,7 +24,7 @@ export function initialCardState(card: WorldCard, scope: StateScope): JsonObject
 export function cardToWorld(card: WorldCard): CreateWorld {
   const data = card.data;
   return {
-    specVersion: card.spec_version, name: data.name, description: data.description ?? null, cover: data.cover ?? null,
+    specVersion: card.spec_version, publication: data.publication ?? null, name: data.name, description: data.description ?? null, cover: data.cover ?? null,
     characters: data.characters as JsonValue[], openings: data.openings as JsonValue[],
     lorebook: (data.lorebook as JsonValue) ?? null, stateDefinition: (data.state as JsonValue) ?? null,
     messageRender: (data.message_render as JsonValue) ?? null, components: (data.components as JsonValue[]) ?? null,
@@ -37,6 +37,7 @@ export function worldToCard(world: WorldContent & { tags: readonly string[] }): 
   return parseCard({
     spec_version: world.specVersion,
     data: {
+      ...(world.publication != null ? { publication: world.publication } : {}),
       name: world.name, characters: world.characters, openings: world.openings, tags: world.tags,
       ...(world.description !== null ? { description: world.description } : {}),
       ...(world.cover !== null ? { cover: world.cover } : {}),

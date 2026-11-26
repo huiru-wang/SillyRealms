@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, realpath } from 'node:fs/promises';
-import { basename, dirname, extname, relative, resolve, sep } from 'node:path';
+import { copyFile, lstat, mkdir } from 'node:fs/promises';
+import { dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   inspectWorldSource, prepareWorldSourcePackage, type WorldSourceInspection,
 } from '../apps/server/src/modules/worlds/service.js';
-// This pure entry is also exported as @sillyrealms/ui-compiler/modules; it never loads browser WASM.
-import { inspectModule, moduleGraph } from '../packages/sr-ui-compiler/src/modules.js';
+import { assertOutsidePackage, checkWorldComponents as checkComponents, WorldCardToolError as ToolError } from './world-card-checks.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const usage = [
@@ -16,9 +15,6 @@ const usage = [
   '相对路径以仓库根目录为准。默认输出为源码目录同级 <目录名>.zip；不会覆盖已有文件。',
 ].join('\n');
 
-class ToolError extends Error {
-  constructor(readonly code: string, message: string) { super(message); }
-}
 function argumentsFor(args: string[]) {
   const [action, ...rest] = args;
   if (rest[0] === '--') rest.shift();
@@ -33,32 +29,6 @@ function argumentsFor(args: string[]) {
   const source = resolve(repositoryRoot, input);
   const output = action === 'pack' ? resolve(repositoryRoot, options[1] ?? source + '.zip') : undefined;
   return { action, source, output };
-}
-// Resolve the nearest existing parent so aliases cannot place the ZIP back in its source assets.
-async function outputLocation(output: string): Promise<string> {
-  let directory = dirname(output);
-  const suffix = [basename(output)];
-  while (true) {
-    try { return resolve(await realpath(directory), ...suffix); }
-    catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
-      const parent = dirname(directory);
-      if (parent === directory) throw error;
-      suffix.unshift(basename(directory));
-      directory = parent;
-    }
-  }
-}
-function checkComponents(inspection: WorldSourceInspection): void {
-  const ids = new Set(inspection.components.map(component => component.id));
-  for (const source of inspection.components) {
-    try { inspectModule(source.component, ids); }
-    catch (error) {
-      throw new ToolError('INVALID_WORLD_COMPONENT', source.id + ': ' + (error instanceof Error ? error.message : String(error)));
-    }
-  }
-  try { moduleGraph(inspection.components); }
-  catch (error) { throw new ToolError('INVALID_WORLD_COMPONENT', error instanceof Error ? error.message : String(error)); }
 }
 function report(action: string, input: string, inspection: WorldSourceInspection, output?: string) {
   return {
@@ -84,10 +54,7 @@ async function main() {
     return;
   }
   if (extname(output!).toLowerCase() !== '.zip') throw new ToolError('INVALID_OUTPUT', '输出文件必须使用 .zip 扩展名');
-  const inside = relative(await realpath(source), await outputLocation(output!));
-  if (inside === 'world.json' || ['assets', 'components'].some(root => inside === root || inside.startsWith(root + sep))) {
-    throw new ToolError('INVALID_OUTPUT', '输出不能放在源码的 assets/ 或 components/ 中');
-  }
+  await assertOutsidePackage(source, output!);
   const exists = await lstat(output!).catch(error => {
     if (error.code === 'ENOENT') return null;
     throw error;

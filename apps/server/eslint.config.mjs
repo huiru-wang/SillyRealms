@@ -36,6 +36,7 @@ const boundaries = {
       sdk: 'Only the pi adapter may import pi SDK types or implementations.',
       adapter: 'Business and transport code depend on the SDK-neutral model contract; concrete adapters belong in composition.',
       module: 'The only public business module entry is service.ts.',
+      worldUpdatesEntry: 'World update consumers must import only usecases/world-updates/index.ts, including public types.',
       contextEntry: 'Context consumers must import only usecases/context/index.ts, including public types.',
       contextDependency: 'Context preparation cannot depend on other usecases or event transport infrastructure.',
       readonly: 'Cross-module module dependencies must be named type-only domain types or explicit Readers, never a full Service.',
@@ -57,6 +58,7 @@ const boundaries = {
     const isService = isModule && localPath === 'modules/' + owner + '/service.ts';
     const isTransport = /^(?:routes|http)\//.test(localPath);
     const isUsecase = localPath.startsWith('usecases/');
+    const isWorldUpdates = localPath.startsWith('usecases/world-updates/');
     const isContext = localPath.startsWith('usecases/context/');
     const isDatabase = localPath.startsWith('infrastructure/database/');
     const isInfrastructure = localPath.startsWith('infrastructure/');
@@ -87,6 +89,11 @@ const boundaries = {
       const targetContext = target === 'usecases/context' || target.startsWith('usecases/context/');
       if (!isContext && targetContext && target !== 'usecases/context/index.ts') {
         context.report({ node, messageId: 'contextEntry' });
+        return;
+      }
+      const targetWorldUpdates = target === 'usecases/world-updates' || target.startsWith('usecases/world-updates/');
+      if (!isWorldUpdates && targetWorldUpdates && target !== 'usecases/world-updates/index.ts') {
+        context.report({ node, messageId: 'worldUpdatesEntry' });
         return;
       }
       const targetOwner = moduleOwner(target);

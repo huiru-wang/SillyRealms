@@ -55,3 +55,23 @@ test('world identity and shape are checked before component loading',async()=>{
   }),/世界响应格式无效/);
   assert.equal(compiled,false);
 });
+
+test('reconnect checks the current release without recompiling unchanged author content',async()=>{
+  const first={...world(),publication:{release:{version:'1.2.0'}}};
+  const modules={code:{stage:'first'},errors:{bad:'old error'}};
+  const original=await loadStageWorld(first.id,undefined,{request:async()=>({item:first}),loadComponents:async()=>modules});
+  const renamed={...first,name:'Local name',revision:99};
+  const unchanged=await loadStageWorld(first.id,undefined,{
+    previous:original,request:async()=>({item:renamed}),loadComponents:async()=>assert.fail('same release does not recompile'),
+  });
+  assert.equal(unchanged.modules,modules);
+  assert.equal(unchanged.world.name,'Local name');
+  const updated={...renamed,publication:{release:{version:'1.3.0'}}};
+  const compiled={code:{stage:'new content at the same file path'},errors:{}};
+  const next=await loadStageWorld(first.id,undefined,{
+    previous:unchanged,request:async()=>({item:updated}),loadComponents:async()=>compiled,
+  });
+  assert.equal(next.modules,compiled);
+  assert.deepEqual(next.modules.errors,{});
+  assert.equal(next.world.publication.release.version,'1.3.0');
+});

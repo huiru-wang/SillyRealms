@@ -2,11 +2,13 @@
 
 - 初稿日期：2026-11-24
 - 最近修订：2026-11-26
-- 状态：协议与实施方案；业务功能待实施。本次更新协议文档，不表示运行时已支持。
+- 状态：已实施（2026-11-26）。以下为当前协议、产品行为与验收边界；验证记录见第 15 节。
 - 仓库：/Users/wanghuiru/Workspace/SillyRealms
 - 适用代码：当前 apps/server、apps/web、packages/sr-sdk。
 - 本版按最新需求采用「同一世界原地覆盖指定版本」。不采用上一轮建议的多版本安装或 world_packages 分组。
 - 更新源不绑定统一域名、账号、平台或 provider；发布者可自行实现同一协议。
+- 正式作品发行信息统一使用 data.publication / WorldPublication / publication_json；只承载创作者声明且随卡分发的信息。
+- OTA 的读取、启动检查、手动刷新、下载与应用编排统一归 usecases/world-updates/；世界卡持久化继续由 WorldService 管理。
 - [集中发布与 Discord 评论方案](world-card-publishing-hub.md)仅为未来可选的托管实现，不是 OTA 标准依赖，也不是当前实施前置。
 
 ## 0. 开放协议边界
@@ -15,8 +17,8 @@
 
 | 能力 | 执行方与契约 |
 | --- | --- |
-| 描述作者与当前发行版 | 世界卡 `data.metadata`，随卡包导入、导出 |
-| 获取全部公开版本 | SR 服务端 `GET metadata.update_url`，读取一份完整版本目录 |
+| 描述作者与当前发行版 | 世界卡 `data.publication`，随卡包导入、导出 |
+| 获取全部公开版本 | SR 服务端 `GET publication.update_url`，读取一份完整版本目录 |
 | 获取指定版本世界卡文件 | 按明确的 `version` 选择目录记录，再 `GET artifact.url`，返回该版原始完整文件 |
 | 应用指定版本 | 本地 SR `POST /api/v1/worlds/:id/apply-version`，校验后原地覆盖 |
 | 获取本地已知版本信息 | 本地 SR `GET /api/v1/worlds/:id/versions`，仅返回缓存 |
@@ -28,7 +30,7 @@ OTA 在本期的产品行为是“检查可用版本、提示更新、由用户�
 
 ## 1. 已确定的产品范围
 
-1. 世界卡正式增加 data.metadata，记录作品身份、作者、当前发行版与更新源。
+1. 世界卡正式增加 data.publication，记录作品身份、作者、当前发行版与更新源。
 2. 创作者提供一个固定 HTTPS 地址，返回该作品的完整公开版本目录。
 3. 每个版本是一条数据对象，包含版本号、更新说明、发布时间和可直接下载的世界卡文件。
 4. 每次服务启动，在完成本地初始化并开始监听后，后台异步执行一轮版本目录检查；世界卡详情另提供用户主动刷新入口。
@@ -52,12 +54,12 @@ OTA 在本期的产品行为是“检查可用版本、提示更新、由用户�
 
 首版触发只有启动自动一轮和用户主动刷新。继续不增加导入后自动补查、TTL 自动过期重拉、定时器、轮询或任务队列。
 
-## 2. 当前代码依据
+## 2. 实施前代码依据
 
-| 现状 | 源码位置 |
+| 实施前现状 | 源码位置 |
 | --- | --- |
 | 示例中仅有自由扩展 authoring.author / revision / notes | docs/world-card.json |
-| 正式世界卡字段没有 metadata | apps/server/src/modules/worlds/validation.ts、types.ts |
+| 正式世界卡字段没有 publication | apps/server/src/modules/worlds/validation.ts、types.ts |
 | 作者扩展可以随导入/导出传递，但没有发布语义 | apps/server/src/modules/worlds/parser.ts |
 | 普通导入创建新 UUID，并套用应用默认预设与模型 | apps/server/src/modules/worlds/service.ts、usecases/import-world.ts |
 | 文件位于 dataRoot/worlds/<worldId>/source 与 package | apps/server/src/modules/worlds/files.ts |
@@ -68,21 +70,27 @@ OTA 在本期的产品行为是“检查可用版本、提示更新、由用户�
 | 预览内容身份只看 worldId 和 components 声明 | apps/web/src/features/worlds/preview-cache.ts |
 | 资源基地址不允许 query，资源响应缺少明确再验证规则 | packages/sr-sdk/src/asset-url.ts、apps/server/src/routes/worlds.ts |
 | initialize 完成后才开始监听，适合监听后启动异步检查 | apps/server/src/server.ts、usecases/initialize.ts |
+| narrative / reply-assist 已按应用实例装配，并有统一 shutdown | apps/server/src/usecases.ts、app.ts、usecases/narrative/index.ts、usecases/reply-assist/index.ts |
+| usecase 访问模块只能经 service.ts，模块不得反向依赖 usecase | apps/server/eslint.config.mjs |
 
-2026-11-26 复核：当前导入器仍只接受世界卡 0.1，正式 metadata、版本目录与 apply-version 路由均未实现；已有导入的数据库及文件发布环节都拒绝覆盖已存在世界。实施时基于届时最新结构增加迁移，不写死数据库版本，不清库、不覆盖其他任务文件。
+上述表格记录实施基线。2026-11-26 已加入世界卡 0.2 publication、版本目录、指定版本应用与 DB v11→v12 的 publication_json 迁移；旧 0.1 卡仍兼容，普通导入继续创建新世界并拒绝覆盖。OTA 使用独立的受控替换路径，迁移保留现有数据。
 
-## 3. 世界卡 metadata 结构
+## 3. 世界卡 publication 结构
 
 ### 3.1 采用的结构
 
-以下仅展示新增元信息和所在位置；角色、开局、状态、组件等现有字段沿用原协议。
+publication 表示“作品发行信息”，类型名为 WorldPublication。它只保存创作者声明、随世界卡分发的作品身份、署名、说明、当前发行版与公开更新入口；本地安装记录、检查状态、远端目录缓存、用户配置与运行状态不进入这个对象。
+
+release 仅指其中的当前发行版，publication 描述整个作品的对外发行信息。字段按明确 schema 校验，不作为任意键值集合。正式能力尚未实施，首次落地直接使用此命名，不增加旧规划名称的兼容字段或双写。
+
+以下仅展示新增 publication 和所在位置；角色、开局、状态、组件等现有字段沿用原协议。
 
 ```json
 {
   "spec_version": "0.2",
   "data": {
     "name": "雾港纪事",
-    "metadata": {
+    "publication": {
       "package_id": "8da0e392-2ea6-4ac1-a93a-b94abf6828a1",
       "authors": [
         {
@@ -122,8 +130,8 @@ OTA 在本期的产品行为是“检查可用版本、提示更新、由用户�
 - 二次创作成为独立发行作品时使用新的 package_id，可在说明中保留原作出处。
 - creator_notes 描述作品的整体使用说明；release.notes 只描述本次发行变化，两者独立展示。
 - release 只描述当前卡包的发行版；完整历史放在远端版本目录。
-- metadata 不参与叙事提示词构建；本地更新检查结果不写入 metadata。
-- 不增加 artifacts 到 metadata，避免将 ZIP 自身哈希放进被校验的 ZIP 引发自引用。
+- publication 不参与叙事提示词构建；本地更新检查结果不写入 publication。
+- 不增加 artifacts 到 publication，避免将 ZIP 自身哈希放进被校验的 ZIP 引发自引用。
 
 ### 3.3 版本号规则
 
@@ -141,10 +149,10 @@ OTA 在本期的产品行为是“检查可用版本、提示更新、由用户�
 | 名称 | 管理者 | 用途 |
 | --- | --- | --- |
 | world.json.spec_version | SR 平台 | 卡片格式版本 |
-| metadata.release.version | 创作者 | 世界内容发行版本 |
+| publication.release.version | 创作者 | 世界内容发行版本 |
 | worlds.revision | SR 平台 | 本地管理/覆盖写入的 CAS 修订号 |
 
-metadata 扩展随卡协议 0.2 发布。继续导入 0.1 卡，缺少 metadata 时作为未声明发行信息的离线卡。保留旧 extensions 原样，但不把 authoring.revision 猜成正式发行版本，也不按卡名自动补 package_id。
+publication 扩展随卡协议 0.2 发布。继续导入 0.1 卡，缺少 publication 时作为未声明发行信息的离线卡。保留旧 extensions 原样，但不把 authoring.revision 猜成正式发行版本，也不按卡名自动补 package_id。
 
 ### 3.5 与角色卡标准的关系
 
@@ -152,11 +160,11 @@ metadata 扩展随卡协议 0.2 发布。继续导入 0.1 卡，缺少 metadata 
 
 | CCv3 语义 | SR 对应 |
 | --- | --- |
-| creator：创作者署名 | metadata.authors；可表达多位作者 |
-| creator_notes：作者说明 | metadata.creator_notes |
-| character_version：作品发行版本 | metadata.release.version；SR 首版增加可比较的数字三段约束 |
+| creator：创作者署名 | publication.authors；可表达多位作者 |
+| creator_notes：作者说明 | publication.creator_notes |
+| character_version：作品发行版本 | publication.release.version；SR 首版增加可比较的数字三段约束 |
 | source：来源 | 作为溯源信息参考；不能未经验证就当作 update_url |
-| extensions：应用扩展 | SR 原有 extensions 保留其自定义用途，正式发行信息进入 metadata |
+| extensions：应用扩展 | SR 原有 extensions 保留其自定义用途，正式发行信息进入 publication |
 
 这是一张语义映射表，不承诺已经实现 CCv3 自动迁移。CCv3 的自由文本版本不能静默转换为合法 SR 发行版本；来源网页也不能自动视为机器版本目录。卡片创建/修改时间与发行的 published_at 不是同一概念。
 
@@ -181,7 +189,7 @@ metadata 扩展随卡协议 0.2 发布。继续导入 0.1 卡，缺少 metadata 
 
 ### 4.1 目录地址
 
-metadata.update_url 指向固定的原始 JSON，例如：
+publication.update_url 指向固定的原始 JSON，例如：
 
 https://cdn.example.org/worlds/fog-harbor/releases.json
 
@@ -251,7 +259,7 @@ https://cdn.example.org/worlds/fog-harbor/releases.json
 | 字段 | 规则 |
 | --- | --- |
 | schema_version | 固定整数 1，属于版本目录协议 |
-| package_id | 必须与本地 metadata.package_id 相同 |
+| package_id | 必须与本地 publication.package_id 相同 |
 | versions | 该作品仍公开的全部发行记录，可为空数组 |
 | version | 唯一的稳定发行版本，遵守第 3.3 节 |
 | title | 可选的人类可读版本标题 |
@@ -265,7 +273,7 @@ https://cdn.example.org/worlds/fog-harbor/releases.json
 
 纯 JSON 发行只适用于不依赖包内缺失文件的卡；继续通过现有导入校验，不放宽 sr-asset:// 引用要求。
 
-用于远端覆盖的发行文件必须带正式 metadata，本期对应卡协议 0.2。支持普通导入旧 0.1 卡，不代表无发行身份的旧卡可以成为可应用版本；此类条目在详情禁用，不能下载后才尝试猜测作品身份。
+用于远端覆盖的发行文件必须带正式 publication，本期对应卡协议 0.2。支持普通导入旧 0.1 卡，不代表无发行身份的旧卡可以成为可应用版本；此类条目在详情禁用，不能下载后才尝试猜测作品身份。
 
 目录不是将每个完整 world.json 内联进一个大 JSON，而是每个版本记录元信息并引用具体文件。检查时不下载各版世界包。
 
@@ -285,9 +293,9 @@ https://cdn.example.org/worlds/fog-harbor/releases.json
 - 同版本内容重写检测只能覆盖平台已有的缓存记录，不声称建立了全网永久发行审计。
 - 下载时以 sha256 约束实际文件，不把哈希当成作者身份认证。
 
-## 5. 本地存储：metadata 入库，公开版本原始 JSON 随世界保存
+## 5. 本地存储：publication 入库，公开版本原始 JSON 随世界保存
 
-数据库只为 worlds 新增 metadata_json，沿用现有 TEXT 序列化 JSON 的方式，保存当前安装的正式作者/发行 metadata；旧卡允许 NULL。通过迁移保留原有世界、会话及运行状态。
+数据库只为 worlds 新增 publication_json，沿用现有 TEXT 序列化 JSON 的方式，保存当前安装的正式作者/发行 publication；旧卡允许 NULL。通过迁移保留原有世界、会话及运行状态。
 
 公开版本目录不进入数据库；不另存 latest_version、checked_at、has_update 等镜像列，不新增版本表、缓存表或通用任务表。
 
@@ -314,12 +322,12 @@ releases.json 直接保存第 4.2 节的公开协议对象，顶层仍为 schema
 
 ### 5.2 读写规则
 
-- 通过现有 WorldFileStore / WorldService 读取和保存，复用该世界已有的文件写串行机制；不另建通用缓存服务。
-- GET 只读文件，校验协议、大小和 package_id 后生成接口投影；文件缺失、损坏或作品身份不符时视为无可用缓存，不影响已安装世界，不隐式访问远端。
-- 来源地址仍只保存在正式 metadata.update_url。原始目录不含本地来源标记，来源一致性由第 6.2 节的写入与失效流程保证，不能仅凭 package_id 相同就认定文件来自当前 URL。
-- 成功获取并通过完整目录校验、同版哈希检查后，在世界根目录写临时文件，再原子 rename 为 releases.json；本次任务结束清理自己的临时文件，读取时忽略临时文件。
+- usecases/world-updates/ 负责读取、校验和保存流程，统一通过 WorldService 获取原文与 mtime、提交新原文；WorldService 内部复用现有 WorldFileStore 与该世界文件写串行机制。用例和路由均不直接访问 worlds 的私有文件实现。
+- GET 的只读投影由 world-updates/read.ts 聚合：从 WorldService 读取文件，再复用本目录 protocol.ts 校验协议、大小和 package_id。文件缺失、损坏或作品身份不符时视为无可用缓存，不影响已安装世界，不隐式访问远端。
+- 来源地址仍只保存在正式 publication.update_url。原始目录不含本地来源标记，来源一致性由第 6.2 节的写入与失效流程保证，不能仅凭 package_id 相同就认定文件来自当前 URL。
+- check.ts 成功获取并通过完整目录校验、同版哈希检查后，调用 WorldService 保存已校验原文；WorldFileStore 在世界根目录写临时文件，再原子 rename 为 releases.json。本次任务结束清理自己的临时文件，读取时忽略临时文件。
 - 网络、协议或写盘失败均保留原 releases.json 及其 mtime；首次失败不生成伪目录或错误 JSON。写盘失败不能返回“刷新成功”。
-- 文件发布前在同一世界写串行区间内复核世界存在、当前来源与任务有效性。保存缓存使用已有目录，不递归创建世界根目录，避免晚到请求重建已删除世界。
+- 文件发布前，WorldService 在同一世界写串行区间内复核世界存在和当前来源，并执行用例传入的同步任务有效性守卫。保存缓存使用已有目录，不递归创建世界根目录，避免晚到请求重建已删除世界；模块不需要导入 OTA 用例或持有它的内存 Map。
 - OTA 只替换 source/package，保留根部 releases.json 原文件及 mtime；删除世界时随整个世界目录一起清理。
 
 ### 5.3 检查状态和时间如何得到
@@ -328,7 +336,7 @@ releases.json 直接保存第 4.2 节的公开协议对象，顶层仍为 schema
 
 | 展示字段 | 来源 |
 | --- | --- |
-| currentVersion | 数据库 metadata.release.version |
+| currentVersion | 数据库 publication.release.version |
 | versions | 校验通过的 releases.json |
 | latestVersion | 从 versions 按数字三段比较计算；空目录为 NULL |
 | lastSuccessAt | 有效 releases.json 的文件修改时间 mtime，表示最后成功保存目录的时间 |
@@ -339,21 +347,21 @@ releases.json 直接保存第 4.2 节的公开协议对象，顶层仍为 schema
 
 服务重启后，可以立即读取上次成功目录和 mtime；上次进程的尝试时间、失败原因及 checking 状态不保留。本轮启动检查产生新的状态，不能把旧错误或旧“检查中”视为持久事实。文件时间用于提示缓存新旧，不作为发行发布时间或永久检查审计。
 
-检查不修改 metadata.release.version、worlds.revision、createdAt/updatedAt、作者内容或运行状态，也不影响列表排序和预览内容身份。
+检查不修改 publication.release.version、worlds.revision、createdAt/updatedAt、作者内容或运行状态，也不影响列表排序和预览内容身份。
 
 ## 6. 启动自动检查与详情主动刷新
 
 ### 6.1 启动自动检查生命周期
 
-1. 按现有顺序打开数据库、装配服务并完成 initialize，包括缺失内置卡的导入。
-2. HTTP 开始监听。
-3. 启动一次后台 Promise，截取当时已存在且有合法 metadata.update_url 的世界卡列表。
-4. 每张卡获取一份目录，校验并保存缓存。
+1. 按现有顺序打开数据库、createServices、createUsecases；在 createUsecases 内创建唯一的 usecases.worldUpdates，随后完成 initialize，包括缺失内置卡的导入。
+2. HTTP 开始监听，并等待 listening 成功。
+3. server.ts 非阻塞调用同一实例的 checkAtStartup()，截取当时已存在且有合法 publication.update_url 的世界卡列表；调用点或方法内部收敛失败，避免未处理 Promise。
+4. 批次逐卡复用 check.ts 的单卡检查，获取目录、校验并经 WorldService 保存。
 5. 本轮结束；进程存活期间不再自动启动下一轮。
 
 任务不阻塞服务可用，不让远端失败导致服务启动失败，不递归调用自己，不设置周期定时器。
 
-启动批次逐卡调用与手动刷新相同的单卡检查方法。首版以 worldId + package_id + update_url 管理正在执行的检查，见第 6.4 节；不增加跨安装副本的长期共享缓存或批次结果重放。
+启动批次与手动刷新使用同一个 createWorldUpdates 实例和同一套单卡检查。首版以 worldId + package_id + update_url 管理正在执行的检查，见第 6.4 节；工厂构造和 initialize 阶段不暗中触发网络。完整装配边界见第 14 节，不增加跨安装副本的长期共享缓存或批次结果重放。
 
 建议并发数 3，目录单次请求超时 10 秒、正文上限 2 MiB、最多 1000 个版本、重定向上限 3。超限按检查失败处理，不截断目录。具体值集中定义并可在实施时按现有规范调整。
 
@@ -361,21 +369,23 @@ releases.json 直接保存第 4.2 节的公开协议对象，顶层仍为 schema
 
 请求前捕获 worldId、packageId、updateUrl，并保留本次 inFlight 任务身份。
 
-网络完成后，进入现有该世界文件写串行区间，在正式发布 releases.json 前复核：
+网络完成后，check.ts 复用 protocol.ts 完成目录校验，并与当前有效旧目录做同版本哈希检查。只有同一实例内有效的单卡检查可以提交文件；不另外暴露绕过检查的保存路由。
 
-- 世界仍存在，当前 package_id/update_url 与请求开始时一致。
-- 本次任务仍有效，未因删除或重新建立本地安装而被撤销。
-- 与当前有效目录的同版本哈希不冲突。
+随后通过 WorldService 进入现有该世界文件写串行区间，在正式发布 releases.json 前复核：
+
+- 世界仍存在，当前 package_id/update_url 与请求开始时一致，由 WorldService 读取正式记录确认。
+- 本次任务仍有效，未因删除或重新建立本地安装而被撤销，由用例传入的同步守卫确认。
 
 不满足就丢弃结果；失效任务也不能覆盖新任务的内存错误状态。仅安装 version、管理名称、标签或模型改变，不让同源结果失效；应用任意版本继续保留当前来源。
 
-删除世界先完成现有授权与删除校验。世界记录删除事务成功提交后，在首次后续异步等待前，同步撤销该世界全部在途检查并清除内存检查状态，再清理整个世界目录。删除事务未提交时不改变检查生命周期。缓存发布和目录删除共用现有文件写串行机制；若文件发布已经开始，随后删除会清掉它；若响应晚到，任务及存在性复核阻止写入。不从缓存文件恢复世界，不为缓存写入重新创建目录。
+删除世界先完成现有授权与删除校验。世界记录删除事务成功提交后，在首次后续异步等待前，通过装配层注入的同步 onWorldDeleted(worldId) 回调调用同一 worldUpdates.cancelForWorld，撤销该世界待处理检查/下载并清除内存检查状态，再清理整个世界目录。删除事务未提交时不改变检查生命周期。缓存发布和目录删除共用现有文件写串行机制；若文件发布已经开始，随后删除会清掉它；若响应晚到，任务及存在性复核阻止写入。不从缓存文件恢复世界，不为缓存写入重新创建目录。
 
 本期没有显式换源入口，OTA 保留当前 update_url。将来若允许修改 package_id/update_url，必须在同一个世界文件写串行区间内撤销旧任务、删除 releases.json、提交新绑定；不能先改绑定再异步删缓存，也不能把删文件和改绑定拆成两个可插队操作。删除缓存失败时不提交新来源。此约束无需增加来源 sidecar 或数据库字段。
 
 ### 6.3 关闭与失败
 
-- 关闭服务时取消启动检查和手动刷新尚未完成的网络请求，等待对应 Promise 与正在进行的文件提交/清理结束，再关闭数据库；关闭后不再发布目录文件或复核数据库。
+- 将同一实例的 worldUpdates.shutdown() 接入已有 app.shutdown()，与 narrative/replyAssist 的关闭一起等待；继续沿用 startServer.close 的 app.shutdown → 关闭 HTTP → 关闭数据库顺序。
+- shutdown 先拒绝新检查/应用操作，取消未完成的目录请求和发行包下载，再等待本实例全部检查、应用、提交及补偿结束；已经进入文件/数据库提交的操作完成提交或补偿后再结束，不能让数据库先关闭。关闭后不再发布文件或访问数据库，不新增关闭框架。
 - 每张卡失败独立记录于当前进程，不能中断整批；不把失败状态写入 releases.json。
 - 不自动重试，不引入持久队列或执行恢复。
 - 有旧成功缓存时仍可展示它，但详情标出上次成功时间和本次失败。
@@ -384,11 +394,11 @@ releases.json 直接保存第 4.2 节的公开协议对象，顶层仍为 schema
 ### 6.4 用户主动刷新与重复请求
 
 - 详情页提供「获取版本列表」或「刷新版本列表」按钮，调用 POST /api/v1/worlds/:id/versions/refresh。
-- 服务端仅从该世界当前 metadata 取得 package_id/update_url，请求不接受用户临时传入任意下载源。
+- 服务端仅从该世界当前 publication 取得 package_id/update_url，请求不接受用户临时传入任意下载源。
 - 没有 update_url 时按钮不可用并说明「作者未提供更新源」；服务端也校验此条件，不发送网络请求。
 - 启动检查和手动刷新共用同一套获取、协议校验、同版哈希检查、来源复核及 releases.json 原子写入逻辑。
-- 用单卡检查用例生命周期内的内存 Map 保存正在执行的 Promise，键为 worldId + package_id + update_url，范围覆盖网络请求直至文件发布结束。已有同键有效任务时等待该 Promise，不重复请求；finally 只清理自己的任务，避免删掉后来建立的新任务。
-- inFlight Map 只负责合并正在执行的请求；任务结束后的下一次主动点击会重新获取目录，不因已有 releases.json 而直接返回旧结果。最近一次尝试/错误另由同一用例保存在内存，不落盘。
+- 在 createWorldUpdates 的应用实例闭包内，用 inFlight Map 保存正在执行的 Promise，键为 worldId + package_id + update_url，范围覆盖网络请求直至文件发布结束。启动与所有 HTTP 请求共享这一份 Map；已有同键有效任务时等待该 Promise，不重复请求，finally 只清理自己的任务，避免删掉后来建立的新任务。
+- inFlight Map 只负责合并正在执行的请求；任务结束后的下一次主动点击会重新获取目录，不因已有 releases.json 而直接返回旧结果。最近一次尝试/错误、请求取消与关闭状态也由同一实例持有，不落盘、不放入 WorldService 或 RuntimeCache，不按 HTTP 请求重新创建。
 - 前端请求期间禁用刷新按钮并显示 loading；启动检查与主动点击重叠时复用正在执行的检查，不再启动第二个同卡请求。
 - 普通 HTTP 请求等待检查结束并返回当前版本投影；不新增后台任务 ID、专用进度 SSE 或轮询。
 - 此操作只更新远端目录缓存，不下载卡包、不改变已安装版本、不重新初始化状态，也不占用世界安装锁或阻塞叙事/AI 帮答。
@@ -399,7 +409,7 @@ releases.json 直接保存第 4.2 节的公开协议对象，顶层仍为 schema
 
 ### 7.1 列表返回投影
 
-在现有摘要字段之外增加：
+world-updates/read.ts 在现有世界摘要之外生成以下只读投影，类型从该用例目录的 index.ts 公开导出：
 
 ```ts
 type WorldVersionSummary = {
@@ -409,10 +419,10 @@ type WorldVersionSummary = {
 };
 ```
 
-- currentVersion 来自 metadata.release.version。
+- currentVersion 来自 publication.release.version。
 - latestVersion 从当前世界通过校验的 releases.json 计算，不在数据库或文件顶层重复保存。
-- updateStatus 根据 metadata、有效目录和本进程检查记录推导：无源为 no_source，有有效进行中任务为 checking，最近检查失败为 failed，其余有目录为 ready、无目录为 not_checked；状态均不落盘。
-- 列表不携带完整版本目录，不在 route 中发起远端请求。
+- updateStatus 根据 publication、有效目录和本进程检查记录推导：无源为 no_source，有有效进行中任务为 checking，最近检查失败为 failed，其余有目录为 ready、无目录为 not_checked；状态均不落盘。
+- 列表通过同一 worldUpdates.getSummaries 批量取得本地更新摘要，不携带完整版本目录；WorldService.list/get 只返回正式世界数据，不反向调用 OTA，不在 route 中发起远端请求。
 - 不存储 hasUpdate；避免与当前版本、缓存产生三份状态。
 
 前端：
@@ -520,7 +530,7 @@ const hasUpdate =
 - 介绍、封面、角色、开局、世界书。
 - 状态定义、消息渲染规则。
 - 组件、舞台入口、作者扩展；extensions 内属于本地管理的键（例如封面马赛克配置）显式保留，不随作者扩展整体覆盖。
-- 作者信息、发行版本、发行说明等 metadata。
+- 作者信息、发行版本、发行说明等 publication。
 
 名称和标签沿用当前产品允许用户管理的语义，本期全部按本地设置保留；若作者新版改名或调整标签，不自动覆盖用户已安装副本。用户可通过现有管理入口自行调整。
 
@@ -572,6 +582,8 @@ cardToWorld 当前会生成初始 global 状态；覆盖路径必须丢弃这份
 
 ## 10. 覆盖执行流程与文件处理
 
+本流程由 world-updates/apply.ts 编排：获取目录与目标版本、调用共享下载工具、协调世界/会话服务与 RuntimeCache，最后发布提交后事件。文件替换、兼容校验及正式世界记录写入仍通过 WorldService 的受控能力执行，用例不直接导入私有 repository、files 或替换目录。
+
 ### 10.1 准备阶段
 
 1. 读取当前世界及其通过校验的 releases.json，选择用户指定的版本记录；来源一致性沿用第 6.2 节的生命周期约束。
@@ -590,7 +602,7 @@ cardToWorld 当前会生成初始 global 状态；覆盖路径必须丢弃这份
 2. 重新读取当前世界，复核 expectedRevision、来源和目标记录。
 3. 检查会话玩家角色及需保留的状态定义兼容。
 4. 在该世界文件写串行区间内，仅将旧 source/package 暂移到本次操作的备份位置，再发布新 source/package；世界根目录和 releases.json 原位保留。
-5. 在短同步数据库事务中 CAS 更新作者内容和 metadata，revision 加一；不写运行 state 和本地保留字段。
+5. 在短同步数据库事务中 CAS 更新作者内容和 publication，revision 加一；不写运行 state 和本地保留字段。
 6. 数据库成功后清理本次 source/package 备份，释放占用，再发提交后事件。
 7. 返回最新世界详情。
 
@@ -633,7 +645,7 @@ RuntimeCache 不查询数据库；调用方提供世界归属。内部覆盖 per
 
 ### 11.2 详情预览失效
 
-previewContentIdentity 增加 metadata.release.version；更新版本改变，即销毁原预览池、取消旧源码请求、重建桥接并读取新源码。
+previewContentIdentity 增加 publication.release.version；更新版本改变，即销毁原预览池、取消旧源码请求、重建桥接并读取新源码。
 
 同一路径 components/Main.tsx 的内容变化必须重新获取，不能只比较 components 声明数组。
 
@@ -666,17 +678,17 @@ previewContentIdentity 增加 metadata.release.version；更新版本改变，�
 
 统一 /api/v1 前缀和现有成功/错误包络，以下路径省略前缀。
 
-| 接口 | 行为 |
-| --- | --- |
-| GET /worlds | 本地摘要，增加 currentVersion/latestVersion/updateStatus；零远端调用 |
-| GET /worlds/:id | 当前作者内容和 metadata，提供精简检查状态；零远端调用 |
-| GET /worlds/:id/versions | 读取 releases.json，结合 metadata 与内存检查状态返回版本目录、当前版、最新版和时间/结果；零远端调用 |
-| POST /worlds/:id/versions/refresh | 用户主动获取该卡的远端目录，校验并原子保存 releases.json，返回更新后的版本投影 |
-| POST /worlds/:id/apply-version | 依据缓存版本记录下载并覆盖当前世界 |
+| 接口 | 行为 | OTA 入口 |
+| --- | --- | --- |
+| GET /worlds | 本地摘要，增加 currentVersion/latestVersion/updateStatus；零远端调用 | worldUpdates.getSummaries，批量聚合 |
+| GET /worlds/:id | 当前作者内容和 publication，提供精简检查状态；零远端调用 | worldUpdates.getSummaries，单卡投影 |
+| GET /worlds/:id/versions | 读取 releases.json，结合 publication 与内存检查状态返回版本目录、当前版、最新版和时间/结果；零远端调用 | worldUpdates.getVersions |
+| POST /worlds/:id/versions/refresh | 用户主动获取该卡的远端目录，校验并原子保存 releases.json，返回更新后的版本投影 | worldUpdates.refresh |
+| POST /worlds/:id/apply-version | 依据缓存版本记录下载并覆盖当前世界 | worldUpdates.applyVersion |
 
 这些均为玩家本地 SR 的接口，发布方不需要实现。获取指定版本的原件已由第 4.0 节的 artifact.url GET 完成，不再要求发布方提供固定下载路由，也不把本地“导出当前安装”冒充某个发行版原始文件。
 
-主动刷新 POST 无需业务请求体，复用现有统一响应包络。成功返回与 GET /worlds/:id/versions 相同形状的数据，至少包含 currentVersion、latestVersion、检查状态/时间和完整版本列表。失败返回标准错误，原 releases.json 及其 mtime 保留，本次尝试和错误仅记录在当前进程内存；GET 接口始终仅读本地数据。文件路径不作为 API 字段返回。刷新不修改 metadata.release.version、worlds.revision 或作者内容。
+主动刷新 POST 无需业务请求体，复用现有统一响应包络。成功返回与 GET /worlds/:id/versions 相同形状的数据，至少包含 currentVersion、latestVersion、检查状态/时间和完整版本列表。失败返回标准错误，原 releases.json 及其 mtime 保留，本次尝试和错误仅记录在当前进程内存；GET 接口始终仅读本地数据。文件路径不作为 API 字段返回。刷新不修改 publication.release.version、worlds.revision 或作者内容。
 
 应用请求：
 
@@ -735,7 +747,7 @@ fog-harbor.zip
 1. 修改世界内容，并递增版本。
 2. 写本版 notes；已有剧情/状态结构不兼容时在说明中明确建议新开世界。
 3. 运行发行脚本，校验源卡与文件引用。
-4. 生成包含新 metadata 的 ZIP，计算最终 ZIP 的 sha256 和 size_bytes。
+4. 生成包含新 publication 的 ZIP，计算最终 ZIP 的 sha256 和 size_bytes。
 5. 将发行对象追加到本地 releases.json，保留旧发行对象。
 6. 先上传新 ZIP 到固定版本路径，确认可直接下载。
 7. 再上传覆盖固定 releases.json。
@@ -745,7 +757,7 @@ fog-harbor.zip
 
 ### 13.3 发行脚本的职责
 
-拟新增 scripts/release-world.ts 与 pnpm world:release 命令；以下是实施后的目标用法，本轮尚未实现：
+已提供 scripts/release-world.ts 与 pnpm world:release 命令：
 
 ```bash
 pnpm world:release \
@@ -760,9 +772,10 @@ pnpm world:release \
 脚本：
 
 - 从源 world.json 读取固定 package_id、作者和 update_url；package_id 缺失时拒绝发版，避免每次生成不同作品身份。
-- 读取 notes，按同一份发行数据生成包内 metadata.release 和目录记录。
+- 读取 notes，按同一份发行数据生成包内 publication.release 和目录记录。
 - 发布时间缺省使用实际打包时间，可显式指定用于可复现发布。
 - 复用正式卡片/资源校验，不维护另一套弱校验器。
+- 读取旧发行目录与生成新目录时，复用 world-updates/index.ts 显式公开的纯 validateReleaseIndex；脚本只调用纯协议函数，不创建 createWorldUpdates 实例、不打开玩家运行数据库、不发起更新检查。
 - 输出版本 ZIP、最终哈希、大小和更新后的 releases.json。
 - 同版本记录已存在则拒绝覆盖，要求新版本号。
 - 本期只生成发布文件，不集成上传凭据、不自动推送到外部托管。
@@ -771,101 +784,168 @@ pnpm world:release \
 
 ### 13.4 作者需要提供给玩家什么
 
-首次分享时提供当前 ZIP，或提供其直接下载链接。ZIP 内 metadata.update_url 已包含固定版本目录地址，玩家导入后无需再填写一套订阅配置。
+首次分享时提供当前 ZIP，或提供其直接下载链接。ZIP 内 publication.update_url 已包含固定版本目录地址，玩家导入后无需再填写一套订阅配置。
 
 作品主页面向人；update_url 面向程序；artifact.url 面向某一版实际文件。三种链接职责清楚，不要求作者建设额外产品网站。
 
-## 14. 文件改动范围
+## 14. OTA 用例组织与文件改动范围
 
-以下是实施目录树；[新增]/[修改]/[删除] 表示计划范围，不代表本轮已经改代码。
+### 14.1 采用独立 usecases/world-updates 目录
 
-```text
+启动异步检查、主动刷新、本地版本查询、下载与指定版本应用组成同一项 OTA 应用能力，集中放在 usecases/world-updates/。沿用现有 narrative/reply-assist 的组织方式，由一个工厂创建一份应用实例状态，不再将检查和应用散落为 usecases 根下的独立入口。
+
+“保存到本地”这一业务步骤属于 OTA 用例；世界目录如何定位、串行写入和原子替换仍由 worlds 模块负责。其原因是 releases.json 与 source/package 共用同一世界生命周期和文件写队列，若用例另建一套磁盘写入，会让刷新、删除和覆盖失去共同的串行边界，也会绕过现有模块访问约束。
+
+### 14.2 具体职责与依赖方向
+
+| 归属 | 负责 |
+| --- | --- |
+| world-updates/index.ts | createWorldUpdates、唯一公共入口、应用实例状态、取消与关闭；组合内部函数 |
+| world-updates/types.ts | 公开输入输出、版本摘要与内部执行类型；公共类型经 index.ts 显式导出 |
+| world-updates/protocol.ts | 纯公开版本目录协议：结构与身份校验、同版哈希一致性、版本排序/选择；不执行 I/O |
+| world-updates/read.ts | 聚合 publication、本地 releases.json/mtime 与内存检查状态，生成完整版本视图或批量摘要 |
+| world-updates/check.ts | 单卡远端获取、协议校验与保存编排；启动批次复用同一检查 |
+| world-updates/apply.ts | 选版、下载校验、兼容检查调用、覆盖事务编排与提交后事件 |
+| world-updates/downloads.ts | 目录和发行文件共用的受限 HTTPS 获取、大小/哈希检查；只处理网络及本次下载暂存 |
+| worlds 模块 | WorldPublication、卡协议 0.2/0.1、publication_json、正式导入导出、内容兼容校验、世界目录及文件操作 |
+| 现有 SessionService / RuntimeCache / EventHub | 会话和玩家信息、运行与覆盖占用、提交后通知；由用例组合使用 |
+
+版本号语法与比较继续使用 packages/sr-sdk/src/release-version.ts 的纯函数，worlds 校验 publication 与 OTA 解析远端目录共用；worlds 不为校验卡片而反向导入 world-updates。
+
+WorldService 提供读取 releases.json 原文/mtime、在既有串行区间内提交原文、删除文件以及替换正式内容的受控操作。保存时由 WorldService 复核正式作品与来源，并执行用例传入的同步有效性守卫；它不负责 HTTP 拉取、远端目录解析、版本选择、检查状态或红点计算。WorldFileStore 不认识 OTA 的 inFlight Map。
+
+用例只能从 modules/worlds/service.ts 取得服务及显式导出的领域类型，不直接导入该模块私有 types.ts、repository.ts、files.ts 或兼容校验实现。其他领域模块也遵守各自 service.ts 出口；模块不导入 usecase，路由不写 SQL 或文件。
+
+发布脚本可以从 world-updates/index.ts 使用显式导出的纯 validateReleaseIndex 及目录类型。入口和内部依赖在模块加载时不得触发网络、读取运行配置/数据或创建 OTA 运行实例；所有运行状态由工厂调用时建立。这样共享同一份协议校验即可，无需为首版新增协议包，也不让发布脚本启动玩家更新流程。
+
+### 14.3 实例装配与生命周期
+
+在 apps/server/src/usecases.ts 调用一次 createWorldUpdates，返回 usecases.worldUpdates。server.ts、HTTP 路由和删除用例共享这一实例，services.ts 不另建 OTA 服务，工厂也不在请求处理或启动检查中重复调用。
+
+| 公开方法 | 消费方与用途 |
+| --- | --- |
+| getVersions | 版本列表 GET；只读本地正式信息、目录文件与内存状态 |
+| getSummaries | 世界列表/详情；按已有查询结果批量读取本地更新摘要 |
+| refresh | 详情刷新 POST；复用或创建单卡检查 |
+| checkAtStartup | server.ts 监听成功之后调用一次；逐卡复用刷新流程，不阻塞服务可用 |
+| applyVersion | 应用指定发行版 POST |
+| cancelForWorld | 删除成功提交后的同步回调；撤销待处理检查/下载，清除该世界内存记录 |
+| shutdown | 接入现有 app.shutdown；拒绝新任务、取消网络、等待检查与应用收尾 |
+
+inFlight、最近检查记录、AbortController 与正在收尾的操作都由该实例闭包持有。RuntimeCache 只扩展世界覆盖占用，不承载目录、检查结果或 OTA 调度。
+
+delete-world.ts 只接收同步窄回调 onWorldDeleted: (worldId: string) => void；createUsecases 将它绑定到 worldUpdates.cancelForWorld。回调在删除事务提交后、首次后续 await 前执行，再由现有世界文件删除流程清理目录。删除用例无需深导入 OTA 内部文件，WorldService 也不反向调用 OTA。
+
+应用外部只从 world-updates/index.ts 导入工厂、公共类型和明确公开的纯协议函数。内部 read/check/apply 等文件通过参数取得依赖及共享状态，不从 index.ts 回导运行实例。为这个新目录补充与现有 context 相同范围的入口 ESLint 规则和架构测试；保持现有模块边界，不放宽规则。
+
+不增加 manager、scheduler、cache-repository、全局任务服务或另一套关闭流程。普通导入仍是新建世界，保持现有拒绝覆盖的规则。
+
+### 14.4 实施文件目录
+
+以下是实际实施目录树；[新增]/[修改] 标出本次交付范围，相关函数测试随能力一同增加或调整。
+
+~~~text
 /Users/wanghuiru/Workspace/SillyRealms/
-├── apps/server/src/
-│   ├── server.ts                              [修改] 监听后单次检查与关闭取消
-│   ├── services.ts / usecases.ts / app.ts      [修改] 装配读取/覆盖用例
-│   ├── errors.ts                              [修改] 集中更新相关错误
-│   ├── infrastructure/
-│   │   ├── database/connection.ts             [修改] 仅新增 metadata_json 的结构迁移
-│   │   └── cache/index.ts                     [修改] 短暂世界覆盖占用
-│   ├── modules/worlds/
-│   │   ├── types.ts                          [修改] metadata/版本目录/检查摘要类型
-│   │   ├── validation.ts / parser.ts         [修改] 0.2/0.1 解析与导入导出
-│   │   ├── releases.ts                       [新增] 目录校验与版本索引规则
-│   │   ├── downloads.ts                      [新增] 受限目录/发行文件获取
-│   │   ├── update-validation.ts              [新增] 玩家引用及状态兼容检查
-│   │   ├── repository.ts                    [修改] metadata 读写与 CAS 内容覆盖
-│   │   ├── service.ts                       [修改] 聚合目录文件、metadata 及来源复核
-│   │   ├── files.ts                         [修改] 根部 releases.json 读写、子目录替换与补偿
-│   │   └── assets.ts                        [修改] 资源验证元信息
-│   ├── modules/sessions/service.ts            [修改] 写入口识别世界覆盖占用
-│   ├── usecases/
-│   │   ├── check-world-versions.ts            [新增] 启动/手动共用获取、文件保存、内存状态与请求合并
-│   │   ├── apply-world-version.ts             [新增] 指定发行版覆盖编排
-│   │   ├── import-world.ts / export-world.ts  [修改] 元信息贯通，缓存不导出
-│   │   ├── create-session.ts / set-state.ts   [修改] 覆盖期写入互斥
-│   │   └── delete-world.ts                    [修改] 删除与覆盖互斥，删除提交后撤销检查并清理目录
-│   └── routes/worlds.ts                       [修改] 本地版本接口与资源再验证
+├── apps/server/
+│   ├── eslint.config.mjs                     [修改] world-updates 唯一公开入口约束
+│   └── src/
+│       ├── server.ts                         [修改] 监听成功后调用单次检查
+│       ├── usecases.ts                       [修改] 创建唯一 OTA 实例、注入删除回调
+│       ├── app.ts                            [修改] 接入同一实例的 shutdown
+│       ├── errors.ts                         [修改] 集中更新相关错误
+│       ├── infrastructure/
+│       │   ├── database/connection.ts        [修改] 仅新增 publication_json 的结构迁移
+│       │   └── cache/index.ts                [修改] 短暂世界覆盖占用
+│       ├── modules/worlds/
+│       │   ├── types.ts                      [修改] WorldPublication 与受控文件操作类型
+│       │   ├── validation.ts / parser.ts     [修改] publication、0.2/0.1 解析与导入导出
+│       │   ├── update-validation.ts          [新增] 玩家引用及状态兼容检查
+│       │   ├── repository.ts                 [修改] publication 读写与 CAS 内容覆盖
+│       │   ├── service.ts                    [修改] 受控文件/覆盖能力及领域类型公开出口
+│       │   ├── files.ts                      [修改] releases.json 原文读写、子目录替换与补偿
+│       │   └── authoring.ts                  [修改] 发行打包时覆盖publication，源文件保持原样
+│       ├── modules/sessions/service.ts       [修改] 写入口识别世界覆盖占用
+│       ├── usecases/
+│       │   ├── world-updates/                [新增] 集中的 OTA 应用能力
+│       │   │   ├── index.ts                  [新增] 公共入口、唯一实例状态与生命周期
+│       │   │   ├── types.ts                  [新增] 版本视图、摘要与执行类型
+│       │   │   ├── context.ts                [新增] 实例依赖、任务状态及失效守卫
+│       │   │   ├── protocol.ts               [新增] 纯版本目录校验、排序与选择
+│       │   │   ├── read.ts                   [新增] 本地版本详情与批量摘要
+│       │   │   ├── check.ts                  [新增] 单卡拉取、校验、保存与请求复用
+│       │   │   ├── apply.ts                  [新增] 指定发行版下载与覆盖编排
+│       │   │   └── downloads.ts              [新增] 受限 HTTPS 与下载校验
+│       │   ├── reply-assist/index.ts          [修改] 帮答占用关联worldId
+│       │   ├── set-state.ts                  [修改] 覆盖期写入互斥
+│       │   └── delete-world.ts               [修改] 删除与覆盖互斥，提交后调用撤销回调
+│       ├── routes/worlds.ts                  [修改] 调用 OTA 公共入口与资源再验证
+│       └── testing/architecture.test.ts      [修改] 模块及 OTA 唯一入口边界验证
 ├── apps/web/src/
 │   ├── features/worlds/
-│   │   ├── api/worlds.ts                      [修改] 缓存版本读取、主动刷新与覆盖接口
-│   │   ├── WorldCard.tsx / WorldLibraryPage.tsx[修改] 版本比较及红点
-│   │   ├── WorldDetailPage.tsx                [修改] 作者版本入口、主动获取按钮与应用后刷新
-│   │   ├── WorldVersionsDialog.tsx            [新增] 全版本说明/主动刷新/选择/确认
-│   │   └── preview-cache.ts / WorldComponentCache.tsx
-│   │                                         [修改] 发行版本变化重建预览
-│   ├── features/sessions/workspace.ts         [修改] 更新后/重连后重载世界内容
-│   ├── features/sessions/SessionPage.tsx       [修改] 发行版本变化时重建舞台，保留 workspace
-│   ├── transport/session-events.ts            [修改] 分发 world.updated
-│   ├── app/ManagementData.tsx                 [修改] 目录刷新或覆盖后同步摘要与红点
-│   └── i18n/locales/                          [修改] 跟随当前中英日文案体系
+│   │   ├── api/worlds.ts                     [修改] publication、版本读取、刷新与覆盖契约
+│   │   ├── WorldCard.tsx / WorldLibraryPage.module.css
+│   │   │                                     [修改] 版本比较及红点
+│   │   ├── WorldDetailPage.tsx               [修改] 作者版本入口、主动获取按钮与应用后刷新
+│   │   ├── WorldPublication.tsx / .module.css
+│   │   │                                     [新增] 作者信息、全版本列表和应用确认
+│   │   ├── versions.ts                       [新增] 版本请求、取消、状态与操作控制
+│   │   └── preview-cache.ts / stage-world.ts [修改] 发行版本变化重建预览和舞台
+│   ├── features/sessions/workspace.ts        [修改] 更新后/重连后重载世界内容
+│   ├── features/sessions/SessionPage.tsx      [修改] 发行版本变化时重建舞台，保留 workspace
+│   ├── transport/session-events.ts           [修改] 分发 world.updated
+│   ├── features/character-sprites/controller.ts
+│   │                                         [修改] 世界更新后重新取当前立绘目录
+│   ├── components/ui/Modal.tsx / .module.css [修改] 复用弹窗增加移动抽屉展示
+│   └── i18n/locales/                         [修改] 跟随当前中英日文案体系
 ├── packages/sr-sdk/
-│   ├── src/release-version.ts                 [新增] 前后端共享稳定版本比较
-│   ├── src/stage-contract.ts                  [修改] 会话事件类型
-│   └── package.json                          [修改] 导出纯版本比较子路径
-├── scripts/release-world.ts                   [新增] 发行产物及目录生成
-├── package.json                              [修改] 发行脚本命令
+│   ├── src/release-version.ts                [新增] 前后端共享稳定版本比较
+│   ├── src/stage-contract.ts / src/stage/index.tsx
+│   │                                         [修改] 会话事件类型及公共类型导出
+│   └── package.json                         [修改] 导出纯版本比较子路径
+├── scripts/release-world.ts                  [新增] 复用纯校验，生成发行产物及目录
+├── scripts/world-card-checks.mts             [新增] 原打包命令与发行命令共用组件检查
+├── scripts/world-card.mts                    [修改] 复用提取后的检查函数
+├── package.json                             [修改] 发行脚本命令
 ├── docs/
-│   ├── world-card.json                        [修改] 正式 metadata 示例
-│   ├── reference/world-card.md                [修改] 0.2 作者信息与发行字段
-│   ├── reference/world-updates.md             [新增] 实施后公开 OTA v1 的规范契约
-│   ├── creator/world-publishing.md            [新增] 作者发布与链接说明
-│   ├── runtime/server-http.md                 [修改] 列表/版本/覆盖契约
-│   ├── runtime/server-events.md               [修改] 提交后世界更新通知
+│   ├── world-card.json                       [新增] 正式 publication 示例
+│   ├── reference/world-card.md               [修改] 0.2 作品发行信息字段
+│   ├── reference/world-updates.md            [新增] 公开 OTA v1 的规范契约
+│   ├── creator/world-publishing.md           [新增] 作者发布与链接说明
+│   ├── runtime/server-http.md                [修改] publication、列表/版本/覆盖契约
+│   ├── runtime/server-events.md              [修改] 提交后世界更新通知
 │   └── runtime/web-management.md / web-runtime.md
 │                                             [修改] 红点/覆盖/舞台刷新行为
 └── plan/
-    ├── world-card-versioning-v1.md           [修改] 本协议与实施方案
-    └── world-card-publishing-hub.md          [修改] 明确集中源仅为可选托管方案
-```
+    ├── world-card-versioning-v1.md            [修改] 本协议与实施方案
+    └── world-card-publishing-hub.md           [修改] 可选托管与 publication 契约一致
+~~~
 
-删除文件：无。对应模块函数测试按下节增加或修改，不因本功能重构 context/state 常规算法、资源寻址协议或整个管理页面。
+删除文件：无。对应函数测试随所属协议、读取、检查、应用和文件能力增加或调整；不因目录组织重构 context/state 常规算法、资源寻址协议或整个管理页面。运行时 releases.json 的数据布局见第 5.1 节，它由检查流程生成，不是仓库交付文件。
 
-单域知识放 worlds，通过 service.ts 对外；网络/文件/DB 多步骤编排归 usecases。版本目录文件复用现有 files.ts 和该世界文件写串行机制，repository 只处理正式数据库记录，routes 不直接操作 SQL 或文件。不新增独立版本缓存模块，也不扩展全局 RuntimeCache 来存目录；它在本方案中仅负责运行与覆盖占用。运行时数据布局见第 5.1 节，releases.json 由检查流程生成，不是仓库交付文件。
+## 15. 实施结果与验收
 
-## 15. 实施顺序与验收
+### 已完成：协议和本地投影
 
-### 第一步：协议和本地投影
+- 0.2 publication、0.1 卡兼容、唯一新增的 publication_json 列，以及世界根部 releases.json 的原始目录读写。
+- 导入导出保留 publication 且不带检查缓存。
+- world-updates/protocol.ts 的纯全版本目录校验，与共享 release-version 比较函数。
+- createWorldUpdates 唯一实例装配、公共类型与入口边界；列表/详情通过 read.ts 聚合本地字段。
 
-- 0.2 metadata、0.1 卡兼容、唯一新增的 metadata_json 列，以及世界根部 releases.json 的原始目录读写。
-- 导入导出保留 metadata 且不带检查缓存。
-- 全版本目录校验与共享版本比较。
-- 列表/详情的本地字段投影。
+### 已完成：启动检查、主动刷新和版本展示
 
-### 第二步：启动检查、主动刷新和版本展示
-
-- 单次自动批次与用户单卡主动刷新，共用检查与文件原子保存；合并同卡正在执行的请求。
+- checkAtStartup 与 refresh 共用同一实例和 check.ts，保存经 WorldService 进入既有文件串行区；合并同卡正在执行的请求。
+- 接入现有 app.shutdown 和删除成功后的同步撤销回调，确保 GET、启动任务与所有路由看到同一份内存状态。
 - 失败保留原文件及 mtime、来源与任务有效性复核、内存检查状态、列表红点和版本详情。
 - 主动刷新成功后立即同步当前客户端摘要与版本列表。
 - 不在普通列表/详情 GET、打开页面或导入完成时隐式增加远端检查。
 
-### 第三步：指定版本覆盖
+### 已完成：指定版本覆盖
 
-- 复用导入准备，完成同 worldId 文件替换与 CAS 提交。
+- apply.ts 复用导入准备，经 WorldService 完成同 worldId 文件替换与 CAS 提交；下载及校验复用同目录的公共内部能力。
 - 运行状态/本地配置保留及明确兼容门槛。
 - 短暂世界占用、预览失效、资源再验证、已打开会话刷新。
 
-### 第四步：创作者发布工具与说明
+### 已完成：创作者发布工具与说明
 
 - 从一份发行信息生成 ZIP、哈希、大小和完整目录。
 - 文档提供可复制的字段、链接形态、发布顺序与失败排查。
@@ -874,7 +954,7 @@ pnpm world:release \
 
 1. 1.10.0 大于 1.9.0；非法/预发行版本不混入本期排序。
 2. 单次启动自动批次每张世界卡至多检查一次；普通页面 GET 不新增远端请求，明确的主动刷新 POST 可以再次获取。
-3. 服务已可用时检查仍可进行；远端失败不影响启动；关闭等待检查和文件提交结束，随后无晚到目录发布或数据库访问。
+3. 服务已可用时检查仍可进行；远端失败不影响启动；已有 app.shutdown 等待检查、应用和提交/补偿结束，随后无晚到目录发布或数据库访问。
 4. 失败保留原 releases.json 与 mtime，latestVersion 仍从旧目录计算；没有有效文件不假装最新版。
 5. 来源变化或世界删除使旧任务失效；晚到成功或失败都被丢弃，不重建目录，也不污染后来任务的内存状态。
 6. 新导入卡不自动补查，但用户可立即主动获取版本列表，无需重启；启动首屏读取时序符合第 1.1 节。
@@ -884,7 +964,7 @@ pnpm world:release \
 10. 覆盖不改变世界 ID、消息、三 scope 状态、默认模型/预设和本地管理字段。
 11. 缺少已有玩家角色、状态根/类型不兼容、范围收紧时在替换前拒绝。
 12. 下载期间可正常运行；最终覆盖与叙事/AI 帮答、新会话、状态写入互斥，其他世界不受影响。
-13. 同路径组件替换后重新获取，资源不沿用旧验证标识；管理名称变化不重建预览。覆盖前已开始的导出/组件读取若横跨替换，结果被丢弃而非交付混合包。
+13. 同路径组件替换后重新获取，资源不沿用旧验证标识；管理名称变化不重建预览。覆盖前已开始的导出/组件读取若横跨替换，结果被丢弃而非交付混合包。RuntimeCache 在正式覆盖占用时递增读取 epoch；即使本次覆盖回滚且 DB revision 未变，也使此前开始的读取失效。
 14. 已打开会话能通过 sessionId 校验接收 world.updated，发行版本变化重建舞台；断线重连可补查，输入草稿和历史保持。
 15. 升级和回退不改变 update_url；只置换 source/package，保留 releases.json 原内容及 mtime，包括下载期间刷新得到的新目录。
 16. 发行脚本给出真实 SHA-256 与大小，同版重复发布被拒绝。
@@ -899,8 +979,27 @@ pnpm world:release \
 25. 自定义 SERVER_DATA_ROOT 时，版本文件仍位于该根下 worlds/<worldId>/；成功保存保留原始 JSON 正文及允许的未知扩展字段，写盘失败不得覆盖旧文件或返回成功。
 26. 文件缺失、损坏、package_id 不符时按无可用缓存返回，普通 GET 不触发网络；之后启动检查或手动刷新可重新建立文件。
 27. 导入不信任包内同名文件作为本地目录；导出和资源接口不包含世界根部 releases.json；删除世界会一并删除文件，晚到检查不能创建已删除的目录。
+28. 世界卡 JSON、DB 映射、HTTP DTO、前端读取与导入导出统一使用 publication / publication_json / WorldPublication；无重复的正式发行信息对象或旧名兼容列。
+29. 一个应用实例内，启动、刷新、GET 和删除撤销共享同一 worldUpdates；两个独立应用实例不共享检查状态，重复构造或按请求创建不能通过装配测试。
+30. 读取/检查/应用函数从公共 index 进入，usecase 不访问 worlds 私有文件；worlds 不依赖 OTA 用例，入口规则由现有 ESLint 与架构测试覆盖。
+31. 发行脚本只调用公开的纯目录校验函数，导入该公开出口不会触发网络、运行配置/数据读取或创建 OTA 实例；不引入第二套目录验证实现。
+32. 刷新与世界删除/覆盖共用原有文件写队列；文件保存接受捕获来源和同步任务有效性守卫，不在用例内另建正式世界目录写入路径。
 
-按仓库现有约束，实施阶段先用函数级测试、临时目录/临时库、typecheck/lint 验证；不启动真实服务、不触碰真实凭据。此次仅文档保存，验证文档结构、示例 JSON 和写入路径即可。
+验证以函数测试、临时目录/临时库、typecheck/lint 为准；不读取真实运行数据库和凭据。测试覆盖协议排序、原文保存、异步失效、升级/回退保留、文件与数据库失败补偿、写入互斥、HTTP函数契约、前端控制器及发行产物。浏览器交互与真实来源联网验证不在本次已完成检查之内。
+
+2026-11-26 验证结果：
+
+| 检查 | 结果 |
+| --- | --- |
+| 服务端函数套件（vitest run --exclude src/server.test.ts --silent） | 通过 |
+| 最后摘要读取调整后的相关测试 | 6 个文件、93 项全部通过 |
+| Web 全部函数测试 | 213 项全部通过 |
+| 前后端 pnpm typecheck | 通过；最后服务端调整后再次通过 |
+| pnpm lint、发行脚本独立 ESLint / strict TypeScript | 通过 |
+| 原有世界卡工具与新增发行脚本测试 | 通过，包括真实 ZIP/哈希/大小、源文件不变和最终索引字节上限 |
+| 正式示例 world:check、文档链接与 JSON 块、git diff --check | 通过 |
+
+首次执行仓库服务端全量命令包含既有 src/server.test.ts，其中 CLI 子进程的 4 秒启动等待超时。后续按仓库函数测试范围显式排除该真实 HTTP/CLI 测试文件，没有修改或删除其测试，也不将该次全量命令记为通过。
 
 ## 16. 参考与设计来源
 
@@ -913,4 +1012,4 @@ pnpm world:release \
 - Character Card V3 的作者说明与来源定义：https://github.com/kwaroran/character-card-spec-v3/blob/main/SPEC_V3.md
 - SemVer 的数字分段比较与发行后内容不变原则：https://semver.org/lang/zh-CN/ 。本方案首版仅采用不含预发布/构建后缀的数字三段子集。
 
-本方案正式收口为：metadata_json 保存正式作者/发行信息 + 每个世界根目录一份原始 releases.json + 启动自动一轮/用户主动刷新 + 前端红点 + 同 worldId 覆盖。最新版从文件计算，检查状态只在内存维护；没有增加公开版本数据库缓存、独立缓存目录、本地多版本安装、周期检测或会话迁移框架。
+本方案正式收口为：data.publication / publication_json 保存作品发行信息 + 每个世界根目录一份原始 releases.json + usecases/world-updates 集中读取、检查、下载和覆盖编排。启动自动一轮与用户主动刷新共用唯一实例，底层世界存储仍复用 WorldService；最新版从文件计算，检查状态只在内存维护。保留前端红点与同 worldId 覆盖，不增加公开版本数据库缓存、独立缓存目录、本地多版本安装、周期检测或会话迁移框架。

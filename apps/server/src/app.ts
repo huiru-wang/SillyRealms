@@ -78,7 +78,7 @@ export function createApp({ events, services, usecases, canAccessSession, webOri
     }));
     app.route('/api/v1/app-settings', createSettingsRoutes(services.settings));
     app.route('/api/v1/worlds', createWorldRoutes({
-      worlds: services.worlds, sessions: services.sessions,
+      worlds: services.worlds, sessions: services.sessions, cache: services.cache, worldUpdates: usecases.worldUpdates,
       importWorld: usecases.importWorld, exportWorld: usecases.exportWorld,
       deleteWorld: usecases.deleteWorld, canAccessSession, shutdownSignal: shutdown.signal,
     }));
@@ -95,7 +95,7 @@ export function createApp({ events, services, usecases, canAccessSession, webOri
     stopping = true;
     shutdown.abort();
     // Keep SSE alive until every accepted run has saved its already received body and published its terminal event.
-    closing = Promise.all([usecases?.narrative.shutdown(), usecases?.replyAssist.shutdown()]).then(() => {}).finally(() => streams.abort());
+    closing = Promise.all([usecases?.narrative.shutdown(), usecases?.replyAssist.shutdown(), usecases?.worldUpdates.shutdown()]).then(() => {}).finally(() => streams.abort());
     return closing;
   } });
 }

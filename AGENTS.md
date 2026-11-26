@@ -56,6 +56,8 @@
 
 ## Workspace Boundary
 
+- World card 0.2 carries author-declared `data.publication`; 0.1 remains compatible. Store publication in `worlds.publication_json` and the last valid remote index as raw `worlds/<worldId>/releases.json`. The independent `usecases/world-updates` public entry owns startup checks, explicit refresh, local reads, downloads and version application; one instance is shared per application. Reads never fetch remotely. Applying an available compatible release retains world identity, local management and all runtime state, and publishes `world.updated` only after commit and lock release. See [update protocol](docs/reference/world-updates.md) and [publishing guide](docs/creator/world-publishing.md).
+
 - State `rules` are optional author hints. Validate supplied rule paths and nonblank strings on card import or definition edits; never require root, nested or array coverage. Prompt assembly renders only supplied rules for active message roots. Rules do not authorize or veto state writes.
 
 - Author character prompts and lore content remain literal on import. Only render selected source fields, once: exact {{user}} and visible state paths, blank invalid/missing state paths, preserve unknown custom placeholders. Presets keep strict syntax and their existing aggregate variables. Never scan substituted values or assembled messages.
@@ -69,7 +71,7 @@
 - Follow [Web management](docs/runtime/web-management.md) and [Server HTTP](docs/runtime/server-http.md). Verify this integration at function level plus typecheck/lint; do not start services or add mock end-to-end environments for this task.
 
 - World author previews run on a separate static origin with a read-only global-state bridge; no runtime/engine or session-start behavior. Shared SDK resource parsing uses the world resources endpoint.
-- World detail owns up to 10 author-preview iframes at stable DOM positions, keyed by introduction/opening identity. Evict first opened (FIFO), never promote on revisit/retry. Tab switches hide retained instances; eviction/retry/detail exit destroys the corresponding bridge, and detail exit aborts shared source loads. Share source requests within the detail; management metadata changes must not remount previews. Hidden previews pause HTML media/CSS animations, not arbitrary author JavaScript; retain the read-only isolation contract.
+- World detail owns up to 10 author-preview iframes at stable DOM positions, keyed by publication release and introduction/opening identity. Evict first opened (FIFO), never promote on revisit/retry. Tab switches hide retained instances; eviction/retry/detail exit destroys the corresponding bridge, and detail exit aborts shared source loads. Share source requests within the detail; management metadata changes must not remount previews. Hidden previews pause HTML media/CSS animations, not arbitrary author JavaScript; retain the read-only isolation contract.
 
 - Web world detail preserves the page structure and interaction model: collapsible overview, character strip, six icon tabs, opening navigation, independent content scrolling and dialogs. Adapt API contracts without replacing these with management panels.
 

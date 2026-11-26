@@ -16,7 +16,7 @@ export {
 export type {SRComposerButton} from './composer-buttons.js';
 export type {SRSessionAPI, SRStateAPI} from './runtime.js';
 export type {
-  AcceptedRun, RunPage, RunQuery, RunStatus, SessionEvent, NarrativeEvent,
+  AcceptedRun, RunPage, RunQuery, RunStatus, SessionEvent, NarrativeEvent, WorldUpdatedEvent,
   StateScope, StateValue, StateSnapshot, StateWriteResult, StateChangedEvent,
   RegenerateRequest, MessageDeletedEvent, ActionSuggestionsState, Suggestions, SuggestionsCreatedEvent, CharacterSpriteChangedEvent, CharacterSpriteItem,
   StageSnapshot, StageRun, StageMessage,

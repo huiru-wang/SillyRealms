@@ -16,9 +16,10 @@ export type ModalProps={
   /** Return false to keep the dialog open after a user close request. */
   onBeforeClose?:()=>boolean;
   closeOnBackdrop?:boolean;
+  mobileSheet?:boolean;
 };
 
-export function Modal({title,onClose,children,size='default',footer,onBeforeClose,closeOnBackdrop=true}:ModalProps){
+export function Modal({title,onClose,children,size='default',footer,onBeforeClose,closeOnBackdrop=true,mobileSheet=false}:ModalProps){
   useTranslation();
   const [phase,setPhase]=useState<'enter'|'open'|'exit'>('enter');
   const titleId=useId();
@@ -87,7 +88,7 @@ export function Modal({title,onClose,children,size='default',footer,onBeforeClos
 
   const hasFooter=footer!==undefined&&footer!==null&&footer!==false;
   return createPortal(
-    <div className={styles.backdrop} data-state={phase} data-size={size}
+    <div className={styles.backdrop} data-state={phase} data-size={size} data-mobile-sheet={mobileSheet||undefined}
       onMouseDown={e=>{if(closeOnBackdrop&&e.currentTarget===e.target)requestClose();}}>
       <section ref={panelRef} className={styles.panel} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header className={styles.header}>

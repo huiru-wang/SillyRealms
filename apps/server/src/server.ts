@@ -46,6 +46,8 @@ export async function startServer({
       throw error;
     }
 
+    void usecases.worldUpdates.checkAtStartup().catch(error => console.warn('WORLD_UPDATE_STARTUP_FAILED', error));
+
     let closing: Promise<void> | undefined;
     const close = (): Promise<void> => {
       if (closing) return closing;

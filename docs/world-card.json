@@ -1,0 +1,38 @@
+{
+  "spec_version": "0.2",
+  "data": {
+    "name": "我的世界",
+    "publication": {
+      "package_id": "8da0e392-2ea6-4ac1-a93a-b94abf6828a1",
+      "authors": [
+        {
+          "name": "世界作者",
+          "url": "https://creator.example.org/"
+        }
+      ],
+      "creator_notes": "从港口抵达开局开始。素材来源与使用说明见作品主页。",
+      "release": {
+        "version": "1.0.0",
+        "published_at": "2026-11-26T12:00:00+08:00",
+        "notes": "首次公开发行。"
+      },
+      "homepage": "https://creator.example.org/my-world/",
+      "update_url": "https://cdn.example.org/worlds/my-world/releases.json"
+    },
+    "characters": [
+      {
+        "id": "traveler",
+        "name": "旅人",
+        "player_selectable": true,
+        "prompt": "你是一位初次抵达雾港的旅人。"
+      }
+    ],
+    "openings": [
+      {
+        "id": "arrival",
+        "name": "抵达",
+        "content": "海风吹过码头，{{user}}来到了雾港。"
+      }
+    ]
+  }
+}

@@ -2,7 +2,8 @@ import { lstat, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { AppError } from '../../errors.js';
-import { parseCardBytes } from './parser.js';
+import type { WorldPublication } from './types.js';
+import { parseCard, parseCardBytes } from './parser.js';
 import type { WorldCard } from './validation.js';
 import { readComponents, validateAssets } from './assets.js';
 import {
@@ -82,14 +83,17 @@ export async function inspectWorldSource(source: string): Promise<WorldSourceIns
 }
 
 /** Return a verified staged ZIP; the caller publishes it only after its extra component checks pass. */
-export async function prepareWorldSourcePackage(source: string): Promise<PreparedWorldSourcePackage> {
+export async function prepareWorldSourcePackage(source: string, options: { publication?: WorldPublication } = {}): Promise<PreparedWorldSourcePackage> {
   const inspection = await inspectWorldSource(source);
   if (inspection.format !== 'directory') throw new AppError('INVALID_WORLD_DIRECTORY', '打包输入必须是包含 world.json 的源码目录');
+  const card = options.publication === undefined ? inspection.card : parseCard({
+    ...inspection.card, data: { ...inspection.card.data, publication: options.publication },
+  });
   const temporary = await mkdtemp(join(tmpdir(), 'sr-world-pack-'));
   const cleanup = () => rm(temporary, { recursive: true, force: true });
   try {
     const path = await writeWorldPackageArchive(
-      temporary, inspection.packageFiles.filter(name => name !== 'world.json'), inspection.card,
+      temporary, inspection.packageFiles.filter(name => name !== 'world.json'), card,
       name => resolvePackagePath(source, name),
     );
     const packaged = await inspectWorldSource(path);

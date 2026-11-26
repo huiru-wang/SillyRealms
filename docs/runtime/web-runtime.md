@@ -29,7 +29,7 @@ SSE 跟随会话页面，MessagePort 跟随 iframe。重新加载舞台只替换
 - 重新生成：`POST .../narrative/runs/regenerate`，正文 `{userEntryId,assistantEntryId,expectedTipEntryId}`；Host 提供当前 tip，assistantEntryId=null 表示最新用户无回复时重试。
 - 停止：`POST .../narrative/runs/:runId/stop`，正文 `{assistantEntryId}`；请求取消不等于已收到终态。
 - 历史和状态：使用 narrative/runs 的完整轮次、nextCursor、nextAfterSeq、activeRunId，以及三作用域 state 路径。真实 tip 从 session、摘要事件和终态取得，不能以最后可见 assistant 替代 compaction tip。
-- 当前事件：message.deleted、run.created/summarizing/summarized/delta/usage/completed/stopped、state.changed、action_suggestions.created、character_sprite.changed。旧 run.phase/run.failed、usage.updated、action_suggestions.changed 均不参与 V2。
+- 当前事件：message.deleted、run.created/summarizing/summarized/delta/usage/completed/stopped、state.changed、action_suggestions.created、character_sprite.changed、world.updated。旧 run.phase/run.failed、usage.updated、action_suggestions.changed 均不参与 V2。
 - 临时输出按 messageId 归属，delta 追加，snapshot 整体替换。snapshot 不表示已保存；终态先按 savedMessageIds 移除未保存输出，再补查 runs 页，持久 entries 按相同 ID 接管，未保存输出不冒充历史。
 - action_suggestions.created 整体替换当前建议；接受新执行时清空，同一执行的重复确认不再次清空。建议事件可以早于 run.completed，终态不无条件擦除本次建议。恢复只读最新 run 最后一条普通 message 的 output.actionSuggestions：须为有效完成的 assistant，且整体 status 为 success/partial_success、有有效非空 items。最后是 user、无结果或结果无效时为空，不回找更早助手。history 仍透传 output 供诊断；stateUpdate 使用带逐项 status 的 updates。两类结果没有 results，旧格式由服务端读取时归一化。
 - 状态 path:"" 替换完整 scope；null 是普通字段值。PATCH success 可以表示路径不存在而被忽略；字段请求值不能直接写入本地缓存。按真实事件/补读同步，混合作用域写入按原顺序分组，无跨 scope 原子承诺。
@@ -43,6 +43,16 @@ SSE 跟随会话页面，MessagePort 跟随 iframe。重新加载舞台只替换
 HTTP 和 SSE 的删除回执按旧消息 ID 幂等处理，服务端确认后才移除旧 AI、清除旧终态和建议；原用户按消息 ID 保留一次。narrative 以新 assistantEntryId 隔离同轮执行，旧结束/停止事件不能影响新执行。迟到 HTTP 不重复应用删除或回退 tip、阶段、终态。历史查询发现同轮新执行时丢弃旧临时输出。
 
 SSE 无回放。丢失过流连续性时，不把后续缺头的 delta 拼成完整正文；等待最终 snapshot 或保存结果。断线不停止运行，退出页面只释放本地订阅。异常提交不自动重发，查询同步后仍保留未确认的输入草稿。
+
+## 世界发行更新
+
+workspace 在初次读取、重连和显式同步时重读所属世界内容，并消费现有会话 SSE 的 `world.updated`。通知包含 sessionId、worldId、version、revision 和 timestamp；先校验当前会话与世界，再使相关世界源码、组件和资源投影失效并重新加载。旧的在途读取不能覆盖随后取得的发行内容。
+
+会话页面以实际 publication.release.version 作为舞台内容身份的一部分。升级或回退后重建 iframe/MessagePort，使用目标版组件及显示规则；保留同一 workspace、历史、状态和输入草稿，不重新发送叙事或重新创建会话。原有 SSE 跟随会话页面，不因 iframe 重建另开连接。单纯管理名称修改、目录刷新、主题或语言变化不触发发行内容重建。
+
+事件没有回放。断线期间发生的更新由重连时的世界读取发现，不依赖前端持久化“已读版本”，也不增加轮询或第二条更新通道。下载准备期间既有会话可继续运行；最终覆盖由 Server 的短暂世界占用与叙事、AI 帮答和状态写入互斥，失败保留既有工作区和内容。
+
+角色立绘目录、资源地址、舞台源码及消息显示规则都来自当前世界。旧消息及运行状态保留；更新不重写历史或把状态恢复为目标版初值。接口与提交后事件见[Server HTTP](server-http.md#世界版本与覆盖)、[Server 事件](server-events.md#世界内容更新)。
 
 ## 行动建议的展示与恢复
 

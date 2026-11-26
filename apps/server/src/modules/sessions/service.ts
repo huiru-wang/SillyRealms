@@ -74,9 +74,18 @@ export class SessionService {
     return row ? toSession(row) : null;
   }
 
+  #assertSessionWrite(id: string, permit?: RunWritePermit): void {
+    this.#dependencies.cache.assertSessionWrite(id, permit, this.get(id)?.worldId);
+  }
+
+  #assertStateWrite(id: string, permit?: RunWritePermit): void {
+    this.#dependencies.cache.assertStateWrite(id, permit, this.get(id)?.worldId);
+  }
+
   create(input: CreateSessionInput): Session {
     const value = createSessionSchema.parse(input);
-    if (value.id !== undefined) this.#dependencies.cache.assertSessionWrite(value.id);
+    this.#dependencies.cache.assertWorldWrite(value.worldId);
+    if (value.id !== undefined) this.#assertSessionWrite(value.id);
     const world = this.#dependencies.worlds.require(value.worldId);
     if (!world.characters.some(character => character && typeof character === 'object' && !Array.isArray(character)
       && character.id === value.userCharacterId && character.player_selectable === true)) {
@@ -108,7 +117,7 @@ export class SessionService {
   }
 
   update(id: string, input: UpdateSessionInput): Session {
-    this.#dependencies.cache.assertSessionWrite(identifier.parse(id));
+    this.#assertSessionWrite(identifier.parse(id));
     const patch = updateSessionSchema.parse(input);
     this.require(id);
     if (patch.runtimeConfig) this.#validateConfigReferences(patch.runtimeConfig);
@@ -122,7 +131,7 @@ export class SessionService {
   }
 
   delete(id: string): boolean {
-    this.#dependencies.cache.assertSessionWrite(identifier.parse(id));
+    this.#assertSessionWrite(identifier.parse(id));
     return this.#repository.delete(identifier.parse(id));
   }
 
@@ -143,13 +152,13 @@ export class SessionService {
   }
 
   appendEntry(sessionId: string, input: AppendEntryInput, permit?: RunWritePermit): SessionEntry {
-    this.#dependencies.cache.assertSessionWrite(identifier.parse(sessionId), permit);
+    this.#assertSessionWrite(identifier.parse(sessionId), permit);
     return this.#appendEntry(sessionId, appendEntrySchema.parse(input));
   }
 
   /** Stores trusted opening or generated assistant output alongside the entry. */
   appendNarrativeAssistant(sessionId: string, input: AppendEntryInput, output: NarrativeOutput, permit?: RunWritePermit): SessionEntry {
-    this.#dependencies.cache.assertSessionWrite(identifier.parse(sessionId), permit);
+    this.#assertSessionWrite(identifier.parse(sessionId), permit);
     const value = appendEntrySchema.parse(input);
     if (value.type !== 'message' || value.role !== 'assistant') {
       throw new AppError('INVALID_REQUEST', '后处理结果只能保存在叙事助手消息');
@@ -203,7 +212,7 @@ export class SessionService {
   }
 
   deleteEntry(sessionId: string, entryId: string, expectedTipEntryId: string | null, permit?: RunWritePermit): DeletedEntry {
-    this.#dependencies.cache.assertSessionWrite(identifier.parse(sessionId), permit);
+    this.#assertSessionWrite(identifier.parse(sessionId), permit);
     identifier.parse(entryId);
     if (expectedTipEntryId !== null) identifier.parse(expectedTipEntryId);
     const deleted = this.#repository.deleteEntry(sessionId, entryId, expectedTipEntryId);
@@ -212,7 +221,7 @@ export class SessionService {
 
   setNarrativeOutcome(sessionId: string, entryId: string, outcome: NarrativeOutcome | null, permit?: RunWritePermit): SessionEntry {
     identifier.parse(sessionId); identifier.parse(entryId);
-    this.#dependencies.cache.assertSessionWrite(sessionId, permit);
+    this.#assertSessionWrite(sessionId, permit);
     return toSessionEntry(this.#repository.setNarrativeOutcome(sessionId, entryId, outcome === null ? null : narrativeOutcomeSchema.parse(outcome)));
   }
 
@@ -229,7 +238,7 @@ export class SessionService {
 
   updateEntry(sessionId: string, entryId: string, input: UpdateEntryInput): SessionEntry {
     identifier.parse(sessionId); identifier.parse(entryId);
-    this.#dependencies.cache.assertSessionWrite(sessionId);
+    this.#assertSessionWrite(sessionId);
     const patch = updateEntrySchema.parse(input);
     if (this.#requireEntry(sessionId, entryId).type === 'compaction' && (patch.payload !== undefined || patch.extData !== undefined)) {
       throw new AppError('INVALID_REQUEST', '摘要内容及覆盖范围仅允许由服务内部维护');
@@ -239,7 +248,7 @@ export class SessionService {
 
   /** NULL means no record; usage:null means a real request without reported usage. */
   setMetrics(sessionId: string, entryId: string, value: EntryMetrics | null): SessionEntry {
-    this.#dependencies.cache.assertSessionWrite(identifier.parse(sessionId));
+    this.#assertSessionWrite(identifier.parse(sessionId));
     const metrics = value === null ? null : metricsSchema.parse(value);
     const current = this.#requireEntry(sessionId, entryId);
     this.#assertMetricsRole(current.role, metrics);
@@ -251,7 +260,7 @@ export class SessionService {
   }
 
   setState(sessionId: string, value: JsonObject): JsonObject {
-    this.#dependencies.cache.assertStateWrite(identifier.parse(sessionId));
+    this.#assertStateWrite(identifier.parse(sessionId));
     return this.#repository.setState(identifier.parse(sessionId), value);
   }
 
@@ -265,7 +274,7 @@ export class SessionService {
   }
 
   setEntryState(sessionId: string, entryId: string, value: JsonValue[] | null): JsonValue[] | null {
-    this.#dependencies.cache.assertStateWrite(identifier.parse(sessionId));
+    this.#assertStateWrite(identifier.parse(sessionId));
     return this.#repository.setEntryState(identifier.parse(sessionId), identifier.parse(entryId), value);
   }
 

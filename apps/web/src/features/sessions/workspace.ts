@@ -8,6 +8,7 @@ import {createSuggestionsController} from '../suggestions/index.ts';
 import {createStateController} from '../state/index.ts';
 import {createSpriteController,type SpriteDisplay} from '../character-sprites/controller.ts';
 import {loadStageWorld} from '../worlds/stage-world.ts';
+import {worldReleaseIdentity} from '../worlds/versions.ts';
 import {readSession,readRuntimeConfig,type RuntimeConfig,type SessionCapabilities} from './client.ts';
 import type {Session} from './types.ts';
 import type {StageSnapshot,StageRun,StageCommandMap,SessionEvent,NarrativeEvent,Usage} from '../../../../../packages/sr-sdk/src/stage-contract.ts';
@@ -32,6 +33,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
   let disposed=false,started=false,loading=true,error:string|null=null,worldError:string|null=null,notice:string|null=null;
   let session:Session|null=null,config:RuntimeConfig|null=null,world:WorkspaceSnapshot['world']=null;
   let capabilities:SessionCapabilities|null=null,configRevision=0,savedSettingsRevision=0;
+  let worldRead:AbortController|null=null;
   let tip:string|null=null,tipRevision=0,connected=false,usageRevision=0;
   let publicationDepth=0,publicationPending=false;
   let state:ReturnType<typeof createStateController>|null=null;
@@ -143,6 +145,10 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
     batchPublish(()=>{
       try{
         if(event.event.startsWith('run.') && narrative.accept(event as NarrativeEvent)===false){forward=false;return;}
+        if(event.event==='world.updated'){
+          if(event.data.worldId!==session?.worldId){forward=false;return;}
+          if(!world||event.data.revision>world.world.revision)void loadWorld();
+        }
         if(event.event==='character_sprite.changed')sprites.accept(event.data);
         if(event.event==='run.created')sprites.remove(event.data.deletedMessageIds,event.data.tipEntryId);
         if(event.event==='message.deleted'){
@@ -194,12 +200,28 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
   }
   subscriptions.push(channel.subscribeConnection(value=>{
     if(disposed)return;connected=value.connected;narrative.setConnected(connected);publish();
-    if(connected&&started){usageRevision++;if(config)reloadCapabilities();void synchronize(true);}
+    if(connected&&started){
+      usageRevision++;if(config)reloadCapabilities();void synchronize(true);
+      if(value.generation>1)void loadWorld(true);
+    }
   }));
-  async function loadWorld(){
-    if(!session||disposed)return;worldError=null;publish();
-    try{world=await getWorld(session.worldId,abort.signal);}catch(reason){if(!disposed)worldError=errorKey(reason,"sessions:worldLoadFailed");}
-    publish();
+  async function loadWorld(reuseContent=false){
+    if(!session||disposed)return;
+    worldRead?.abort();
+    const read=new AbortController();worldRead=read;
+    const previous=world,worldId=session.worldId;
+    const current=()=>!disposed&&!read.signal.aborted&&worldRead===read;
+    worldError=null;publish();
+    try{
+      const next=await getWorld(worldId,read.signal,reuseContent&&previous?{previous}:undefined);
+      if(!current())return;
+      world=next;
+      if(previous&&worldReleaseIdentity(previous.world)!==worldReleaseIdentity(next.world)){
+        sprites.reloadCatalog();
+        if(!loading)reloadCapabilities();
+      }
+    }catch(reason){if(current())worldError=errorKey(reason,"sessions:worldLoadFailed");}
+    finally{if(current()){worldRead=null;publish();}}
   }
   async function start(){
     if(started||disposed)return;started=true;channel.connect();
@@ -235,7 +257,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
     }
     publish();return result as StageCommandMap[K]['output'];
   }
-  async function refresh(){await Promise.all([synchronize(true),refreshRuntimeConfig()]);}
+  async function refresh(){await Promise.all([synchronize(true),refreshRuntimeConfig(),loadWorld(true)]);}
   return {
     setSpritesEnabled(enabled:boolean){
       sprites.setEnabled(enabled);
@@ -255,7 +277,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
       session={...value,tipEntryId:tip};publish();
     },
     clearNotice(){notice=null;narrative.clearError();publish();},
-    dispose(){if(disposed)return;disposed=true;abort.abort();channel.dispose();sprites.dispose();narrative.dispose();history.dispose();suggestions.dispose();state?.dispose();for(const unsubscribe of subscriptions)unsubscribe();listeners.clear();eventListeners.clear();},
+    dispose(){if(disposed)return;disposed=true;worldRead?.abort();abort.abort();channel.dispose();sprites.dispose();narrative.dispose();history.dispose();suggestions.dispose();state?.dispose();for(const unsubscribe of subscriptions)unsubscribe();listeners.clear();eventListeners.clear();},
   };
 }
 export type SessionWorkspace=ReturnType<typeof createSessionWorkspace>;

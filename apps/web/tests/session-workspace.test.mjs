@@ -22,7 +22,8 @@ function eventPort(){
 }
 function setup(initialActive=false){
  const channel=eventPort(),calls=[],opening=run('opening',[entry('opening-a',1,'opening')]);
- const server={runs:[opening],active:null,tip:'opening-a',coins:10,onRequest:null,onSession:null};
+ const server={runs:[opening],active:null,tip:'opening-a',coins:10,onRequest:null,onSession:null,
+  worldVersion:'1.0.0',worldRevision:1,worldReads:[],onWorld:null};
  if(initialActive){server.runs.push(run('r',[entry('r-u',2,'r','user')],'running'));server.active='r';server.tip='r-u';}
  const request=async(path,init={})=>{
   calls.push({path,init});
@@ -46,7 +47,11 @@ function setup(initialActive=false){
    const available=await (server.onRuntimeConfig?.()??true);
    return {stage:{origin:'http://stage.test',entryPath:'/frame.html'},debug:false,capabilities:{characterSprite:{available}}};
   },
-  loadStageWorld:async()=>({world:{id:'w'},modules:{},main:null,rules:[],state:{},assetBaseUrl:null}),
+  loadStageWorld:async(id,signal,options)=>{
+   server.worldReads.push({id,signal,options});
+   if(server.onWorld)return server.onWorld(id,signal,options);
+   return {world:{id:'w',revision:server.worldRevision,publication:{release:{version:server.worldVersion}}},modules:{},main:null,rules:[],state:{},assetBaseUrl:null};
+  },
  });
  return {workspace,server,channel,calls};
 }
@@ -279,4 +284,57 @@ test('a history refresh started before acceptance cannot overwrite the new user 
  read.resolve(oldPage);await refresh;
  assert.deepEqual(workspace.getSnapshot().stage.runs.at(-1).messages.map(message=>message.id),['r-u']);
  assert.deepEqual(workspace.getSnapshot().stage.suggestions,{items:['Live action']});
+});
+
+test('world.updated reloads author content while preserving the workspace history, state and suggestions',async t=>{
+  const {workspace,server,channel,calls}=setup();t.after(()=>workspace.dispose());
+  server.runs[0].entries[0].extData.output={actionSuggestions:{status:'success',items:['Keep this suggestion']}};
+  await workspace.start();
+  const before=workspace.getSnapshot();calls.length=0;
+  server.worldVersion='1.2.0';server.worldRevision=2;
+  channel.emit({event:'world.updated',data:{sessionId:'s',worldId:'w',version:'1.2.0',revision:2,timestamp:10}});
+  await nextTurn();
+  const after=workspace.getSnapshot();
+  assert.equal(after.world.world.publication.release.version,'1.2.0');
+  assert.deepEqual(after.stage.runs,before.stage.runs);
+  assert.deepEqual(after.stage.state,before.stage.state);
+  assert.deepEqual(after.stage.suggestions,before.stage.suggestions);
+  assert.equal(after.session,before.session);
+  assert.equal(after.config,before.config);
+  assert.equal(channel.closed,false);
+  assert.equal(calls.some(call=>call.path.includes('/narrative/')),false);
+  assert.equal(calls.some(call=>call.path==='v1/worlds/w/character-sprites'),true);
+  const count=server.worldReads.length;
+  channel.emit({event:'world.updated',data:{sessionId:'s',worldId:'w',version:'1.2.0',revision:2,timestamp:10}});
+  channel.emit({event:'world.updated',data:{sessionId:'s',worldId:'foreign',version:'2.0.0',revision:100,timestamp:11}});
+  await nextTurn();assert.equal(server.worldReads.length,count);
+});
+
+test('a reconnect checks a missed installation using the existing world as the reusable content candidate',async t=>{
+  const {workspace,server,channel}=setup();t.after(()=>workspace.dispose());await workspace.start();
+  const previous=workspace.getSnapshot().world;
+  channel.disconnect();server.worldVersion='1.1.0';server.worldRevision=2;channel.connect();
+  await nextTurn();
+  assert.equal(workspace.getSnapshot().world.world.publication.release.version,'1.1.0');
+  assert.equal(server.worldReads.at(-1).options.previous,previous);
+});
+
+test('late world loads cannot overwrite a newer installed release or resurrect a disposed workspace',async t=>{
+  const {workspace,server,channel}=setup();t.after(()=>workspace.dispose());await workspace.start();
+  const first=deferred(),second=deferred();
+  let calls=0;
+  server.onWorld=()=>++calls===1?first.promise:second.promise;
+  const event=revision=>({event:'world.updated',data:{sessionId:'s',worldId:'w',version:'1.'+revision+'.0',revision,timestamp:revision}});
+  const result=revision=>({world:{id:'w',revision,publication:{release:{version:'1.'+revision+'.0'}}},modules:{},main:null,rules:[],state:{},assetBaseUrl:null});
+  channel.emit(event(2));channel.emit(event(3));
+  assert.equal(server.worldReads.at(-2).signal.aborted,true);
+  second.resolve(result(3));await nextTurn();
+  first.resolve(result(2));await nextTurn();
+  assert.equal(workspace.getSnapshot().world.world.revision,3);
+  const last=deferred();server.onWorld=()=>last.promise;
+  channel.emit(event(4));workspace.dispose();
+  const snapshot=workspace.getSnapshot();
+  assert.equal(server.worldReads.at(-1).signal.aborted,true);
+  last.resolve(result(4));await nextTurn();
+  assert.equal(workspace.getSnapshot(),snapshot);
 });

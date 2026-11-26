@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { isReleaseVersion } from '@sillyrealms/sdk/release-version';
+import type { WorldPublication } from './types.js';
 import { validateWhen } from '@sillyrealms/sdk/when-expression';
 import { parseSRAssetUri } from '@sillyrealms/sdk/assets';
 import {
@@ -96,12 +98,38 @@ const extensions = z.custom<Record<string, unknown>>(
     ctx.addIssue({ code: 'custom', path: ['cover_mosaic_enabled'], message: 'Expected boolean' });
   }
 });
-const schema=z.object({spec_version:z.literal('0.1'),data:z.object({
+function publicationUrl(protocols: readonly string[], update = false) {
+  return z.string().refine(value => {
+    try {
+      const url = new URL(value);
+      return value === value.trim() && /^https?:\/\//i.test(value) && protocols.includes(url.protocol)
+        && !url.username && !url.password && (!update || !url.hash);
+    } catch { return false; }
+  }, update ? 'Expected an absolute HTTPS update URL without credentials or fragment' : 'Expected an absolute HTTP(S) URL');
+}
+const publicationSchema = z.object({
+  package_id: z.uuid().regex(/^[0-9a-f-]+$/, 'Expected a canonical lowercase UUID'),
+  authors: z.array(z.object({ name: nonblank, url: publicationUrl(['http:', 'https:']).optional() }).strict()).min(1),
+  creator_notes: z.string().optional(),
+  release: z.object({
+    version: z.string().refine(isReleaseVersion, 'Expected a stable MAJOR.MINOR.PATCH version'),
+    published_at: z.iso.datetime({ offset: true }),
+    notes: z.string(),
+  }).strict(),
+  homepage: publicationUrl(['http:', 'https:']).optional(),
+  update_url: publicationUrl(['https:'], true).optional(),
+}).strict();
+const schema=z.object({spec_version:z.enum(['0.1', '0.2']),data:z.object({
+  publication: publicationSchema.optional(),
   name:id,description:componentView.optional(),tags:z.array(id).optional(),cover:z.string().optional(),
   characters,
   openings:z.array(openingSchema).min(1).superRefine(unique),state:atomicStateSchema.optional(),
   lorebook:z.object({entries:z.array(lore).superRefine(unique)}).optional(),message_render:messageRender.optional(),ui:z.never().optional(),components:components.optional(),stage_component:componentId.optional(),extensions:extensions.optional()
-})});
+})}).superRefine((card, ctx) => {
+  if (card.spec_version === '0.2' && card.data.publication === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['data', 'publication'], message: 'World card 0.2 requires publication' });
+  }
+});
 
 export type WorldCard = z.infer<typeof schema>;
 
@@ -193,3 +221,12 @@ export function validateCharacters(value: unknown): WorldCard['data']['character
 }
 
 export function validateComponents(value: unknown) { return components.parse(value); }
+
+export function validateWorldPublication(value: unknown): WorldPublication {
+  const result = publicationSchema.safeParse(value);
+  if (!result.success) {
+    const issue = result.error.issues[0]!;
+    throw new CardError(location(['data', 'publication', ...issue.path]), issue.message);
+  }
+  return result.data;
+}

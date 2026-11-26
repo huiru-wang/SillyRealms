@@ -8,7 +8,7 @@ HTTP适配器位于 `apps/server/src/routes/`，可调用业务模块Service或�
 
 Service 公共输入输出采用显式驼峰领域类型，存储行到领域对象的转换位于 Service，存储行及列名留在模块内部。HTTP 使用 V2 管理接口契约；跨模块展示字段由 route 调属主 Service 组合，不放回 Repository JOIN 或相互依赖的 Service 展示逻辑。作者 JSON、状态键及文档协议里的键不做递归改名。
 
-业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；Web 接入世界内容库、预设、模型配置、设置和基础会话和叙事运行页。数据库 user_version=11，只迁移结构匹配的 V2 v1–v10 库（v2 添加预设 revision，v3 添加世界 revision 和 created_at/id 索引，v4 为非 NULL 消息状态添加 (session_id,seq) 索引，v5 添加带 zh-CN 默认值的 app_settings.locale，v6 在同一迁移事务内重建该单例表的 CHECK 约束以接受 ja，逐字段保留默认项、原语言及时间戳，v7 添加帮答模型绑定、应用默认帮答预设和会话帮答目标，v8 添加可空的 sessions.reply_assist_preset_id，v9 重建 sessions，清空旧会话及其 entries，保留世界、模型、预设和应用设置；v10 仅为 app_settings 添加 cover_mosaic_density，保留 v9 的全部数据；v11 仅为 worlds 添加可空的 default_reply_assist_preset_id，保留 v10 全部数据），拒绝未知结构和旧 Server 库。createApp传入services时必须同时传入usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureBuiltins 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 和 sr-default-reply-assist-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
+业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；Web 接入世界内容库、预设、模型配置、设置和基础会话和叙事运行页。数据库 user_version=12，只迁移结构匹配的 V2 v1–v11 库（v2 添加预设 revision，v3 添加世界 revision 和 created_at/id 索引，v4 为非 NULL 消息状态添加 (session_id,seq) 索引，v5 添加带 zh-CN 默认值的 app_settings.locale，v6 在同一迁移事务内重建该单例表的 CHECK 约束以接受 ja，逐字段保留默认项、原语言及时间戳，v7 添加帮答模型绑定、应用默认帮答预设和会话帮答目标，v8 添加可空的 sessions.reply_assist_preset_id，v9 重建 sessions，清空旧会话及其 entries，保留世界、模型、预设和应用设置；v10 仅为 app_settings 添加 cover_mosaic_density，保留 v9 的全部数据；v11 仅为 worlds 添加可空的 default_reply_assist_preset_id，保留 v10 全部数据；v12 仅为 worlds 添加可空的 publication_json，保留 v11 全部世界、会话与状态数据），拒绝未知结构和旧 Server 库。createApp传入services时必须同时传入usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureBuiltins 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 和 sr-default-reply-assist-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
 
 ## 普通 JSON 响应
 
@@ -135,7 +135,7 @@ promptCache 是 SDK 提供的最佳估计保留时长，缺失表示未提供，
 
 | 方法 | 路径 | 能力 |
 |---|---|---|
-| GET | /worlds | 摘要列表，名称和标签筛选 |
+| GET | /worlds | 摘要列表，名称和标签筛选，当前/最新版本与检查状态 |
 | POST | /worlds/import | multipart file 字段上传 JSON 或 ZIP 世界卡 |
 | GET / HEAD | /worlds/:id/export | 按当前世界重建 ZIP / 下载头 |
 | GET / PATCH / DELETE | /worlds/:id | 领域详情 / 管理字段修改 / 删除世界及确认后的关联会话 |
@@ -145,29 +145,29 @@ promptCache 是 SDK 提供的最佳估计保留时长，缺失表示未提供，
 | GET / HEAD | /worlds/:id/original | 下载或检查已保存原件 |
 | GET / HEAD | /worlds/:id/resources/* | 读取或检查包内组件、素材等资源 |
 
-世界列表支持 q（名称包含匹配，最多 200 字符）、tag（精确标签名）、limit（1–200，默认 24）、cursor；不接受 offset/tagId。按 createdAt/id 倒序进行 keyset 分页，编辑内容或状态不改变顺序。游标绑定名称及标签筛选，不能挪到其他查询。Repository 直接读取摘要列并批量读取本页标签，不解析作者 JSON；sessionCount 由 route 调 SessionService 批量组合，不跨模块 JOIN。
+世界列表支持 q（名称包含匹配，最多 200 字符）、tag（精确标签名）、limit（1–200，默认 24）、cursor；不接受 offset/tagId。按 createdAt/id 倒序进行 keyset 分页，编辑内容或状态不改变顺序。游标绑定名称及标签筛选，不能挪到其他查询。Repository 读取摘要、正式发行信息并批量读取本页标签，不逐世界读取作者正文；sessionCount 由 route 调 SessionService 批量组合，版本摘要由同一 worldUpdates.getSummaries 读取本地目录后批量聚合，不跨模块 JOIN，也不访问远端。
 
-列表项为 `{id,name,cover,coverMosaicEnabled,tags:string[],sessionCount,createdAt,updatedAt}`。详情为 `data.item`，顶层字段包括 id、revision、specVersion、name、description、cover、coverMosaicEnabled、tags、characters、openings、lorebook、stateDefinition、messageRender、components、stageComponent、extensions、defaultPresetId、defaultReplyAssistPresetId、defaultApiModelConfigId、createdAt、updatedAt。不再包装 item.data 或返回空 warnings；stateDefinition 是作者声明，详情不包含运行 state。description 保留 null、组件对象或已有文本；作者对象内部协议键不递归转换。
+列表项为 `{id,name,cover,coverMosaicEnabled,tags:string[],sessionCount,createdAt,updatedAt,currentVersion,latestVersion,updateStatus}`。详情为 `data.item`，顶层字段包括 id、revision、specVersion、name、description、cover、coverMosaicEnabled、tags、characters、openings、lorebook、stateDefinition、messageRender、components、stageComponent、extensions、publication、currentVersion、latestVersion、updateStatus、defaultPresetId、defaultReplyAssistPresetId、defaultApiModelConfigId、createdAt、updatedAt。不再包装 item.data 或返回空 warnings；stateDefinition 是作者声明，详情不包含运行 state。description 保留 null、组件对象或已有文本；作者对象内部协议键不递归转换。publication 为严格 WorldPublication 对象或 null，内部沿用 package_id、creator_notes、release.published_at、update_url 等作者协议键；不是任意 metadata 字典。
 
 PATCH 仅接受 name、tags、coverMosaicEnabled、defaultPresetId、defaultReplyAssistPresetId、defaultApiModelConfigId 的非空子集，以及必填 expectedRevision。只写提交的管理列；标签 trim、去重并保留顺序，与 revision 更新在同一事务中完成。成功 revision 加一；过期返回 WORLD_REVISION_CONFLICT/409，引用不存在或校验失败不部分保存。显式 null 清除世界默认引用；defaultReplyAssistPresetId 仅接受 reply_assist 类型预设，创建会话时预填到 runtimeConfig.replyAssistPresetId，null 继续表示跟随应用默认。默认预设和模型引用是本机配置，不随世界卡导出。不提供 POST /worlds、PUT /worlds/:id/tags 或旧 /tags 别名；除上述马赛克保留键外，作者内容与运行状态不通过管理 PATCH 更新。
 
-`coverMosaicEnabled` 是 `extensions.cover_mosaic_enabled` 的布尔投影，缺省 false。管理写入只合并这一键到 `worlds.extensions_json`，保留其他扩展项，并复用 expectedRevision 的原子更新；不接受任意 extensions 覆盖。列表摘要仅投影该键，不逐世界读取完整内容。正式卡协议为 `data.extensions.cover_mosaic_enabled`，只接受布尔值，普通导出和再次导入保留 true/false；下载原件仍返回最初上传字节。
+`coverMosaicEnabled` 是 `extensions.cover_mosaic_enabled` 的布尔投影，缺省 false。管理写入只合并这一键到 `worlds.extensions_json`，保留其他扩展项，并复用 expectedRevision 的原子更新；不接受任意 extensions 覆盖。列表摘要仅投影该键，不逐世界读取完整内容。正式卡协议为 `data.extensions.cover_mosaic_enabled`，只接受布尔值，普通导出和再次导入保留 true/false；下载原件返回当前安装版保存的原始字节，管理修改不改写原件；OTA 成功后原件为选定发行文件。
 
 `/components` 返回 `data:{items:[{id,component}],errors:Record<string,string>}`。path 声明优先于 inline，文件读取失败不回退；路径、编码和大小检查由 worlds 内部复用，单个组件错误不阻塞其他组件读取，错误不暴露绝对磁盘路径。前端按需编译，接口不执行作者代码。
 
 资源接口 `/worlds/:id/resources/*` 的通配路径相对于磁盘 `package/` 根目录，例如 `resources/assets/cover.png`、`resources/components/intro.tsx`；保留读取包内文件的范围，不限于素材目录。HTTP 路径命名不改变磁盘布局或现有路径安全规则。
 
-原件下载固定文件名为 `original.json` 或 `original.zip`，反映已保存的原始字节。包资源路径允许子目录，拒绝路径穿越和符号链接；资源响应包含 MIME、nosniff、只读文档 CSP 和 Access-Control-Allow-Origin: *；文件打开和流生命周期在世界模块内部处理。
+原件下载固定文件名为 `original.json` 或 `original.zip`，反映已保存的原始字节。包资源路径允许子目录，拒绝路径穿越和符号链接；资源响应包含 MIME、nosniff、只读文档 CSP 和 Access-Control-Allow-Origin: *；使用再验证缓存策略和随当前内容变化的验证标识，使同路径资源在发行覆盖后重新获取。文件打开和流生命周期在世界模块内部处理，资源范围不包含世界根部 releases.json。
 
 DELETE `/worlds/:id` 未确认关联删除时，有关联会话返回 WORLD_HAS_SESSIONS/409，errorMessage 提示会话数量及再次确认会一并删除会话和消息；此时不修改数据库或文件。再次确认发送 `?deleteSessions=true`；省略或显式 `false` 均不授权删除会话，deleteSessions 的其他取值返回 INVALID_REQUEST/400。没有关联会话时直接删除。
 
-删除由用例编排：在同一个同步数据库事务中，通过 SessionService 删除该世界的全部关联会话及其消息，再删除世界和标签；沿用 SESSION_WRITE_LOCKED，任一会话正在运行或任一步骤失败时，整个事务回滚。配置 canAccessSession 时逐一检查关联会话的访问权限；异步检查后在事务内重新查询，发现未授权的新会话时返回 WORLD_HAS_SESSIONS，保持数据不变。数据库提交后清理整个世界根目录，包括 source/ 和 package/。目录缺失视为已清理；DB 已不存在但目录残留时，重试同一 DELETE 仍会清理并返回成功。两者均不存在返回 WORLD_NOT_FOUND。
+删除由用例编排：在同一个同步数据库事务中，通过 SessionService 删除该世界的全部关联会话及其消息，再删除世界和标签；沿用 SESSION_WRITE_LOCKED，任一会话正在运行或任一步骤失败时，整个事务回滚。配置 canAccessSession 时逐一检查关联会话的访问权限；异步检查后在事务内重新查询，发现未授权的新会话时返回 WORLD_HAS_SESSIONS，保持数据不变。数据库提交后同步撤销该世界的检查/下载，再清理整个世界根目录，包括 source/、package/ 和 releases.json。世界覆盖占用期间拒绝冲突删除；晚到检查不能重建已删除目录。目录缺失视为已清理；DB 已不存在但目录残留时，重试同一 DELETE 仍会清理并返回成功。两者均不存在返回 WORLD_NOT_FOUND。
 
 文件清理失败返回 WORLD_FILES_DELETE_FAILED，不回滚已完成的 DB 删除；调用方可重试。文件写入/删除按世界串行，并拒绝不安全的世界根目录；不会跟随内部符号链接删除外部目标。
 
 世界模块内部职责：`parser.ts` 解码 JSON、调用统一校验并转换卡片与领域对象；`validation.ts` 校验卡结构、引用、状态与条件表达式；`assets.ts` 读取组件源码并检查资源引用；`archive.ts` 处理导入文件、ZIP 解压和导出打包；`files.ts` 管理目录、暂存、发布、清理和文件流。条件表达式只做静态验证，不执行。上述实现通过 `service.ts` 对外提供能力，不改变本节 HTTP 和磁盘布局契约。
 
-世界导入采用multipart/form-data，HTTP 层按实际字节限制读取正文流并保留 boundary，不依赖 Node 适配器 Request 对象具有原生 Fetch 内部状态。只接受一个file字段，扩展名为.json或.zip。上传原名只用于判断格式，不保存、不参与导出命名；保留上传原始字节。ZIP根目录为world.json，资源只能位于components/和assets/，允许子目录；验证重复/冲突路径、符号链接、大小、资源引用和世界卡内容。JSON导入不能引用不存在的包内资源。卡使用spec_version和data，不再要求固定spec标识，导出也不生成spec。
+世界导入采用multipart/form-data，HTTP 层按实际字节限制读取正文流并保留 boundary，不依赖 Node 适配器 Request 对象具有原生 Fetch 内部状态。只接受一个file字段，扩展名为.json或.zip。上传原名只用于判断格式，不保存、不参与导出命名；保留上传原始字节。ZIP根目录为world.json，资源只能位于components/和assets/，允许子目录；验证重复/冲突路径、符号链接、大小、资源引用和世界卡内容。JSON导入不能引用不存在的包内资源。卡使用spec_version和data，不再要求固定spec标识，导出也不生成spec。接受0.1与0.2；0.2必须有正式publication，0.1缺少时按离线兼容卡保存，显式提供则完整校验。不会从extensions推断作品身份或发行版本。
 
 启动安装内置 ZIP 和手动上传共用世界导入流程。前者按发行清单的固定 ID 补齐，后者每次生成独立的 UUID。
 
@@ -175,7 +175,60 @@ DELETE `/worlds/:id` 未确认关联删除时，有关联会话返回 WORLD_HAS_
 
 当前世界导出从DB读取世界卡与标签，结合package/当前资源重新构建ZIP，忽略原始上传字节与package中旧world.json。文件名为当前world.name.zip，非法文件名字符做安全替换，中文使用标准下载头编码；导出使用no-store。导出产物先完整生成，再打开下载流，完成/取消/HEAD后清理临时文件。
 
-导出会重新校验当前内容能否表示为合法0.1世界卡。已有纯文本 description 无法表示为协议要求的组件描述时，明确返回INVALID_WORLD_CARD/422，不静默丢弃该字段。
+导出按当前specVersion重新校验0.1/0.2世界卡并保留publication，不包含releases.json和内存检查状态。横跨内容替换的导出或组件读取会被判定失效，不交付混合版本。已有纯文本 description 无法表示为协议要求的组件描述时，明确返回INVALID_WORLD_CARD/422，不静默丢弃该字段。
+
+## 世界版本与覆盖
+
+本节均为玩家本地 SR 接口。作者托管源只需[公开目录与发行文件](../reference/world-updates.md)，无需实现这些管理路由。
+
+| 方法 | 路径 | 行为 |
+| --- | --- | --- |
+| GET | /worlds/:id/versions | 只读当前 publication、本地目录与内存检查状态 |
+| POST | /worlds/:id/versions/refresh | 明确请求远端完整目录，验证后原子保存，返回新投影 |
+| POST | /worlds/:id/apply-version | 从本地目录选定发行记录，下载并校验后原地覆盖 |
+
+版本 GET 与刷新成功均返回 `data.item`：
+
+~~~ts
+{
+  worldId: string;
+  currentVersion: string | null;
+  latestVersion: string | null;
+  updateStatus: 'no_source' | 'not_checked' | 'checking' | 'ready' | 'failed';
+  lastSuccessAt: number | null;
+  lastAttemptAt: number | null;
+  errorCode: string | null;
+  versions: Array<WorldReleaseRecord & { supported: boolean }>;
+}
+~~~
+
+`WorldReleaseRecord` 沿用公开目录的 version、title、published_at、notes、spec_version、artifact 等 snake_case 字段；列表按数字三段版本降序。supported 只在 spec_version 为 0.2 时为 true；其他格式仍可展示，客户端禁用应用并提示检查 SR 版本。latestVersion 取完整有效目录的最大版本，不受 supported 过滤。
+
+currentVersion 来自当前 publication。lastSuccessAt 来自有效目录文件 mtime，lastAttemptAt 为当前进程最近尝试时间，两者均为 Unix 毫秒；errorCode 只表示本进程最近一次失败。updateStatus 优先表达无源、有效进行中检查、最近失败，再区分有有效目录的 ready 和尚无目录的 not_checked。文件缺失、损坏或作品身份不符时按无可用目录返回，不隐式联网。
+
+刷新不需要业务请求体，不接受外部传入的来源地址。Server 只使用该世界的 package_id/update_url，和启动单次检查共用同一应用实例；相同绑定的进行中请求复用到文件发布结束，结束后再次 POST 会重新请求。普通 GET、打开详情/弹窗和导入完成不会发起远端检查。启动检查在 HTTP 监听成功后非阻塞执行一轮，不增加周期任务。
+
+刷新失败使用标准错误包络，保留旧目录及其 mtime；本次尝试与失败只在内存。成功按远端目录整体替换本地原始 JSON，已撤下条目不累计保留；返回版本投影用于客户端立即同步弹窗、详情和列表红点。刷新不改变 publication、world revision、作者内容或运行状态，不发 world.updated。
+
+应用请求体：
+
+~~~json
+{
+  "version": "1.10.0",
+  "expectedSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "expectedRevision": 7
+}
+~~~
+
+SHA-256 示例需替换为所选目录记录真实值。服务端校验当前目录仍有该版且哈希一致，下载 URL 从该记录取得；不接受 URL 覆盖、不自动选择最新、不支持同版本强制重装。成功返回 `data.item` 为当前完整世界详情，包含新的 publication 和版本摘要。
+
+下载和导入准备在世界占用前进行。最后应用前重新检查绑定与 expectedRevision、已有玩家角色和状态兼容性；短暂占用覆盖区与该世界叙事/AI 帮答、新会话、状态写入及冲突管理操作互斥，其他世界不受影响。失败按阶段清理或补偿，当前版保持或恢复，不能只改版本号。
+
+成功替换作者定义、publication 与 source/package，保留 worldId、消息、global/session/message 运行状态、本地名称/标签/马赛克和默认预设/模型绑定。保持当前 update_url，不使用旧包中的来源回退；已有 releases.json 原文及 mtime 不因覆盖改变，包括下载期间刚刷新的目录。
+
+无更新源、目录缺失/非法、目标不存在、不支持格式、同版哈希冲突、下载或校验失败、世界忙、revision 冲突、玩家角色或状态不兼容均返回标准错误；不得以旧结果伪装本次成功。本地路径和原始网络凭据不作为公共错误内容返回。成功提交后才向关联会话发布[world.updated](server-events.md#世界内容更新)。
+
+应用能力集中在 `usecases/world-updates/`，通过唯一 index.ts 公开入口装配；世界模块仍负责正式内容、文件串行和替换补偿。check/get/apply 与删除撤销共用同一实例，shutdown 取消网络并等待所有检查、应用和补偿收尾后才关闭数据库。
 
 ## 会话、消息与线性历史
 

@@ -23,6 +23,7 @@
 .cardText{position:absolute;inset:auto 0 0;display:flex;flex-direction:column;align-items:flex-start;gap:5px;padding:15px 20px 16px;color:var(--media-text);line-height:1.23;min-width:0}
 .cardTitle,.cardGenre{display:block;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .cardTitle{font-size:16px;font-weight:600;letter-spacing:.005em}
+.cardIdentity{display:flex;align-items:center;max-width:100%;min-width:0}
 .cardGenre{font-size:13px;color:var(--media-muted)}
 .cardCount{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--media-muted);white-space:nowrap}
 .empty{min-height:290px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:13px;color:var(--text-muted);border:1px dashed var(--stroke-strong);border-radius:15px}

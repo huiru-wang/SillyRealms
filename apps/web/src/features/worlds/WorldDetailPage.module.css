@@ -69,6 +69,7 @@
 .worldText h1,.metadata{pointer-events:auto}
 .metadata{opacity:var(--metadata-opacity);margin-top:9px}
 .metadata[aria-hidden="true"]{visibility:hidden;pointer-events:none}
+.publicationRow{width:calc(100% + var(--overview-actions-width));min-width:0}
 .tags{display:flex;align-items:center;gap:7px;margin-top:10px;overflow:hidden;white-space:nowrap}
 .tags>span{padding:4px 8px;background:var(--surface);border:1px solid var(--stroke);color:var(--text-secondary);font-size:11px;border-radius:6px;flex:none}
 .tags>.worldFacts{background:none;border:0;color:var(--text-muted);padding-left:4px;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto}

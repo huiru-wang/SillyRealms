@@ -18,6 +18,7 @@ import type {HostedComposerButton} from '../../stage-host/composer-buttons';
 import {StageHost} from '../../stage-host/StageHost';
 import {createSessionWorkspace,type SessionWorkspace} from './workspace';
 import {useSessionLayout} from './use-session-layout';
+import {worldReleaseIdentity} from '../worlds/versions';
 import type {StageCommand} from '../../../../../packages/sr-sdk/src/stage-contract';
 import styles from './Sessions.module.css';
 
@@ -62,6 +63,7 @@ function SessionView({workspace,reload}:{workspace:SessionWorkspace;reload:()=>v
   const render=useMemo(()=>view.world&&view.config?{
     modules:view.world.modules,main:view.world.main,rules:view.world.rules,state:view.world.state,assetBaseUrl:view.world.assetBaseUrl,debug:view.config.debug,
   }:null,[view.world,view.config]);
+  const stageKey=view.world?worldReleaseIdentity(view.world.world):undefined;
   const activeRun=stage.activeRunId,active=stage.runs.find(run=>run.runId===activeRun);
   const busy=!!activeRun||view.sending||localeSaving||assistBusy;
   const latestRun=stage.runs.at(-1),latestUser=latestRun?.messages.find(message=>message.role==='user');
@@ -104,9 +106,9 @@ function SessionView({workspace,reload}:{workspace:SessionWorkspace;reload:()=>v
     <div ref={layout.viewport} className={styles.stageSlot} aria-label={i18n.t("sessions:stage")}>
       {view.error?<div className="stage-error" role="alert"><h2>{i18n.t("sessions:unavailable")}</h2><p>{errorMessage(view.error)}</p><button onClick={reload}>{i18n.t("sessions:reloadSession")}</button></div>:
         view.worldError?<div className="stage-error" role="alert"><h2>{i18n.t("sessions:worldLoadFailed")}</h2><p>{errorMessage(view.worldError)}</p><button onClick={()=>void workspace.reloadWorld()}>{i18n.t("sessions:reloadWorld")}</button></div>:
-        render&&view.config?<StageHost config={view.config} render={render} snapshot={stage} command={command} subscribeEvents={workspace.subscribeEvents} fontSize={fontSize} bottomInset={layout.bottomInset} onNotice={setNotice} onComposerButtons={setButtons}/>:
+        render&&view.config?<StageHost key={stageKey} config={view.config} render={render} snapshot={stage} command={command} subscribeEvents={workspace.subscribeEvents} fontSize={fontSize} bottomInset={layout.bottomInset} onNotice={setNotice} onComposerButtons={setButtons}/>:
         <p className="loading-panel" role="status">{i18n.t("sessions:preparingStage")}</p>}
-      {spriteToggle&&render&&!view.error&&!view.worldError&&<CharacterSpriteOverlay display={view.sprites}
+      {spriteToggle&&render&&!view.error&&!view.worldError&&<CharacterSpriteOverlay key={stageKey} display={view.sprites}
         assetBaseUrl={render.assetBaseUrl} bottomInset={layout.bottomInset}/>}
     </div>
     <div ref={layout.overlay} className={styles.composerArea} data-composer-overlay>

@@ -19,6 +19,7 @@
 | 选择叙事方式和模型 | [预设与模型](creator/presets-and-models.md) |
 | 设计自己的阅读与交互界面 | [展示与舞台](creator/presentation.md) |
 | 检查、打包、交给别人游玩 | [打包与分享](creator/packaging.md) |
+| 声明作者与版本，发布可在线更新的作品 | [作者发行指南](creator/world-publishing.md) |
 | 排查导入、状态、素材和组件问题 | [常见问题](creator/troubleshooting.md) |
 
 ## 我已有酒馆作品
@@ -34,6 +35,7 @@
 | 需要查阅的内容 | 参考 |
 | --- | --- |
 | 世界卡字段、必填项、引用关系 | [世界卡格式](reference/world-card.md) |
+| 公开版本目录、发行文件与本地覆盖 | [开放 OTA 协议](reference/world-updates.md) |
 | 会话、历史、状态、组件和资源 API | [SDK 开发手册](sdk/README.md) |
 | 校验 API 与工具使用边界 | [工具参考](sdk/tooling.md) |
 | 作者组件的挂载和权限 | [组件契约](design/world-components.md) |

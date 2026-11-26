@@ -21,7 +21,7 @@ describe('V2 database lifecycle and constraints', () => {
   };
 
   function legacyWorldDefaults(database: DatabaseSync) {
-    database.exec('DROP INDEX idx_world_reply_preset; ALTER TABLE worlds DROP COLUMN default_reply_assist_preset_id');
+    database.exec('ALTER TABLE worlds DROP COLUMN publication_json; DROP INDEX idx_world_reply_preset; ALTER TABLE worlds DROP COLUMN default_reply_assist_preset_id');
   }
 
   // Recreate the historical table before inserting fixtures. DROP COLUMN on V6's
@@ -139,7 +139,7 @@ CREATE TABLE app_settings (
     const upgraded = openDatabase(path);
     expect(upgraded.prepare('SELECT * FROM app_settings').get()).toEqual({ ...originalSettings, locale: 'zh-CN', default_reply_assist_preset_id: null, cover_mosaic_density: 24 });
     expect(upgraded.prepare('SELECT * FROM presets').get()).toEqual({ ...originalPreset, api_model_config_id: null });
-    expect(upgraded.prepare('SELECT * FROM worlds').get()).toEqual({ ...originalWorld, default_reply_assist_preset_id: null });
+    expect(upgraded.prepare('SELECT * FROM worlds').get()).toEqual({ ...originalWorld, default_reply_assist_preset_id: null, publication_json: null });
     expect(upgraded.prepare('PRAGMA user_version').get()?.user_version).toBe(DATABASE_VERSION);
     expect(() => upgraded.prepare("UPDATE app_settings SET locale='fr'").run()).toThrow();
     upgraded.prepare("UPDATE app_settings SET locale='en'").run();
@@ -174,7 +174,7 @@ CREATE TABLE app_settings (
       ...row,
       ...(table === 'app_settings' ? { default_reply_assist_preset_id: null, cover_mosaic_density: 24 } : {}),
       ...(table === 'presets' ? { api_model_config_id: null } : {}),
-      ...(table === 'worlds' ? { default_reply_assist_preset_id: null } : {}),
+      ...(table === 'worlds' ? { default_reply_assist_preset_id: null, publication_json: null } : {}),
     }))]));
     records.set('sessions', []);
     records.set('entries', []);
@@ -198,10 +198,11 @@ CREATE TABLE app_settings (
     reopened.close();
   });
 
-  it.each([9, 10])('adds world reply defaults to a verified V%s database without changing existing rows', version => {
+  it.each([9, 10, 11])('adds publication and world reply defaults to a verified V%s database without changing existing rows', version => {
     const path = file();
     const previous = openDatabase(path);
-    legacyWorldDefaults(previous);
+    if (version === 11) previous.exec('ALTER TABLE worlds DROP COLUMN publication_json');
+    else legacyWorldDefaults(previous);
     if (version === 9) previous.exec('ALTER TABLE app_settings DROP COLUMN cover_mosaic_density');
     previous.exec('PRAGMA user_version=' + version);
     previous.prepare('INSERT INTO api_model_configs VALUES(?,?,?,?,?,?,?)')
@@ -223,7 +224,7 @@ CREATE TABLE app_settings (
     const records = new Map(tables.map(table => [table, previous.prepare('SELECT * FROM ' + table).all().map(row => ({
       ...row,
       ...(table === 'app_settings' && version === 9 ? { cover_mosaic_density: 24 } : {}),
-      ...(table === 'worlds' ? { default_reply_assist_preset_id: null } : {}),
+      ...(table === 'worlds' ? { default_reply_assist_preset_id: null, publication_json: null } : {}),
     }))]));
     previous.close();
 

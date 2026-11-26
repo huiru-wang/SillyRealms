@@ -1,12 +1,13 @@
 # 世界卡格式参考
 
-本页对应当前仓库的导入器。协议版本是 `spec_version: "0.1"`；状态定义另有 `schema_version: 2`。两者不是同一个版本号。
+本页对应当前仓库的导入器。正式发行卡使用 `spec_version: "0.2"`，继续接受 0.1 卡；状态定义另有 `schema_version: 2`，公开版本目录使用 `schema_version: 1`。这些版本与作者的 `publication.release.version` 各自独立。
 
-先做作品请读[第一张世界卡](../creator/first-world.md)；完整文件见[最小示例](../../examples/worlds/minimal/world.json)与[雾港来信](../../examples/worlds/fog-harbor/world.json)。字段校验以[世界卡校验器](../../apps/server/src/modules/worlds/validation.ts)、[状态校验器](../../packages/sr-sdk/src/state-validation.ts)为准；通过 `pnpm world:check` 使用实际契约检查。
+先做作品请读[第一张世界卡](../creator/first-world.md)；正式发行字段见 [0.2 示例](../world-card.json)，现有[最小示例](../../examples/worlds/minimal/world.json)与[雾港来信](../../examples/worlds/fog-harbor/world.json)仍可按兼容格式导入。字段校验以[世界卡校验器](../../apps/server/src/modules/worlds/validation.ts)、[状态校验器](../../packages/sr-sdk/src/state-validation.ts)为准；通过 `pnpm world:check` 使用实际契约检查。
 
 ## 目录
 
 - [根结构](#根结构)
+- [作品发行信息](#作品发行信息)
 - [角色](#角色)
 - [角色立绘](#角色立绘)
 - [开局](#开局)
@@ -22,9 +23,18 @@
 
 ~~~json
 {
-  "spec_version": "0.1",
+  "spec_version": "0.2",
   "data": {
     "name": "我的世界",
+    "publication": {
+      "package_id": "8da0e392-2ea6-4ac1-a93a-b94abf6828a1",
+      "authors": [{"name": "世界作者"}],
+      "release": {
+        "version": "1.0.0",
+        "published_at": "2026-11-26T12:00:00+08:00",
+        "notes": "首次公开发行。"
+      }
+    },
     "characters": [
       {"id": "traveler", "name": "旅人", "player_selectable": true}
     ],
@@ -35,11 +45,12 @@
 }
 ~~~
 
-这是结构最小值。实际作品应补充角色 prompt 和世界资料，让模型知道应该怎样继续故事。
+这是 0.2 正式卡的结构最小值，示例 UUID 应替换为自己作品首次生成并长期保留的值。实际作品应补充角色 prompt 和世界资料，让模型知道应该怎样继续故事。0.1 卡不要求补齐发行信息；没有 publication 时作为离线兼容卡，不推断作者作品身份或版本。
 
 | 字段（位于 data） | 必填 | 类型 / 约束 |
 | --- | --- | --- |
 | `name` | 是 | 去掉首尾空白后非空的字符串 |
+| `publication` | 0.2 必填 | 固定结构的作品发行信息；0.1 可缺省，显式提供时同样完整校验 |
 | `characters` | 是 | 角色数组，至少一项可扮演，数组内 ID 唯一 |
 | `openings` | 是 | 至少一个开局，数组内 ID 唯一 |
 | `description` | 否 | `{type:"component", component:"组件ID"}`；新卡不接受旧字符串简介 |
@@ -52,7 +63,7 @@
 | `message_render` | 否 | `{rules: [...显示规则]}` |
 | `extensions` | 否 | 扩展元数据对象；平台识别已约定的保留键，其余作者元数据原样保留 |
 
-不要在世界卡中加入模型 Key、运行时会话数据或本机默认配置 ID。`data.ui` 不被接受。未定义的自创字段不构成平台能力，也不能保证原样往返；作者元数据放在 extensions，并在作品说明中解释。
+不要在世界卡中加入模型 Key、运行时会话数据或本机默认配置 ID。`data.ui` 不被接受。未定义的自创字段不构成平台能力，也不能保证原样往返；自定义作者扩展放在 extensions，并在作品说明中解释；正式作品身份、作者和发行版本使用 publication。
 
 ### 封面马赛克
 
@@ -67,7 +78,47 @@
 }
 ~~~
 
-管理界面修改开关只合并这一保留键，保留其他扩展数据。普通导出保存当前的显式 `true` 或 `false`，重新导入后沿用；下载原件仍返回上传时的原始字节。开关不修改封面图片或包内素材，也不增加作者代码权限。该键只接受布尔值，不接受字符串、数字或 `null`。
+管理界面修改开关只合并这一保留键，保留其他扩展数据。普通导出保存当前的显式 `true` 或 `false`，重新导入后沿用；下载原件返回当前安装版的原始字节；实际应用发行版后对应选中发行文件。开关不修改封面图片或包内素材，也不增加作者代码权限。该键只接受布尔值，不接受字符串、数字或 `null`。
+
+## 作品发行信息
+
+`data.publication` 对应公开类型 `WorldPublication`，只描述随卡分发的作品身份、署名、说明、当前发行版和公开更新入口。它不保存本地安装记录、检查状态、远端全版本目录、用户设置或运行状态。
+
+~~~json
+{
+  "package_id": "8da0e392-2ea6-4ac1-a93a-b94abf6828a1",
+  "authors": [
+    { "name": "世界作者", "url": "https://creator.example.org/" }
+  ],
+  "creator_notes": "建议先阅读开局说明，素材致谢见作品主页。",
+  "release": {
+    "version": "1.2.0",
+    "published_at": "2026-11-26T12:00:00+08:00",
+    "notes": "新增港口角色，修复背包展示。"
+  },
+  "homepage": "https://creator.example.org/my-world/",
+  "update_url": "https://cdn.example.org/worlds/my-world/releases.json"
+}
+~~~
+
+| 字段 | 约束与含义 |
+| --- | --- |
+| `package_id` | 必填规范小写 UUID；标识作者作品，发版、改名与回退不变，不等于本机 worldId |
+| `authors` | 至少一位，按数组顺序署名；每项 `name` 非空，`url` 可选 HTTP(S) |
+| `creator_notes` | 可省略，缺省为空字符串；整体玩法建议、说明与致谢 |
+| `release.version` | 稳定 `MAJOR.MINOR.PATCH`，三段均为非负安全整数，不允许多余前导零 |
+| `release.published_at` | 带时区的 ISO 8601 发行时间 |
+| `release.notes` | 本版更新说明，允许空字符串；与 creator_notes 分别保存和展示 |
+| `homepage` | 可选 HTTP(S) 作品页面，面向人阅读 |
+| `update_url` | 可选固定公开 HTTPS 全版本目录地址，面向程序，不使用用户凭据或 URL 片段 |
+
+publication、authors 各项及 release 均拒绝未知键；其他作者扩展继续放在 `data.extensions`。作者署名不是账号认证。publication 不参与叙事提示词构建，不能用作者说明替代角色 prompt 或世界书。
+
+`1.10.0` 大于 `1.9.0`，按数字段比较；不接受 `v1.2.0`、`1.2`、`01.2.0`、`1.2.0-beta`、`1.2.0+build` 或自由文本。作品 ID 与版本绑定不可变发行文件，包内内容变化应发布新版本。发布时间与本地管理的 revision 都不参与版本大小比较。
+
+0.2 必须提供完整 publication。0.1 缺少时保存为空，显式提供时验证并保留；不从旧 `extensions.authoring.revision`、昵称或卡名猜测正式版本/身份。既有 extensions 保持自定义用途。普通导入和导出保留正式发行信息，导出不包含本地远端目录缓存。
+
+完整历史及最终 ZIP 的 SHA-256/字节数放在包外版本目录，不嵌入 publication，避免 ZIP 包含自身哈希。目录获取、不可变性与指定版本覆盖见[开放 OTA 协议](world-updates.md)，可复制的发版命令见[作者发行指南](../creator/world-publishing.md)。
 
 ## 角色
 
@@ -271,6 +322,6 @@ ZIP 只允许根 world.json、components/、assets/；拒绝重复或大小写/U
 
 world:check 使用当前导入和模块检查能力，但不执行组件、调用模型、下载远程素材或评判剧情效果。声明式资源可检查，组件运行中动态拼出的路径仍需实际打开验证。
 
-普通导入创建新世界副本；修改源码、重新打包不会自动更新既有世界或会话。世界导出重建作者卡与资源，不是运行数据库备份。默认叙事预设、帮答预设和模型绑定由应用管理，不随世界卡导出；不能依赖作者本地 ID 让接收者自动取得同样模型。
+普通导入创建新世界副本；修改源码、重新打包不会自动更新既有世界或会话。带正式更新源的卡可由玩家明确选择并确认[应用指定发行版](world-updates.md#应用指定版本)，在同一 worldId 下替换作者内容并保留会话和运行状态。世界导出重建作者卡与资源，不是运行数据库备份。默认叙事预设、帮答预设和模型绑定由应用管理，不随世界卡导出；不能依赖作者本地 ID 让接收者自动取得同样模型。
 
 参考来源：[解析/导出](../../apps/server/src/modules/worlds/parser.ts) · [资源校验](../../apps/server/src/modules/worlds/assets.ts) · [ZIP 处理](../../apps/server/src/modules/worlds/archive.ts) · [资源路径](../../packages/sr-sdk/src/asset-url.ts)。

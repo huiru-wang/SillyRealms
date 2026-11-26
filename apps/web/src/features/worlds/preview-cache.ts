@@ -4,8 +4,8 @@ export type PreviewEntry={id:string;entry:string;title:string};
 export type PreviewModules={code:Record<string,string>;errors:Record<string,string>};
 export const PREVIEW_LIMIT=10;
 
-export function previewContentIdentity(world:Pick<WorldDetail,'id'|'components'>):string {
-  return JSON.stringify([world.id,world.components??[]]);
+export function previewContentIdentity(world:Pick<WorldDetail,'id'|'components'> & Partial<Pick<WorldDetail,'publication'>>):string {
+  return JSON.stringify([world.id,world.publication?.release.version??null,world.components??[]]);
 }
 
 /** First opened, first evicted. Revisiting or retrying never promotes an entry. */

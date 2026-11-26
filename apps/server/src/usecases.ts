@@ -16,6 +16,7 @@ import { createImportWorld } from './usecases/import-world.js';
 import { createInitialize } from './usecases/initialize.js';
 import { createSetState } from './usecases/set-state.js';
 import { createAppendEntry } from './usecases/append-entry.js';
+import { createWorldUpdates } from './usecases/world-updates/index.js';
 import { createSessionUsecase } from './usecases/create-session.js';
 
 /** Application flows are composed here; no usecase opens or retains a database connection. */
@@ -24,7 +25,9 @@ export function createUsecases({ services, transaction, events, modelClient = ne
 }) {
   const { worlds, sessions, presets, settings } = services;
   const importWorld = createImportWorld({ worlds, settings });
+  const worldUpdates = createWorldUpdates({ worlds, sessions, cache: services.cache, events });
   return {
+    worldUpdates,
     createSession: createSessionUsecase({ worlds, sessions, state: services.state, transaction, events }),
     replyAssist: createReplyAssist({ ...services, modelClient, events }),
     narrative: createNarrativeUsecases({ ...services, events, modelClient, transaction }),
@@ -34,7 +37,7 @@ export function createUsecases({ services, transaction, events, modelClient = ne
     initialize: createInitialize({ presets, settings, worlds, initialWorlds: services.initialWorlds, importWorld, transaction }),
     setState: createSetState({ worlds, sessions, state: services.state, transaction, events, cache: services.cache }),
     appendEntry: createAppendEntry({ sessions, state: services.state, transaction, events }),
-    deleteWorld: createDeleteWorld({ worlds, sessions, transaction }),
+    deleteWorld: createDeleteWorld({ worlds, sessions, transaction, onWorldDeleted: worldUpdates.cancelForWorld }),
     importWorld,
     exportWorld: createExportWorld({ worlds }),
     importPreset: createImportPreset({ presets }),

@@ -13,6 +13,7 @@ type Dependencies = {
   worlds: Pick<WorldService, 'deleteRecord' | 'deleteFiles'>;
   sessions: Pick<SessionService, 'listIdsByWorld' | 'delete'>;
   transaction: TransactionRunner;
+  onWorldDeleted?: (worldId: string) => void;
 };
 
 function requireConfirmation(count: number, changed = false): never {
@@ -21,7 +22,7 @@ function requireConfirmation(count: number, changed = false): never {
 }
 
 /** Commit all database deletions together; file cleanup remains independently retryable. */
-export function createDeleteWorld({ worlds, sessions, transaction }: Dependencies): DeleteWorld {
+export function createDeleteWorld({ worlds, sessions, transaction, onWorldDeleted }: Dependencies): DeleteWorld {
   return async (worldId, { deleteSessions = false, authorizeSession } = {}) => {
     let authorized: Set<string> | undefined;
     if (deleteSessions && authorizeSession) {
@@ -37,6 +38,7 @@ export function createDeleteWorld({ worlds, sessions, transaction }: Dependencie
       for (const id of ids) sessions.delete(id);
       return worlds.deleteRecord(worldId);
     });
+    onWorldDeleted?.(worldId);
     const filesRemoved = await worlds.deleteFiles(worldId);
     return dbDeleted || filesRemoved;
   };

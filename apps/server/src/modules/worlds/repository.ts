@@ -1,11 +1,12 @@
 import { transaction } from '../../infrastructure/database/transaction.js';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { encodeJson, type JsonObject, type JsonValue } from '../../infrastructure/database/connection.js';
-import type { WorldDescription, WorldListOptions } from './types.js';
+import type { WorldDescription, WorldListOptions, WorldPublication, WorldUpdateSource } from './types.js';
 
 /** Decoded storage rows stay inside this module; only the Service exposes domain objects. */
 export type WorldContentRow = {
   spec_version: string;
+  publication_json: WorldPublication | null;
   name: string;
   description: WorldDescription;
   cover: string | null;
@@ -25,11 +26,11 @@ export type WorldRow = WorldContentRow & {
   id: string; revision: number; state: JsonObject; tags: string[]; created_at: number; updated_at: number;
 };
 const contentColumns = [
-  'spec_version', 'name', 'description', 'cover', 'characters_json', 'openings_json',
+  'spec_version', 'publication_json', 'name', 'description', 'cover', 'characters_json', 'openings_json',
   'lorebook_json', 'state_definition_json', 'message_render_json', 'components',
   'stage_component', 'extensions_json', 'default_preset_id', 'default_reply_assist_preset_id', 'default_api_model_config_id',
 ] as const;
-const nullableJsonFields = new Set(['description', 'lorebook_json', 'state_definition_json', 'message_render_json', 'extensions_json']);
+const nullableJsonFields = new Set(['publication_json', 'description', 'lorebook_json', 'state_definition_json', 'message_render_json', 'extensions_json']);
 
 function contentValues(input: WorldContentRow): SQLInputValue[] {
   return contentColumns.map(field => {
@@ -59,6 +60,10 @@ function readDescription(value: unknown): WorldDescription {
 export class WorldRepository {
   constructor(private readonly db: DatabaseSync) {}
 
+  exists(id: string): boolean {
+    return this.db.prepare('SELECT 1 FROM worlds WHERE id = ?').get(id) !== undefined;
+  }
+
   get(id: string): WorldRow | null {
     const row = this.db.prepare('SELECT * FROM worlds WHERE id = ?').get(id);
     if (!row) return null;
@@ -67,6 +72,7 @@ export class WorldRepository {
     return {
       id: String(row.id), revision: Number(row.revision),
       spec_version: String(row.spec_version),
+      publication_json: nullableJson('publication_json') as WorldPublication | null,
       name: String(row.name),
       description: readDescription(row.description),
       cover: row.cover === null ? null : String(row.cover),
@@ -89,6 +95,11 @@ export class WorldRepository {
     };
   }
 
+  listUpdateSources(): WorldUpdateSource[] {
+    return this.db.prepare("SELECT id, json_extract(publication_json,'$.package_id') AS package_id, json_extract(publication_json,'$.update_url') AS update_url FROM worlds WHERE publication_json IS NOT NULL AND json_type(publication_json,'$.update_url')='text' ORDER BY id")
+      .all().map(row => ({ worldId: String(row.id), packageId: String(row.package_id), updateUrl: String(row.update_url) }));
+  }
+
   listUsingDefaultPreset(presetId: string, type: 'narrative' | 'reply_assist') {
     const column = type === 'reply_assist' ? 'default_reply_assist_preset_id' : 'default_preset_id';
     return this.db.prepare('SELECT id, name FROM worlds WHERE ' + column + ' = ? ORDER BY name, id')
@@ -105,14 +116,14 @@ export class WorldRepository {
     if (tag) { conditions.push('EXISTS (SELECT 1 FROM world_tags t WHERE t.world_id=w.id AND t.name=?)'); args.push(tag); }
     if (before) { conditions.push('(w.created_at < ? OR (w.created_at = ? AND w.id < ?))'); args.push(before.createdAt, before.createdAt, before.id); }
     const filter = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
-    const rows = this.db.prepare("SELECT w.id,w.name,w.cover,CASE WHEN json_type(w.extensions_json,'$.cover_mosaic_enabled')='true' THEN 1 ELSE 0 END AS cover_mosaic_enabled,w.created_at,w.updated_at FROM worlds w" + filter + ' ORDER BY w.created_at DESC,w.id DESC LIMIT ? OFFSET ?').all(...args, limit, offset);
+    const rows = this.db.prepare("SELECT w.id,w.name,w.publication_json,w.cover,CASE WHEN json_type(w.extensions_json,'$.cover_mosaic_enabled')='true' THEN 1 ELSE 0 END AS cover_mosaic_enabled,w.created_at,w.updated_at FROM worlds w" + filter + ' ORDER BY w.created_at DESC,w.id DESC LIMIT ? OFFSET ?').all(...args, limit, offset);
     const tags = new Map<string, string[]>();
     if (rows.length) {
       for (const row of this.db.prepare('SELECT world_id,name FROM world_tags WHERE world_id IN (' + rows.map(() => '?').join(',') + ') ORDER BY world_id,sort_order,name').all(...rows.map(row => String(row.id)))) {
         const id = String(row.world_id); const values = tags.get(id) ?? []; values.push(String(row.name)); tags.set(id, values);
       }
     }
-    return rows.map(row => ({ id: String(row.id), name: String(row.name), cover: row.cover === null ? null : String(row.cover), cover_mosaic_enabled: Number(row.cover_mosaic_enabled) === 1, tags: tags.get(String(row.id)) ?? [], created_at: Number(row.created_at), updated_at: Number(row.updated_at) }));
+    return rows.map(row => ({ id: String(row.id), name: String(row.name), publication: row.publication_json === null ? null : JSON.parse(String(row.publication_json)) as WorldPublication, cover: row.cover === null ? null : String(row.cover), cover_mosaic_enabled: Number(row.cover_mosaic_enabled) === 1, tags: tags.get(String(row.id)) ?? [], created_at: Number(row.created_at), updated_at: Number(row.updated_at) }));
   }
 
   updateManagement(id: string, patch: { name?: string; extensions_json?: JsonObject; default_preset_id?: string | null; default_reply_assist_preset_id?: string | null; default_api_model_config_id?: string | null }, tags: string[] | undefined, revision: number): WorldRow | null {
@@ -148,6 +159,15 @@ export class WorldRepository {
         .run(...values, Date.now(), id);
       if (tags !== undefined) this.writeTags(id, tags);
       return this.get(id)!;
+    });
+  }
+
+  replaceContent(id: string, content: WorldContentRow, expectedRevision: number): WorldRow | null {
+    const values = contentValues(content);
+    return transaction(this.db, () => {
+      const result = this.db.prepare('UPDATE worlds SET ' + contentColumns.map(field => field + '=?').join(',') + ', revision=revision+1, updated_at=? WHERE id=? AND revision=?')
+        .run(...values, Date.now(), id, expectedRevision);
+      return result.changes ? this.get(id)! : null;
     });
   }
 

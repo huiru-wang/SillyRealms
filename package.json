@@ -19,6 +19,7 @@
     "lint": "pnpm --filter @sillyrealms/server lint",
     "world:check": "pnpm --filter @sillyrealms/server exec tsx ../../scripts/world-card.mts check",
     "world:pack": "pnpm --filter @sillyrealms/server exec tsx ../../scripts/world-card.mts pack",
-    "test:world-cards": "pnpm --filter @sillyrealms/server exec tsx --test ../../scripts/world-card.test.mts"
+    "world:release": "pnpm --filter @sillyrealms/server exec tsx ../../scripts/release-world.ts",
+    "test:world-cards": "pnpm --filter @sillyrealms/server exec tsx --test ../../scripts/world-card.test.mts ../../scripts/release-world.test.mts"
   }
 }

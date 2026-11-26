@@ -17,6 +17,7 @@
 | 搬来已有酒馆作品 | [从 SillyTavern 迁移](from-sillytavern.md) | 行为映射、迁移作品与非等价项说明 |
 | 让 Agent 帮忙制作 | [使用 Agent 创作](agent-authoring.md) | 按仓库 Skill 完成创作、检查和打包 |
 | 分享、检查资源包 | [打包与分享](packaging.md) | 通过检查的 ZIP 和试玩说明 |
+| 发行新版本并让玩家在线更新 | [作者发行指南](world-publishing.md) | 固定作品身份、不可变 ZIP 与完整版本目录 |
 | 排查导入、状态或组件问题 | [排错](troubleshooting.md) | 找到出错环节及可验证的修复方法 |
 
 ## 先认识四个对象

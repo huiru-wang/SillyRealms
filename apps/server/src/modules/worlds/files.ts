@@ -10,7 +10,9 @@ export type WorldPaths = { root: string; source: string; package: string };
 export type OriginalFormat = 'json' | 'zip';
 export type WorldOriginal = { format: OriginalFormat; bytes: Uint8Array };
 export type PackageFile = { path: string; stat: Stats };
+export type ReleaseIndexSnapshot = Readonly<{ text: string; mtimeMs: number }>;
 export type WorldDownload = { body: ReadableStream<Uint8Array>; filename: string; size: number };
+const WORLD_RELEASE_INDEX_LIMIT = 2 * 1024 * 1024;
 export const WORLD_JSON_LIMIT = 10 * 1024 * 1024;
 export const WORLD_ZIP_LIMIT = 256 * 1024 * 1024;
 const sourceLimits: Record<OriginalFormat, number> = { json: WORLD_JSON_LIMIT, zip: WORLD_ZIP_LIMIT };
@@ -43,8 +45,8 @@ function missing(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
-type InvalidFileCode = 'INVALID_WORLD_ORIGINAL' | 'INVALID_WORLD_PACKAGE_FILE';
-type MissingFileCode = 'WORLD_ORIGINAL_NOT_FOUND' | 'WORLD_PACKAGE_FILE_NOT_FOUND';
+type InvalidFileCode = 'INVALID_WORLD_ORIGINAL' | 'INVALID_WORLD_PACKAGE_FILE' | 'WORLD_RELEASE_INDEX_READ_FAILED';
+type MissingFileCode = 'WORLD_ORIGINAL_NOT_FOUND' | 'WORLD_PACKAGE_FILE_NOT_FOUND' | 'WORLD_RELEASE_INDEX_READ_FAILED';
 
 async function openVerified(path: string, expected: Stats, invalidCode: InvalidFileCode, missingCode: MissingFileCode) {
   let file: FileHandle | undefined;
@@ -198,13 +200,14 @@ export class WorldFileStore {
     return found;
   }
 
-  async saveOriginal(worldId: string, format: OriginalFormat, bytes: Uint8Array): Promise<void> {
+  async saveOriginal(worldId: string, format: OriginalFormat, bytes: Uint8Array, guard?: () => void): Promise<void> {
     if (format !== 'json' && format !== 'zip') throw new AppError('INVALID_WORLD_ORIGINAL_FORMAT');
     if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0 || bytes.byteLength > sourceLimits[format]) {
       throw new AppError('INVALID_WORLD_ORIGINAL_SIZE');
     }
     // Enqueue before mkdir so deletion cannot finish ahead of an already-accepted write.
     await withWorldWrite(this.paths(worldId).root, async () => {
+      guard?.();
       const source = await this.directory(worldId, 'source', true);
       const current = await this.originalAt(source);
       // Switching formats is a future import policy, not a partially atomic two-file replacement.
@@ -212,10 +215,56 @@ export class WorldFileStore {
       const temporary = join(source, '.original-' + randomUUID());
       try {
         await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 });
+        guard?.();
         await rename(temporary, join(source, 'original.' + format));
       } finally {
         await rm(temporary, { force: true });
       }
+    });
+  }
+
+  /** Raw validated remote bytes; interpretation remains in the update usecase. */
+  async readReleaseIndex(worldId: string): Promise<ReleaseIndexSnapshot | null> {
+    let file: FileHandle | undefined;
+    try {
+      const path = join(await this.directory(worldId), 'releases.json');
+      const expected = await lstat(path);
+      if (!expected.isFile() || expected.isSymbolicLink() || expected.size > WORLD_RELEASE_INDEX_LIMIT) {
+        throw new AppError('WORLD_RELEASE_INDEX_READ_FAILED');
+      }
+      const opened = await openVerified(path, expected, 'WORLD_RELEASE_INDEX_READ_FAILED', 'WORLD_RELEASE_INDEX_READ_FAILED');
+      file = opened.file;
+      if (opened.stat.size > WORLD_RELEASE_INDEX_LIMIT) throw new AppError('WORLD_RELEASE_INDEX_READ_FAILED');
+      const bytes = await file.readFile();
+      if (bytes.byteLength > WORLD_RELEASE_INDEX_LIMIT) throw new AppError('WORLD_RELEASE_INDEX_READ_FAILED');
+      return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), mtimeMs: opened.stat.mtimeMs };
+    } catch (error) {
+      if (missing(error)) return null;
+      if (error instanceof AppError) throw error;
+      throw new AppError('WORLD_RELEASE_INDEX_READ_FAILED');
+    } finally { await file?.close(); }
+  }
+
+  /** Never creates a world directory, so late checks cannot resurrect a deleted world. */
+  async saveReleaseIndex(worldId: string, text: string, isCurrent: () => boolean): Promise<ReleaseIndexSnapshot | null> {
+    if (typeof text !== 'string' || !text || Buffer.byteLength(text, 'utf8') > WORLD_RELEASE_INDEX_LIMIT) {
+      throw new AppError('WORLD_RELEASE_INDEX_WRITE_FAILED');
+    }
+    return withWorldWrite(this.paths(worldId).root, async () => {
+      if (!isCurrent()) return null;
+      const root = await this.directory(worldId).catch(error => { if (missing(error)) return null; throw error; });
+      if (root === null) return null;
+      const temporary = join(root, '.releases-' + randomUUID());
+      try {
+        await writeFile(temporary, text, { flag: 'wx', mode: 0o600 });
+        const stat = await lstat(temporary);
+        if (!isCurrent()) return null;
+        await rename(temporary, join(root, 'releases.json'));
+        return { text, mtimeMs: stat.mtimeMs };
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw new AppError('WORLD_RELEASE_INDEX_WRITE_FAILED');
+      } finally { await rm(temporary, { force: true }); }
     });
   }
 
@@ -295,6 +344,64 @@ export class WorldFileStore {
       await rename(stage.root, target);
       stage.root = target;
       stage.published = true;
+    });
+  }
+
+  /**
+   * Replace only source/package while retaining the world root and releases.json inode.
+   * Both callbacks are synchronous; commit owns the world repository's CAS transaction.
+   */
+  async replaceImport<T>(
+    stage: ImportFileStage,
+    check: (snapshot: ReleaseIndexSnapshot | null) => void,
+    commit: (snapshot: ReleaseIndexSnapshot | null) => T,
+  ): Promise<T> {
+    return withWorldWrite(this.paths(stage.worldId).root, async () => {
+      const movedOld: ('source' | 'package')[] = [];
+      const movedNew: ('source' | 'package')[] = [];
+      let root: string | undefined;
+      let backup: string | undefined;
+      try {
+        if (stage.published || dirname(stage.root) !== await this.stagingRoot()) throw new AppError('INVALID_WORLD_DIRECTORY');
+        const staged = await lstat(stage.root);
+        if (!staged.isDirectory() || staged.isSymbolicLink()) throw new AppError('INVALID_WORLD_DIRECTORY');
+        root = await this.directory(stage.worldId);
+        for (const leaf of ['source', 'package'] as const) {
+          await this.directory(stage.worldId, leaf);
+          const stat = await lstat(join(stage.root, leaf));
+          if (!stat.isDirectory() || stat.isSymbolicLink()) throw new AppError('INVALID_WORLD_DIRECTORY');
+        }
+        const snapshot = await this.readReleaseIndex(stage.worldId);
+        check(snapshot);
+        backup = join(stage.root, 'previous');
+        await mkdir(backup, { mode: 0o700 });
+        // An asynchronous file operation can invalidate the caller's permit/task token.
+        check(snapshot);
+        for (const leaf of ['source', 'package'] as const) {
+          await rename(join(root, leaf), join(backup, leaf));
+          movedOld.push(leaf);
+          await rename(join(stage.root, leaf), join(root, leaf));
+          movedNew.push(leaf);
+        }
+        const result = commit(snapshot);
+        // After DB commit, cleanup cannot turn success into a false rollback.
+        try { await this.removeTemporaryDirectory(stage.root); }
+        catch { console.warn('WORLD_UPDATE_BACKUP_CLEANUP_FAILED', { worldId: stage.worldId }); }
+        return result;
+      } catch (error) {
+        try {
+          if (root && backup) {
+            for (const leaf of [...movedNew].reverse()) await rename(join(root, leaf), join(stage.root, leaf));
+            for (const leaf of [...movedOld].reverse()) await rename(join(backup, leaf), join(root, leaf));
+          }
+        } catch {
+          // Keep the private backup for recovery; a caller must not discard this stage.
+          throw new AppError('WORLD_UPDATE_REPLACE_FAILED', '文件恢复失败，已保留临时备份');
+        }
+        try { await this.removeTemporaryDirectory(stage.root); }
+        catch { console.warn('WORLD_UPDATE_STAGE_CLEANUP_FAILED', { worldId: stage.worldId }); }
+        throw error;
+      }
     });
   }
 

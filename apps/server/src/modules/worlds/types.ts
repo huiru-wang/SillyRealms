@@ -1,9 +1,21 @@
 import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
 
+/** Author-declared publication data retains its wire-format keys. */
+export type WorldPublication = {
+  package_id: string;
+  authors: { name: string; url?: string }[];
+  creator_notes?: string;
+  release: { version: string; published_at: string; notes: string };
+  homepage?: string;
+  update_url?: string;
+};
+export type WorldUpdateSource = { worldId: string; packageId: string; updateUrl: string };
+
 export type WorldDescription = string | { type: 'component'; component: string } | null;
 
 export type WorldContent = {
   specVersion: string;
+  publication: WorldPublication | null;
   name: string;
   description: WorldDescription;
   cover: string | null;
@@ -34,7 +46,7 @@ export type World = WorldContent & {
   updatedAt: number;
 };
 export type WorldTag = { name: string; worldCount: number };
-export type WorldSummary = Pick<World, 'id' | 'name' | 'cover' | 'coverMosaicEnabled' | 'tags' | 'createdAt' | 'updatedAt'>;
+export type WorldSummary = Pick<World, 'id' | 'name' | 'publication' | 'cover' | 'coverMosaicEnabled' | 'tags' | 'createdAt' | 'updatedAt'>;
 export type WorldDetail = Omit<World, 'state'>;
 export type WorldManagementPatch = Partial<Pick<World, 'name' | 'tags' | 'coverMosaicEnabled' | 'defaultPresetId' | 'defaultReplyAssistPresetId' | 'defaultApiModelConfigId'>> & { expectedRevision: number };
 export type WorldListOptions = { q?: string; tag?: string; limit?: number; offset?: number; before?: { createdAt: number; id: string } };
@@ -50,7 +62,7 @@ export type CharacterSpriteCatalogItem = {
 export type CharacterSpriteCatalog = { worldId: string; items: CharacterSpriteCatalogItem[] };
 
 export const worldContentFields = [
-  'specVersion', 'name', 'description', 'cover', 'characters', 'openings',
+  'specVersion', 'publication', 'name', 'description', 'cover', 'characters', 'openings',
   'lorebook', 'stateDefinition', 'messageRender', 'components',
   'stageComponent', 'extensions', 'defaultPresetId', 'defaultReplyAssistPresetId', 'defaultApiModelConfigId',
 ] as const;

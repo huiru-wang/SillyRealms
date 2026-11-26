@@ -134,10 +134,10 @@ describe('world routes', () => {
     for (const id of ['session-one', 'session-two']) services.sessions.create({ runtimeConfig: { narrativePresetId: config.presetId, apiModelConfigId: config.apiModelConfigId }, id, worldId: first.id, userCharacterId: 'player' });
     const url = base + '?tag=' + encodeURIComponent('城市') + '&q=' + encodeURIComponent('雾') + '&limit=1';
     const firstPage = await data<Page<WorldListItem>>(await app.request(url));
-    expect(firstPage.items).toEqual([{ id: first.id, name: first.name, cover: first.cover, coverMosaicEnabled: true, tags: ['城市'], sessionCount: 2, createdAt: 1000, updatedAt: 1000 }]);
+    expect(firstPage.items).toEqual([{ id: first.id, name: first.name, publication: null, currentVersion: null, latestVersion: null, updateStatus: 'no_source', cover: first.cover, coverMosaicEnabled: true, tags: ['城市'], sessionCount: 2, createdAt: 1000, updatedAt: 1000 }]);
     expect(firstPage.hasMore).toBe(true);
     const lastPage = await data<Page<WorldListItem>>(await app.request(url + '&cursor=' + firstPage.nextCursor));
-    expect(lastPage).toEqual({ items: [{ id: second.id, name: second.name, cover: null, coverMosaicEnabled: false, tags: ['城市'], sessionCount: 0, createdAt: 1000, updatedAt: 1000 }], hasMore: false, nextCursor: null });
+    expect(lastPage).toEqual({ items: [{ id: second.id, name: second.name, publication: null, currentVersion: null, latestVersion: null, updateStatus: 'no_source', cover: null, coverMosaicEnabled: false, tags: ['城市'], sessionCount: 0, createdAt: 1000, updatedAt: 1000 }], hasMore: false, nextCursor: null });
     expect(await data(await app.request(base + '?tag=absent'))).toEqual({ items: [], hasMore: false, nextCursor: null });
     await failure(await app.request(base + '?tag=other&cursor=' + firstPage.nextCursor), 'INVALID_REQUEST', 400);
     await failure(await app.request(base + '?cursor=invalid'), 'INVALID_REQUEST', 400);

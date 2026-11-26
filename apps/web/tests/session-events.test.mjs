@@ -59,3 +59,15 @@ test('sprite events accept complete snapshots and explicit clearing, rejecting d
  }
  assert.deepEqual(events,[[item],[]]);channel.dispose();
 });
+
+test('world updates use the same session channel with a validated world namespace and no run identity',()=>{
+  const source=new Source(),events=[],channel=createSessionEventChannel({sessionId:'s',createSource:()=>source});
+  channel.subscribe('world',event=>events.push(event));channel.connect();
+  const data={sessionId:'s',worldId:'w',version:'1.2.0',revision:2,timestamp:100};
+  source.emit('world.updated',data);
+  for(const invalid of [{sessionId:'other'},{worldId:''},{version:'v1.2.0'},{revision:0},{revision:1.5},{timestamp:'100'}]){
+    source.emit('world.updated',{...data,...invalid});
+  }
+  assert.deepEqual(events,[{event:'world.updated',data}]);
+  channel.dispose();
+});

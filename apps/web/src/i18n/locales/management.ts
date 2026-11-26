@@ -1,6 +1,35 @@
 /** Platform management copy. Author content and identifiers are never translated. */
 export const managementZh = {
   "worlds": {
+    "publication": {
+      "updateAvailable": "有新版本：{{version}}",
+      "undeclared": "未声明发行信息",
+      "versions": "版本",
+      "refreshVersions": "刷新版本列表",
+      "getVersions": "获取版本列表",
+      "noSource": "作者未提供更新源",
+      "confirmTitle": "确认应用版本",
+      "applying": "正在下载并应用…",
+      "confirmCopy": "将世界卡从 v{{from}} 覆盖为 v{{to}}。",
+      "confirmPreserved": "已有会话将使用目标版本的角色、世界书和舞台；消息与运行状态保留。",
+      "installed": "当前版本",
+      "homepage": "作品主页",
+      "authors": "创作者：",
+      "creatorNotes": "作者说明",
+      "installedNotes": "当前版本说明",
+      "noNotes": "暂无更新说明。",
+      "lastFetched": "上次获取：{{time}}",
+      "notFetched": "尚未获取版本列表。",
+      "loadingLocal": "正在读取版本列表…",
+      "fetching": "正在获取版本列表…",
+      "empty": "当前更新源暂无公开版本。",
+      "publishedVersions": "公开版本",
+      "current": "当前版本",
+      "requiresAppUpdate": "需更新 SR",
+      "updateTo": "更新至 {{version}}",
+      "downgradeTo": "回退至 {{version}}",
+      "errorDetails": "查看错误详情"
+    },
     "tab": {
       "overview": "介绍",
       "lore": "世界书",
@@ -460,6 +489,35 @@ export const managementZh = {
 
 export const managementEn = {
   "worlds": {
+    "publication": {
+      "updateAvailable": "Update available: {{version}}",
+      "undeclared": "No release information",
+      "versions": "Versions",
+      "refreshVersions": "Refresh versions",
+      "getVersions": "Get versions",
+      "noSource": "The creator has not provided an update source.",
+      "confirmTitle": "Apply this version?",
+      "applying": "Downloading and applying…",
+      "confirmCopy": "Replace world version {{from}} with {{to}}.",
+      "confirmPreserved": "Existing sessions will use this version’s characters, lorebook and stage. Messages and story state are kept.",
+      "installed": "Installed version",
+      "homepage": "World homepage",
+      "authors": "Created by:",
+      "creatorNotes": "Creator’s notes",
+      "installedNotes": "Installed release notes",
+      "noNotes": "No release notes.",
+      "lastFetched": "Last fetched: {{time}}",
+      "notFetched": "Versions have not been fetched yet.",
+      "loadingLocal": "Reading saved versions…",
+      "fetching": "Fetching versions…",
+      "empty": "This update source has no published versions.",
+      "publishedVersions": "Published versions",
+      "current": "Installed",
+      "requiresAppUpdate": "Update SR first",
+      "updateTo": "Update to {{version}}",
+      "downgradeTo": "Roll back to {{version}}",
+      "errorDetails": "View error details"
+    },
     "tab": {
       "overview": "Introduction",
       "lore": "Lorebook",
@@ -919,6 +977,35 @@ export const managementEn = {
 
 export const managementJa = {
   "worlds": {
+    "publication": {
+      "updateAvailable": "新しいバージョン：{{version}}",
+      "undeclared": "公開情報なし",
+      "versions": "バージョン",
+      "refreshVersions": "バージョン一覧を更新",
+      "getVersions": "バージョン一覧を取得",
+      "noSource": "作者が更新元を指定していません。",
+      "confirmTitle": "このバージョンを適用しますか？",
+      "applying": "ダウンロード・適用中…",
+      "confirmCopy": "ワールドを v{{from}} から v{{to}} に置き換えます。",
+      "confirmPreserved": "既存のセッションには対象バージョンのキャラクター、ロアブック、ステージが適用されます。メッセージと進行状態は保持されます。",
+      "installed": "インストール済み",
+      "homepage": "作品のホームページ",
+      "authors": "作者：",
+      "creatorNotes": "作者の説明",
+      "installedNotes": "現在のバージョンの変更内容",
+      "noNotes": "変更内容はありません。",
+      "lastFetched": "最終取得：{{time}}",
+      "notFetched": "バージョン一覧は未取得です。",
+      "loadingLocal": "保存済みの一覧を読み込み中…",
+      "fetching": "バージョン一覧を取得中…",
+      "empty": "この更新元には公開バージョンがありません。",
+      "publishedVersions": "公開バージョン",
+      "current": "現在のバージョン",
+      "requiresAppUpdate": "SR の更新が必要",
+      "updateTo": "{{version}} に更新",
+      "downgradeTo": "{{version}} に戻す",
+      "errorDetails": "エラーの詳細を見る"
+    },
     "tab": {
       "overview": "紹介",
       "lore": "ロアブック",
