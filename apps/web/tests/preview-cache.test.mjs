@@ -33,7 +33,7 @@ test('different openings using the same module keep separate instances; title ch
 });
 
 test('management saves preserve preview identity; world or author source changes invalidate it',()=>{
-  const world={id:'one',components:[{id:'entry',component:'source'}],name:'Name',revision:1};
+  const world={id:'one',publication:{release:{version:'1.0.0'}},components:[{id:'entry',component:'source'}],name:'Name',revision:1};
   const identity=previewContentIdentity(world);
   assert.equal(previewContentIdentity({...structuredClone(world),name:'Renamed',revision:2,tags:['new']}),identity);
   assert.notEqual(previewContentIdentity({...world,id:'two'}),identity);

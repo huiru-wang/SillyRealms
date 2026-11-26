@@ -1,3 +1,4 @@
+import { worldPublication } from '../../testing/fixtures.js';
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '../../infrastructure/database/connection.js';
@@ -29,7 +30,7 @@ const makeFixture = async () => {
   await services.credentials.set(credentialRef,'test-only');
   services.models.create({id:'model',name:'Model',providerId:'test',modelId:'writer',credentialRef});
   services.settings.ensure({ defaultPresetId:'sr-default-preset', defaultApiModelConfigId:null, defaultReplyAssistPresetId:presetId });
-  services.worlds.create({id:'world',name:'World',specVersion:'0.1',characters:[{id:'p',name:'Player',player_selectable:true}],
+  services.worlds.create({id:'world',name:'World',specVersion: '0.2', publication: worldPublication(),characters:[{id:'p',name:'Player',player_selectable:true}],
     openings:[{id:'open',name:'Open',content:'Opening'}]});
   for (const id of ['a','b']) services.sessions.create({id,worldId:'world',userCharacterId:'p',runtimeConfig: { narrativePresetId: 'sr-default-preset', apiModelConfigId: 'model' }});
   const seen:SessionEvent[]=[];

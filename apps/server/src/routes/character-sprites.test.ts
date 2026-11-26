@@ -1,3 +1,4 @@
+import { worldPublication } from '../testing/fixtures.js';
 import { Hono } from 'hono';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -29,7 +30,7 @@ beforeEach(() => {
   services.presets.create({ ...narrativePreset(), id: 'preset' });
   services.models.create({ id: 'model', name: 'Model', providerId: 'provider', modelId: 'model', credentialRef: 'ref' });
   // No current catalog: a historical result remains readable when an author removes a sprite.
-  services.worlds.create({ id: 'world', specVersion: '0.1', name: 'World',
+  services.worlds.create({ id: 'world', specVersion: '0.2', publication: worldPublication(), name: 'World',
     characters: [{ id: 'player', name: 'Player', player_selectable: true }],
     openings: [{ id: 'opening', name: 'Opening', content: 'Begin' }] });
   for (const id of ['one', 'other']) services.sessions.create({

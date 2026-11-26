@@ -11,17 +11,16 @@ const publication = () => ({
 });
 
 describe('world publication protocol', () => {
-  it('requires publication for 0.2 and preserves declared publication and offline extensions on 0.1', () => {
-    const legacy = worldCardFixture();
-    expect(() => parseCard({ ...legacy, spec_version: '0.2' })).toThrow('publication');
-    const data = { ...legacy.data, publication: publication(), extensions: { authoring: { revision: '第二章' } } };
-    for (const version of ['0.1', '0.2']) {
-      const parsed = parseCard({ spec_version: version, data });
-      expect(parsed.data.publication).toEqual(publication());
-      expect(parsed.data.extensions).toEqual(data.extensions);
-    }
-    const offline = parseCard({ ...legacy, data: { ...legacy.data, extensions: data.extensions } });
-    expect(offline.data.publication).toBeUndefined();
+  it('requires publication and accepts only the current world card format', () => {
+    const current = worldCardFixture();
+    expect(() => parseCard({ ...current, data: { ...current.data, publication: undefined } })).toThrow('publication');
+    expect(() => parseCard({ ...current, spec_version: '0.1' })).toThrow('spec_version');
+    const data = { ...current.data, publication: publication(), extensions: { authoring: { revision: '第二章' } } };
+    const parsed = parseCard({ spec_version: '0.2', data });
+    expect(parsed.data.publication).toEqual(publication());
+    expect(parsed.data.extensions).toEqual(data.extensions);
+    const offline = parseCard({ ...current, data: { ...current.data, extensions: data.extensions } });
+    expect(offline.data.publication.update_url).toBeUndefined();
     expect(offline.data.extensions).toEqual(data.extensions);
   });
 

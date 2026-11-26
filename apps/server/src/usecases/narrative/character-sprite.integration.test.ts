@@ -1,3 +1,4 @@
+import { worldPublication } from '../../testing/fixtures.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -42,7 +43,7 @@ beforeEach(async () => {
     ? { ...node, prompt: '根据当前场景选择完整立绘快照。\n{{characterSprite.catalog}}' } : node);
   services.presets.create({ ...preset, id: 'preset', config: { ...preset.config, nodes } });
   services.worlds.create({
-    id: 'world', specVersion: '0.1', name: 'World',
+    id: 'world', specVersion: '0.2', publication: worldPublication(), name: 'World',
     characters: [
       { id: 'player', name: 'Player', player_selectable: true },
       ...['alice', 'bob', 'carol'].map(id => ({ id, name: id,

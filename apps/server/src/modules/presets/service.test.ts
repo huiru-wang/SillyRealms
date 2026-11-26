@@ -184,6 +184,14 @@ describe('typed preset persistence', () => {
     const unknown = preset('Unknown');
     unknown.config.nodes[0]!.prompt = '{{not.allowed}}';
     expect(() => presets.create(unknown)).toThrow(/未知系统变量/);
+    for (const variable of ['persona.prompt', 'characters.prompts']) {
+      const old = preset('Deprecated ' + variable);
+      old.config.nodes[0]!.prompt = '{{' + variable + '}}';
+      expect(() => presets.create(old)).toThrow(/未知系统变量/);
+    }
+    const current = preset('Current role content');
+    current.config.nodes[0]!.prompt = '{{persona.content}} / {{characters.content}}';
+    expect(presets.create(current).config.nodes[0]!.prompt).toBe(current.config.nodes[0]!.prompt);
     const unfinished = preset('Unfinished');
     unfinished.config.nodes[0]!.prompt = '{{world.lore';
     expect(() => presets.create(unfinished)).toThrow(/缺少结束标记/);

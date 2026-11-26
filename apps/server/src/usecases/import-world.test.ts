@@ -41,9 +41,9 @@ describe('import world use case', () => {
   it('retains valid, invalid, custom and unfinished author placeholders verbatim', async () => {
     const card = worldCardFixture();
     const prompt = '{{state.session.人设.姓名}} {{state.bad.姓名}} {{ weather.today }} {{unfinished';
-    Object.assign(card.data.characters[0]!, { prompt });
+    Object.assign(card.data.characters[0]!, { content: prompt });
     const world = await importWorld({ format: 'json', bytes: json(card) });
-    expect(services.worlds.require(world.id).characters[0]).toMatchObject({ prompt });
+    expect(services.worlds.require(world.id).characters[0]).toMatchObject({ content: prompt });
   });
 
   it('imports a no-spec JSON card, retains exact source bytes and applies current settings defaults', async () => {
@@ -65,9 +65,9 @@ describe('import world use case', () => {
 
   it('imports ZIP resources after validating component and image references', async () => {
     const raw = worldCardFixture();
-    const card = { ...raw, spec: 'world_card', data: { ...raw.data, cover: 'sr-asset://assets/cover.png',
+    const card = { ...raw, data: { ...raw.data, cover: 'sr-asset://assets/cover.png',
       components: [{ id: 'intro', path: 'sr-asset://components/intro.tsx' }],
-      description: { type: 'component', component: 'intro' },
+      presentation: { type: 'component', component: 'intro' },
     } };
     const bytes = await zipBytes([
       { name: 'world.json', data: JSON.stringify(card) },
@@ -75,7 +75,7 @@ describe('import world use case', () => {
       { name: 'assets/cover.png', data: 'image' },
     ]);
     const world = await importWorld({ format: 'zip', bytes });
-    expect(world.description).toEqual({ type: 'component', component: 'intro' });
+    expect(world.presentation).toEqual({ type: 'component', component: 'intro' });
     expect(await services.worlds.readOriginal(world.id)).toEqual({ format: 'zip', bytes });
     expect(await readFile((await services.worlds.resolvePackageFile(world.id, 'assets/cover.png')).path, 'utf8')).toBe('image');
     expect(await names('staging')).toEqual([]);
@@ -163,5 +163,28 @@ describe('import world use case', () => {
     expect(await names('worlds')).toEqual([stage.id]);
     expect(await services.worlds.delete(stage.id)).toBe(true);
     expect(await names('worlds')).toEqual([]);
+  });
+});
+
+describe('presentation asset references', () => {
+  it.each(['world', 'character', 'opening'] as const)('checks %s Markdown package resources before publishing', async slot => {
+    const raw = worldCardFixture();
+    const presentation = { type: 'markdown', text: '![介绍](sr-asset://assets/introduction.png)' };
+    const card = { ...raw, data: {
+      ...raw.data,
+      ...(slot === 'world' ? { presentation } : {}),
+      ...(slot === 'character' ? { characters: [{ ...raw.data.characters[0], presentation }] } : {}),
+      ...(slot === 'opening' ? { openings: [{ ...raw.data.openings[0], presentation }] } : {}),
+    } };
+    await expect(importWorld({ format: 'json', bytes: json(card) })).rejects.toThrow('sr-asset');
+    const missing = await zipBytes([{ name: 'world.json', data: JSON.stringify(card) }]);
+    await expect(importWorld({ format: 'zip', bytes: missing })).rejects.toThrow('introduction.png');
+    expect(services.worlds.list()).toEqual([]);
+    const complete = await zipBytes([
+      { name: 'world.json', data: JSON.stringify(card) },
+      { name: 'assets/introduction.png', data: 'image' },
+    ]);
+    const world = await importWorld({ format: 'zip', bytes: complete });
+    expect(await readFile((await services.worlds.resolvePackageFile(world.id, 'assets/introduction.png')).path, 'utf8')).toBe('image');
   });
 });

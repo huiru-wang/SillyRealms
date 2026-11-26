@@ -28,3 +28,11 @@ export function narrativePreset(name = 'Story'): Extract<CreatePresetInput, { ty
 export function withEmptyModelNotes(body: string): string {
   return body + '\n\n<action_suggestions>[]</action_suggestions>';
 }
+
+export function worldPublication() {
+  return {
+    package_id: '8da0e392-2ea6-4ac1-a93a-b94abf6828a1',
+    authors: [{ name: 'Test author' }],
+    release: { version: '1.0.0', published_at: '2026-11-26T00:00:00Z', notes: '' },
+  };
+}

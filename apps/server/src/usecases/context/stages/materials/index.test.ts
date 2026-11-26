@@ -1,3 +1,4 @@
+import { worldPublication } from '../../../../testing/fixtures.js';
 import { describe, expect, it, vi } from 'vitest';
 import { StateService } from '../../../../modules/state/service.js';
 import { selectNarrativeMaterials, type MaterialSources } from './index.js';
@@ -7,8 +8,8 @@ function sources(): MaterialSources {
   return {
     locale: 'zh-CN',
     world: {
-      id: 'world', revision: 1, specVersion: '0.1', publication: null, name: 'World', description: null, cover: null,
-      characters: [{ id: 'player', name: 'Robin', player_selectable: true, prompt: 'You are {{user}}.' }],
+      id: 'world', revision: 1, specVersion: '0.2', publication: worldPublication(), name: 'World', presentation: null, cover: null,
+      characters: [{ id: 'player', name: 'Robin', player_selectable: true, content: 'You are {{user}}.' }],
       openings: [], lorebook: null, stateDefinition: null, messageRender: null, components: null,
       stageComponent: null, extensions: null, coverMosaicEnabled: false, defaultPresetId: null, defaultReplyAssistPresetId: null, defaultApiModelConfigId: null,
       state: {}, tags: [], createdAt: 0, updatedAt: 0,
@@ -18,7 +19,7 @@ function sources(): MaterialSources {
     views: { global: { day: 2 }, session: { unlocked: true }, message: { coins: 5 } },
   };
 }
-function variable(input: MaterialSources, name: 'persona.prompt' | 'characters.prompts' | 'world.lore' | 'state.message' | 'state.update.message') {
+function variable(input: MaterialSources, name: 'persona.content' | 'characters.content' | 'world.lore' | 'state.message' | 'state.update.message') {
   const value = selectNarrativeMaterials(input, conditions).variables[name];
   if (value.type !== 'text') throw new Error('Expected text variable');
   return value.value;
@@ -68,8 +69,8 @@ describe('narrative material selection', () => {
     const input = sources();
     const prompt = '名={{user}}/代号={{state.session.人设.代号}}/城市={{state.global.day}}/钱={{state.message.coins}}';
     input.world.characters = [
-      { id: 'player', name: '{{state.message.coins}}', player_selectable: true, prompt },
-      { id: 'npc', name: 'NPC', prompt },
+      { id: 'player', name: '{{state.message.coins}}', player_selectable: true, content: prompt },
+      { id: 'npc', name: 'NPC', content: prompt },
     ];
     input.world.lorebook = { entries: [{ id: 'lore', content: prompt + '{{ weather.today }}' }] };
     input.world.stateDefinition = { schema_version: 2, scopes: {
@@ -81,8 +82,8 @@ describe('narrative material selection', () => {
     input.views.message.coins = 0;
     const result = selectNarrativeMaterials(input, conditions);
     const expected = '名={{state.message.coins}}/代号=&lt;{{user}}&gt;/城市=2/钱=0';
-    expect(result.variables['persona.prompt'].value).toBe(expected);
-    expect(result.variables['characters.prompts'].value).toBe(expected);
+    expect(result.variables['persona.content'].value).toBe(expected);
+    expect(result.variables['characters.content'].value).toBe(expected);
     expect(result.variables['world.lore'].value).toBe(expected + '{{ weather.today }}');
     expect(result.variables['state.message'].value).toContain('description: {{state.global.day}}');
     expect(result.activeRoots).toEqual(['coins']);
@@ -91,17 +92,17 @@ describe('narrative material selection', () => {
   it('keeps enabled/load rules, role exclusion and stable author order while replacing user macros once', () => {
     const input = sources();
     input.world.characters.push(
-      { id: 'later', name: 'Later', order: 2, prompt: 'Second {{user}}', load: { mode: 'on_mention', keywords: ['manor', 'harbor'], keyword_logic: 'all' } },
-      { id: 'early', name: 'Early', order: 1, prompt: 'First <{{user}}>', load: { when: 'getState("unlocked") && getState("coins") >= 5' } },
-      { id: 'tie', name: 'Tie', order: 2, prompt: 'Third', load: { mode: 'always' } },
-      { id: 'disabled', name: 'Disabled', enabled: false, prompt: 'Disabled must not appear' },
-      { id: 'never', name: 'Never', prompt: 'Never must not appear', load: { mode: 'never' } },
-      { id: 'excluded', name: 'Excluded', prompt: 'Excluded must not appear', load: { mode: 'on_mention', keywords: ['harbor'], exclude_keywords: ['manor'] } },
+      { id: 'later', name: 'Later', order: 2, content: 'Second {{user}}', load: { mode: 'on_mention', keywords: ['manor', 'harbor'], keyword_logic: 'all' } },
+      { id: 'early', name: 'Early', order: 1, content: 'First <{{user}}>', load: { when: 'getState("unlocked") && getState("coins") >= 5' } },
+      { id: 'tie', name: 'Tie', order: 2, content: 'Third', load: { mode: 'always' } },
+      { id: 'disabled', name: 'Disabled', enabled: false, content: 'Disabled must not appear' },
+      { id: 'never', name: 'Never', content: 'Never must not appear', load: { mode: 'never' } },
+      { id: 'excluded', name: 'Excluded', content: 'Excluded must not appear', load: { mode: 'on_mention', keywords: ['harbor'], exclude_keywords: ['manor'] } },
     );
-    expect(variable(input, 'persona.prompt')).toBe('You are Robin.');
-    expect(variable(input, 'characters.prompts')).toBe('First &lt;Robin&gt;\n\nSecond Robin\n\nThird');
-    input.world.characters[0] = { id: 'player', name: 'Robin', player_selectable: true, prompt: 'Hidden player', load: { mode: 'never' } };
-    expect(variable(input, 'persona.prompt')).toBe('');
+    expect(variable(input, 'persona.content')).toBe('You are Robin.');
+    expect(variable(input, 'characters.content')).toBe('First &lt;Robin&gt;\n\nSecond Robin\n\nThird');
+    input.world.characters[0] = { id: 'player', name: 'Robin', player_selectable: true, content: 'Hidden player', load: { mode: 'never' } };
+    expect(variable(input, 'persona.content')).toBe('');
   });
 
   it('applies lore load order, keyword logic, exclusions and read-only condition failures', () => {
@@ -178,10 +179,10 @@ describe('narrative material selection', () => {
   it('records names, rules and the actual keyword/when outcomes without reevaluating conditions or copying material content', () => {
     const input = sources();
     input.world.characters.push(
-      { id: 'visitor', name: 'Visitor', prompt: 'PRIVATE_CHARACTER_PROMPT', load: {
+      { id: 'visitor', name: 'Visitor', content: 'PRIVATE_CHARACTER_PROMPT', load: {
         mode: 'on_mention', keywords: ['harbor', 'manor'], keyword_logic: 'all', when: 'getState("coins") >= 5',
       } },
-      { id: 'disabled', name: 'Disabled', enabled: false, prompt: 'PRIVATE_DISABLED_PROMPT', load: { when: 'getState("coins") >= 5' } },
+      { id: 'disabled', name: 'Disabled', enabled: false, content: 'PRIVATE_DISABLED_PROMPT', load: { when: 'getState("coins") >= 5' } },
     );
     input.world.lorebook = { entries: [
       { id: 'excluded', title: 'Excluded lore', content: 'PRIVATE_LORE', load: {
@@ -213,4 +214,33 @@ describe('narrative material selection', () => {
     expect(JSON.stringify(result.selection)).not.toContain(input.inputText);
   });
 
+});
+
+describe('presentation isolation from model material', () => {
+  it('uses only content for persona and role text while retaining state and sprite descriptions', () => {
+    const input = sources();
+    input.world.presentation = { type: 'markdown', text: 'WORLD_DISPLAY_ONLY' };
+    input.world.characters = [
+      { id: 'player', name: 'Robin', player_selectable: true, content: 'PERSONA_FACTS',
+        presentation: { type: 'markdown', text: 'PLAYER_DISPLAY_ONLY' } },
+      { id: 'npc', name: 'NPC', content: 'NPC_FACTS',
+        presentation: { type: 'component', component: 'DISPLAY_COMPONENT_ONLY' } },
+    ];
+    input.world.openings = [{ id: 'start', name: 'Start', content: 'OPENING_NOT_A_SEPARATE_NODE',
+      presentation: { type: 'markdown', text: 'OPENING_DISPLAY_ONLY' } }];
+    input.world.stateDefinition = { schema_version: 2, scopes: { message: {
+      cash: { type: 'number', initial: 0, description: 'STATE_MEANING' },
+    } } };
+    input.views.message.cash = 3;
+    input.characterSpriteCatalog = [{ characterId: 'npc', characterName: 'NPC', spriteId: 'default',
+      description: 'SPRITE_MEANING', asset: 'https://example.org/hidden-asset.png' }];
+    const result = selectNarrativeMaterials(input, conditions);
+    expect(result.variables['persona.content'].value).toBe('PERSONA_FACTS');
+    expect(result.variables['characters.content'].value).toBe('NPC_FACTS');
+    const material = JSON.stringify(result.variables);
+    expect(material).toContain('STATE_MEANING');
+    expect(material).toContain('SPRITE_MEANING');
+    for (const hidden of ['WORLD_DISPLAY_ONLY', 'PLAYER_DISPLAY_ONLY', 'DISPLAY_COMPONENT_ONLY',
+      'OPENING_DISPLAY_ONLY', 'OPENING_NOT_A_SEPARATE_NODE', 'hidden-asset.png']) expect(material).not.toContain(hidden);
+  });
 });

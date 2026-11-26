@@ -35,15 +35,22 @@ function resourceReferences(card:WorldCard):ResourceReference[] {
     for(const match of text.matchAll(/\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi))add(decodeHTMLAttribute(match[1]??match[2]??match[3]??''),location);
     for(const match of text.matchAll(/!\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))/g))add(decodeHTMLStrict(match[1]??match[2]??''),location);
   };
+  const presentation=(value:WorldCard['data']['presentation'],location:string)=>{
+    if(value?.type==='markdown')prose(value.text,location+'.text');
+  };
+  presentation(card.data.presentation,'$.data.presentation');
   card.data.characters.forEach((item,index)=>{
     add(item.avatar,'$.data.characters['+index+'].avatar');
     item.sprites?.forEach((sprite, spriteIndex) => add(sprite.asset, '$.data.characters[' + index + '].sprites[' + spriteIndex + '].asset', true));
-    prose(item.description,'$.data.characters['+index+'].description');
+    presentation(item.presentation,'$.data.characters['+index+'].presentation');
   });
-  card.data.openings.forEach((item,index)=>prose(item.content,'$.data.openings['+index+'].content'));
+  card.data.openings.forEach((item,index)=>{
+    prose(item.content,'$.data.openings['+index+'].content');
+    presentation(item.presentation,'$.data.openings['+index+'].presentation');
+  });
   card.data.lorebook?.entries.forEach((item,index)=>prose(item.content,'$.data.lorebook.entries['+index+'].content'));
   card.data.message_render?.rules?.forEach((item,index)=>{
-    if(item.replacement.type!=='component')prose(item.replacement.content,'$.data.message_render.rules['+index+'].replacement.content');
+    if(item.replacement.type!=='component')prose(item.replacement.text,'$.data.message_render.rules['+index+'].replacement.text');
   });
   return references;
 }

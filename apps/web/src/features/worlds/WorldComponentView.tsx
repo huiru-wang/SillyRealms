@@ -12,14 +12,16 @@ import {worldAssetBaseUrl} from '../../world-assets';
 import {worldStateQueries,readWorldState} from './world-component-protocol';
 import {stageErrorMessage} from '../../../../../packages/sr-sdk/src/stage/feedback';
 import type {PreviewModules} from './preview-cache';
+import {PREVIEW_FOCUS_EVENT} from '../../components/ui/focus-navigation';
+import {createPreviewDialogHost} from './preview-dialog';
 
-type Props={worldId:string;entry:string;title:string;active:boolean;load:(refresh?:boolean)=>Promise<PreviewModules>};
+type Props={worldId:string;entry:string;title:string;active:boolean;dialog?:boolean;load:(refresh?:boolean)=>Promise<PreviewModules>};
 
 export function WorldComponentView(props:Props) {
   const [revision,setRevision]=useState(0);
   return <MountedWorldComponent key={revision} {...props} refresh={revision>0} retry={()=>setRevision(value=>value+1)}/>;
 }
-function MountedWorldComponent({worldId,entry,title,active,load,refresh,retry}:Props&{refresh:boolean;retry:()=>void}) {
+function MountedWorldComponent({worldId,entry,title,active,dialog=false,load,refresh,retry}:Props&{refresh:boolean;retry:()=>void}) {
   const {t,i18n}=useTranslation('stage');
   const locale=isAppLocale(i18n.resolvedLanguage)?i18n.resolvedLanguage:DEFAULT_LOCALE;
   const latest=useRef({t,locale});latest.current={t,locale};
@@ -27,15 +29,28 @@ function MountedWorldComponent({worldId,entry,title,active,load,refresh,retry}:P
   useEffect(()=>{notifyAppearance.current?.();},[locale]);
   const frame=useRef<HTMLIFrameElement>(null),[error,setError]=useState(''),[loaded,setLoaded]=useState(false),[height,setHeight]=useState(1);
   const [source,setSource]=useState<string>(),onFrameLoad=useRef<(()=>void)|undefined>(undefined);
-  const visible=useRef(active),notifyVisibility=useRef<(()=>void)|undefined>(undefined);
-  useLayoutEffect(()=>{visible.current=active;notifyVisibility.current?.();},[active]);
+  const visible=useRef(active),dialogEnabled=useRef(dialog),notifyVisibility=useRef<(()=>void)|undefined>(undefined);
+  const requestDialogFocus=useRef<((edge:unknown)=>void)|undefined>(undefined);
+  useLayoutEffect(()=>{visible.current=active;dialogEnabled.current=dialog;notifyVisibility.current?.();},[active,dialog]);
+  useLayoutEffect(()=>{
+    const element=frame.current;
+    const focus=(event:Event)=>requestDialogFocus.current?.((event as CustomEvent).detail?.edge);
+    element?.addEventListener(PREVIEW_FOCUS_EVENT,focus);
+    return()=>element?.removeEventListener(PREVIEW_FOCUS_EVENT,focus);
+  },[source,error]);
+
   useEffect(()=>{
     const nonce=randomId();
     setSource(undefined);setLoaded(false);setHeight(1);setError('');
     let gone=false,port:MessagePort|undefined,connected=false,ready=false,compiled:PreviewModules|undefined;
     let expectedOrigin:string|undefined;
     const abort=new AbortController();
-    const fail=(reason?:unknown)=>{if(gone)return;setError(errorKey(reason,'stage:preview.loadFailed'));gone=true;clearTimeout(timer);abort.abort();port?.close();};
+    const dialogKeyboard=createPreviewDialogHost({
+      frame:()=>frame.current,enabled:()=>dialogEnabled.current,active:()=>visible.current,
+      send:message=>{if(!gone&&ready)port?.postMessage(message);},
+    });
+    requestDialogFocus.current=dialogKeyboard.focus;
+    const fail=(reason?:unknown)=>{if(gone)return;setError(errorKey(reason,'stage:preview.loadFailed'));gone=true;clearTimeout(timer);abort.abort();dialogKeyboard.dispose();port?.close();};
     const timer=setTimeout(fail,20000);
     onFrameLoad.current=()=>{
       if(gone||!expectedOrigin)return;
@@ -45,13 +60,16 @@ function MountedWorldComponent({worldId,entry,title,active,load,refresh,retry}:P
     };
     function appearance(){if(gone)return;port?.postMessage({type:'appearance',locale:latest.current.locale,...readAppearance()});}
     notifyAppearance.current=appearance;
-    notifyVisibility.current=()=>{if(!gone&&ready)port?.postMessage({type:'visibility',active:visible.current});};
+    notifyVisibility.current=()=>{
+      if(!gone&&ready){port?.postMessage({type:'visibility',active:visible.current});dialogKeyboard.sync();}
+    };
     function render(){if(ready&&compiled){appearance();notifyVisibility.current?.();port?.postMessage({type:'render',entry,modules:compiled,assetBaseUrl:worldAssetBaseUrl(location.origin,worldId)});}}
     const listener=(event:MessageEvent)=>{
       if(gone||connected||!expectedOrigin||event.source!==frame.current?.contentWindow||event.origin!==expectedOrigin||event.data?.type!=='sr-world-ready'||event.data.nonce!==nonce)return;
       connected=true;const channel=new MessageChannel();port=channel.port1;
       port.onmessage=async({data})=>{
         if(gone||!data||typeof data!=='object')return;
+        if(dialogKeyboard.receive(data))return;
         if(data.type==='ready'){ready=true;notifyVisibility.current?.();render();}
         else if(data.type==='mounted'){clearTimeout(timer);setLoaded(true);}
         else if(data.type==='ui-error')fail(data.message);
@@ -74,7 +92,7 @@ function MountedWorldComponent({worldId,entry,title,active,load,refresh,retry}:P
       const url=worldPreviewURL(import.meta.env.VITE_WORLD_PREVIEW_ORIGIN??localOrigin(location.origin, 5177),location.origin,nonce);
       expectedOrigin=url.origin;setSource(url.href);
     } catch(error) {fail(error);}
-    return()=>{gone=true;clearTimeout(timer);abort.abort();theme.disconnect();port?.close();onFrameLoad.current=undefined;notifyVisibility.current=undefined;notifyAppearance.current=undefined;window.removeEventListener('message',listener);};
+    return()=>{gone=true;clearTimeout(timer);abort.abort();theme.disconnect();dialogKeyboard.dispose();port?.close();requestDialogFocus.current=undefined;onFrameLoad.current=undefined;notifyVisibility.current=undefined;notifyAppearance.current=undefined;window.removeEventListener('message',listener);};
   },[worldId,entry,load,refresh]);
   if(error)return <div role="alert"><p>{stageErrorMessage(error,key=>t(key),key=>i18n.exists(key,{ns:'stage'}))}</p><Button variant="secondary" onClick={retry}>{t('common.retry')}</Button></div>;
   return <>{!loaded&&<p role="status">{t('preview.loading')}</p>}{source&&<iframe key={source} ref={frame} title={title} data-world-component={entry} src={source} sandbox="allow-scripts allow-same-origin" onLoad={()=>onFrameLoad.current?.()} style={{display:'block',width:'100%',height,border:0,visibility:loaded?'visible':'hidden'}}/>}</>;

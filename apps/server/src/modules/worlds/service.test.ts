@@ -1,3 +1,4 @@
+import { worldPublication } from '../../testing/fixtures.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -13,7 +14,7 @@ let worlds: WorldService;
 let services: ReturnType<typeof createServices>;
 let dataRoot: string;
 const content = () => ({
-  specVersion: '0.1', name: '雾港',
+  specVersion: '0.2', publication: worldPublication(), name: '雾港',
   characters: [{ id: 'player', name: '旅人', player_selectable: true }],
   openings: [{ id: 'start', name: '抵达', content: '船靠岸了。' }],
 });
@@ -45,7 +46,7 @@ describe('world definitions and tags', () => {
       { id: 'default', asset: 'https://images.example/alice/default.webp', description: '平静' },
     ];
     const original = worlds.create({ ...content(), id: 'sprite-world', characters: [
-      { id: 'alice', name: 'Alice', prompt: 'private narrative prompt', load: { mode: 'never' }, sprites },
+      { id: 'alice', name: 'Alice', content: 'private narrative prompt', load: { mode: 'never' }, sprites },
       { id: 'player', name: 'Player', player_selectable: true },
       { id: 'bob', name: 'Bob', sprites: [{ id: 'default', asset: 'https://images.example/bob.webp', description: '严肃' }] },
     ] });
@@ -86,28 +87,46 @@ describe('world definitions and tags', () => {
     expect(worlds.listTags()).toEqual([{ name: '城市', worldCount: 1 }, { name: '悬疑', worldCount: 1 }]);
   });
 
-  it('decodes component descriptions while preserving textual descriptions and author JSON keys', () => {
-    const component = { type: 'component' as const, component: 'world-description' };
+  it('persists component and Markdown presentations with no legacy string fallback', () => {
+    const component = { type: 'component' as const, component: 'world-introduction' };
     const world = worlds.create({
-      ...content(), id: 'description', description: component,
-      characters: [{ id: 'player', name: '旅人', player_selectable: true }],
-      components: [{ id: 'world-description', component: 'export default function Intro(){ return null; }' }],
-      openings: [{ id: 'start', name: '抵达', content: 'Begin' }],
+      ...content(), id: 'presentation', presentation: component,
+      characters: [{ id: 'player', name: '旅人', player_selectable: true, content: 'Model-only character facts',
+        presentation: { type: 'markdown', text: 'Public character introduction' } }],
+      components: [{ id: 'world-introduction', component: 'export default function Intro(){ return null; }' }],
+      openings: [{ id: 'start', name: '抵达', content: 'Begin', presentation: component }],
     });
-    expect(world.description).toEqual(component);
-    expect(world.characters).toEqual([{ id: 'player', name: '旅人', player_selectable: true }]);
-    expect(world.openings).toEqual([{ id: 'start', name: '抵达', content: 'Begin' }]);
+    expect(world.presentation).toEqual(component);
+    expect(world.characters[0]).toMatchObject({ content: 'Model-only character facts',
+      presentation: { type: 'markdown', text: 'Public character introduction' } });
+    expect(world.openings[0]).toMatchObject({ content: 'Begin', presentation: component });
+    expect(world).not.toHaveProperty('description');
     expect(world).not.toHaveProperty('characters_json');
     expect(world).not.toHaveProperty('spec_version');
-    const jsonText = JSON.stringify(component);
-    expect(worlds.update(world.id, { description: jsonText })?.description).toBe(jsonText);
-    db.prepare('UPDATE worlds SET description=? WHERE id=?').run('earlier plain text', world.id);
-    expect(worlds.require(world.id).description).toBe('earlier plain text');
-    db.prepare('UPDATE worlds SET description=? WHERE id=?').run(jsonText, world.id);
-    expect(worlds.require(world.id).description).toEqual(component);
-    expect(() => worlds.update(world.id, { description: { type: 'component', component: '' } }))
-      .toThrow('INVALID_WORLD_FIELD');
-    expect(worlds.require(world.id).description).toEqual(component);
+    const markdown = { type: 'markdown' as const, text: 'Public world introduction' };
+    expect(worlds.update(world.id, { presentation: markdown })?.presentation).toEqual(markdown);
+    expect(worlds.require(world.id).presentation).toEqual(markdown);
+    expect(() => worlds.update(world.id, { presentation: 'legacy prose' } as unknown as WorldPatch))
+      .toThrow('INVALID_WORLD_CARD');
+    expect(() => db.prepare('UPDATE worlds SET presentation_json=? WHERE id=?').run('plain prose', world.id)).toThrow();
+    expect(() => worlds.update(world.id, { presentation: { type: 'component', component: '' } }))
+      .toThrow('INVALID_WORLD_CARD');
+    expect(worlds.require(world.id).presentation).toEqual(markdown);
+  });
+
+  it('validates every presentation reference and changed opening before committing a world patch', () => {
+    const world = worlds.create({ ...content(), components: [{ id: 'intro', component: 'export default ()=>null' }],
+      presentation: { type: 'component', component: 'intro' } });
+    for (const patch of [
+      { presentation: { type: 'component', component: 'missing' } },
+      { characters: [{ id: 'player', name: '旅人', player_selectable: true, presentation: { type: 'component', component: 'missing' } }] },
+      { openings: [{ id: 'start', name: 'Start', content: 'Begin', presentation: { type: 'component', component: 'missing' } }] },
+      { openings: [{ id: 'start', name: 'Start', content: 'Begin', type: 'component', component: 'intro' }] },
+      { components: [] },
+    ] as WorldPatch[]) {
+      expect(() => worlds.update(world.id, patch)).toThrow('INVALID_WORLD_CARD');
+      expect(worlds.require(world.id)).toEqual(world);
+    }
   });
 
   it('updates content and tags atomically without overwriting runtime state', () => {

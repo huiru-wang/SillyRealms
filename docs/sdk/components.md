@@ -185,4 +185,4 @@ CoinLabel.srDisplay = 'inline' as const;
 | `message`、`runId` | `message.id`、`message.role` 和本轮 `runId` 标识展示位置。消息组件同样可使用会话 Hook；仅凭历史消息 ID 不能重新生成历史轮次。 |
 | `srDisplay` | 默认按块级组件处理，行内标记设为 `'inline'`；另一合法值为 `'block'`。将它设在默认导出的组件上。 |
 
-正则需要产生非空匹配。可用 flags 为 `g/i/m/s/u`，每个最多一次，默认 g。可用 `roles` 限定用户或助手。渲染器还支持 `{type:"markdown", content:"…"}` 和 `{type:"html", content:"…"}` 静态替换。消息替换只改变显示，正文和状态的持久化由宿主负责。[展示与组件契约](../design/world-components.md)
+正则需要产生非空匹配。可用 flags 为 `g/i/m/s/u`，每个最多一次，默认 g。可用 `roles` 限定用户或助手。渲染器还支持 `{type:"markdown", text:"…"}` 和 `{type:"html", text:"…"}` 静态替换。消息替换只改变显示，正文和状态的持久化由宿主负责。[展示与组件契约](../design/world-components.md)

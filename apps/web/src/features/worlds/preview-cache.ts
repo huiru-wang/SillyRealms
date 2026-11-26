@@ -1,11 +1,16 @@
+import type {Presentation} from '@sillyrealms/sdk/presentation';
 import type {WorldDetail} from './api/worlds';
 
-export type PreviewEntry={id:string;entry:string;title:string};
+export type PreviewEntry={id:string;entry:string;title:string;surface?:'dialog'};
+
+export function presentationPreview(presentation:Presentation|null|undefined,id:string,title:string,surface?:'dialog'):PreviewEntry|null {
+  return presentation?.type==='component'?{id,entry:presentation.component,title,...(surface?{surface}:{})}:null;
+}
 export type PreviewModules={code:Record<string,string>;errors:Record<string,string>};
 export const PREVIEW_LIMIT=10;
 
-export function previewContentIdentity(world:Pick<WorldDetail,'id'|'components'> & Partial<Pick<WorldDetail,'publication'>>):string {
-  return JSON.stringify([world.id,world.publication?.release.version??null,world.components??[]]);
+export function previewContentIdentity(world:Pick<WorldDetail,'id'|'components'|'publication'>):string {
+  return JSON.stringify([world.id,world.publication.release.version,world.components??[]]);
 }
 
 /** First opened, first evicted. Revisiting or retrying never promotes an entry. */
@@ -14,7 +19,7 @@ export function retainPreview(entries:readonly PreviewEntry[],active:PreviewEntr
   const index=entries.findIndex(item=>item.id===active.id);
   if(index<0)return [...entries.slice(-(PREVIEW_LIMIT-1)),active];
   const previous=entries[index];
-  if(previous.entry===active.entry&&previous.title===active.title)return entries;
+  if(previous.entry===active.entry&&previous.title===active.title&&previous.surface===active.surface)return entries;
   return entries.map((item,i)=>i===index?active:item);
 }
 

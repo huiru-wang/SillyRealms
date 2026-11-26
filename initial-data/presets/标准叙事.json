@@ -19,7 +19,7 @@
         "kind": "system",
         "role": "system",
         "enabled": true,
-        "prompt": "<用户信息>\n{{persona.prompt}}\n</用户信息>"
+        "prompt": "<用户信息>\n{{persona.content}}\n</用户信息>"
       },
       {
         "id": "characterInfo",
@@ -27,7 +27,7 @@
         "kind": "system",
         "role": "system",
         "enabled": true,
-        "prompt": "<角色信息>\n{{characters.prompts}}\n</角色信息>"
+        "prompt": "<角色信息>\n{{characters.content}}\n</角色信息>"
       },
       {
         "id": "worldInfo",

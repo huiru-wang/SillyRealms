@@ -174,15 +174,20 @@ test('invalid release input and conflicting old indexes leave the old directory 
   assert.equal(await exists(f.zip), false);
 });
 
-test('offline legacy cards cannot acquire a new identity implicitly during release', async t => {
+test('release rejects retired formats and missing publication before creating output', async t => {
   const f = await fixture(t);
   const { name, characters, openings } = f.card.data;
-  await f.save({ spec_version: '0.1', data: { name, characters, openings } });
-  const result = run(f.args, f.temporary);
-  assert.equal(result.status, 1);
-  assert.equal(result.report.code, 'WORLD_PUBLICATION_REQUIRED');
-  assert.equal(await exists(f.index), false);
-  assert.equal(await exists(f.zip), false);
+  for (const card of [
+    { ...f.card, spec_version: '0.1' },
+    { spec_version: '0.2', data: { name, characters, openings } },
+  ]) {
+    await f.save(card);
+    const result = run(f.args, f.temporary);
+    assert.equal(result.status, 1);
+    assert.equal(result.report.code, 'INVALID_WORLD_CARD');
+    assert.equal(await exists(f.index), false);
+    assert.equal(await exists(f.zip), false);
+  }
 });
 
 test('index/output aliases into packaged content are refused and existing locks are respected', async t => {

@@ -8,12 +8,25 @@
 
 | 位置 | 注册方式 | 可以做什么 |
 | --- | --- | --- |
-| 世界详情介绍 | `data.description` 引用组件 ID | 展示作品介绍、包内素材，按需只读 global |
-| 开局预览 | 开局的 `type/component` | 展示这一开局的气氛和玩法说明，按需只读 global |
+| 世界详情介绍 | `data.presentation` 的组件分支 | 展示作品介绍、包内素材，按需只读 global |
+| 角色介绍 | `characters[].presentation` 的组件分支 | 展示玩家可读的角色资料，按需只读 global |
+| 开局预览 | `openings[].presentation` 的组件分支 | 展示这一开局的气氛和玩法说明，按需只读 global |
 | 会话舞台 Stage | `data.stage_component` | 读取会话/历史/状态，组合官方正文，自定义交互 |
 | 消息中的局部组件 | `message_render.rules` 匹配文本 | 把标记显示为图片、卡片或行内提示 |
 
 仅登记到 `components` 不会让组件自动出现；必须有上述挂载引用。详情预览没有会话身份，不能在那里读取玩家银币、写状态、发送消息或创建会话。
+
+世界、角色、开局的 presentation 都支持简单文字和组件两种形式：
+
+~~~json
+{"presentation": {"type": "markdown", "text": "在深夜的小饭馆里，认识来往的客人。"}}
+~~~
+
+~~~json
+{"presentation": {"type": "component", "component": "InnIntroduction"}}
+~~~
+
+组件需要先登记在 components；普通文字无需写 React。presentation 不自动进入模型，角色设定正文仍写 content。角色缺少 presentation 时不展示 content；开局缺少 presentation 时预览公开的 content，创建会话仍始终保存 content 作为首条助手消息。配置的组件加载失败时显示错误，不偷偷替换为角色正文。
 
 ## 1. 在官方正文旁边显示银币
 

@@ -1,8 +1,8 @@
 # 世界卡格式参考
 
-本页对应当前仓库的导入器。正式发行卡使用 `spec_version: "0.2"`，继续接受 0.1 卡；状态定义另有 `schema_version: 2`，公开版本目录使用 `schema_version: 1`。这些版本与作者的 `publication.release.version` 各自独立。
+本页对应当前仓库的导入器。世界卡只接受 `spec_version: "0.2"`，不兼容旧格式或旧字段；状态定义另有 `schema_version: 2`，公开版本目录使用 `schema_version: 1`。这些版本与作者的 `publication.release.version` 各自独立。
 
-先做作品请读[第一张世界卡](../creator/first-world.md)；正式发行字段见 [0.2 示例](../world-card.json)，现有[最小示例](../../examples/worlds/minimal/world.json)与[雾港来信](../../examples/worlds/fog-harbor/world.json)仍可按兼容格式导入。字段校验以[世界卡校验器](../../apps/server/src/modules/worlds/validation.ts)、[状态校验器](../../packages/sr-sdk/src/state-validation.ts)为准；通过 `pnpm world:check` 使用实际契约检查。
+先做作品请读[第一张世界卡](../creator/first-world.md)；正式发行字段见 [0.2 示例](../world-card.json)，[最小示例](../../examples/worlds/minimal/world.json)与[雾港来信](../../examples/worlds/fog-harbor/world.json)均使用同一当前格式。字段校验以[世界卡校验器](../../apps/server/src/modules/worlds/validation.ts)、[状态校验器](../../packages/sr-sdk/src/state-validation.ts)为准；通过 `pnpm world:check` 使用实际契约检查。
 
 ## 目录
 
@@ -45,15 +45,15 @@
 }
 ~~~
 
-这是 0.2 正式卡的结构最小值，示例 UUID 应替换为自己作品首次生成并长期保留的值。实际作品应补充角色 prompt 和世界资料，让模型知道应该怎样继续故事。0.1 卡不要求补齐发行信息；没有 publication 时作为离线兼容卡，不推断作者作品身份或版本。
+这是 0.2 正式卡的结构最小值，示例 UUID 应替换为自己作品首次生成并长期保留的值。实际作品应补充角色 content 和世界资料，让模型知道应该怎样继续故事。每张卡都必须声明 publication；不配置 update_url 即可作为离线作品使用。
 
 | 字段（位于 data） | 必填 | 类型 / 约束 |
 | --- | --- | --- |
 | `name` | 是 | 去掉首尾空白后非空的字符串 |
-| `publication` | 0.2 必填 | 固定结构的作品发行信息；0.1 可缺省，显式提供时同样完整校验 |
+| `publication` | 是 | 固定结构的作品发行信息 |
 | `characters` | 是 | 角色数组，至少一项可扮演，数组内 ID 唯一 |
 | `openings` | 是 | 至少一个开局，数组内 ID 唯一 |
-| `description` | 否 | `{type:"component", component:"组件ID"}`；新卡不接受旧字符串简介 |
+| `presentation` | 否 | 世界介绍，使用 Markdown 文本或组件展示对象，见下文 |
 | `cover` | 否 | 图片地址字符串；包内素材用 sr-asset URI |
 | `tags` | 否 | 非空字符串数组 |
 | `lorebook` | 否 | `{entries: [...世界书条目]}` |
@@ -64,6 +64,30 @@
 | `extensions` | 否 | 扩展元数据对象；平台识别已约定的保留键，其余作者元数据原样保留 |
 
 不要在世界卡中加入模型 Key、运行时会话数据或本机默认配置 ID。`data.ui` 不被接受。未定义的自创字段不构成平台能力，也不能保证原样往返；自定义作者扩展放在 extensions，并在作品说明中解释；正式作品身份、作者和发行版本使用 publication。
+
+### 正文、展示与说明
+
+世界卡使用三种明确的字段语义：
+
+| 字段 | 含义 |
+| --- | --- |
+| `content` | 角色、开局、世界书的正文；是否进入上下文由各自业务规则决定 |
+| `presentation` | 世界介绍、角色介绍和开局预览的展示配置，不自动注入模型 |
+| `description` | 状态、立绘等对象的纯文本语义说明，可由对应模块组织进模型材料 |
+
+三种介绍入口共用以下结构，不接受字符串简写、空对象或 HTML 类型：
+
+~~~ts
+type Presentation =
+  | { type: 'markdown'; text: string }
+  | { type: 'component'; component: string };
+~~~
+
+Markdown 的 text 必须非空且不超过 100000 UTF-8 字节，纯文本也使用这个分支；包内图片使用 sr-asset URI 并随 ZIP 分发。组件分支只接受已登记的组件 ID，不在这里内联源码。presentation 不执行角色正文的提示词变量替换。未提供时省略字段；已配置但加载失败时显示错误与重试，不静默回退到另一份正文。
+
+世界没有 presentation 时显示暂无介绍；角色没有 presentation 时不展示可能含隐藏设定的 content；开局没有 presentation 时展示公开的 content。角色 content 不因有无介绍而改变原有 load、排序或变量规则。
+
+旧 data.description、角色 prompt/description、开局平铺 type/component 和消息替换中的 content 均被拒绝，不静默丢弃。消息显示替换保留外层 replacement，舞台保留 stage_component；它们不改名为 presentation。状态与立绘的 description 仍为字符串。
 
 ### 封面马赛克
 
@@ -112,11 +136,11 @@
 | `homepage` | 可选 HTTP(S) 作品页面，面向人阅读 |
 | `update_url` | 可选固定公开 HTTPS 全版本目录地址，面向程序，不使用用户凭据或 URL 片段 |
 
-publication、authors 各项及 release 均拒绝未知键；其他作者扩展继续放在 `data.extensions`。作者署名不是账号认证。publication 不参与叙事提示词构建，不能用作者说明替代角色 prompt 或世界书。
+publication、authors 各项及 release 均拒绝未知键；其他作者扩展继续放在 `data.extensions`。作者署名不是账号认证。publication 不参与叙事提示词构建，不能用作者说明替代角色 content 或世界书。
 
 `1.10.0` 大于 `1.9.0`，按数字段比较；不接受 `v1.2.0`、`1.2`、`01.2.0`、`1.2.0-beta`、`1.2.0+build` 或自由文本。作品 ID 与版本绑定不可变发行文件，包内内容变化应发布新版本。发布时间与本地管理的 revision 都不参与版本大小比较。
 
-0.2 必须提供完整 publication。0.1 缺少时保存为空，显式提供时验证并保留；不从旧 `extensions.authoring.revision`、昵称或卡名猜测正式版本/身份。既有 extensions 保持自定义用途。普通导入和导出保留正式发行信息，导出不包含本地远端目录缓存。
+每张卡必须提供完整 publication；不接受 0.1 卡，也不从旧 `extensions.authoring.revision`、昵称或卡名猜测正式版本/身份。既有 extensions 保持自定义用途。普通导入和导出保留正式发行信息，导出不包含本地远端目录缓存。
 
 完整历史及最终 ZIP 的 SHA-256/字节数放在包外版本目录，不嵌入 publication，避免 ZIP 包含自身哈希。目录获取、不可变性与指定版本覆盖见[开放 OTA 协议](world-updates.md)，可复制的发版命令见[作者发行指南](../creator/world-publishing.md)。
 
@@ -128,15 +152,15 @@ publication、authors 各项及 release 均拒绝未知键；其他作者扩展�
 | --- | --- |
 | `id` | 稳定标识，角色数组内唯一 |
 | `name` | 显示名称；选中身份名称用于 `{{user}}` |
-| `description` | 可选字符串，玩家可读介绍 |
-| `prompt` | 可选字符串，进入人物/玩家身份材料 |
+| `presentation` | 可选展示对象，玩家可读角色介绍；省略时不展示 content |
+| `content` | 可选字符串，进入人物/玩家身份材料 |
 | `avatar` | 可选图片地址 |
 | `sprites` | 可选立绘素材数组；非空时必须含 ID 为 default 的素材 |
 | `player_selectable` | 可选布尔，是否可被玩家选择 |
 | `order` | 可选整数，角色材料排序；默认 0 |
 | `load` | 可选加载条件 |
 
-角色 prompt 支持精确 `{{user}}` 和本轮可见的 state 字段插值；不是任意模板执行器。选中角色通过其 load 后作为 persona 材料，其他激活角色作为 character 材料。详见[组织世界内容](../creator/world-content.md)。
+角色 content 支持精确 `{{user}}` 和本轮可见的 state 字段插值；不是任意模板执行器。选中角色通过其 load 后作为 persona 材料，其他激活角色作为 character 材料。详见[组织世界内容](../creator/world-content.md)。
 
 ### 角色立绘
 
@@ -169,7 +193,7 @@ publication、authors 各项及 release 均拒绝未知键；其他作者扩展�
 
 素材对象只接受以上三个字段；`sprites` 可以省略或为 []。角色 ID 和素材 ID 是消息结果引用的稳定标识。立绘无需另设 emotion 字段，也不在素材中指定左右槽位、CSS 或组件名。
 
-目录包含全卡已声明的素材。角色 load 只控制角色 prompt 加载，不过滤立绘目录；素材说明是可被模型读取的选择资料，不应承担剧情解锁或隐藏信息的职责。节点启用后，模型材料只包含角色 ID/姓名、素材 ID/说明和当前玩家角色 ID，图片地址用于资源读取。
+目录包含全卡已声明的素材。角色 load 只控制角色 content 加载，不过滤立绘目录；素材说明是可被模型读取的选择资料，不应承担剧情解锁或隐藏信息的职责。节点启用后，模型材料只包含角色 ID/姓名、素材 ID/说明和当前玩家角色 ID，图片地址用于资源读取。
 
 引用包内图片时，必须将文件放进 ZIP 的对应 assets/ 路径。导入、导出、`world:check` 与打包都会检查声明的包内资源；单独 JSON 导入不能引用包内文件。在线地址只校验 URI，不在导入时下载或探测。
 
@@ -183,12 +207,11 @@ publication、authors 各项及 release 均拒绝未知键；其他作者扩展�
 | --- | --- | --- |
 | `id/name/content` | 是 | 非空字符串；id 在开局数组内唯一 |
 | `initial_state` | 否 | message 根名到完整初值的对象 |
-| `type` | 条件必填 | 使用预览组件时固定为 component |
-| `component` | 条件必填 | 与 type 同时提供，引用已登记组件 |
+| `presentation` | 否 | 开局预览展示对象；省略时展示公开的 content |
 
 content 在创建会话时作为第一条助手消息保存，精确 `{{user}}` 替换一次；创建会话不生成模型开场。initial_state 只能覆盖已声明的 message 根，按整根替换并校验值；没覆盖的根使用定义初值。
 
-预览组件与实际会话开场是不同入口。预览组件不能执行会话初始化、读取 session/message 或代替平台创建会话。
+presentation 只影响世界详情中的开局预览，不能替代首条助手消息，也不会作为独立节点在每轮重复注入。预览组件不能执行会话初始化、读取 session/message 或代替平台创建会话。
 
 ## 世界书
 
@@ -202,7 +225,7 @@ content 在创建会话时作为第一条助手消息保存，精确 `{{user}}` 
 | `enabled` | 可选布尔；false 关闭条目 |
 | `load` | 加载条件，额外允许整数 order |
 
-order 默认 0，同值保留原数组顺序。条目 content 与角色 prompt 一样支持有限的作者变量。资料被加载不意味着故事中对应事件发生或人物已经知情。
+order 默认 0，同值保留原数组顺序。条目 content 与角色 content 一样支持有限的作者变量。资料被加载不意味着故事中对应事件发生或人物已经知情。
 
 ## 加载条件
 
@@ -272,8 +295,9 @@ scopes 可包含 global、session、message。每个根定义：
 
 | 挂载位置 | 引用 |
 | --- | --- |
-| 世界介绍 | `description: {type:"component", component:"Introduction"}` |
-| 开局预览 | 开局内同时写 `type:"component"` 与 `component:"OpeningPreview"` |
+| 世界介绍 | `data.presentation: {type:"component", component:"Introduction"}` |
+| 角色介绍 | `characters[].presentation: {type:"component", component:"CharacterIntroduction"}` |
+| 开局预览 | `openings[].presentation: {type:"component", component:"OpeningPreview"}` |
 | 会话舞台 | `stage_component: "HarborStage"` |
 | 消息片段 | 显示规则的 replacement.component |
 
@@ -281,7 +305,7 @@ scopes 可包含 global、session、message。每个根定义：
 
 每个模块必须默认导出；内部依赖通过 `./组件ID` 默认静态导入。允许的外部模块为 react、react-dom/client、react/jsx-runtime 和 @sillyrealms/sdk；通常只需 React 和 SDK。不支持任意 npm 包、SDK 子路径、动态 import、require、转发导出或循环依赖。[编译规则](../../packages/sr-ui-compiler/src/modules.ts)
 
-介绍/开局预览只有受限只读 global API，舞台才有会话/历史/状态操作。两个环境不是同一权限集。具体接口见[SDK 手册](../sdk/README.md)。
+世界介绍、角色介绍和开局预览只有受限只读 global API，舞台才有会话/历史/状态操作。两个环境不是同一权限集。具体接口见[SDK 手册](../sdk/README.md)。
 
 ## 消息显示规则
 
@@ -294,9 +318,9 @@ scopes 可包含 global、session、message。每个根定义：
 | `roles` | 是 | 非空数组，user / assistant |
 | `pattern` | 是 | 正则字符串，长度 1–2000 |
 | `flags` | 否 | 默认 g，只允许 g/i/m/s/u 且不重复 |
-| `replacement` | 是 | markdown/html 的 content，或 component 的组件 ID |
+| `replacement` | 是 | markdown/html 的 text，或 component 的组件 ID |
 
-replacement 为 `{type:"markdown",content:"..."}`、`{type:"html",content:"..."}` 或 `{type:"component",component:"..."}`。文本替换内容最多 100000 UTF-8 字节。组件接收 match、groups、namedGroups、message、runId；第一个捕获组是 groups[0]。
+replacement 为 `{type:"markdown",text:"..."}`、`{type:"html",text:"..."}` 或 `{type:"component",component:"..."}`。文本替换内容最多 100000 UTF-8 字节。组件接收 match、groups、namedGroups、message、runId；第一个捕获组是 groups[0]。
 
 规则用于官方正文渲染链路。自定义舞台如果不使用相关正文组件，平台不会自动把规则插入作者布局。显示替换不改写持久正文或状态。[完整使用方法](../sdk/components.md)
 

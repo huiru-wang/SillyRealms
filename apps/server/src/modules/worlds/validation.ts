@@ -44,10 +44,14 @@ const sprites = z.array(sprite).superRefine(unique).superRefine((items, ctx) => 
     ctx.addIssue({ code: 'custom', message: 'Nonempty sprites must contain default' });
   }
 });
-const character=z.object({id,name:nonblank,description:z.string().optional(),prompt:z.string().optional(),avatar:z.string().optional(),order:z.number().int().optional(),player_selectable:z.boolean().optional(),load:load.optional(),sprites:sprites.optional()});
 const componentId=z.string().regex(/^[A-Za-z_$][A-Za-z0-9_$-]*$/);
 const componentView=z.object({type:z.literal('component'),component:componentId}).strict();
-export const openingSchema=z.object({id,name:nonblank,content:nonblank,initial_state:dict.optional(),type:z.literal('component').optional(),component:componentId.optional()}).superRefine((value,ctx)=>{if((value.type===undefined)!==(value.component===undefined))ctx.addIssue({code:'custom',path:['component'],message:'type and component must be specified together'});});
+const presentationSchema=z.discriminatedUnion('type', [
+  z.object({type:z.literal('markdown'),text:nonblank.refine(value=>Buffer.byteLength(value,'utf8')<=100000,'Exceeds 100000 bytes')}).strict(),
+  componentView,
+]);
+const character=z.object({id,name:nonblank,presentation:presentationSchema.optional(),content:z.string().optional(),avatar:z.string().optional(),order:z.number().int().optional(),player_selectable:z.boolean().optional(),load:load.optional(),sprites:sprites.optional()}).strict();
+export const openingSchema=z.object({id,name:nonblank,content:nonblank,initial_state:dict.optional(),presentation:presentationSchema.optional()}).strict();
 const lore=z.object({id,title:z.string().optional(),content:nonblank,enabled:z.boolean().optional(),load:loreLoad.optional()});
 function unique(items:{id:string}[],ctx:z.RefinementCtx) {
   const seen=new Set<string>();
@@ -63,8 +67,8 @@ const renderRule=z.object({
   pattern:z.string().min(1).max(2000),
   flags:z.string().optional(),
   replacement:z.discriminatedUnion('type',[
-    z.object({type:z.literal('markdown'),content:boundedBytes(100000)}).strict(),
-    z.object({type:z.literal('html'),content:boundedBytes(100000)}).strict(),
+    z.object({type:z.literal('markdown'),text:boundedBytes(100000)}).strict(),
+    z.object({type:z.literal('html'),text:boundedBytes(100000)}).strict(),
     z.object({type:z.literal('component'),component:componentId}).strict(),
   ]),
 }).strict().superRefine((rule,ctx)=>{
@@ -119,17 +123,13 @@ const publicationSchema = z.object({
   homepage: publicationUrl(['http:', 'https:']).optional(),
   update_url: publicationUrl(['https:'], true).optional(),
 }).strict();
-const schema=z.object({spec_version:z.enum(['0.1', '0.2']),data:z.object({
-  publication: publicationSchema.optional(),
-  name:id,description:componentView.optional(),tags:z.array(id).optional(),cover:z.string().optional(),
+const schema=z.object({spec_version:z.literal('0.2'),data:z.object({
+  publication: publicationSchema,
+  name:id,presentation:presentationSchema.optional(),tags:z.array(id).optional(),cover:z.string().optional(),
   characters,
   openings:z.array(openingSchema).min(1).superRefine(unique),state:atomicStateSchema.optional(),
   lorebook:z.object({entries:z.array(lore).superRefine(unique)}).optional(),message_render:messageRender.optional(),ui:z.never().optional(),components:components.optional(),stage_component:componentId.optional(),extensions:extensions.optional()
-})}).superRefine((card, ctx) => {
-  if (card.spec_version === '0.2' && card.data.publication === undefined) {
-    ctx.addIssue({ code: 'custom', path: ['data', 'publication'], message: 'World card 0.2 requires publication' });
-  }
-});
+}).strict()}).strict();
 
 export type WorldCard = z.infer<typeof schema>;
 
@@ -184,11 +184,17 @@ export function validateCard(raw: unknown): WorldCard {
   const reference = (id: string | undefined, path: string) => {
     if (id !== undefined && !components.has(id)) throw new CardError(path, 'Component not found');
   };
-  reference(card.data.description?.component, '$.data.description.component');
+  const presentationReference = (value: z.infer<typeof presentationSchema> | undefined, path: string) => {
+    if (value?.type === 'component') reference(value.component, path + '.component');
+  };
+  presentationReference(card.data.presentation, '$.data.presentation');
+  card.data.characters.forEach((character, index) => {
+    presentationReference(character.presentation, '$.data.characters[' + index + '].presentation');
+  });
   reference(card.data.stage_component, '$.data.stage_component');
   card.data.openings.forEach((opening, index) => {
     const path = '$.data.openings[' + index + ']';
-    reference(opening.component, path + '.component');
+    presentationReference(opening.presentation, path + '.presentation');
     for (const [key, value] of Object.entries(opening.initial_state ?? {})) {
       if (!isSafeStateKey(key)) throw new CardError(path + '.initial_state.' + key, 'Unsafe state key');
       const definition = card.data.state?.scopes.message?.[key];

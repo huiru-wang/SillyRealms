@@ -4,6 +4,7 @@
   opacity:0;
   transition:opacity var(--motion-overlay) var(--ease-standard);
 }
+.backdrop[hidden]{display:none}
 .panel{
   display:flex;flex-direction:column;min-width:0;
   width:min(440px,100%);max-height:calc(100dvh - var(--space-8));

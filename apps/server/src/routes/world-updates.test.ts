@@ -31,7 +31,7 @@ function card(version: string) {
   const value = worldCardFixture();
   return { ...value, spec_version: '0.2', data: { ...value.data, publication: publication(version),
     cover: 'sr-asset://assets/scene.txt',
-    characters: value.data.characters.map(character => ({ ...character, prompt: 'Prompt ' + version })),
+    characters: value.data.characters.map(character => ({ ...character, content: 'Prompt ' + version })),
   } };
 }
 let db: DatabaseSync, root: string, services: ReturnType<typeof createServices>;
@@ -128,7 +128,7 @@ describe('world update HTTP projection', () => {
     const result = await data<{ item: Record<string, unknown> }>(await post('/apply-version', applyBody()));
     expect(result.item).toMatchObject({ id: world.id, revision: world.revision + 1, specVersion: '0.2',
       publication: publication('2.0.0'), currentVersion: '2.0.0', latestVersion: '2.0.0', updateStatus: 'ready',
-      characters: [{ id: 'player', prompt: 'Prompt 2.0.0' }], openings: card('2.0.0').data.openings });
+      characters: [{ id: 'player', content: 'Prompt 2.0.0' }], openings: card('2.0.0').data.openings });
     expect(result.item).not.toHaveProperty('state');
     expect(result.item).not.toHaveProperty('versions');
     expect(downloads.getArtifact).toHaveBeenCalledExactlyOnceWith(record('2.0.0'), expect.any(AbortSignal));

@@ -82,9 +82,6 @@ async function digestFile(path: string) {
 async function release(options: Options) {
   const source = await inspectWorldSource(options.source);
   if (source.format !== 'directory') throw new ToolError('INVALID_WORLD_DIRECTORY', '发行输入必须是包含 world.json 的源码目录');
-  if (source.card.spec_version !== '0.2' || !source.card.data.publication) {
-    throw new ToolError('WORLD_PUBLICATION_REQUIRED', '请先在 0.2 源卡中填写固定 package_id、作者与有效 publication');
-  }
   const publication: WorldPublication = {
     ...source.card.data.publication,
     release: { version: options.version, published_at: options.publishedAt, notes: await readUtf8(options.notes) },
@@ -107,7 +104,7 @@ async function release(options: Options) {
     try {
       checkWorldComponents(staged.inspection);
       const card = staged.inspection.card;
-      const actual = card.data.publication!;
+      const actual = card.data.publication;
       const version = actual.release.version;
       // Use the formally validated version, never unchecked CLI text, in filesystem paths.
       const output = await resolvedOutputPath(join(options.output, 'versions', version, basename(options.source) + '.zip'));

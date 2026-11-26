@@ -1,3 +1,4 @@
+import { worldPublication } from '../testing/fixtures.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -69,7 +70,7 @@ describe('preset HTTP operations', () => {
     services.settings.update({ defaultPresetId: preset.id });
     services.models.create({ id: 'model', name: 'Model', providerId: 'provider', modelId: 'm', credentialRef: 'ref' });
     const world = services.worlds.create({
-      id: 'world', name: '小饭馆', specVersion: '0.1', defaultPresetId: preset.id,
+      id: 'world', name: '小饭馆', specVersion: '0.2', publication: worldPublication(), defaultPresetId: preset.id,
       characters: [{ id: 'player', name: '掌柜', player_selectable: true }],
       openings: [{ id: 'opening', name: '开局', content: '开门' }],
     });
@@ -99,7 +100,7 @@ describe('preset HTTP operations', () => {
   it('reports world reply-assist references before allowing preset deletion', async () => {
     const reply = services.presets.create({ ...services.presets.getDefault('reply_assist'), name: 'World reply' });
     const world = services.worlds.create({
-      name: '小饭馆', specVersion: '0.1', defaultReplyAssistPresetId: reply.id,
+      name: '小饭馆', specVersion: '0.2', publication: worldPublication(), defaultReplyAssistPresetId: reply.id,
       characters: [{ id: 'player', name: '掌柜', player_selectable: true }],
       openings: [{ id: 'opening', name: '开局', content: '开门' }],
     });

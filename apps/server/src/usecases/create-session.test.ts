@@ -1,3 +1,5 @@
+import type { Presentation } from '@sillyrealms/sdk/presentation';
+import { worldPublication } from '../testing/fixtures.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -30,7 +32,7 @@ beforeEach(() => {
   services.presets.create({ ...narrativePreset(), id: 'preset' });
   services.models.create({ id: 'model', name: 'Model', providerId: 'provider', modelId: 'model', credentialRef: 'not-read-on-create' });
   services.worlds.create({
-    id: 'world', name: 'World', specVersion: '0.1',
+    id: 'world', name: 'World', specVersion: '0.2', publication: worldPublication(),
     characters: [{ id: 'player', name: '掌柜', player_selectable: true }, { id: 'npc', name: 'NPC' }],
     openings: [{ id: 'start', name: '夜归', content: '{{user}}，欢迎回来。{{user}}！', initial_state: { coins: 20, bag: { gold: 5 } } }],
     stateDefinition: { schema_version: 2, scopes: {
@@ -76,6 +78,23 @@ describe('create a ready session', () => {
     expect(usecases.narrative.usage('session').recordedRequestCount).toBe(0);
   });
 
+  it.each(['markdown', 'component'] as const)('keeps %s opening presentation out of the initial assistant message', type => {
+    const opening = services.worlds.requireOpening('world', 'start');
+    const presentation: Presentation = type === 'markdown'
+      ? { type: 'markdown' as const, text: 'PREVIEW_ONLY {{user}}' }
+      : { type: 'component' as const, component: 'PreviewOnly' };
+    services.worlds.update('world', {
+      openings: [{ id: opening.id, name: opening.name, content: opening.content, presentation }],
+      components: [{ id: 'PreviewOnly', component: 'export default function PreviewOnly(){throw Error("must not execute on create")}' }],
+    });
+    const components = vi.spyOn(services.worlds, 'getComponents');
+    const result = usecases.createSession(input);
+    expect(result.entry.payload).toMatchObject({ message: { content: '掌柜，欢迎回来。掌柜！' } });
+    expect(JSON.stringify(result.entry)).not.toContain('PREVIEW_ONLY');
+    expect(JSON.stringify(result.entry)).not.toContain('PreviewOnly');
+    expect(components).not.toHaveBeenCalled();
+  });
+
   it('substitutes every exact user placeholder once, keeping replacement syntax literal', () => {
     services.worlds.update('world', { characters: [{ id: 'player', name: '$&{{user}}', player_selectable: true }] });
     const result = usecases.createSession(input);
@@ -118,7 +137,10 @@ describe('create a ready session', () => {
   });
 
   it.each([{ unknown: 1 }, { coins: 999 }, { 'bag.gold': 1 }] as JsonObject[])('rejects invalid initial overrides: %j', initialState => {
-    services.worlds.update('world', { openings: [{ id: 'start', name: 'Start', content: 'Hi', initial_state: initialState }] });
+    const opening = { id: 'start', name: 'Start', content: 'Hi', initial_state: initialState };
+    expect(() => services.worlds.update('world', { openings: [opening] })).toThrow('INVALID_WORLD_CARD');
+    // A malformed storage/source projection must still fail before session persistence.
+    vi.spyOn(services.worlds, 'requireOpening').mockReturnValue(opening);
     const publish = vi.spyOn(events, 'publish');
     expect(() => usecases.createSession(input)).toThrow();
     expect(services.sessions.get('session')).toBeNull();

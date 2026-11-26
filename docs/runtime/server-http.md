@@ -8,7 +8,7 @@ HTTP适配器位于 `apps/server/src/routes/`，可调用业务模块Service或�
 
 Service 公共输入输出采用显式驼峰领域类型，存储行到领域对象的转换位于 Service，存储行及列名留在模块内部。HTTP 使用 V2 管理接口契约；跨模块展示字段由 route 调属主 Service 组合，不放回 Repository JOIN 或相互依赖的 Service 展示逻辑。作者 JSON、状态键及文档协议里的键不做递归改名。
 
-业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；Web 接入世界内容库、预设、模型配置、设置和基础会话和叙事运行页。数据库 user_version=12，只迁移结构匹配的 V2 v1–v11 库（v2 添加预设 revision，v3 添加世界 revision 和 created_at/id 索引，v4 为非 NULL 消息状态添加 (session_id,seq) 索引，v5 添加带 zh-CN 默认值的 app_settings.locale，v6 在同一迁移事务内重建该单例表的 CHECK 约束以接受 ja，逐字段保留默认项、原语言及时间戳，v7 添加帮答模型绑定、应用默认帮答预设和会话帮答目标，v8 添加可空的 sessions.reply_assist_preset_id，v9 重建 sessions，清空旧会话及其 entries，保留世界、模型、预设和应用设置；v10 仅为 app_settings 添加 cover_mosaic_density，保留 v9 的全部数据；v11 仅为 worlds 添加可空的 default_reply_assist_preset_id，保留 v10 全部数据；v12 仅为 worlds 添加可空的 publication_json，保留 v11 全部世界、会话与状态数据），拒绝未知结构和旧 Server 库。createApp传入services时必须同时传入usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureBuiltins 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 和 sr-default-reply-assist-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
+业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；Web 接入世界内容库、预设、模型配置、设置和基础会话和叙事运行页。数据库 `user_version=13`，直接创建完整当前结构；只重开结构完全匹配的 v13 数据库。旧 v1–v12、未知结构和旧 Server 库均在写入前拒绝，不执行迁移、重置或删除。世界展示使用可空的 `worlds.presentation_json`，作品发行信息使用必填的 `worlds.publication_json`。createApp传入services时必须同时传入usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureBuiltins 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 和 sr-default-reply-assist-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
 
 ## 普通 JSON 响应
 
@@ -85,7 +85,7 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 | GET / PATCH | /app-settings | 读取 / 更新应用默认预设、模型、语言和封面马赛克密度 |
 
 
-应用语言由 `AppSettings.locale` 保存，只接受 `zh-CN`、`en` 和 `ja`，新安装及无语言字段的旧库默认 `zh-CN`，已有语言值在升级时保持不变。GET 返回 `data.item.locale`；PATCH `{"locale":"en"}` 只更新语言，未提交的默认预设/模型保持原值，其他字段更新也不重置语言。不接受 null、空字符串或未知语言。设置为应用实例共享值；切换成功后开始的新请求使用新语言，已捕获上下文的运行继续使用原语言。叙事提交/重新生成不新增 locale 请求字段。
+应用语言由 `AppSettings.locale` 保存，只接受 `zh-CN`、`en` 和 `ja`，新安装默认 `zh-CN`，重新打开当前格式数据库时保留已保存的语言。GET 返回 `data.item.locale`；PATCH `{"locale":"en"}` 只更新语言，未提交的默认预设/模型保持原值，其他字段更新也不重置语言。不接受 null、空字符串或未知语言。设置为应用实例共享值；切换成功后开始的新请求使用新语言，已捕获上下文的运行继续使用原语言。叙事提交/重新生成不新增 locale 请求字段。
 
 `AppSettings.coverMosaicDensity` 为 8–64 的整数，默认 24，表示列表封面短边的采样格数。PATCH 只更新提交的值，拒绝 null、小数和越界值；保存语言或默认项不重置密度。密度为应用实例设置，不随世界卡导出。
 
@@ -147,7 +147,7 @@ promptCache 是 SDK 提供的最佳估计保留时长，缺失表示未提供，
 
 世界列表支持 q（名称包含匹配，最多 200 字符）、tag（精确标签名）、limit（1–200，默认 24）、cursor；不接受 offset/tagId。按 createdAt/id 倒序进行 keyset 分页，编辑内容或状态不改变顺序。游标绑定名称及标签筛选，不能挪到其他查询。Repository 读取摘要、正式发行信息并批量读取本页标签，不逐世界读取作者正文；sessionCount 由 route 调 SessionService 批量组合，版本摘要由同一 worldUpdates.getSummaries 读取本地目录后批量聚合，不跨模块 JOIN，也不访问远端。
 
-列表项为 `{id,name,cover,coverMosaicEnabled,tags:string[],sessionCount,createdAt,updatedAt,currentVersion,latestVersion,updateStatus}`。详情为 `data.item`，顶层字段包括 id、revision、specVersion、name、description、cover、coverMosaicEnabled、tags、characters、openings、lorebook、stateDefinition、messageRender、components、stageComponent、extensions、publication、currentVersion、latestVersion、updateStatus、defaultPresetId、defaultReplyAssistPresetId、defaultApiModelConfigId、createdAt、updatedAt。不再包装 item.data 或返回空 warnings；stateDefinition 是作者声明，详情不包含运行 state。description 保留 null、组件对象或已有文本；作者对象内部协议键不递归转换。publication 为严格 WorldPublication 对象或 null，内部沿用 package_id、creator_notes、release.published_at、update_url 等作者协议键；不是任意 metadata 字典。
+列表项为 `{id,name,cover,coverMosaicEnabled,tags:string[],sessionCount,createdAt,updatedAt,currentVersion,latestVersion,updateStatus}`。详情为 `data.item`，顶层字段包括 id、revision、specVersion、name、presentation、cover、coverMosaicEnabled、tags、characters、openings、lorebook、stateDefinition、messageRender、components、stageComponent、extensions、publication、currentVersion、latestVersion、updateStatus、defaultPresetId、defaultReplyAssistPresetId、defaultApiModelConfigId、createdAt、updatedAt。不再包装 item.data 或返回空 warnings；stateDefinition 是作者声明，详情不包含运行 state。presentation 为 null 或 `{type:"markdown",text:string}` / `{type:"component",component:string}`；不接受字符串简写。角色和开局的 presentation 使用相同结构，角色正文为 content；作者对象内部协议键不递归转换。publication 为严格 WorldPublication 对象，内部沿用 package_id、creator_notes、release.published_at、update_url 等作者协议键；不是任意 metadata 字典。
 
 PATCH 仅接受 name、tags、coverMosaicEnabled、defaultPresetId、defaultReplyAssistPresetId、defaultApiModelConfigId 的非空子集，以及必填 expectedRevision。只写提交的管理列；标签 trim、去重并保留顺序，与 revision 更新在同一事务中完成。成功 revision 加一；过期返回 WORLD_REVISION_CONFLICT/409，引用不存在或校验失败不部分保存。显式 null 清除世界默认引用；defaultReplyAssistPresetId 仅接受 reply_assist 类型预设，创建会话时预填到 runtimeConfig.replyAssistPresetId，null 继续表示跟随应用默认。默认预设和模型引用是本机配置，不随世界卡导出。不提供 POST /worlds、PUT /worlds/:id/tags 或旧 /tags 别名；除上述马赛克保留键外，作者内容与运行状态不通过管理 PATCH 更新。
 
@@ -167,7 +167,7 @@ DELETE `/worlds/:id` 未确认关联删除时，有关联会话返回 WORLD_HAS_
 
 世界模块内部职责：`parser.ts` 解码 JSON、调用统一校验并转换卡片与领域对象；`validation.ts` 校验卡结构、引用、状态与条件表达式；`assets.ts` 读取组件源码并检查资源引用；`archive.ts` 处理导入文件、ZIP 解压和导出打包；`files.ts` 管理目录、暂存、发布、清理和文件流。条件表达式只做静态验证，不执行。上述实现通过 `service.ts` 对外提供能力，不改变本节 HTTP 和磁盘布局契约。
 
-世界导入采用multipart/form-data，HTTP 层按实际字节限制读取正文流并保留 boundary，不依赖 Node 适配器 Request 对象具有原生 Fetch 内部状态。只接受一个file字段，扩展名为.json或.zip。上传原名只用于判断格式，不保存、不参与导出命名；保留上传原始字节。ZIP根目录为world.json，资源只能位于components/和assets/，允许子目录；验证重复/冲突路径、符号链接、大小、资源引用和世界卡内容。JSON导入不能引用不存在的包内资源。卡使用spec_version和data，不再要求固定spec标识，导出也不生成spec。接受0.1与0.2；0.2必须有正式publication，0.1缺少时按离线兼容卡保存，显式提供则完整校验。不会从extensions推断作品身份或发行版本。
+世界导入采用multipart/form-data，HTTP 层按实际字节限制读取正文流并保留 boundary，不依赖 Node 适配器 Request 对象具有原生 Fetch 内部状态。只接受一个file字段，扩展名为.json或.zip。上传原名只用于判断格式，不保存、不参与导出命名；保留上传原始字节。ZIP根目录为world.json，资源只能位于components/和assets/，允许子目录；验证重复/冲突路径、符号链接、大小、资源引用和世界卡内容。JSON导入不能引用不存在的包内资源。卡使用spec_version和data，不再要求固定spec标识，导出也不生成spec。只接受0.2且必须有正式publication；旧格式、旧展示字段、角色prompt与旧消息替换content均明确拒绝。不会从extensions推断作品身份或发行版本。
 
 启动安装内置 ZIP 和手动上传共用世界导入流程。前者按发行清单的固定 ID 补齐，后者每次生成独立的 UUID。
 
@@ -175,7 +175,7 @@ DELETE `/worlds/:id` 未确认关联删除时，有关联会话返回 WORLD_HAS_
 
 当前世界导出从DB读取世界卡与标签，结合package/当前资源重新构建ZIP，忽略原始上传字节与package中旧world.json。文件名为当前world.name.zip，非法文件名字符做安全替换，中文使用标准下载头编码；导出使用no-store。导出产物先完整生成，再打开下载流，完成/取消/HEAD后清理临时文件。
 
-导出按当前specVersion重新校验0.1/0.2世界卡并保留publication，不包含releases.json和内存检查状态。横跨内容替换的导出或组件读取会被判定失效，不交付混合版本。已有纯文本 description 无法表示为协议要求的组件描述时，明确返回INVALID_WORLD_CARD/422，不静默丢弃该字段。
+导出按唯一当前0.2格式重新校验世界卡并保留publication，不包含releases.json和内存检查状态。横跨内容替换的导出或组件读取会被判定失效，不交付混合版本。正文、presentation 和语义 description 各自按标准保留；未知或旧字段明确返回 INVALID_WORLD_CARD/422，不静默丢弃。
 
 ## 世界版本与覆盖
 
@@ -458,7 +458,7 @@ HTTP 200 成功包络：
 }
 ```
 
-每张素材一项，以 characterId + spriteId 关联；响应不包含角色完整 prompt、load 条件、图片字节或绝对磁盘路径。素材协议见 [世界卡协议](../reference/world-card.md)。
+每张素材一项，以 characterId + spriteId 关联；响应不包含角色完整 content、load 条件、图片字节或绝对磁盘路径。素材协议见 [世界卡协议](../reference/world-card.md)。
 
 ### 指定消息结果
 

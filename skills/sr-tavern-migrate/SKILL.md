@@ -30,7 +30,7 @@ description: "在 SillyRealms 仓库中，将已有 SillyTavern/酒馆角色卡�
 
 ## 制作 SR 版本
 
-1. 先完成角色、开局、世界资料和必要状态，用官方正文跑通主体。
+1. 先完成角色、开局、世界资料和必要状态，用官方正文跑通主体。目标使用当前世界卡 0.2 与完整 publication，保留真实作者署名和授权来源；来源未署名时如实记录，不冒充原创作者。角色设定写 content，玩家介绍写 presentation（markdown/text 或 component），状态与立绘的 description 保持语义说明；消息静态替换的文本载荷写 text。不要把 Tavern 的 description/prompt 直接照搬成 SR 旧字段。
 2. 再按[呈现教程](../../docs/creator/presentation.md)和[SDK](../../docs/sdk/README.md)重建必要的按钮、地图、建角表单或消息显示。详情预览只有只读 global；会话写入放在 Stage。
 3. 调整原占位变量，保持其原句含义。玩家操作者、选中身份与自定义角色姓名不能混用；避免把初始值重复写死在常驻提示词里。
 4. 整理可分发的本地素材，保留来源与授权说明。不能取得的素材列为缺口，不以坏链接或空白组件掩盖。

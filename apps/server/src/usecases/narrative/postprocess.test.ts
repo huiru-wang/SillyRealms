@@ -1,3 +1,4 @@
+import { worldPublication } from '../../testing/fixtures.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -45,7 +46,7 @@ beforeEach(async () => {
   services.models.create({ id: 'model', name: 'Model', providerId: 'provider', modelId: 'model', credentialRef });
   services.presets.create({ ...narrativePreset(), id: 'preset' });
   services.worlds.create({
-    id: 'world', name: 'World', specVersion: '0.1',
+    id: 'world', name: 'World', specVersion: '0.2', publication: worldPublication(),
     characters: [{ id: 'player', name: 'Player', player_selectable: true }],
     openings: [{ id: 'start', name: 'Start', content: 'Opening' }],
     stateDefinition: { schema_version: 2, scopes: { message: {

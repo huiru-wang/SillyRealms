@@ -1,3 +1,4 @@
+export type {Presentation} from '../presentation.js';
 import {WorldStory} from './world-story.js';
 import {ActionSuggestions} from './action-suggestions.js';
 import {LoadingText} from '../loading-text.js';

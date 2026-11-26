@@ -1,3 +1,4 @@
+import { worldPublication } from '../../testing/fixtures.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -35,7 +36,7 @@ beforeEach(async () => {
   services.models.create({ id: 'model', name: 'Model', providerId: 'provider', modelId: 'model', credentialRef });
   const preset = narrativePreset(); preset.config.contextStrategy.maxContextTokens = 1500;
   services.presets.create({ ...preset, id: 'preset' });
-  services.worlds.create({ id: 'world', name: 'World', specVersion: '0.1',
+  services.worlds.create({ id: 'world', name: 'World', specVersion: '0.2', publication: worldPublication(),
     characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'opening', name: 'Opening', content: 'Start' }],
   });
   services.sessions.create({ id: 'session', worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player' });

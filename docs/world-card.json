@@ -24,7 +24,11 @@
         "id": "traveler",
         "name": "旅人",
         "player_selectable": true,
-        "prompt": "你是一位初次抵达雾港的旅人。"
+        "content": "你是一位初次抵达雾港的旅人。",
+        "presentation": {
+          "type": "markdown",
+          "text": "一位初次抵达雾港的旅人。"
+        }
       }
     ],
     "openings": [
@@ -33,6 +37,10 @@
         "name": "抵达",
         "content": "海风吹过码头，{{user}}来到了雾港。"
       }
-    ]
+    ],
+    "presentation": {
+      "type": "markdown",
+      "text": "带着一封旧信抵达雾港，寻找守灯人。"
+    }
   }
 }

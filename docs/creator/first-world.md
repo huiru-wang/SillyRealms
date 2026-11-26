@@ -22,9 +22,9 @@ pnpm world:check examples/worlds/my-first-world
 
 ## 2. 改三个位置
 
-在 `data.name` 中给作品起一个新名字，例如“雾港来信 · 我的第一版”。保留 `spec_version`、数组结构和原有 ID；修改名称不需要修改引用 ID。
+在 `data.name` 中给作品起一个新名字，例如“雾港来信 · 我的第一版”。保持 `spec_version: "0.2"`、数组结构和角色/开局引用 ID；修改名称不需要修改这些引用。创建自己的作品时还应生成独立的 `publication.package_id`，填写实际作者署名、版本与说明，不能沿用示例作品身份；没有远端更新源时省略 update_url。详见[作者发行](world-publishing.md)。
 
-在 `characters` 中找到 `id: "traveler"`。它的 `player_selectable: true` 表示玩家可扮演这一身份。把 `prompt` 改为：
+在 `characters` 中找到 `id: "traveler"`。它的 `player_selectable: true` 表示玩家可扮演这一身份。把 `content` 改为：
 
 ~~~text
 {{user}}是一名第一次到雾港的年轻送信人，手里只有一封未署名的信。

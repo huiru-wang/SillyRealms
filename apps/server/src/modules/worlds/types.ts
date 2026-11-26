@@ -1,3 +1,4 @@
+import type { Presentation } from '@sillyrealms/sdk/presentation';
 import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
 
 /** Author-declared publication data retains its wire-format keys. */
@@ -11,13 +12,13 @@ export type WorldPublication = {
 };
 export type WorldUpdateSource = { worldId: string; packageId: string; updateUrl: string };
 
-export type WorldDescription = string | { type: 'component'; component: string } | null;
+export type WorldPresentation = Presentation;
 
 export type WorldContent = {
   specVersion: string;
-  publication: WorldPublication | null;
+  publication: WorldPublication;
   name: string;
-  description: WorldDescription;
+  presentation: WorldPresentation | null;
   cover: string | null;
   characters: JsonValue[];
   openings: JsonValue[];
@@ -32,8 +33,8 @@ export type WorldContent = {
   defaultApiModelConfigId: string | null;
 };
 
-export type CreateWorld = Pick<WorldContent, 'specVersion' | 'name' | 'characters' | 'openings'>
-  & Partial<Omit<WorldContent, 'specVersion' | 'name' | 'characters' | 'openings'>>
+export type CreateWorld = Pick<WorldContent, 'specVersion' | 'publication' | 'name' | 'characters' | 'openings'>
+  & Partial<Omit<WorldContent, 'specVersion' | 'publication' | 'name' | 'characters' | 'openings'>>
   & { id?: string; state?: JsonObject; tags?: readonly string[] };
 export type WorldPatch = Partial<WorldContent> & { tags?: readonly string[] };
 export type World = WorldContent & {
@@ -62,7 +63,7 @@ export type CharacterSpriteCatalogItem = {
 export type CharacterSpriteCatalog = { worldId: string; items: CharacterSpriteCatalogItem[] };
 
 export const worldContentFields = [
-  'specVersion', 'publication', 'name', 'description', 'cover', 'characters', 'openings',
+  'specVersion', 'publication', 'name', 'presentation', 'cover', 'characters', 'openings',
   'lorebook', 'stateDefinition', 'messageRender', 'components',
   'stageComponent', 'extensions', 'defaultPresetId', 'defaultReplyAssistPresetId', 'defaultApiModelConfigId',
 ] as const;

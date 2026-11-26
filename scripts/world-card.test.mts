@@ -22,9 +22,14 @@ async function fixture(t: TestContext) {
   const directory = join(temporary, 'world');
   await mkdir(directory);
   const card = {
-    spec_version: '0.1',
+    spec_version: '0.2',
     data: {
       name: '测试旅店',
+      publication: {
+        package_id: 'f52b3090-3d5f-4d09-89b4-b6507cb1a4f6',
+        authors: [{ name: '测试作者' }],
+        release: { version: '1.0.0', published_at: '2026-11-26T00:00:00Z', notes: '测试用发行。' },
+      },
       characters: [{ id: 'traveler', name: '旅人', player_selectable: true }],
       openings: [{ id: 'arrival', name: '抵达', content: '你推开旅店的门。' }],
       state: { schema_version: 2, scopes: { message: {
@@ -81,6 +86,43 @@ test('packs only allowed roots, checks the finished ZIP, and preserves source by
   assert.deepEqual(content.packageFiles, ['assets/cover.svg', 'world.json']);
   assert.equal(await readFile(join(f.directory, 'world.json'), 'utf8'), before);
   assert.equal(await exists(join(f.temporary, 'app-data')), false);
+});
+
+test('packs current presentation fields, character content and display replacements without rewriting them', async t => {
+  const f = await fixture(t);
+  await mkdir(join(f.directory, 'assets'));
+  await writeFile(join(f.directory, 'assets', 'inn.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+  const card = { ...f.card, data: { ...f.card.data,
+    presentation: { type: 'markdown', text: '![旅店](sr-asset://assets/inn.svg)' },
+    characters: [{ ...f.card.data.characters[0], content: '{{user}}正在寻找失落的信件。',
+      presentation: { type: 'component', component: 'CharacterIntro' } }],
+    openings: [{ ...f.card.data.openings[0],
+      presentation: { type: 'markdown', text: '一个适合初次探索的起点。' } }],
+    components: [{ id: 'CharacterIntro', component: 'export default function CharacterIntro(){return null;}' }],
+    message_render: { rules: [{ id: 'inn', roles: ['assistant'], pattern: '旅店',
+      replacement: { type: 'markdown', text: '![旅店](sr-asset://assets/inn.svg)' } }] },
+  } };
+  await f.save(card);
+  const source = await readFile(join(f.directory, 'world.json'));
+  const output = join(f.temporary, 'current.zip');
+  const result = run(['pack', f.directory, '--out', output], f.temporary);
+  assert.equal(result.status, 0, result.stderr);
+  const packed = await inspectWorldSource(output);
+  assert.deepEqual(packed.card, card);
+  assert.deepEqual(packed.packageFiles, ['assets/inn.svg', 'world.json']);
+  assert.deepEqual(await readFile(join(f.directory, 'world.json')), source);
+  assert.equal(await exists(join(f.temporary, 'app-data')), false);
+});
+
+test('rejects retired author fields instead of silently dropping model content', async t => {
+  const f = await fixture(t);
+  await f.save({ ...f.card, data: { ...f.card.data,
+    characters: [{ ...f.card.data.characters[0], prompt: '不得静默丢失的角色设定。' }],
+  } });
+  const result = run(['check', f.directory], f.temporary);
+  assert.equal(result.status, 1);
+  assert.equal(result.report.code, 'INVALID_WORLD_CARD');
+  assert.match(result.report.message, /characters.*prompt/);
 });
 
 test('default ZIP is beside the directory and an existing output is never replaced', async t => {

@@ -1,3 +1,4 @@
+import { worldPublication } from './testing/fixtures.js';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -25,7 +26,7 @@ function temporaryDirectory() {
 function seedSessions(services: Services, ids: string[]) {
   const preset = services.presets.create(narrativePreset());
   const model = services.models.create({ name: 'Test model', providerId: 'test', modelId: 'test-model', credentialRef: 'test-ref' });
-  const world = services.worlds.create({ name: 'Test world', specVersion: '0.1', characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'start', name: 'Start', content: 'Begin' }] });
+  const world = services.worlds.create({ name: 'Test world', specVersion: '0.2', publication: worldPublication(), characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'start', name: 'Start', content: 'Begin' }] });
   for (const id of ids) services.sessions.create({
     id, worldId: world.id, runtimeConfig: { narrativePresetId: preset.id, apiModelConfigId: model.id }, userCharacterId: 'player',
   });
@@ -104,7 +105,7 @@ describe('Server over HTTP', () => {
     const preset = running.services.presets.create(narrativePreset());
     running.services.settings.update({ defaultPresetId: preset.id, defaultApiModelConfigId: model.id });
     const world = running.services.worlds.create({
-      name: 'Persistent world', specVersion: '0.1', characters: [{ id: 'player', name: 'Player', player_selectable: true }],
+      name: 'Persistent world', specVersion: '0.2', publication: worldPublication(), characters: [{ id: 'player', name: 'Player', player_selectable: true }],
       openings: [{ id: 'start', name: 'Start', content: 'Begin' }], tags: ['test'], defaultPresetId: preset.id, defaultApiModelConfigId: model.id,
     });
     const session = running.services.sessions.create({

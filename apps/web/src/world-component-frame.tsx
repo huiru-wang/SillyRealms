@@ -15,6 +15,7 @@ import {WorldStateContext,WorldDocumentContent,useSRWorldStateAPI,type SRWorldSt
 import {RichText,SRAssetProvider,useSRAssetUrl} from '@sillyrealms/sdk';
 import './world-component-frame.css';
 import {createPreviewActivity} from './features/worlds/preview-activity';
+import {createPreviewDialogFrame} from './features/worlds/preview-dialog';
 let port:MessagePort|undefined,sequence=0,locale:FrameLocale|undefined;
 const pending=new Map<number,{resolve:(value:any)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
 function read(entries:Array<{path:string;scope?:'global'}>):Promise<any> {
@@ -39,6 +40,7 @@ function Disconnected(){const {t}=useTranslation('stage');return <p>{t('preview.
 if(!hostOrigin||window.parent===window)root.render(<I18nextProvider i18n={i18n}><Disconnected/></I18nextProvider>);
 let lastHeight=0;
 const activity=createPreviewActivity(document);
+const dialogKeyboard=createPreviewDialogFrame(document,message=>port?.postMessage(message),()=>activity.active);
 function reportHeight(force=false){
   if(!activity.active)return;
   const height=Math.ceil(rootElement.getBoundingClientRect().height);
@@ -58,6 +60,7 @@ window.addEventListener('message',event=>{
   locale=currentLocale;
   port.onmessage=({data})=>{
     if(!data||typeof data!=='object')return;
+    if(dialogKeyboard.receive(data))return;
     if(data.type==='response'){
       const request=pending.get(data.id);if(!request)return;clearTimeout(request.timer);pending.delete(data.id);
       if(data.error)request.reject(Error(data.error));else request.resolve(data.data);
@@ -78,6 +81,6 @@ window.addEventListener('message',event=>{
   };
   port.start();port.postMessage({type:'ready'});
 });
-window.addEventListener('pagehide',()=>{locale?.close();activity.dispose();resize.disconnect();for(const request of pending.values()){clearTimeout(request.timer);request.reject(Error('stage:preview.closed'));}pending.clear();port?.close();});
+window.addEventListener('pagehide',()=>{locale?.close();dialogKeyboard.dispose();activity.dispose();resize.disconnect();for(const request of pending.values()){clearTimeout(request.timer);request.reject(Error('stage:preview.closed'));}pending.clear();port?.close();});
 window.addEventListener('error',event=>port?.postMessage({type:'ui-error',message:event.message||'stage:preview.runtimeError'}));
 window.addEventListener('unhandledrejection',event=>port?.postMessage({type:'ui-error',message:event.reason instanceof Error?event.reason.message:'stage:preview.unhandledError'}));

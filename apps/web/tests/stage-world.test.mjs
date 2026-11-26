@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {loadStageWorld} from '../src/features/worlds/stage-world.ts';
 
 const world=()=>({
-  id:'world/one',revision:2,name:'世界',characters:[],openings:[],components:[{id:'stage',path:'components/stage.tsx'},{id:'bad',path:'components/bad.tsx'}],
+  id:'world/one',publication:{release:{version:'1.0.0'}},revision:2,name:'世界',characters:[],openings:[],components:[{id:'stage',path:'components/stage.tsx'},{id:'bad',path:'components/bad.tsx'}],
   stageComponent:'stage',messageRender:{rules:[{id:'card',roles:['assistant'],pattern:'card',replacement:{type:'component',component:'bad'}}]},
   stateDefinition:{schema_version:2,scopes:{global:{weather:{initial:'clear',rules:{weather:'private'}}},message:{coins:{initial:8}}}},
 });

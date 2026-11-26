@@ -13,7 +13,8 @@
     "./action-suggestions.css": "./src/action-suggestions.css",
     "./world-document": "./src/world-document/WorldDocumentRenderer.tsx",
     "./locale": "./src/locale.ts",
-    "./release-version": "./src/release-version.ts"
+    "./release-version": "./src/release-version.ts",
+    "./presentation": "./src/presentation.ts"
   },
   "peerDependencies": {
     "react": "19.2.0",

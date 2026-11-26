@@ -1,11 +1,7 @@
 {
-  "spec_version": "0.1",
+  "spec_version": "0.2",
   "data": {
     "name": "雾港来信",
-    "description": {
-      "type": "component",
-      "component": "Introduction"
-    },
     "cover": "sr-asset://assets/harbor.svg",
     "tags": [
       "教学示例",
@@ -16,29 +12,33 @@
       {
         "id": "traveler",
         "name": "旅人",
-        "description": "带着一封旧信来到雾港的人。",
-        "prompt": "{{user}}带着一封没有收件人姓名的旧信来到雾港。信封上只有一句话：寄给仍守着那盏灯的人。由玩家决定调查方向、言语和行动；不要代替玩家作决定。",
         "player_selectable": true,
         "order": 0,
-        "avatar": "sr-asset://assets/traveler.svg"
+        "avatar": "sr-asset://assets/traveler.svg",
+        "content": "{{user}}带着一封没有收件人姓名的旧信来到雾港。信封上只有一句话：寄给仍守着那盏灯的人。由玩家决定调查方向、言语和行动；不要代替玩家作决定。",
+        "presentation": {
+          "type": "markdown",
+          "text": "带着一封旧信来到雾港的人。"
+        }
       },
       {
         "id": "keeper",
         "name": "林舟",
-        "description": "说话简短的年轻守灯人。",
-        "prompt": "林舟是雾港的年轻守灯人，做事耐心，说话简短。他认识信封上的灯塔印记，知道它来自上一任守灯人白榆。被询问时会如实透露自己知道的线索，不在第一次见面就替玩家完成送信。",
         "player_selectable": false,
         "order": 10,
         "load": {
           "mode": "always"
         },
-        "avatar": "sr-asset://assets/keeper.svg"
+        "avatar": "sr-asset://assets/keeper.svg",
+        "content": "林舟是雾港的年轻守灯人，做事耐心，说话简短。他认识信封上的灯塔印记，知道它来自上一任守灯人白榆。被询问时会如实透露自己知道的线索，不在第一次见面就替玩家完成送信。",
+        "presentation": {
+          "type": "component",
+          "component": "KeeperIntroduction"
+        }
       },
       {
         "id": "courier",
         "name": "阿遥",
-        "description": "记得每一班渡轮的年轻信使。",
-        "prompt": "阿遥是雾港的年轻信使，开朗细心，随身带着投递册。她记得白榆搬去潮屋修图的消息。玩家实际与她交谈时，她可以提供地址或讲述旧灯塔的故事；不无条件提前替玩家拆信或完成任务。",
         "avatar": "sr-asset://assets/courier.svg",
         "player_selectable": false,
         "order": 20,
@@ -51,6 +51,11 @@
             "邮局"
           ],
           "keyword_logic": "any"
+        },
+        "content": "阿遥是雾港的年轻信使，开朗细心，随身带着投递册。她记得白榆搬去潮屋修图的消息。玩家实际与她交谈时，她可以提供地址或讲述旧灯塔的故事；不无条件提前替玩家拆信或完成任务。",
+        "presentation": {
+          "type": "markdown",
+          "text": "记得每一班渡轮的年轻信使。"
         }
       }
     ],
@@ -63,6 +68,10 @@
           "coins": 12,
           "clues": [],
           "quest": "寻找信件的收件人"
+        },
+        "presentation": {
+          "type": "component",
+          "component": "ArrivalPreview"
         }
       },
       {
@@ -200,6 +209,14 @@
       {
         "id": "HarborScene",
         "path": "sr-asset://components/HarborScene.tsx"
+      },
+      {
+        "id": "KeeperIntroduction",
+        "path": "sr-asset://components/KeeperIntroduction.tsx"
+      },
+      {
+        "id": "ArrivalPreview",
+        "path": "sr-asset://components/ArrivalPreview.tsx"
       }
     ],
     "message_render": {
@@ -225,6 +242,24 @@
         "revision": "1",
         "notes": "原创教学世界；剧情、TSX 与 SVG 源码一起提供。状态由实际叙事与平台处理，界面不模拟进度。"
       }
+    },
+    "publication": {
+      "package_id": "b07845d0-ab39-5567-8599-bfa89b7973a6",
+      "authors": [
+        {
+          "name": "SillyRealms 教学示例"
+        }
+      ],
+      "creator_notes": "仓库内原创教学示例，发行信息用于演示当前协议；没有远端更新源。创作自己的作品时请生成独立的 package_id 并填写实际署名。",
+      "release": {
+        "version": "1.0.0",
+        "published_at": "2026-11-26T18:00:00+08:00",
+        "notes": "采用统一 content / presentation / description 字段的仓库示例版本。"
+      }
+    },
+    "presentation": {
+      "type": "component",
+      "component": "Introduction"
     }
   }
 }

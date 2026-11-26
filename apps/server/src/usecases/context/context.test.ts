@@ -1,3 +1,4 @@
+import { worldPublication } from '../../testing/fixtures.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -29,8 +30,8 @@ beforeEach(() => {
   services.models.create({ id: 'model', name: 'Model', providerId: 'provider', modelId: 'model', credentialRef: 'ref' });
   services.presets.create({ ...narrativePreset(), id: 'preset' });
   services.worlds.create({
-    id: 'world', specVersion: '0.1', name: 'World',
-    characters: [{ id: 'player', name: 'Player', player_selectable: true, prompt: 'Player prompt' }],
+    id: 'world', specVersion: '0.2', publication: worldPublication(), name: 'World',
+    characters: [{ id: 'player', name: 'Player', player_selectable: true, content: 'Player prompt' }],
     openings: [{ id: 'start', name: 'Start', content: 'Opening stays unused' }], state: { day: 2 },
   });
   services.sessions.create({
@@ -67,12 +68,12 @@ describe('compiled context composition', () => {
   it.each([['zh-CN', '简体中文'], ['en', 'English'], ['ja', '日本語']] as const)('keeps %s for every history candidate and expands it only in preset source text', (locale, language) => {
     services.settings.ensure({ locale, defaultPresetId: null, defaultApiModelConfigId: null });
     services.worlds.update('world', {
-      characters: [{ id: 'player', name: 'Player', player_selectable: true, prompt: 'Author {{system.language}}' }],
+      characters: [{ id: 'player', name: 'Player', player_selectable: true, content: 'Author {{system.language}}' }],
     });
     append('prior', 'assistant', 'Earlier reply');
     const snapshot = capture('Input {{system.language}}');
     snapshot.preset.config.nodes.find(node => node.id === 'main')!.prompt = 'Language={{system.language}}';
-    snapshot.preset.config.nodes.find(node => node.id === 'personaInfo')!.prompt = '{{persona.prompt}}';
+    snapshot.preset.config.nodes.find(node => node.id === 'personaInfo')!.prompt = '{{persona.content}}';
     services.settings.update({ locale: 'zh-CN' });
 
     const evaluate = createCandidateEvaluator(snapshot, model, services.state);
@@ -88,7 +89,7 @@ describe('compiled context composition', () => {
   it('rechecks visible roots for every candidate without rescanning material or rereading inherited state', () => {
     const token = '{{state.message.coins}}';
     services.worlds.update('world', {
-      characters: [{ id: 'player', name: 'Player', player_selectable: true, prompt: '角色=' + token }],
+      characters: [{ id: 'player', name: 'Player', player_selectable: true, content: '角色=' + token }],
       stateDefinition: { schema_version: 2, scopes: { message: {
         coins: { type: 'string', initial: '', description: 'Coins', rules: { coins: 'Coins' },
           load: { mode: 'on_mention', keywords: ['gate'] } },
@@ -98,7 +99,7 @@ describe('compiled context composition', () => {
     const value = '{{user}}' + '金'.repeat(2048);
     services.sessions.setEntryState('session', 'prior', [{ key: 'coins', value }]);
     const snapshot = capture(token);
-    snapshot.preset.config.nodes[0]!.prompt = '{{persona.prompt}}；预设=' + token;
+    snapshot.preset.config.nodes[0]!.prompt = '{{persona.content}}；预设=' + token;
     snapshot.preset.config.nodes.find(node => node.id === 'actionSuggestions')!.prompt = '建议=' + token + '。';
     services.sessions.setEntryState('session', 'prior', [{ key: 'coins', value: 'new value' }]);
     const evaluate = createCandidateEvaluator(snapshot, model, services.state);
@@ -124,8 +125,8 @@ describe('compiled context composition', () => {
     append('prior', 'assistant', '历史🙂');
     const snapshot = capture('输入');
     snapshot.materials.variables['history.summary'] = { type: 'text', value: '摘要' };
-    snapshot.materials.variables['persona.prompt'] = { type: 'text', value: '角色' };
-    snapshot.preset.config.nodes.find(node => node.id === 'main')!.prompt = '规则{{persona.prompt}}';
+    snapshot.materials.variables['persona.content'] = { type: 'text', value: '角色' };
+    snapshot.preset.config.nodes.find(node => node.id === 'main')!.prompt = '规则{{persona.content}}';
     snapshot.preset.config.nodes.find(node => node.id === 'userInput')!.prompt = '问题：{{input.text}}';
     snapshot.preset.config.nodes.find(node => node.id === 'personaInfo')!.prompt = ' \n ';
     Object.assign(snapshot.preset.config.nodes.find(node => node.id === 'worldInfo')!, {
@@ -673,8 +674,8 @@ describe('compaction stage without persistence', () => {
 describe('character sprite context', () => {
   function spritesWorld() {
     services.worlds.update('world', { characters: [
-      { id: 'player', name: 'Player', player_selectable: true, prompt: 'Player prompt' },
-      { id: 'alice', name: 'Alice', prompt: 'Hidden character prompt', load: { mode: 'never' },
+      { id: 'player', name: 'Player', player_selectable: true, content: 'Player prompt' },
+      { id: 'alice', name: 'Alice', content: 'Hidden character prompt', load: { mode: 'never' },
         sprites: [
           { id: 'default', description: 'calm sprite description', asset: 'https://example.com/default.png' },
           { id: 'smile', description: 'smiling sprite description', asset: 'https://example.com/smile.png' },
@@ -693,7 +694,7 @@ describe('character sprite context', () => {
     expect(variable.value).toContain('calm sprite description');
     expect(variable.value).not.toContain('https://');
     expect(variable.value).not.toContain('Hidden character prompt');
-    expect(snapshot.materials.variables['characters.prompts'].value).toBe('');
+    expect(snapshot.materials.variables['characters.content'].value).toBe('');
     const prompt = compiled.messages.at(-1)!.content;
     expect(prompt).toContain('character_sprite 使用扁平 JSONL');
     expect(prompt).toContain('truecenter');

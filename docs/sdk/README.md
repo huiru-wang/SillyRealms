@@ -1,6 +1,6 @@
 # SillyRealms 创作者 SDK 开发手册
 
-本手册对应当前仓库的 `@sillyrealms/sdk` 0.1.0。世界卡作者可以用 React TSX 编写会话舞台、消息组件、世界介绍和开局预览。生成世界卡的 Agent 应先确定组件运行的位置，再选择下表中的接口。包根导出的 TypeScript 类型描述会话舞台的完整能力，世界详情预览在运行时只注入其中的一部分。
+本手册对应当前仓库的 `@sillyrealms/sdk` 0.1.0。世界卡作者可以用 React TSX 编写会话舞台、消息组件、世界介绍、角色介绍和开局预览。生成世界卡的 Agent 应先确定组件运行的位置，再选择下表中的接口。包根导出的 TypeScript 类型描述会话舞台的完整能力，世界详情预览在运行时只注入其中的一部分。
 
 从玩法开始请读[创作者手册](../creator/README.md)；查完整字段请读[世界卡格式参考](../reference/world-card.md)。本手册用于查接口，不要求第一次制作世界卡就通读全部章节。
 
@@ -89,7 +89,7 @@ export default function InnStage() {
 }
 ```
 
-将 `world.json` 放在 ZIP 根部，导入世界卡并打开会话。只有详情介绍和开局预览时，可用 `data.description` 或 `openings[].component` 引用对应的组件 ID。仅注册进 `components` 的模块不会自行挂载。组件可以用 `import Child from './Child'` 引入另一项已登记的组件 ID；卡内依赖使用默认导出、静态导入且不能成环。指定 `path` 时平台优先读包内文件，读失败会显示错误。[完整卡片示例](../../examples/worlds/fog-harbor/world.json) · [可运行示例说明](../../examples/worlds/README.md) · [组件挂载与预览契约](../design/world-components.md)
+将 `world.json` 放在 ZIP 根部，导入世界卡并打开会话。详情中的世界介绍、角色介绍和开局预览分别通过 `data.presentation`、`characters[].presentation`、`openings[].presentation` 的组件分支引用对应 ID。三处也支持 `{type:"markdown",text:"..."}`；组件分支为 `{type:"component",component:"ID"}`。仅注册进 `components` 的模块不会自行挂载。组件可以用 `import Child from './Child'` 引入另一项已登记的组件 ID；卡内依赖使用默认导出、静态导入且不能成环。指定 `path` 时平台优先读包内文件，读失败会显示错误。[完整卡片示例](../../examples/worlds/fog-harbor/world.json) · [可运行示例说明](../../examples/worlds/README.md) · [组件挂载与预览契约](../design/world-components.md)
 
 ## 编写与排错
 

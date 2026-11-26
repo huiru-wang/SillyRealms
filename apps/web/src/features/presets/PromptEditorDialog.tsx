@@ -28,8 +28,8 @@ export function PromptEditorDialog({title, initialValue, metadata = false, reply
   const textVariables = [
   ['system.language', t('presets:applicationLanguage')],
   ['user', t('currentPlayerName')],
-  ['persona.prompt', t('playerPersona')],
-  ['characters.prompts', t('loadedCharacters')],
+  ['persona.content', t('playerPersona')],
+  ['characters.content', t('loadedCharacters')],
   ['world.lore', t('activeLorebook')],
   ['history.summary', t('existingSummary')],
   ['state.global', t('globalStateReadOnly')],

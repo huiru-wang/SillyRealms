@@ -6,7 +6,7 @@ export const systemNodeIds = ['main', 'personaInfo', 'characterInfo', 'worldInfo
 export const postprocessNodeIds = ['stateUpdate', 'actionSuggestions', 'characterSprite'] as const;
 const builtinIds: readonly string[] = [...systemNodeIds, ...postprocessNodeIds];
 export const systemVariableNames = [
-  'system.language', 'user', 'persona.prompt', 'characters.prompts', 'world.lore',
+  'system.language', 'user', 'persona.content', 'characters.content', 'world.lore',
   'history.summary', 'history.messages', 'input.text', 'state.message', 'state.session', 'state.global',
   'characterSprite.catalog', 'state.update.message',
 ] as const;
@@ -99,7 +99,7 @@ export const narrativeConfigSchema = configShape.superRefine(({ nodes, contextSt
 });
 
 const replyNodeIds = ['main', 'sessionGoal', 'personaInfo', 'characterInfo', 'worldInfo', 'currentState', 'chatHistory'];
-export const replyVariableNames = ['system.language', 'user', 'persona.prompt', 'characters.prompts', 'world.lore',
+export const replyVariableNames = ['system.language', 'user', 'persona.content', 'characters.content', 'world.lore',
   'history.summary', 'history.messages', 'state.message', 'state.session', 'state.global', 'session.reply.assist.goal'] as const;
 
 const replyConfigSchema = configShape.extend({

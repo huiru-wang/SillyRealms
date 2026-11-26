@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardToWorld, parseCard } from './parser.js';
+import { cardToWorld, parseCard, worldToCard } from './parser.js';
 import { worldCardFixture } from './test-fixtures.js';
 
 describe('world card protocol', () => {
@@ -82,13 +82,14 @@ describe('world card protocol', () => {
     }
   });
 
-  it('accepts cards without spec, drops the retired legacy marker and preserves author keys', () => {
+  it('accepts the current spec_version and rejects the retired spec marker', () => {
     const raw = worldCardFixture();
-    const card = parseCard({ ...raw, spec: 'world_card' });
+    const card = parseCard(raw);
+    expect(() => parseCard({ ...raw, spec: 'world_card' })).toThrow('INVALID_WORLD_CARD');
     expect(card).toEqual(raw);
     expect(card).not.toHaveProperty('spec');
     const content = cardToWorld(card);
-    expect(content.specVersion).toBe('0.1');
+    expect(content.specVersion).toBe('0.2');
     expect(content.characters).toEqual(raw.data.characters);
     expect(content.state).toEqual({ coins: 3 });
     expect(content.stateDefinition).toEqual(raw.data.state);
@@ -117,5 +118,51 @@ describe('world card protocol', () => {
     expect(() => parseCard({
       ...raw, data: { ...raw.data, openings: [{ ...raw.data.openings[0], initial_state: { absent: 1 } }] },
     })).toThrow('State root not found');
+  });
+});
+
+describe('world content and presentation contract', () => {
+  it('round-trips all presentation positions and the message replacement text without changing model content', () => {
+    const raw = worldCardFixture();
+    const presentation = { type: 'component' as const, component: 'Intro' };
+    const card = parseCard({ ...raw, data: { ...raw.data,
+      presentation: { type: 'markdown', text: '# World introduction' },
+      characters: [{ ...raw.data.characters[0], content: 'Model facts {{user}}', presentation }],
+      openings: [{ ...raw.data.openings[0], presentation }],
+      components: [{ id: 'Intro', component: 'export default ()=>null' }],
+      message_render: { rules: [{ id: 'display', roles: ['assistant'], pattern: 'BEGIN', replacement: { type: 'markdown', text: '**Start**' } }] },
+    } });
+    const world = cardToWorld(card);
+    expect(worldToCard({ ...world, tags: world.tags ?? [] } as Parameters<typeof worldToCard>[0])).toEqual(card);
+    expect(card.data.characters[0]).toMatchObject({ content: 'Model facts {{user}}', presentation });
+    expect(card.data.characters[0]).not.toHaveProperty('prompt');
+    expect(card.data).not.toHaveProperty('description');
+  });
+
+  it('rejects deprecated fields instead of silently dropping the author content', () => {
+    const raw = worldCardFixture();
+    const base = raw.data;
+    const invalidData = [
+      { ...base, description: { type: 'component', component: 'Intro' } },
+      { ...base, characters: [{ ...base.characters[0], prompt: 'Would be silently lost' }] },
+      { ...base, characters: [{ ...base.characters[0], description: 'Old introduction' }] },
+      { ...base, openings: [{ ...base.openings[0], type: 'component', component: 'Intro' }] },
+      { ...base, presentation: 'Old shorthand' },
+      { ...base, presentation: { type: 'markdown', content: 'Wrong payload' } },
+      { ...base, presentation: { type: 'markdown', text: ' ' } },
+      { ...base, message_render: { rules: [{ id: 'old', roles: ['assistant'], pattern: 'x', replacement: { type: 'markdown', content: 'Old payload' } }] } },
+    ];
+    for (const data of invalidData) expect(() => parseCard({ ...raw, data })).toThrow('INVALID_WORLD_CARD');
+  });
+
+  it.each(['world', 'character', 'opening'] as const)('rejects an unresolved %s presentation reference', slot => {
+    const raw = worldCardFixture();
+    const presentation = { type: 'component', component: 'Missing' };
+    const data = { ...raw.data,
+      ...(slot === 'world' ? { presentation } : {}),
+      ...(slot === 'character' ? { characters: [{ ...raw.data.characters[0], presentation }] } : {}),
+      ...(slot === 'opening' ? { openings: [{ ...raw.data.openings[0], presentation }] } : {}),
+    };
+    expect(() => parseCard({ ...raw, data })).toThrow('Component not found');
   });
 });

@@ -1,6 +1,6 @@
 # Server
 
-- 预设严格模式与世界卡宽容模式共用 Server 纯语法模块。只在候选组装时展开原始角色 prompt、世界书 content 和预设节点；状态字段仅读捕获的 tip 三域视图及当前候选可见根，不改变 message 写授权、不再次解析填入值。世界卡导入不验证提示词变量。
+- 预设严格模式与世界卡宽容模式共用 Server 纯语法模块。只在候选组装时展开原始角色 content、世界书 content 和预设节点；状态字段仅读捕获的 tip 三域视图及当前候选可见根，不改变 message 写授权、不再次解析填入值。世界卡导入不验证提示词变量。
 
 - 本期在 modules/usecases 管理能力上实施叙事首版：SDK 无关模型流、可选一次滚动摘要或滑动窗口裁剪（pi 适配实现）、核心提示词编译、统一 SSE、提交/停止、消息独立持久化、目录和连通性检测。通过 narrative/postprocess 实施模型输出的 message 状态更新、行动建议与独立角色立绘；不设计 runtime、engine、通用任务、Agent/tool loop 或执行恢复。Web 已按现有叙事与 state 契约接入独立运行页及 Stage SDK。
 - 单域操作采用 `route → service → repository`；应用流程采用 `route → usecase → service → repository`。route 可以调用读写能力，跨模块只读展示投影可在 route 组合；跨模块写编排必须进入 usecases。route 不写 SQL、不管理事务。
@@ -28,12 +28,12 @@
 - 会话路由先经 SessionService 检查真实会话，再执行可选 canAccessSession；等待后先检查关闭信号，再确认会话仍存在。访问适配器不能代替会话存在性检查。
 - 普通 HTTP 统一 `{ success, errorCode, errorMessage, data }`，错误集中 errors.ts 映射并保留正确状态码；未知异常不泄漏 SQL、路径或堆栈。SSE/文件下载保留原始正文，传输开始前错误仍用 JSON 失败包络。
 - routes 使用 http/response.ts，HTTP 正文/query/游标处理留在传输层，业务校验留在 Service。跨模块列表/详情展示投影由 route 调公开 Service 组合。接口契约见 `../../docs/runtime/server-http.md`。
-- V2 使用独立数据根目录和数据库，user_version=12；只迁移结构匹配的 V2 v1–v11 库，依次添加预设 revision、世界 revision、导入时间索引、消息状态快照索引、app_settings.locale 及其三语取值约束、帮答引用、会话目标和可空的会话帮答预设；v9 清空旧会话和 entries，改用 sessions.runtime_config 保存会话配置并以虚拟列维护外键；v10 仅为 app_settings 添加 cover_mosaic_density（8–64 整数、默认 24），保留 v9 全部数据；v11 仅为 worlds 添加可空的 default_reply_assist_preset_id，保留既有世界、会话及默认项；v12 仅为 worlds 添加可空 publication_json，保留所有现有数据。不自动改造/清空旧 Server 库，不导入旧 Server 的建表、恢复或执行逻辑。现有 V2 设置记录保留原值；缺失的 V2 内置预设与设置由启动 initialize 幂等补齐，不导入旧 Server 数据。
+- 当前数据库 user_version=13，直接建立完整当前结构：世界 presentation_json 保存展示对象或 NULL，publication_json 为必填对象。只重开结构完全匹配的当前版本，所有旧版本明确拒绝且不迁移、不重置、不删除已有数据；新目录由启动 initialize 幂等安装当前格式内置内容。
 - 本轮仅做函数级测试、typecheck、lint，不启动真实服务或执行 HTTP/浏览器链路验证。函数测试使用内存或临时库、临时文件以及最小凭据替身，不访问真实 Keychain；架构测试检查入口/层级/SQL属主，类型测试检查 Reader 不具有写方法。关闭 HTTP/SSE 后再关库。
 
 ## 世界卡发行与 OTA
 
-- 世界卡 0.2 使用正式 data.publication / WorldPublication / publication_json，0.1 保持兼容，缺省不推断作者或作品身份。publication 是声明式发行信息，不包含运行状态和检查缓存，也不注入模型提示词。公开协议与作者流程见 ../../docs/reference/world-updates.md、../../docs/creator/world-publishing.md。
+- 世界卡只接受 0.2，data.publication / WorldPublication / publication_json 必填。旧字段和旧格式明确拒绝，不作兼容。publication 是声明式发行信息，不包含运行状态和检查缓存，也不注入模型提示词。公开协议与作者流程见 ../../docs/reference/world-updates.md、../../docs/creator/world-publishing.md。
 - usecases/world-updates/index.ts 是唯一公开入口；一个 createWorldUpdates 实例由 usecases.ts 创建并供路由、启动、删除与关闭共用。监听后仅自动检查一轮，用户显式刷新可再次请求；普通 GET 和新导入不触发网络。目录、最近尝试和检查任务不进入 RuntimeCache；只有成功原始目录写入 worlds/<worldId>/releases.json，失败保留原文与 mtime。
 - 用例只经 WorldService 读写目录和应用已验证暂存包，文件路径与按世界串行仍归 worlds/files。保存前在同一队列内复核来源和任务有效性；删除事务提交后同步 cancelForWorld 再清文件。app.shutdown 取消网络并等待所有检查及应用/补偿结束。
 - apply-version 下载和验证在锁外，最终替换持有按对象身份验证的 WorldUpdatePermit。只替换 source/package，保留根部 releases 文件、本地 name/tags/mosaic/defaults、worldId/createdAt 及三 scope 状态；当前绑定的 update_url 不随回退改变。state 根/类型、数值范围及已有玩家引用不兼容时拒绝应用。Repository CAS 提交成功且释放占用后，向既有会话发送 world.updated。
@@ -109,3 +109,5 @@
 - 应用语言由 SettingsService 持久化为 locale（zh-CN/en/ja，缺省 zh-CN），与默认预设、模型共用 app-settings 的 GET/PATCH。context 仅依赖只读 SettingsReader，在首次异步等待前捕获语言并在所有裁剪候选中沿用；业务输入仍只有 sessionId。预设系统变量 {{system.language}} 填入简体中文/English/日本語，作者素材、历史和替换结果不新增二次展开。默认 main 带语言约束，已有自定义预设不覆盖；协议标签、状态路径及约定状态值不因切换语言而翻译。
 
 - AI 帮答由 usecases/reply-assist 独立编排，prepareReplyAssistContext 只读构建请求。会话级锁在配置校验之前取得，按身份释放后发送终态；帮答不使用叙事写许可，不写 entry、state 或 usage。
+
+- 世界卡正文统一使用 content：角色、世界书、开局；角色上下文变量为 {{persona.content}} / {{characters.content}}，预设节点 prompt 保持提示词模板语义。世界、角色与开局展示使用 presentation（markdown/text 或 component/component）；description 只保留为状态和立绘的字符串说明。世界内容新增及更新必须整体校验，所有展示组件引用需存在；展示不加入模型材料，开局首条消息仍来自 content。消息渲染 replacement 的 markdown/html 文本载荷使用 text。展示文本中的包内资源沿用导入/导出完整性校验。

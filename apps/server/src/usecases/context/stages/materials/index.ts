@@ -133,8 +133,8 @@ export function selectNarrativeMaterials(input: MaterialSources, conditions: Con
     variables: {
       'system.language': text(languageNames[input.locale]),
       user: text(playerName),
-      'persona.prompt': text(playerActive ? authorPrompt(player.prompt ?? '') : ''),
-      'characters.prompts': text(selected.map(({ character }) => authorPrompt(character.prompt ?? '')).filter(Boolean).join('\n\n')),
+      'persona.content': text(playerActive ? authorPrompt(player.content ?? '') : ''),
+      'characters.content': text(selected.map(({ character }) => authorPrompt(character.content ?? '')).filter(Boolean).join('\n\n')),
       'world.lore': text(lore.map(({ entry }) => authorPrompt(entry.content)).join('\n\n')),
       'history.summary': text(input.summary ?? ''),
       'history.messages': { type: 'messages', value: history },

@@ -52,7 +52,7 @@ async function fileResponse(file: WorldDownload, head: boolean, attachment = fal
 function worldDetail(world: World) {
   return {
     id: world.id, revision: world.revision, specVersion: world.specVersion, publication: world.publication, name: world.name,
-    description: world.description, cover: world.cover, coverMosaicEnabled: world.coverMosaicEnabled, tags: world.tags, characters: world.characters,
+    presentation: world.presentation, cover: world.cover, coverMosaicEnabled: world.coverMosaicEnabled, tags: world.tags, characters: world.characters,
     openings: world.openings, lorebook: world.lorebook, stateDefinition: world.stateDefinition,
     messageRender: world.messageRender, components: world.components, stageComponent: world.stageComponent,
     extensions: world.extensions, defaultPresetId: world.defaultPresetId, defaultReplyAssistPresetId: world.defaultReplyAssistPresetId,

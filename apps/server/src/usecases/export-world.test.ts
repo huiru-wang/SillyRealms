@@ -1,3 +1,4 @@
+import type { Presentation } from '@sillyrealms/sdk/presentation';
 import { mkdtemp, open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,7 +40,7 @@ describe('export world use case', () => {
   it('builds ZIP from current definition, tags and package while retaining the unchanged original', async () => {
     const raw = worldCardFixture();
     const original = await zipBytes([
-      { name: 'world.json', data: JSON.stringify({ ...raw, spec: 'world_card' }) },
+      { name: 'world.json', data: JSON.stringify(raw) },
       { name: 'assets/scene.txt', data: 'old resource' },
     ]);
     const world = await importWorld({ format: 'zip', bytes: original });
@@ -52,7 +53,7 @@ describe('export world use case', () => {
     expect(Object.keys(entries).sort()).toEqual(['assets/scene.txt', 'world.json']);
     expect(entries['assets/scene.txt']!.toString()).toBe('current resource');
     const card = JSON.parse(entries['world.json']!.toString());
-    expect(card).toMatchObject({ spec_version: '0.1', data: {
+    expect(card).toMatchObject({ spec_version: '0.2', data: {
       name: '新的世界', tags: ['当前标签'], state: raw.data.state, extensions: { author_key: 'current' },
     } });
     expect(card).not.toHaveProperty('spec');
@@ -100,15 +101,40 @@ describe('export world use case', () => {
     expect(await services.worlds.readOriginal(world.id)).toEqual({ format: 'json', bytes: source });
   });
 
-  it('exports JSON-only worlds to ZIP and rejects unrepresentable textual descriptions', async () => {
+  it.each(['markdown', 'component'] as const)('exports JSON-only worlds and round-trips %s presentation in every position', async type => {
+    const presentation: Presentation = type === 'markdown'
+      ? { type: 'markdown', text: 'Public introduction' }
+      : { type: 'component', component: 'Intro' };
+    const source = worldCardFixture();
     const world = await importWorld(input());
     const download = await exportWorld(world.id);
     const entries = await unzipBytes(new Uint8Array(await new Response(download.body).arrayBuffer()));
     expect(Object.keys(entries)).toEqual(['world.json']);
-    expect(JSON.parse(entries['world.json']!.toString())).toEqual(worldCardFixture());
-    services.worlds.update(world.id, { description: 'plain legacy description' });
-    await expect(exportWorld(world.id)).rejects.toThrow('INVALID_WORLD_CARD');
-    expect(services.worlds.require(world.id).description).toBe('plain legacy description');
+    expect(JSON.parse(entries['world.json']!.toString())).toEqual(source);
+    const fields = {
+      presentation,
+      characters: [{ ...source.data.characters[0]!, content: 'Model facts {{user}}', presentation }],
+      openings: [{ ...source.data.openings[0]!, presentation }],
+      components: [{ id: 'Intro', component: 'export default () => null;' }],
+      messageRender: { rules: [{ id: 'render', roles: ['assistant'], pattern: 'START',
+        replacement: { type: 'html', text: '<p>Start</p>' } }] },
+    };
+    services.worlds.update(world.id, fields);
+    const updated = await exportWorld(world.id);
+    const bytes = new Uint8Array(await new Response(updated.body).arrayBuffer());
+    const next = await unzipBytes(bytes);
+    const card = JSON.parse(next['world.json']!.toString());
+    expect(card.data).toMatchObject({
+      presentation, characters: fields.characters, openings: fields.openings, message_render: fields.messageRender,
+    });
+    expect(card.data).not.toHaveProperty('description');
+    expect(card.data.characters[0]).not.toHaveProperty('prompt');
+    expect(card.data.characters[0]).not.toHaveProperty('description');
+    expect(card.data.openings[0]).not.toHaveProperty('type');
+    expect(card.data.openings[0]).not.toHaveProperty('component');
+    for (const input of [{ format: 'zip' as const, bytes }, { format: 'json' as const, bytes: next['world.json']! }]) {
+      expect(await importWorld(input)).toMatchObject(fields);
+    }
     await expect(exportWorld('missing')).rejects.toThrow('WORLD_NOT_FOUND');
   });
 

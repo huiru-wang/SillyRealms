@@ -1,3 +1,4 @@
+import { worldPublication } from '../../testing/fixtures.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -73,7 +74,7 @@ afterEach(async () => {
 
 function createWorld(id: string) {
   return services.worlds.create({
-    id, name: id, specVersion: '0.1', state: { day: 1 },
+    id, name: id, specVersion: '0.2', publication: worldPublication(), state: { day: 1 },
     characters: [{ id: 'player', name: 'Player', player_selectable: true }],
     openings: [{ id: 'start', name: 'Start', content: 'Opening' }],
   });

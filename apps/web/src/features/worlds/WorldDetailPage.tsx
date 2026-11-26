@@ -2,10 +2,11 @@ import {useTranslation} from 'react-i18next';
 import {Button,IconButton} from '../../components/ui/Button';
 import {SessionRow} from '../sessions/SessionRow';
 import {WorldComponentCache} from './WorldComponentCache';
-import {memo,useEffect,useLayoutEffect,useRef,useState,type CSSProperties,type Dispatch,type KeyboardEvent,type RefObject,type SetStateAction,type TouchEvent as ReactTouchEvent,type UIEvent,type WheelEvent as ReactWheelEvent} from 'react';
+import {memo,useCallback,useEffect,useLayoutEffect,useRef,useState,type CSSProperties,type Dispatch,type KeyboardEvent,type RefObject,type SetStateAction,type TouchEvent as ReactTouchEvent,type UIEvent,type WheelEvent as ReactWheelEvent} from 'react';
 import {Link,useParams,useSearchParams} from 'react-router-dom';
 import {BookOpen,BookText,ChevronDown,ChevronLeft,ChevronRight,ChevronUp,Compass,Ellipsis,MessageCircle,Settings2,SlidersHorizontal} from 'lucide-react';
-import {WorldDocumentRenderer} from '@sillyrealms/sdk/world-document';
+import {WorldPresentation} from './WorldPresentation';
+import {presentationPreview} from './preview-cache';
 import {useSRAssetBaseUrl} from '@sillyrealms/sdk';
 import {WorldAssetsProvider} from '../../world-assets';
 import {Modal} from '../../components/ui/Modal';
@@ -105,11 +106,11 @@ function SessionSection({worldId}:{worldId:string}){
     {page?.hasMore&&!error&&<Button disabled={loading} onClick={more}>{loading?t('loading'):t('loadMore')}</Button>}
   </>;
 }
-type DetailContentProps={section:Section;world:WorldDetail;characterId?:string;onSaved:(world:WorldDetail)=>void};
+type DetailContentProps={section:Section;world:WorldDetail;characterId?:string;inspectedCharacter?:Character;onCloseCharacter:()=>void;onSaved:(world:WorldDetail)=>void};
 // Keep the preview pool at one DOM position: moving an iframe also reloads its document.
 const WorldDetailContent=memo(function WorldDetailContent(props:DetailContentProps){
   const {t} = useTranslation('worlds');
-  const {section,world}=props;
+  const {section,world,inspectedCharacter,onCloseCharacter}=props;
   const [openingId,setOpeningId]=useState(()=>world.openings[0]?.id??null);
   const openingIndex=Math.max(0,world.openings.findIndex(item=>item.id===openingId));
   const setOpeningIndex:Dispatch<SetStateAction<number>>=next=>{
@@ -117,9 +118,9 @@ const WorldDetailContent=memo(function WorldDetailContent(props:DetailContentPro
     setOpeningId(world.openings[index]?.id??world.openings[0]?.id??null);
   };
   const opening=world.openings[openingIndex];
-  const active=section==='overview'&&world.description&&typeof world.description!=='string'
-    ?{id:'introduction',entry:world.description.component,title:t('worldIntroduction')}
-    :section==='openings'&&opening?.component?{id:'opening:'+opening.id,entry:opening.component,title:opening.name}:null;
+  const active=section==='overview'?presentationPreview(world.presentation,'introduction',t('worldIntroduction'))
+    :section==='openings'&&opening?presentationPreview(opening.presentation,'opening:'+opening.id,opening.name):null;
+  const dialog=inspectedCharacter?presentationPreview(inspectedCharacter.presentation,'character:'+inspectedCharacter.id,inspectedCharacter.name,'dialog'):null;
   const touch=useRef<number|null>(null);
   const frameCleanup=useRef<(()=>void)|null>(null);
   useLayoutEffect(()=>()=>{frameCleanup.current?.();frameCleanup.current=null;touch.current=null;},[section,opening?.id]);
@@ -131,7 +132,7 @@ const WorldDetailContent=memo(function WorldDetailContent(props:DetailContentPro
     touch.current=null;
   };
   return <div onTouchStart={event=>{touch.current=section!=='openings'||event.target instanceof Element&&event.target.closest('[role=dialog]')?null:event.touches[0]?.clientX??null;}} onTouchEnd={event=>finishSwipe(event.changedTouches[0]?.clientX)} onLoadCapture={event=>{
-    if(section!=='openings'||!(event.target instanceof HTMLIFrameElement))return;
+    if(section!=='openings'||!(event.target instanceof HTMLIFrameElement)||event.target.closest('[role=dialog]'))return;
     // Prose documents are same-origin; author previews retain their isolated origin.
     const doc=event.target.contentDocument;if(!doc)return;
     frameCleanup.current?.();
@@ -141,7 +142,8 @@ const WorldDetailContent=memo(function WorldDetailContent(props:DetailContentPro
     frameCleanup.current=()=>{doc.removeEventListener('touchstart',start);doc.removeEventListener('touchend',end);};
   }}>
     <SectionContent key={section+worldReleaseIdentity(world)} {...props} openingIndex={openingIndex} setOpeningIndex={setOpeningIndex}/>
-    <WorldComponentCache world={world} active={active}/>
+    <WorldComponentCache world={world} active={active} dialog={dialog} dialogOpen={!!inspectedCharacter} onCloseDialog={onCloseCharacter}/>
+    {inspectedCharacter&&!dialog&&<Modal title={inspectedCharacter.name} onClose={onCloseCharacter}><WorldPresentation presentation={inspectedCharacter.presentation} title={t('characterIntroduction2')} emptyText={t('thisCharacterHasNoIntroductionYet')}/></Modal>}
   </div>;
 });
 function SectionContent({section,world,characterId,onSaved,openingIndex,setOpeningIndex}:DetailContentProps&{openingIndex:number;setOpeningIndex:Dispatch<SetStateAction<number>>}){
@@ -153,10 +155,10 @@ function SectionContent({section,world,characterId,onSaved,openingIndex,setOpeni
   if(section==='state')return <WorldState state={data.stateDefinition??undefined}/>;
   if(section==='openings')return opening?<>
     <div className={styles.openingToolbar}><div className={styles.openingNav}><IconButton inset disabled={openingIndex===0} onClick={()=>setOpeningIndex(i=>i-1)} aria-label={t('previousOpening')}><ChevronLeft size={15}/></IconButton><span aria-label={t('worlds:openingPosition',{index:openingIndex+1,count:data.openings.length})}>{openingIndex+1}/{data.openings.length}</span><IconButton inset disabled={openingIndex===data.openings.length-1} onClick={()=>setOpeningIndex(i=>i+1)} aria-label={t('nextOpening')}><ChevronRight size={15}/></IconButton></div><div className={styles.openingActions}><Button size="compact" onClick={()=>setStateOpen(true)}>{t('viewInitialState')}</Button><StartSession world={world} openingId={opening.id} characterId={characterId}/></div></div>{!characterId&&<p className={styles.startError}>{t('thisWorldHasNoPlayableCharacters')}</p>}
-    <h3>{opening.name}</h3>{!opening.component&&<WorldDocumentRenderer showStyleWarning={false} title={opening.name} content={opening.content}/>}
+    <h3>{opening.name}</h3><WorldPresentation presentation={opening.presentation} title={opening.name} fallbackText={opening.content}/>
     {stateOpen&&<Modal title={t('openingState')} size="editor" onClose={()=>setStateOpen(false)}><OpeningState key={opening.id} openingName={opening.name} state={data.stateDefinition??undefined} override={opening.initial_state}/></Modal>}</>:<p>{t('thisWorldHasNoOpenings')}</p>;
   if(section==='configuration')return <WorldConfig world={world} onSaved={onSaved}/>;
-  return typeof data.description==='string'?<WorldDocumentRenderer showStyleWarning={false} title={t('worldIntroduction')} content={data.description}/>:data.description?null:<p>{t('thisWorldHasNoIntroductionYet')}</p>;
+  return <WorldPresentation presentation={data.presentation} title={t('worldIntroduction')} emptyText={t('thisWorldHasNoIntroductionYet')}/>;
 }
 
 function StartSession({world,openingId,characterId}:{world:WorldDetail;openingId:string;characterId?:string}){
@@ -203,6 +205,7 @@ function WorldDetailView({world,onSaved,onSummary}:{world:WorldDetail;onSaved:(w
   const assetBaseUrl=useSRAssetBaseUrl();
   const names=world.characters.map(character=>character.name);
   const [roleDialog,setRoleDialog]=useState<number|null>(null);
+  const closeRoleDialog=useCallback(()=>setRoleDialog(null),[]);
   const [selectedCharacterId,setSelectedCharacterId]=useState(()=>world.characters.find(character=>character.player_selectable)?.id??null);
   const selectedIndex=world.characters.findIndex(character=>character.id===selectedCharacterId&&character.player_selectable);
   const selectedRole=selectedIndex>=0?selectedIndex:world.characters.findIndex(character=>character.player_selectable);
@@ -410,6 +413,8 @@ function WorldDetailView({world,onSaved,onSummary}:{world:WorldDetail;onSaved:(w
     }
   };
   const contentWheel=(event:ReactWheelEvent<HTMLElement>)=>{
+    // Modal portals bubble through React, but must not scroll/collapse the covered reading pane.
+    if(!event.currentTarget.contains(event.target as Node))return;
     if(event.ctrlKey||event.metaKey||Math.abs(event.deltaY)<=Math.abs(event.deltaX)||event.deltaY===0)return;
     if(event.deltaY<0){downwardIntentUntil.current=0;return;}
     downwardIntentUntil.current=Date.now()+500;
@@ -417,8 +422,9 @@ function WorldDetailView({world,onSaved,onSummary}:{world:WorldDetail;onSaved:(w
     requestAnimationFrame(()=>collapseAtContentEnd(pane));
   };
   const contentScroll=(event:UIEvent<HTMLElement>)=>collapseAtContentEnd(event.currentTarget);
-  const contentTouchStart=(event:ReactTouchEvent<HTMLElement>)=>{touchY.current=event.touches[0]?.clientY??null;downwardIntentUntil.current=0;};
+  const contentTouchStart=(event:ReactTouchEvent<HTMLElement>)=>{if(!event.currentTarget.contains(event.target as Node))return;touchY.current=event.touches[0]?.clientY??null;downwardIntentUntil.current=0;};
   const contentTouchMove=(event:ReactTouchEvent<HTMLElement>)=>{
+    if(!event.currentTarget.contains(event.target as Node))return;
     const current=event.touches[0]?.clientY;
     if(current===undefined||touchY.current===null)return;
     if(current<touchY.current-2){
@@ -483,10 +489,9 @@ function WorldDetailView({world,onSaved,onSummary}:{world:WorldDetail;onSaved:(w
           {sections.map(({name,icon:Icon})=><button key={name} data-world-section={name} className={[styles.tab,section===name?styles.tabActive:''].join(' ')} onClick={event=>chooseSection(name,event.currentTarget)} aria-current={section===name?'page':undefined}><Icon size={17} strokeWidth={1.8}/><span>{t('worlds:tab.'+name)}</span></button>)}
         </nav>
         <article ref={content} className={styles.content} data-world-content tabIndex={0} aria-label={t('worlds:sectionDetails',{name:t('worlds:tab.'+section)})} onKeyDown={scrollContentWithKeyboard} onWheel={contentWheel} onScroll={contentScroll} onTouchStart={contentTouchStart} onTouchMove={contentTouchMove}>
-          <div className={styles.contentInner} data-full-width={section==='sessions'}><WorldDetailContent section={section} world={world} onSaved={onSaved} characterId={world.characters[selectedRole]?.id}/></div>
+          <div className={styles.contentInner} data-full-width={section==='sessions'}><WorldDetailContent section={section} world={world} onSaved={onSaved} characterId={world.characters[selectedRole]?.id} inspectedCharacter={roleDialog===null?undefined:world.characters[roleDialog]} onCloseCharacter={closeRoleDialog}/></div>
         </article>
       </div>
     </div>
-    {roleDialog!==null&&world.characters[roleDialog]&&<Modal title={world.characters[roleDialog].name} onClose={()=>setRoleDialog(null)}>{world.characters[roleDialog].description?<WorldDocumentRenderer showStyleWarning={false} title={t('characterIntroduction2')} content={world.characters[roleDialog].description!}/>:<p>{t('thisCharacterHasNoIntroductionYet')}</p>}</Modal>}
   </div>;
 }

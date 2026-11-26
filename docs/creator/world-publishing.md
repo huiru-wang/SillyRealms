@@ -6,7 +6,7 @@
 
 ## 首次准备
 
-保持既有源码布局：根 `world.json`、`components/` 和 `assets/`。先按[打包与分享](packaging.md)检查资源，再把卡格式设为 `0.2` 并在 `data.publication` 填写：
+保持既有源码布局：根 `world.json`、`components/` 和 `assets/`。卡格式固定为 `0.2`；先在 `data.publication` 填写下面的信息，再按[打包与分享](packaging.md)检查资源：
 
 ~~~json
 {
@@ -35,7 +35,7 @@ node -e "console.log(require('node:crypto').randomUUID())"
 
 `creator_notes` 写整个作品的玩法建议、限制与致谢，`release.notes` 写本次版本变化。两者分别展示，不进入叙事提示词。`homepage` 给人阅读，`update_url` 给程序读取。没有更新源的卡仍可普通分发，但玩家无法由卡内地址发现新版。
 
-`publication` 是固定 schema，不能塞入检查状态、自定义属性或完整发行目录；自定义作者扩展继续放在 `data.extensions`。0.1 卡可以继续导入；没有正式发行信息时不会从昵称、卡名或扩展版本自动推断身份。
+`publication` 是固定 schema，不能塞入检查状态、自定义属性或完整发行目录；自定义作者扩展继续放在 `data.extensions`。所有世界卡均使用 0.2 并声明完整 publication；离线作品可以省略 update_url。旧格式或缺少 publication 在世界卡校验阶段返回 INVALID_WORLD_CARD，不从昵称、卡名或扩展版本自动推断身份。
 
 ## 发版命令
 
@@ -117,7 +117,7 @@ Server 每次成功启动后检查一轮；玩家也可以在详情主动“获�
 
 | 现象 | 检查位置 |
 | --- | --- |
-| 没有版本入口可用，或提示无更新源 | 包内是否有有效 `publication.update_url`；离线卡可补齐正式发行信息后重新分发 |
+| 没有版本入口可用，或提示无更新源 | 包内是否有有效 `publication.update_url`；离线卡可添加 update_url 后重新分发 |
 | 获取失败但仍显示旧版本 | 旧成功目录被保留；检查远端 HTTP、公开 HTTPS 地址、JSON 结构和作品 ID |
 | 点击刷新后没有新版本 | 目录是否已更新；新版本是否为更大的数字三段；不能按发布日期推断 |
 | SHA-256/大小不符 | 是否上传了报告中的同一个最终文件；托管地址是否返回 HTML 或另一版本 |

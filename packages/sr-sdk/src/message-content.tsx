@@ -91,7 +91,7 @@ export const MessageContent = React.memo(function MessageContent({message,runId}
         const key=nonce.current+'-'+encodeURIComponent(item.ruleId)+'-'+item.start,inline=Component.srDisplay==='inline';
         raw+=inline?`<span data-sr-slot="${key}"></span>`:`\n\n<div data-sr-slot="${key}"></div>\n\n`;
         portals.push({key,component:Component,props:{match:item.match,groups:item.groups,namedGroups:item.namedGroups,message:{id:message.id,role:message.role},runId}});
-      } else raw+=substitute(item.replacement.content,item);
+      } else raw+=substitute(item.replacement.text,item);
     }
     raw+=plain(cursor,message.content.length);
     const document=renderWorldDocument(raw,{profile:'message',slots:new Set(portals.map(portal=>portal.key)),assetBaseUrl});

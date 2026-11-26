@@ -23,7 +23,7 @@ function card(version: string) {
   return { ...value, spec_version: '0.2', data: { ...value.data,
     publication: { package_id: packageId, authors: [{ name: '作者' }], creator_notes: '作者说明',
       release: { version, published_at: '2026-11-26T00:00:00Z', notes: 'Release ' + version }, update_url: updateUrl },
-    characters: value.data.characters.map(character => ({ ...character, prompt: 'Prompt ' + version })),
+    characters: value.data.characters.map(character => ({ ...character, content: 'Prompt ' + version })),
   } };
 }
 function artifact(version: string): WorldImportInput { return { format: 'json', bytes: Buffer.from(JSON.stringify(card(version))) }; }
@@ -182,10 +182,10 @@ describe('world update orchestration', () => {
     expect(downloads.getIndex).toHaveBeenCalledTimes(6);
   });
 
-  it('keeps legacy/offline worlds offline and reports unknown future card formats without applying them', async () => {
-    const legacy = await createImportWorld(services)({ format: 'json', bytes: Buffer.from(JSON.stringify(worldCardFixture())) });
-    expect(await updates.getVersions(legacy.id)).toMatchObject({ currentVersion: null, updateStatus: 'no_source' });
-    expect(() => updates.refresh(legacy.id)).toThrow('WORLD_UPDATE_NO_SOURCE');
+  it('keeps worlds without update sources offline and reports unknown future card formats without applying them', async () => {
+    const offline = await createImportWorld(services)({ format: 'json', bytes: Buffer.from(JSON.stringify(worldCardFixture())) });
+    expect(await updates.getVersions(offline.id)).toMatchObject({ currentVersion: '1.0.0', updateStatus: 'no_source' });
+    expect(() => updates.refresh(offline.id)).toThrow('WORLD_UPDATE_NO_SOURCE');
     const future = { ...record('3.0.0'), spec_version: '0.9' };
     downloads.getIndex.mockResolvedValueOnce(JSON.stringify({ schema_version: 1, package_id: packageId, versions: [record('2.0.0'), future] }));
     expect(await updates.refresh(world.id)).toMatchObject({ latestVersion: '3.0.0', versions: [{ version: '3.0.0', supported: false }, { version: '2.0.0', supported: true }] });
@@ -208,7 +208,7 @@ describe('world update orchestration', () => {
     const upgraded = await apply();
     expect(upgraded).toMatchObject({ id: world.id, revision: world.revision + 1, name: '本地名称', tags: ['本地标签'], coverMosaicEnabled: true,
       defaultPresetId: preset.id, defaultApiModelConfigId: model.id, state: { coins: 99, extra: true }, publication: { release: { version: '2.0.0' }, update_url: updateUrl } });
-    expect(upgraded.characters[0]).toMatchObject({ prompt: 'Prompt 2.0.0' });
+    expect(upgraded.characters[0]).toMatchObject({ content: 'Prompt 2.0.0' });
     expect(services.sessions.require(session.id)).toEqual(originalSession);
     expect(services.sessions.getEntry(session.id, entry.id)).toEqual(entry);
     expect(await services.worlds.readReleaseIndex(world.id)).toEqual(cached);

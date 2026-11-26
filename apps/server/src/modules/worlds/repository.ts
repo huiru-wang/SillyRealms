@@ -1,14 +1,14 @@
 import { transaction } from '../../infrastructure/database/transaction.js';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { encodeJson, type JsonObject, type JsonValue } from '../../infrastructure/database/connection.js';
-import type { WorldDescription, WorldListOptions, WorldPublication, WorldUpdateSource } from './types.js';
+import type { WorldPresentation, WorldListOptions, WorldPublication, WorldUpdateSource } from './types.js';
 
 /** Decoded storage rows stay inside this module; only the Service exposes domain objects. */
 export type WorldContentRow = {
   spec_version: string;
-  publication_json: WorldPublication | null;
+  publication_json: WorldPublication;
   name: string;
-  description: WorldDescription;
+  presentation_json: WorldPresentation | null;
   cover: string | null;
   characters_json: JsonValue[];
   openings_json: JsonValue[];
@@ -26,11 +26,11 @@ export type WorldRow = WorldContentRow & {
   id: string; revision: number; state: JsonObject; tags: string[]; created_at: number; updated_at: number;
 };
 const contentColumns = [
-  'spec_version', 'publication_json', 'name', 'description', 'cover', 'characters_json', 'openings_json',
+  'spec_version', 'publication_json', 'name', 'presentation_json', 'cover', 'characters_json', 'openings_json',
   'lorebook_json', 'state_definition_json', 'message_render_json', 'components',
   'stage_component', 'extensions_json', 'default_preset_id', 'default_reply_assist_preset_id', 'default_api_model_config_id',
 ] as const;
-const nullableJsonFields = new Set(['publication_json', 'description', 'lorebook_json', 'state_definition_json', 'message_render_json', 'extensions_json']);
+const nullableJsonFields = new Set(['publication_json', 'presentation_json', 'lorebook_json', 'state_definition_json', 'message_render_json', 'extensions_json']);
 
 function contentValues(input: WorldContentRow): SQLInputValue[] {
   return contentColumns.map(field => {
@@ -40,20 +40,6 @@ function contentValues(input: WorldContentRow): SQLInputValue[] {
     if (nullableJsonFields.has(field)) return value === null ? null : encodeJson(value);
     return value as SQLInputValue;
   });
-}
-
-function readDescription(value: unknown): WorldDescription {
-  if (value === null) return null;
-  const text = String(value);
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (typeof parsed === 'string') return parsed;
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
-      'type' in parsed && parsed.type === 'component' && 'component' in parsed && typeof parsed.component === 'string') {
-      return { type: 'component', component: parsed.component };
-    }
-  } catch { /* Earlier V2 rows stored descriptions as unencoded text. */ }
-  return text;
 }
 
 /** Module-private persistence; each transaction contains only worlds and world_tags SQL. */
@@ -72,9 +58,9 @@ export class WorldRepository {
     return {
       id: String(row.id), revision: Number(row.revision),
       spec_version: String(row.spec_version),
-      publication_json: nullableJson('publication_json') as WorldPublication | null,
+      publication_json: JSON.parse(String(row.publication_json)) as WorldPublication,
       name: String(row.name),
-      description: readDescription(row.description),
+      presentation_json: nullableJson('presentation_json') as WorldPresentation | null,
       cover: row.cover === null ? null : String(row.cover),
       characters_json: JSON.parse(String(row.characters_json)) as JsonValue[],
       openings_json: JSON.parse(String(row.openings_json)) as JsonValue[],
@@ -123,7 +109,7 @@ export class WorldRepository {
         const id = String(row.world_id); const values = tags.get(id) ?? []; values.push(String(row.name)); tags.set(id, values);
       }
     }
-    return rows.map(row => ({ id: String(row.id), name: String(row.name), publication: row.publication_json === null ? null : JSON.parse(String(row.publication_json)) as WorldPublication, cover: row.cover === null ? null : String(row.cover), cover_mosaic_enabled: Number(row.cover_mosaic_enabled) === 1, tags: tags.get(String(row.id)) ?? [], created_at: Number(row.created_at), updated_at: Number(row.updated_at) }));
+    return rows.map(row => ({ id: String(row.id), name: String(row.name), publication: JSON.parse(String(row.publication_json)) as WorldPublication, cover: row.cover === null ? null : String(row.cover), cover_mosaic_enabled: Number(row.cover_mosaic_enabled) === 1, tags: tags.get(String(row.id)) ?? [], created_at: Number(row.created_at), updated_at: Number(row.updated_at) }));
   }
 
   updateManagement(id: string, patch: { name?: string; extensions_json?: JsonObject; default_preset_id?: string | null; default_reply_assist_preset_id?: string | null; default_api_model_config_id?: string | null }, tags: string[] | undefined, revision: number): WorldRow | null {

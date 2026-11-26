@@ -124,13 +124,13 @@ entry.role 与 payload.message.role 一致。同轮已有消息共享 runId；re
 
 预设节点按原顺序编译。history.messages 展开为原角色消息，自定义文本节点保留位置和角色；最新普通消息为 user 时，该消息从 history.messages 的投影中移至 input.text，只在 userInput 节点插入一次；尾部 compaction 不改变这一判定。最新普通消息为 assistant（包括无可见正文的部分输出）或会话为空时，input.text 为空，userInput 节点不产生消息，即使节点包含包装文字；之前的用户消息仍留在历史原位置。预设模板支持固定变量、状态字段路径与原有转义，未知变量和非法路径仍报错。
 
-预设节点和已选中的玩家/NPC prompt、世界书 content 支持 `{{state.<global|session|message>.<路径>}}`：从本轮捕获视图逐段读对象自有属性，只能读取当前裁剪候选按 load 激活的根，不增加写授权。字符串原样填入（作者素材保留原有正文转义），其余值输出紧凑 JSON；缺值或不可见根留空。世界卡导入不检查变量；作者素材中非法的闭合 state 路径留空，不支持的自定义变量和未闭合正文原样保留。只扫描源字段，输入、历史、替换结果和最终消息均不再扫描；状态规则、开局、摘要提示不新增插值。
+预设节点和已选中的玩家/NPC content、世界书 content 支持 `{{state.<global|session|message>.<路径>}}`：从本轮捕获视图逐段读对象自有属性，只能读取当前裁剪候选按 load 激活的根，不增加写授权。字符串原样填入（作者素材保留原有正文转义），其余值输出紧凑 JSON；缺值或不可见根留空。世界卡导入不检查变量；作者素材中非法的闭合 state 路径留空，不支持的自定义变量和未闭合正文原样保留。只扫描源字段，输入、历史、替换结果和最终消息均不再扫描；状态规则、开局、摘要提示不新增插值。
 
 stateUpdate、actionSuggestions、characterSprite 按固定相对顺序声明。PresetService.resolvePostprocessPrompts 只返回实际存在且 enabled=true 的节点，不补缺失节点、不替换空提示词、不读取旧变量别名。启用能力节点的空提示词在保存/导入时拒绝；模板编译失败明确报错，无默认回退。默认正文来自发行模板或用户显式恢复默认。main 使用遵守本轮实际构建能力的通用措辞。
 
 worldState 是 chatHistory 前的固定 system 节点。三域状态依本轮候选的加载条件选择一次，任一域有适用根就渲染事实；缺失快照值标为未设置。stateUpdate 开启且有适用事实时，最近两条可见助手消息沿用历史状态更新旁注。只有最终候选有激活的 message 根时才加入更新节点、固定状态协议，并将这些根授权给后处理。{{state.update.message}} 仅可在该节点中使用，列出根名及作者已有的规则。缺失或关闭更新节点时写授权为空，模型自行输出的更新仍逐行解析并记录校验结果。
 
-characterSprite 还要求世界目录非空。context 首次异步等待前捕获全卡已声明的合法素材，角色 load 只控制角色 prompt，不裁掉立绘目录；成功 request.characterSpriteCatalog 无论节点是否启用都保留，供实际输出校验。正式变量 `{{characterSprite.catalog}}` 只在立绘条件成立时提供角色 ID/姓名、素材 ID/说明、当前玩家角色 ID，不含 asset 地址、完整角色 prompt 或图片。该变量可用于其他预设节点，但关闭或缺失立绘节点时值为空。条件同时控制立绘节点、固定协议和历史来源；详情见 [预设创作](../creator/presets-and-models.md) 与 [世界卡协议](../reference/world-card.md)。
+characterSprite 还要求世界目录非空。context 首次异步等待前捕获全卡已声明的合法素材，角色 load 只控制角色 content，不裁掉立绘目录；成功 request.characterSpriteCatalog 无论节点是否启用都保留，供实际输出校验。正式变量 `{{characterSprite.catalog}}` 只在立绘条件成立时提供角色 ID/姓名、素材 ID/说明、当前玩家角色 ID，不含 asset 地址、完整角色 content 或图片。该变量可用于其他预设节点，但关闭或缺失立绘节点时值为空。条件同时控制立绘节点、固定协议和历史来源；详情见 [预设创作](../creator/presets-and-models.md) 与 [世界卡协议](../reference/world-card.md)。
 
 ### 叙事输出语言
 

@@ -1,3 +1,4 @@
+import { worldPublication } from '../testing/fixtures.js';
 import { Hono } from 'hono';
 import { createApp } from '../app.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -37,7 +38,7 @@ beforeEach(() => {
   services.presets.create({ ...narrativePreset(), id: 'preset' });
   services.models.create({ id: 'model', name: 'Model', providerId: 'provider', modelId: 'model', credentialRef: 'ref' });
   services.worlds.create({
-    id: 'world', specVersion: '0.1', name: 'World', characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'start', name: 'Start', content: 'Begin' }],
+    id: 'world', specVersion: '0.2', publication: worldPublication(), name: 'World', characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'start', name: 'Start', content: 'Begin' }],
     stateDefinition: { schema_version: 2, scopes: {} }, state: { day: 1, weather: 'rain' },
   });
   services.sessions.create({ ...sessionInput('one'), state: { coins: 1, reputation: 0 } });
@@ -184,7 +185,7 @@ describe('session HTTP operations', () => {
 
   it('filters by worldId and advances a scoped cursor across tied timestamps', async () => {
     services.sessions.delete('one'); services.sessions.delete('blocked');
-    services.worlds.create({ id: 'other', specVersion: '0.1', name: 'Other', characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'start', name: 'Start', content: 'Begin' }] });
+    services.worlds.create({ id: 'other', specVersion: '0.2', publication: worldPublication(), name: 'Other', characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'start', name: 'Start', content: 'Begin' }] });
     vi.spyOn(Date, 'now').mockReturnValue(100);
     for (const id of ['a', 'b', 'c']) services.sessions.create(sessionInput(id));
     services.sessions.create({ ...sessionInput('foreign'), worldId: 'other' });

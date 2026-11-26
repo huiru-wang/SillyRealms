@@ -12,13 +12,13 @@
 
 | 来源内容 | 应有的处理 |
 | --- | --- |
-| `name/description/personality` | 保留林舟的身份、性格和边界，组织成 SR 角色的展示说明和 prompt |
+| `name/description/personality` | 保留林舟的身份、性格和边界，组织成 SR 角色的 presentation 展示说明和 content 正文 |
 | `scenario` | 保留旧信、雾港和灯塔的故事前提，可写入角色设定或世界书 |
 | `first_mes/alternate_greetings` | 形成两个非空开局；如沿用教程，使用 `arrival`、`lantern` |
 | 原文件只有一个 NPC | 显式补充可扮演的 `traveler`，不能把林舟默认为玩家 |
 | `character_book.entries` | 迁移正文及关键词意图，使用 SR 实际支持的 load 规则 |
 | `{{char}}` | 在确认此宏指林舟后改成角色名；不可保留为虚构的 SR 系统变量 |
-| `{{user}}` | 依字段的真实展开规则处理；角色 prompt 可保留，开局会在创建会话时一次替换 |
+| `{{user}}` | 依字段的真实展开规则处理；角色 content 可保留，开局会在创建会话时一次替换 |
 | `{{getvar::coins}}` | 单列为需转换的旧宏；只有定义对应 SR 状态并采用受支持的变量后，才可声称已转换 |
 | `extensions.migration_fixture_unknown` | 记录为未知扩展，保留来源说明；不能静默忽略后声称无损，也不能执行或虚构 SR 支持 |
 | `mes_example` | 报告如何保留其说话风格，避免把示例误当成这局已经发生的历史 |

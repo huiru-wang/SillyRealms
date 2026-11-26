@@ -32,7 +32,7 @@ export async function loadStageWorld(worldId:string,signal?:AbortSignal,dependen
     'v1/worlds/'+encodeURIComponent(worldId),{signal});
   signal?.throwIfAborted();
   const world=response?.item;
-  if(!world||world.id!==worldId||!Array.isArray(world.characters)||!Array.isArray(world.openings)||
+  if(!world||world.id!==worldId||!world.publication||typeof world.publication.release?.version!=='string'||!Array.isArray(world.characters)||!Array.isArray(world.openings)||
     (world.components!==null&&!Array.isArray(world.components)))throw Error(i18n.t('worlds:invalidWorldResponse'));
   const previous=dependencies.previous;
   if(previous&&previewContentIdentity(previous.world)===previewContentIdentity(world)){

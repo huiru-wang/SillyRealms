@@ -5,9 +5,11 @@ import {useCallback,useEffect,useId,useRef,useState,type ReactNode} from 'react'
 import {createPortal} from 'react-dom';
 import {X} from 'lucide-react';
 import styles from './Modal.module.css';
-import {restoreDialogFocus} from './focus';
+import {activateModal} from './modal-interaction';
 
 export type ModalProps={
+  /** Hide the portal while retaining its children; hidden modals own no focus or listeners. */
+  open?:boolean;
   title:string;
   onClose:()=>void;
   children:ReactNode;
@@ -19,13 +21,14 @@ export type ModalProps={
   mobileSheet?:boolean;
 };
 
-export function Modal({title,onClose,children,size='default',footer,onBeforeClose,closeOnBackdrop=true,mobileSheet=false}:ModalProps){
+export function Modal({open=true,title,onClose,children,size='default',footer,onBeforeClose,closeOnBackdrop=true,mobileSheet=false}:ModalProps){
   useTranslation();
   const [phase,setPhase]=useState<'enter'|'open'|'exit'>('enter');
   const titleId=useId();
   const closeRef=useRef<HTMLButtonElement>(null);
   const panelRef=useRef<HTMLElement>(null);
   const closing=useRef(false);
+  const visible=useRef(open);visible.current=open;
   const timer=useRef<ReturnType<typeof setTimeout>|null>(null);
   const onCloseRef=useRef(onClose);
   const onBeforeCloseRef=useRef(onBeforeClose);
@@ -35,7 +38,7 @@ export function Modal({title,onClose,children,size='default',footer,onBeforeClos
   onBeforeCloseRef.current=onBeforeClose;
 
   const requestClose=useCallback(()=>{
-    if(closing.current||onBeforeCloseRef.current?.()===false)return;
+    if(!visible.current||closing.current||onBeforeCloseRef.current?.()===false)return;
     closing.current=true;
     setPhase('exit');
     if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){
@@ -49,51 +52,28 @@ export function Modal({title,onClose,children,size='default',footer,onBeforeClos
   },[]);
 
   useEffect(()=>{
-    const before=document.activeElement instanceof HTMLElement?document.activeElement:null;
-    let keyboard=!!before?.matches(':focus-visible')&&!before.hasAttribute('data-pointer-focus');
-    const pointer=()=>{keyboard=false;};
-    const root=document.getElementById('root');
-    const wasInert=root?.inert ?? false;
-    if(root)root.inert=true;
-    closeRef.current?.focus({preventScroll:true});
+    if(!open)return;
+    closing.current=false;
+    setPhase('enter');
+    const deactivate=activateModal(document,()=>panelRef.current,()=>closeRef.current,requestClose);
     const enterFrame=requestAnimationFrame(()=>{
       if(!closing.current)setPhase('open');
     });
-    function key(e:KeyboardEvent){
-      keyboard=true;
-      if(e.defaultPrevented||e.isComposing)return;
-      if(e.key==='Escape'){e.preventDefault();requestClose();return;}
-      if(e.key!=='Tab')return;
-      const items=[...(panelRef.current?.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])') ?? [])]
-        .filter(el=>el.getClientRects().length>0&&el.tabIndex>=0&&!el.closest('[inert]')&&getComputedStyle(el).visibility!=='hidden');
-      if(!items.length){e.preventDefault();return;}
-      const first=items[0],last=items[items.length-1];
-      if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
-      else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
-    }
-    document.addEventListener('keydown',key);
-    document.addEventListener('pointerdown',pointer,true);
-    return ()=>{
+    return()=>{
       cancelAnimationFrame(enterFrame);
-      document.removeEventListener('keydown',key);
-      document.removeEventListener('pointerdown',pointer,true);
-      if(timer.current!==null){
-        clearTimeout(timer.current);
-        timer.current=null;
-      }
-      if(root)root.inert=wasInert;
-      if(before)restoreDialogFocus(before,keyboard);
+      if(timer.current!==null){clearTimeout(timer.current);timer.current=null;}
+      deactivate();
     };
-  },[requestClose]);
+  },[requestClose,open]);
 
   const hasFooter=footer!==undefined&&footer!==null&&footer!==false;
   return createPortal(
-    <div className={styles.backdrop} data-state={phase} data-size={size} data-mobile-sheet={mobileSheet||undefined}
+    <div className={styles.backdrop} hidden={!open} inert={!open} aria-hidden={!open||undefined} data-state={phase} data-size={size} data-mobile-sheet={mobileSheet||undefined}
       onMouseDown={e=>{if(closeOnBackdrop&&e.currentTarget===e.target)requestClose();}}>
-      <section ref={panelRef} className={styles.panel} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <section ref={panelRef} className={styles.panel} role={open?'dialog':undefined} aria-modal={open?true:undefined} aria-labelledby={open?titleId:undefined}>
         <header className={styles.header}>
           <h2 id={titleId}>{title}</h2>
-          <IconButton ref={closeRef} type="button" aria-label={i18n.t("common:closeDialog")} onClick={requestClose}><X size={20}/></IconButton>
+          <IconButton ref={closeRef} data-modal-close type="button" aria-label={i18n.t("common:closeDialog")} onClick={requestClose}><X size={20}/></IconButton>
         </header>
         <div className={styles.body} data-modal-body>{children}</div>
         {hasFooter&&<footer className={styles.footer}>{footer}</footer>}

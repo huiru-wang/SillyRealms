@@ -1,7 +1,7 @@
 import {compareReleaseVersion} from '@sillyrealms/sdk/release-version';
 import {api,ApiError,json} from '../../api.ts';
 import type {HttpRequest} from '../../transport/http.ts';
-import type {WorldDetail,WorldPublication,WorldVersionsView,WorldVersionSummary,WorldVersionApplication} from './api/worlds.ts';
+import type {WorldDetail,WorldVersionsView,WorldVersionSummary,WorldVersionApplication} from './api/worlds.ts';
 
 export function releaseDirection(current:string|null|undefined,target:string):'upgrade'|'downgrade'|'current'|null {
   if(!current)return null;
@@ -12,8 +12,8 @@ export function hasWorldUpdate(world:Partial<WorldVersionSummary>):boolean {
   return !!world.latestVersion&&releaseDirection(world.currentVersion,world.latestVersion)==='upgrade';
 }
 /** Installed content changes independently of management edits and update checks. */
-export function worldReleaseIdentity(world:{id:string;publication?:WorldPublication|null;currentVersion?:string|null}):string {
-  return JSON.stringify([world.id,world.publication?.release.version??world.currentVersion??null]);
+export function worldReleaseIdentity(world:Pick<WorldDetail,'id'|'publication'>):string {
+  return JSON.stringify([world.id,world.publication.release.version]);
 }
 export function publicationLink(value:string|undefined):string|undefined {
   if(!value)return undefined;

@@ -1,3 +1,4 @@
+import { worldPublication } from '../../testing/fixtures.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,12 +28,12 @@ beforeEach(() => {
   db = openDatabase(':memory:'); dataRoot = mkdtempSync(join(tmpdir(), 'sr-context-api-'));
   services = createServices(db, dataRoot, memoryCredentials());
   const preset = narrativePreset();
-  preset.config.nodes.find(node => node.id === 'personaInfo')!.prompt = '{{persona.prompt}}';
+  preset.config.nodes.find(node => node.id === 'personaInfo')!.prompt = '{{persona.content}}';
   services.presets.create({ ...preset, id: 'preset' });
   services.models.create({ id: 'model', name: 'Model', providerId: 'provider', modelId: 'model', credentialRef: 'original-reference' });
   services.worlds.create({
-    id: 'world', name: 'World', specVersion: '0.1',
-    characters: [{ id: 'player', name: 'Player', player_selectable: true, prompt: 'Original persona' }],
+    id: 'world', name: 'World', specVersion: '0.2', publication: worldPublication(),
+    characters: [{ id: 'player', name: 'Player', player_selectable: true, content: 'Original persona' }],
     openings: [{ id: 'start', name: 'Start', content: 'Opening' }],
   });
   services.sessions.create({ id: 'session', worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player' });
@@ -155,7 +156,7 @@ describe('public context preparation', () => {
     const pending = prepareContext(dependencies, request);
     expect(readWorld).toHaveBeenCalledWith('world');
     expect(dependencies.modelClient.resolve).not.toHaveBeenCalled();
-    world.characters = [{ id: 'player', name: 'Player', player_selectable: true, prompt: 'Changed persona' }];
+    world.characters = [{ id: 'player', name: 'Player', player_selectable: true, content: 'Changed persona' }];
     preset.config.modelParameters.temperature = 0.2;
     configuredModel.providerId = 'changed-provider';
     configuredModel.credentialRef = 'changed-reference';
@@ -312,7 +313,7 @@ describe('public context preparation', () => {
 describe('captured character sprite catalog', () => {
   it.each([true, false])('retains the synchronous catalog across async preparation when enabled=%s', enabled => {
     services.worlds.update('world', { characters: [
-      { id: 'player', name: 'Player', player_selectable: true, prompt: 'Original persona',
+      { id: 'player', name: 'Player', player_selectable: true, content: 'Original persona',
         sprites: [{ id: 'default', description: 'captured-description', asset: 'https://example.com/original.png' }] },
     ] });
     const config = services.presets.require('preset').config;
@@ -320,7 +321,7 @@ describe('captured character sprite catalog', () => {
     services.presets.update('preset', { config });
     const pending = prepareContext(dependencies, input());
     services.worlds.update('world', { characters: [
-      { id: 'player', name: 'Player', player_selectable: true, prompt: 'Original persona',
+      { id: 'player', name: 'Player', player_selectable: true, content: 'Original persona',
         sprites: [{ id: 'default', description: 'later-description', asset: 'https://example.com/later.png' }] },
     ] });
     return pending.then(prepared => {

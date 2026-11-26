@@ -18,7 +18,7 @@ import {
 } from './types.js';
 
 export type WorldOpening = z.infer<typeof openingSchema>;
-export type { CreateWorld, WorldContent, WorldDescription, WorldListOptions, WorldPage, WorldPatch, World, WorldTag, WorldSummary, WorldDetail, WorldManagementPatch, CharacterSpriteCatalog, CharacterSpriteCatalogItem, WorldPublication, WorldUpdateSource } from './types.js';
+export type { CreateWorld, WorldContent, WorldPresentation, WorldListOptions, WorldPage, WorldPatch, World, WorldTag, WorldSummary, WorldDetail, WorldManagementPatch, CharacterSpriteCatalog, CharacterSpriteCatalogItem, WorldPublication, WorldUpdateSource } from './types.js';
 export type { OriginalFormat, PackageFile, WorldDownload, WorldOriginal, WorldPaths, ReleaseIndexSnapshot } from './files.js';
 
 export { assertWorldReplacementCompatible } from './update-validation.js';
@@ -76,26 +76,18 @@ function normalizeContent(input: WorldContent): WorldContent {
     if (typeof value !== 'string') throw new AppError('INVALID_WORLD_FIELD', field);
     content[field] = field === 'defaultPresetId' || field === 'defaultReplyAssistPresetId' || field === 'defaultApiModelConfigId' ? nonblank(value, field) : value;
   }
-  if (content.publication !== null) content.publication = validateWorldPublication(content.publication);
-  if (content.specVersion === '0.2' && content.publication === null) throw new AppError('INVALID_WORLD_CARD', '0.2 requires publication');
+  content.publication = validateWorldPublication(content.publication);
+  if (content.specVersion !== '0.2') throw new AppError('INVALID_WORLD_CARD', 'Unsupported world card format');
   if (content.extensions !== null) validateWorldExtensions(content.extensions);
-  const description = input.description;
-  if (description !== null && typeof description !== 'string') {
-    if (typeof description !== 'object' || Array.isArray(description) ||
-      Object.keys(description).some(key => key !== 'type' && key !== 'component') || description.type !== 'component') {
-      throw new AppError('INVALID_WORLD_FIELD', 'description');
-    }
-    content.description = { type: 'component', component: nonblank(description.component, 'description.component') };
-  }
   return content;
 }
 
 function initialContent(input: CreateWorld): WorldContent {
   return {
     specVersion: input.specVersion,
-    publication: input.publication ?? null,
+    publication: input.publication,
     name: input.name,
-    description: input.description ?? null,
+    presentation: input.presentation ?? null,
     cover: input.cover ?? null,
     characters: input.characters,
     openings: input.openings,
@@ -123,7 +115,7 @@ function withCoverMosaic(extensions: JsonValue, enabled: boolean): JsonObject {
 
 function toWorld(row: WorldRow): World {
   return {
-    id: row.id, revision: row.revision, coverMosaicEnabled: coverMosaicEnabled(row.extensions_json), specVersion: row.spec_version, publication: row.publication_json, name: row.name, description: row.description, cover: row.cover,
+    id: row.id, revision: row.revision, coverMosaicEnabled: coverMosaicEnabled(row.extensions_json), specVersion: row.spec_version, publication: row.publication_json, name: row.name, presentation: row.presentation_json, cover: row.cover,
     characters: row.characters_json, openings: row.openings_json, lorebook: row.lorebook_json,
     stateDefinition: row.state_definition_json, messageRender: row.message_render_json,
     components: row.components, stageComponent: row.stage_component, extensions: row.extensions_json,
@@ -134,7 +126,7 @@ function toWorld(row: WorldRow): World {
 
 function toContentRow(content: WorldContent): WorldContentRow {
   return {
-    spec_version: content.specVersion, publication_json: content.publication, name: content.name, description: content.description, cover: content.cover,
+    spec_version: content.specVersion, publication_json: content.publication, name: content.name, presentation_json: content.presentation, cover: content.cover,
     characters_json: content.characters, openings_json: content.openings, lorebook_json: content.lorebook,
     state_definition_json: content.stateDefinition, message_render_json: content.messageRender,
     components: content.components, stage_component: content.stageComponent, extensions_json: content.extensions,
@@ -288,6 +280,7 @@ export class WorldService {
     if (patch.stateDefinition != null) validateWorldStateDefinition(patch.stateDefinition);
     if (patch.characters !== undefined) next.characters = validateCharacters(patch.characters);
     const tags = patch.tags === undefined ? undefined : tagsFrom(patch.tags);
+    worldToCard({ ...next, tags: tags ?? current.tags });
     this.checkReferences(next);
     return toWorld(this.#repository.update(id, toContentRow(next), tags));
   }

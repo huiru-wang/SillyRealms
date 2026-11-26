@@ -67,13 +67,12 @@ describe('world management functions',()=>{
    expect(()=>services.worlds.create({...content(),extensions})).toThrow('INVALID_WORLD_CARD');
   }
  });
- it('retains legacy content while clearing defaults and rejects missing references atomically',()=>{
-  const preset=services.presets.create(narrativePreset()),world=services.worlds.create({...content(),defaultPresetId:preset.id});
-  db.prepare('UPDATE worlds SET description=? WHERE id=?').run('legacy prose',world.id);
+ it('retains presentation content while clearing defaults and rejects missing references atomically',()=>{
+  const preset=services.presets.create(narrativePreset()),world=services.worlds.create({...content(),defaultPresetId:preset.id,presentation:{type:'markdown',text:'Public introduction'}});
   expect(()=>services.worlds.updateManagement(world.id,{name:'lost',tags:['lost'],defaultPresetId:'missing',expectedRevision:1})).toThrow('PRESET_NOT_FOUND');
   expect(services.worlds.require(world.id)).toMatchObject({name:world.name,tags:world.tags,revision:1});
   const updated=services.worlds.updateManagement(world.id,{defaultPresetId:null,expectedRevision:1});
-  expect(updated.description).toBe('legacy prose');expect(updated.defaultPresetId).toBeNull();
+  expect(updated.presentation).toEqual({type:'markdown',text:'Public introduction'});expect(updated.defaultPresetId).toBeNull();
  });
  it('saves a typed reply-assist default with revision protection and preserves unrelated content',()=>{
   const reply=services.presets.create({...services.presets.getDefault('reply_assist'),name:'World reply'});
@@ -97,7 +96,7 @@ describe('world management functions',()=>{
  });
  it('validates new definitions before persistence',()=>{
   expect(()=>services.worlds.create({...content(),characters:[]})).toThrow('INVALID_WORLD_CARD');
-  expect(()=>services.worlds.create({...content(),description:'unsupported prose'})).toThrow('INVALID_WORLD_CARD');
+  expect(()=>services.worlds.create({...content(),presentation:'unsupported prose' as never})).toThrow('INVALID_WORLD_CARD');
   expect(services.worlds.listPage().items).toEqual([]);
  });
  it('returns component-specific file errors without an inline fallback or absolute paths',async()=>{

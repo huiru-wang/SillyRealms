@@ -10,7 +10,7 @@ const results:Array<{name:string;pass:boolean}>=[];
 const check=(name:string,pass:unknown)=>results.push({name,pass:!!pass});
 const wait=()=>new Promise(resolve=>setTimeout(resolve,250));
 const rule={id:'dice',roles:['user' as const,'assistant' as const],pattern:'DICE',replacement:{type:'component' as const,component:'Dice'}};
-const replace={id:'author',roles:['user' as const,'assistant' as const],pattern:'作者',replacement:{type:'html' as const,content:'<em>“作者替换”</em>'}};
+const replace={id:'author',roles:['user' as const,'assistant' as const],pattern:'作者',replacement:{type:'html' as const,text:'<em>“作者替换”</em>'}};
 const Dice:MessageComponent=()=>{const [count,setCount]=useState(0);return <button id="dice" onClick={()=>setCount(n=>n+1)}>count:{count}</button>};Dice.srDisplay='inline';
 const config:StoryConfiguration={rules:[rule,replace],components:{Dice},state:{},ready:()=>{},match:async text=>({warning:false,matches:[rule,replace].flatMap(item=>{const start=text.indexOf(item.pattern);return start<0?[]:[{start,end:start+item.pattern.length,ruleId:item.id,replacement:item.replacement,match:item.pattern,groups:[],namedGroups:{}}]})})};
 const root=createRoot(document.querySelector('#root')!);

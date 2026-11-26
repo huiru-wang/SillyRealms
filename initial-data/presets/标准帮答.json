@@ -26,7 +26,7 @@
         "name": "用户信息",
         "kind": "system",
         "role": "system",
-        "prompt": "{{persona.prompt}}",
+        "prompt": "{{persona.content}}",
         "enabled": true
       },
       {
@@ -34,7 +34,7 @@
         "name": "角色信息",
         "kind": "system",
         "role": "system",
-        "prompt": "{{characters.prompts}}",
+        "prompt": "{{characters.content}}",
         "enabled": true
       },
       {

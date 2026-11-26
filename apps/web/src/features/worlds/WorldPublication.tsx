@@ -68,7 +68,7 @@ function PublicationContent({world,controller}:{world:WorldDetail;controller:Ret
   const [open,setOpen]=useState(false);
   const [selected,setSelected]=useState<{release:WorldRelease;revision:number;from:string|null}|null>(null);
   const publication=world.publication,view=state.view,summary=view??world;
-  const hasSource=!!publication?.update_url;
+  const hasSource=!!publication.update_url;
   const refreshing=state.refreshing,applying=!!state.applying,busy=state.loading||refreshing||applying;
   const refreshLabel=t(view?.lastSuccessAt?'publication.refreshVersions':'publication.getVersions');
   const showVersions=()=>{setSelected(null);setOpen(true);void controller.load();};
@@ -81,17 +81,17 @@ function PublicationContent({world,controller}:{world:WorldDetail;controller:Ret
   };
   const targetDirection=selected?releaseDirection(selected.from,selected.release.version):null;
   const actionLabel=selected?t(targetDirection==='downgrade'?'publication.downgradeTo':'publication.updateTo',{version:selected.release.version}):'';
-  const homepage=publicationLink(publication?.homepage);
+  const homepage=publicationLink(publication.homepage);
   return <>
     <div className={styles.summary}>
-      <span className={styles.authors} title={publication?.authors.map(author=>author.name).join(' · ')}>
-        {publication?.authors.length?publication.authors.map((author,index)=>{
+      <span className={styles.authors} title={publication.authors.map(author=>author.name).join(' · ')}>
+        {publication.authors.map((author,index)=>{
           const href=publicationLink(author.url);
           return <span key={index}>{index>0&&' · '}{href?<a href={href} target="_blank" rel="noopener noreferrer">{author.name}</a>:author.name}</span>;
-        }):t('publication.undeclared')}
+        })}
       </span>
       <Button size="compact" variant="ghost" onClick={showVersions} icon={<History size={14}/>} aria-label={t('publication.versions')}>
-        {publication?.release.version?'v'+publication.release.version:t('publication.versions')}
+        {'v'+publication.release.version}
         {hasWorldUpdate(summary)&&<WorldUpdateDot version={summary.latestVersion!}/>}
       </Button>
       <IconButton size="compact" aria-label={refreshLabel} title={hasSource?refreshLabel:t('publication.noSource')}
@@ -115,14 +115,14 @@ function PublicationContent({world,controller}:{world:WorldDetail;controller:Ret
             <div className={styles.installedHeader}><span>{t('publication.installed')}</span><strong>{summary.currentVersion?'v'+summary.currentVersion:t('publication.undeclared')}</strong>
               {homepage&&<ActionLink href={homepage} target="_blank" rel="noopener noreferrer" size="compact" variant="ghost">{t('publication.homepage')} <ExternalLink size={13}/></ActionLink>}
             </div>
-            {publication&&<>
+            <>
               <p className={styles.hint}>{t('publication.authors')} {publication.authors.map(author=>author.name).join(' · ')}</p>
               {publication.creator_notes&&<details><summary>{t('publication.creatorNotes')}</summary><ReleaseNotes text={publication.creator_notes}/></details>}
               <details><summary>{t('publication.installedNotes')}</summary>
                 <p className={styles.hint}>{formatDate(publication.release.published_at,{dateStyle:'medium',timeStyle:'short'})}</p>
                 <ReleaseNotes text={publication.release.notes||t('publication.noNotes')}/>
               </details>
-            </>}
+            </>
           </section>
           <div className={styles.toolbar}>
             <div className={styles.hint}>

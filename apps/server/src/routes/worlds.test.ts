@@ -1,3 +1,4 @@
+import { worldPublication } from '../testing/fixtures.js';
 import { Hono } from 'hono';
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -35,7 +36,7 @@ let root: string;
 let services: ReturnType<typeof createServices>;
 let app: Hono;
 const base = '/api/v1/worlds';
-const content = () => ({ id: 'world-one', name: '雾港', specVersion: '0.1', characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'start', name: 'Start', content: 'Begin' }] });
+const content = () => ({ id: 'world-one', name: '雾港', specVersion: '0.2', publication: worldPublication(), characters: [{ id: 'player', name: 'Player', player_selectable: true }], openings: [{ id: 'start', name: 'Start', content: 'Begin' }] });
 
 beforeEach(async () => {
   db = openDatabase(':memory:');
@@ -96,7 +97,7 @@ describe('world routes', () => {
   it('returns only sprite catalog fields, including an empty catalog and missing-world errors', async () => {
     const sprite = { id: 'default', asset: 'https://images.example/player.webp', description: '平静' };
     const world = services.worlds.create({ ...content(), characters: [
-      { ...content().characters[0], prompt: 'hidden prompt', load: { mode: 'never' }, sprites: [sprite] },
+      { ...content().characters[0], content: 'hidden prompt', load: { mode: 'never' }, sprites: [sprite] },
     ] });
     expect(await data(await app.request(base + '/' + world.id + '/character-sprites'))).toEqual({
       worldId: world.id,
@@ -134,10 +135,10 @@ describe('world routes', () => {
     for (const id of ['session-one', 'session-two']) services.sessions.create({ runtimeConfig: { narrativePresetId: config.presetId, apiModelConfigId: config.apiModelConfigId }, id, worldId: first.id, userCharacterId: 'player' });
     const url = base + '?tag=' + encodeURIComponent('城市') + '&q=' + encodeURIComponent('雾') + '&limit=1';
     const firstPage = await data<Page<WorldListItem>>(await app.request(url));
-    expect(firstPage.items).toEqual([{ id: first.id, name: first.name, publication: null, currentVersion: null, latestVersion: null, updateStatus: 'no_source', cover: first.cover, coverMosaicEnabled: true, tags: ['城市'], sessionCount: 2, createdAt: 1000, updatedAt: 1000 }]);
+    expect(firstPage.items).toEqual([{ id: first.id, name: first.name, publication: worldPublication(), currentVersion: '1.0.0', latestVersion: null, updateStatus: 'no_source', cover: first.cover, coverMosaicEnabled: true, tags: ['城市'], sessionCount: 2, createdAt: 1000, updatedAt: 1000 }]);
     expect(firstPage.hasMore).toBe(true);
     const lastPage = await data<Page<WorldListItem>>(await app.request(url + '&cursor=' + firstPage.nextCursor));
-    expect(lastPage).toEqual({ items: [{ id: second.id, name: second.name, publication: null, currentVersion: null, latestVersion: null, updateStatus: 'no_source', cover: null, coverMosaicEnabled: false, tags: ['城市'], sessionCount: 0, createdAt: 1000, updatedAt: 1000 }], hasMore: false, nextCursor: null });
+    expect(lastPage).toEqual({ items: [{ id: second.id, name: second.name, publication: worldPublication(), currentVersion: '1.0.0', latestVersion: null, updateStatus: 'no_source', cover: null, coverMosaicEnabled: false, tags: ['城市'], sessionCount: 0, createdAt: 1000, updatedAt: 1000 }], hasMore: false, nextCursor: null });
     expect(await data(await app.request(base + '?tag=absent'))).toEqual({ items: [], hasMore: false, nextCursor: null });
     await failure(await app.request(base + '?tag=other&cursor=' + firstPage.nextCursor), 'INVALID_REQUEST', 400);
     await failure(await app.request(base + '?cursor=invalid'), 'INVALID_REQUEST', 400);
@@ -167,28 +168,37 @@ describe('world routes', () => {
     expect(services.worlds.require(world.id)).toMatchObject({ revision: 3, extensions: disabled.item.extensions, coverMosaicEnabled: false });
   });
 
-  it('projects author fields and preserves legacy text descriptions without runtime state', async () => {
+  it('projects component and Markdown presentations without runtime state', async () => {
     const { presetId, apiModelConfigId } = configuration();
-    const description = { type: 'component' as const, component: 'intro' };
+    const presentation = { type: 'component' as const, component: 'intro' };
     const definition = worldCardFixture().data.state;
     const world = services.worlds.create({
-      ...content(), description, stateDefinition: definition, state: { coins: 7 },
+      ...content(), presentation,
+      characters: [{ ...content().characters[0], content: 'Only model facts',
+        presentation: { type: 'markdown', text: 'Public role introduction' } }],
+      openings: [{ ...content().openings[0], presentation }],
+      stateDefinition: definition, state: { coins: 7 },
       defaultPresetId: presetId, defaultApiModelConfigId: apiModelConfigId,
       components: [{ id: 'intro', component: 'export default () => null' }], stageComponent: 'intro',
       extensions: { custom_key: 1 },
     });
     const response = await data<{ item: WorldDetail }>(await app.request(base + '/' + world.id));
     expect(response).toMatchObject({ item: {
-      id: world.id, specVersion: '0.1', revision: 1, defaultPresetId: presetId, defaultApiModelConfigId: apiModelConfigId,
-      description, stateDefinition: definition, stageComponent: 'intro', characters: content().characters,
-      openings: content().openings, extensions: { custom_key: 1 },
+      id: world.id, specVersion: '0.2', publication: worldPublication(), revision: 1, defaultPresetId: presetId, defaultApiModelConfigId: apiModelConfigId,
+      presentation, stateDefinition: definition, stageComponent: 'intro',
+      characters: [{ ...content().characters[0], content: 'Only model facts', presentation: { type: 'markdown', text: 'Public role introduction' } }],
+      openings: [{ ...content().openings[0], presentation }], extensions: { custom_key: 1 },
     } });
     expect(response.item).not.toHaveProperty('state');
     expect(response.item).not.toHaveProperty('data');
+    expect(response.item).not.toHaveProperty('description');
+    expect(response.item.characters[0]).not.toHaveProperty('prompt');
+    expect(response.item.openings[0]).not.toHaveProperty('component');
     expect(response).not.toHaveProperty('warnings');
-    services.worlds.update(world.id, { description: 'A plain textual description' });
+    services.worlds.update(world.id, { presentation: { type: 'markdown', text: 'A public introduction' } });
     const plain = await data<{ item: WorldDetail }>(await app.request(base + '/' + world.id));
-    expect(plain.item.description).toBe('A plain textual description');
+    expect(plain.item.presentation).toEqual({ type: 'markdown', text: 'A public introduction' });
+    expect(plain.item).not.toHaveProperty('description');
     const cleared = await data<{ item: WorldDetail }>(await jsonRequest('/' + world.id, 'PATCH', { expectedRevision: 2, defaultPresetId: null, defaultApiModelConfigId: null }));
     expect(cleared.item.defaultPresetId).toBeNull();
     expect(cleared.item.defaultApiModelConfigId).toBeNull();
@@ -389,7 +399,7 @@ describe('world routes', () => {
     expect(response.headers.get('Cache-Control')).toBe('no-store');
     const exported = await unzipBytes(new Uint8Array(await response.arrayBuffer()));
     const card = JSON.parse(exported['world.json']!.toString());
-    expect(card).toMatchObject({ spec_version: '0.1', data: { name: '新 名称', tags: ['现在'] } });
+    expect(card).toMatchObject({ spec_version: '0.2', data: { name: '新 名称', tags: ['现在'] } });
     expect(card).not.toHaveProperty('spec');
     expect(card.data.characters[0].sprites).toEqual(sprites);
     const source = await app.request(base + '/' + imported.item.id + '/original');

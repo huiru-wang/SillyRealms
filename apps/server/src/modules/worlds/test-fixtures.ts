@@ -1,9 +1,11 @@
+import { worldPublication } from '../../testing/fixtures.js';
 import { ZipFile } from 'yazl';
 import { fromBuffer, type Entry, type ZipFile as InputZip } from 'yauzl';
 
 export const worldCardFixture = () => ({
-  spec_version: '0.1',
+  spec_version: '0.2',
   data: {
+    publication: worldPublication(),
     name: '雾港',
     tags: ['冒险'],
     characters: [{ id: 'player', name: '旅人', player_selectable: true }],
