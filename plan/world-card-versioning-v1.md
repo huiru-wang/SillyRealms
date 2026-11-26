@@ -1,35 +1,56 @@
-# SR 世界卡作者元信息、版本目录与覆盖更新方案
+# SR 世界卡作者信息与开放 OTA 协议 v1
 
-- 日期：2026-11-24
-- 状态：待实施；本次仅保存方案，不修改业务代码。
+- 初稿日期：2026-11-24
+- 最近修订：2026-11-26
+- 状态：协议与实施方案；业务功能待实施。本次更新协议文档，不表示运行时已支持。
 - 仓库：/Users/wanghuiru/Workspace/SillyRealms
 - 适用代码：当前 apps/server、apps/web、packages/sr-sdk。
 - 本版按最新需求采用「同一世界原地覆盖指定版本」。不采用上一轮建议的多版本安装或 world_packages 分组。
-- 集中托管发布与评论的独立补充方案见 [SR 世界卡集中发布与 Discord 评论方案](world-card-publishing-hub.md)；本地更新触发策略与覆盖语义保持本方案。
+- 更新源不绑定统一域名、账号、平台或 provider；发布者可自行实现同一协议。
+- [集中发布与 Discord 评论方案](world-card-publishing-hub.md)仅为未来可选的托管实现，不是 OTA 标准依赖，也不是当前实施前置。
+
+## 0. 开放协议边界
+
+本方案定义 SR World Update Protocol v1。这里的“标准”指 SR 对创作者、托管方与客户端公开的稳定契约；不是声称 CCv3 已定义同名作者结构或 OTA。
+
+| 能力 | 执行方与契约 |
+| --- | --- |
+| 描述作者与当前发行版 | 世界卡 `data.metadata`，随卡包导入、导出 |
+| 获取全部公开版本 | SR 服务端 `GET metadata.update_url`，读取一份完整版本目录 |
+| 获取指定版本世界卡文件 | 按明确的 `version` 选择目录记录，再 `GET artifact.url`，返回该版原始完整文件 |
+| 应用指定版本 | 本地 SR `POST /api/v1/worlds/:id/apply-version`，校验后原地覆盖 |
+| 获取本地已知版本信息 | 本地 SR `GET /api/v1/worlds/:id/versions`，仅返回缓存 |
+| 主动刷新版本目录 | 本地 SR `POST /api/v1/worlds/:id/versions/refresh`，读取远端，校验后保存到该世界目录的 releases.json |
+
+远端只需要提供 JSON 和文件；它可以是静态站点、对象存储或动态服务。协议不规定 URL 路径模板，也不要求安装 SR 服务端、提供平台账号或实现上述本地 API。版本目录和世界卡文件可以来自不同域名，客户端不按托管商名称分支处理。
+
+OTA 在本期的产品行为是“检查可用版本、提示更新、由用户选择目标版本应用”。远端发布新版本不会主动改写玩家安装。检查触发采用“每次服务启动自动一轮 + 用户在详情主动刷新单卡”；协议本身不绑定检查频率。
 
 ## 1. 已确定的产品范围
 
 1. 世界卡正式增加 data.metadata，记录作品身份、作者、当前发行版与更新源。
 2. 创作者提供一个固定 HTTPS 地址，返回该作品的完整公开版本目录。
 3. 每个版本是一条数据对象，包含版本号、更新说明、发布时间和可直接下载的世界卡文件。
-4. 每次服务启动，在完成本地初始化并开始监听后，后台异步执行一轮版本目录检查。
-5. 世界列表、详情和版本列表接口只读取本地数据与检查缓存，不触发远端目录请求。
-6. 将远端最新版本号持久保存；前端读取当前版本和最新版本，比较后显示一个红点。
+4. 每次服务启动，在完成本地初始化并开始监听后，后台异步执行一轮版本目录检查；世界卡详情另提供用户主动刷新入口。
+5. 世界列表、详情和版本列表 GET 接口只读取本地数据与检查缓存；仅启动批次或显式刷新 POST 会触发远端目录请求。
+6. 在对应世界目录保存最近一次成功获取的完整公开版本原始 JSON；最新版从文件内容计算，前端与当前版比较后显示一个红点。
 7. 世界详情可以查看作者目录中所有公开版本，选择其中一个覆盖当前世界，包括升级和回退。
 8. 覆盖保留本地 worldId、已有会话、历史消息、运行状态及本地管理配置；后续叙事与舞台使用覆盖后的作者内容。
 9. 本期不增加定时检查、每次列表请求检查、详情打开补查、社区后台、增量下载、长期本地版本仓库或自动状态迁移。
 
 「所有版本」指作者在目录中列出且仍公开提供的版本，并不保证找回作者已移除的历史发行。平台只保留一份当前安装，历史版在用户选中时重新下载。
 
-### 1.1 严格启动一次的可见性边界
+### 1.1 自动检查与用户主动刷新的边界
 
-- 新导入的世界卡若错过本次启动扫描，等下次服务启动才检查；本期不偷偷增加单卡检查。
+- 新导入的世界卡不自动补查；有 update_url 时，用户可立即在详情点击「获取版本列表」，无需等到下次服务启动。
 - 首屏早于后台检查完成时，读取上次缓存；从未检查过则显示未知。
-- 已打开的静态列表不会因后台写库自行重绘；本期在下一次正常列表读取、重新进入或用户刷新页面后显示结果，不增加轮询或全局推送。
-- 详情打开不会补拉目录；没有缓存时显示「尚未获取版本列表，服务启动时检查」。
-- 用户主动应用某个版本时允许下载该版本文件。这是安装操作，不是再次检查版本目录。
+- 启动后台更新 releases.json 不新增全局推送，其他已打开页面在下一次正常读取时获得结果。
+- 用户主动刷新完成后，发起操作的客户端立即同步版本列表、详情及世界列表摘要，重新计算红点，不要求退出页面再进入。
+- 详情打开、版本弹窗打开、切换 Tab 和普通页面刷新都只读取本地缓存；显式版本刷新按钮才发起远端获取。
+- 没有缓存时显示「尚未获取版本列表」及获取按钮；已有缓存时可查看最后成功时间并手动刷新。
+- 用户主动应用某个版本只下载所选发行文件，与刷新版本目录是两个独立操作。
 
-这些限制是本期触发策略的直接结果。后续可以单独增加「手动检查」或「首次导入检查」，不包含在本期。
+首版触发只有启动自动一轮和用户主动刷新。继续不增加导入后自动补查、TTL 自动过期重拉、定时器、轮询或任务队列。
 
 ## 2. 当前代码依据
 
@@ -43,12 +64,12 @@
 | 现有发布函数拒绝覆盖已存在目标目录 | modules/worlds/files.ts 的 publishImport |
 | 会话只保存 worldId，每轮读取当前世界定义 | modules/sessions/types.ts、usecases/context/capture.ts |
 | global/session/message 状态分别存于 worlds/sessions/entries | infrastructure/database/connection.ts、modules/state/service.ts |
-| 当前 RuntimeCache 只有 Run 占用，缺少世界覆盖占用 | infrastructure/cache/index.ts |
+| 当前 RuntimeCache 管理叙事与 AI 帮答准入，缺少世界覆盖占用 | infrastructure/cache/index.ts |
 | 预览内容身份只看 worldId 和 components 声明 | apps/web/src/features/worlds/preview-cache.ts |
 | 资源基地址不允许 query，资源响应缺少明确再验证规则 | packages/sr-sdk/src/asset-url.ts、apps/server/src/routes/worlds.ts |
 | initialize 完成后才开始监听，适合监听后启动异步检查 | apps/server/src/server.ts、usecases/initialize.ts |
 
-审阅时 DATABASE_VERSION 为 6，工作区有其他任务的未提交改动。实施时基于届时最新结构增加迁移，不写死与其他任务冲突的数据库版本，不清库、不覆盖其他任务文件。
+2026-11-26 复核：当前导入器仍只接受世界卡 0.1，正式 metadata、版本目录与 apply-version 路由均未实现；已有导入的数据库及文件发布环节都拒绝覆盖已存在世界。实施时基于届时最新结构增加迁移，不写死数据库版本，不清库、不覆盖其他任务文件。
 
 ## 3. 世界卡 metadata 结构
 
@@ -69,6 +90,7 @@
           "url": "https://creator.example.org/"
         }
       ],
+      "creator_notes": "港口题材的多人叙事世界。建议先阅读开局说明，素材致谢见作品主页。",
       "release": {
         "version": "1.2.0",
         "published_at": "2026-11-10T12:00:00+08:00",
@@ -86,7 +108,8 @@
 | 字段 | 类型 | 要求与含义 |
 | --- | --- | --- |
 | package_id | string | 正式新卡必填，规范 UUID；首次创作生成并保存，后续发版、改名、回退保持不变 |
-| authors | array | 至少一位作者，每项 name 为非空字符串，url 为可选 HTTP(S) 公开主页 |
+| authors | array | 至少一位作者，按数组顺序署名；每项 name 为非空字符串，url 为可选 HTTP(S) 公开主页 |
+| creator_notes | string | 可省略，缺省视为空字符串；面向玩家的作者说明、玩法建议与致谢，不是本版更新日志 |
 | release.version | string | 正式新卡必填，稳定发行版本 MAJOR.MINOR.PATCH |
 | release.published_at | string | 新发行必填，带时区的 ISO 8601 时间 |
 | release.notes | string | 本版更新说明，可为空字符串；纯文本或受限 Markdown |
@@ -97,6 +120,7 @@
 - 作者署名不代表账号认证；不能凭作者昵称或作品名自动关联安装。
 - authors[].url 和 homepage 只允许 HTTP(S)，拒绝 javascript:/data: 等协议；更新源和发行文件另按更严格的公开 HTTPS 规则校验。
 - 二次创作成为独立发行作品时使用新的 package_id，可在说明中保留原作出处。
+- creator_notes 描述作品的整体使用说明；release.notes 只描述本次发行变化，两者独立展示。
 - release 只描述当前卡包的发行版；完整历史放在远端版本目录。
 - metadata 不参与叙事提示词构建；本地更新检查结果不写入 metadata。
 - 不增加 artifacts 到 metadata，避免将 ZIP 自身哈希放进被校验的 ZIP 引发自引用。
@@ -122,7 +146,38 @@
 
 metadata 扩展随卡协议 0.2 发布。继续导入 0.1 卡，缺少 metadata 时作为未声明发行信息的离线卡。保留旧 extensions 原样，但不把 authoring.revision 猜成正式发行版本，也不按卡名自动补 package_id。
 
+### 3.5 与角色卡标准的关系
+
+作者元信息参考 CCv3 的语义，SR 仍使用自己的世界卡结构，不重复维护一套平铺的 creator/character_version 字段。
+
+| CCv3 语义 | SR 对应 |
+| --- | --- |
+| creator：创作者署名 | metadata.authors；可表达多位作者 |
+| creator_notes：作者说明 | metadata.creator_notes |
+| character_version：作品发行版本 | metadata.release.version；SR 首版增加可比较的数字三段约束 |
+| source：来源 | 作为溯源信息参考；不能未经验证就当作 update_url |
+| extensions：应用扩展 | SR 原有 extensions 保留其自定义用途，正式发行信息进入 metadata |
+
+这是一张语义映射表，不承诺已经实现 CCv3 自动迁移。CCv3 的自由文本版本不能静默转换为合法 SR 发行版本；来源网页也不能自动视为机器版本目录。卡片创建/修改时间与发行的 published_at 不是同一概念。
+
 ## 4. 创作者提供的全版本目录
+
+### 4.0 远端 HTTP 交互契约
+
+1. **获取版本目录**：对 update_url 发起 HTTPS GET。基础成功响应是 HTTP 200 + 第 4.2 节的原始 JSON 对象；远端不包裹 SR 本地接口的 success/data 结构。
+2. **选择指定版本**：按唯一且完全相等的 version 匹配条目。不得把“最新版本下载地址”替代用户选中的历史版本，也不依赖数组顺序。
+3. **获取世界卡文件**：对该条目的 artifact.url 发起 HTTPS GET，基础成功响应是 HTTP 200 + 原始 ZIP/JSON 字节；校验值针对这些最终字节。
+4. **本地应用**：下载、完整校验后由 SR 执行安装。发布源没有远程执行玩家安装的接口；不需要另加固定路径的“安装”或“指定版本查询”API。
+
+约束：
+
+- 目录协议版本为 schema_version = 1；不支持的版本作为检查失败处理，保留上次成功缓存。
+- 全版本目录不分页、不只返回 latest、不静默截断；上限与失败策略见第 6.1 节。
+- 客户端可忽略不认识的非必需字段；新增字段不能改变 v1 已有字段含义，破坏性变更需要新的 schema_version。
+- 建议目录使用 application/json，ZIP 使用 application/zip，JSON 卡使用 application/json；实际内容仍须校验。
+- 非成功 HTTP 响应、HTML 正文或不符合目录结构的对象都属于失败，不能解释为“没有新版”或空版本目录。
+- URL 是完整绝对地址，可包含服务商需要的固定查询参数；不依赖临时签名、浏览器会话或供应商专用解析。
+- 静态托管和动态 API 返回同一内容契约即可。具体上传、发布权限、评论、账号体系由发布方自行实现。
 
 ### 4.1 目录地址
 
@@ -230,48 +285,65 @@ https://cdn.example.org/worlds/fog-harbor/releases.json
 - 同版本内容重写检测只能覆盖平台已有的缓存记录，不声称建立了全网永久发行审计。
 - 下载时以 sha256 约束实际文件，不把哈希当成作者身份认证。
 
-## 5. 本地存储：两个 JSON 字段即可
+## 5. 本地存储：metadata 入库，公开版本原始 JSON 随世界保存
 
-在 worlds 增加：
+数据库只为 worlds 新增 metadata_json，沿用现有 TEXT 序列化 JSON 的方式，保存当前安装的正式作者/发行 metadata；旧卡允许 NULL。通过迁移保留原有世界、会话及运行状态。
 
-| 列 | 内容 | 是否导出 |
-| --- | --- | --- |
-| metadata_json | 正式作者/发行 metadata；旧卡允许 NULL | 是 |
-| update_cache_json | 绑定来源、完整目录、latestVersion、检查时间和结果 | 否 |
+公开版本目录不进入数据库；不另存 latest_version、checked_at、has_update 等镜像列，不新增版本表、缓存表或通用任务表。
 
-不再额外双写 author、version、latest_version、checked_at 等独立列，不新增版本表、作品分组表或通用任务表。
+### 5.1 文件位置与内容
 
-### 5.1 缓存领域结构
+使用现有 dataRoot，在每张世界卡根目录保存一份 releases.json：
 
-以下为服务端内部类型示意，使用驼峰命名；其中 manifest 保持作者协议原字段。
+~~~text
+data/
+└── worlds/
+    └── <worldId>/
+        ├── source/          # 当前安装版的原始 ZIP/JSON
+        ├── package/         # 当前安装版的 world.json、组件与资源
+        └── releases.json    # 最近一次成功获取的公开版本目录原始 JSON
+~~~
 
-```ts
-type WorldUpdateCache = {
-  source: {
-    packageId: string;
-    updateUrl: string;
-  };
-  status: "checking" | "ready" | "failed";
-  lastAttemptAt: number;
-  lastSuccessAt: number | null;
-  latestVersion: string | null;
-  manifest: WorldVersionIndex | null;
-  errorCode: string | null;
-};
-```
+实际目录是 worlds；配置 SERVER_DATA_ROOT 时，整个布局跟随既有 dataRoot，不写死仓库路径，也不根据进程工作目录另算。无需增加独立的缓存目录。
 
-- 缓存绑定 packageId + updateUrl，不是仅绑定显示名称。
-- 开始检查时保留 manifest/latestVersion/lastSuccessAt，只更新状态和本次尝试时间。
-- 成功时在一次本域写入中替换完整目录、latestVersion 与成功时间。
-- 失败时保存失败状态与简明错误码，保留上次成功目录和 latestVersion。
-- NULL 表示尚未建立缓存，不能解释为「已是最新版」。
-- 列表读取时，缓存来源若与当前绑定不一致，则视为无缓存，不能拿旧源数据比较。
-- 缓存检查不递增 worlds.revision，不修改作者内容，不改变 createdAt/updatedAt，也不影响列表排序或预览缓存。
-- 导出继续从世界作者内容和资源构建，严格排除 update_cache_json。
+releases.json 直接保存第 4.2 节的公开协议对象，顶层仍为 schema_version、package_id、versions。先完整校验，再保存收到的 UTF-8 JSON 正文；不重新排序或序列化，不增加本地包裹对象、来源字段、检查状态或附属状态文件。允许的未知扩展字段也原样保留。
 
-## 6. 服务启动后的单次后台检查
+文件保存所有公开版本记录，包括版本号、标题、发布时间、说明、卡片格式及 artifact 的 URL、格式、SHA-256 和大小。每次成功整体替换为源当前返回的目录，不累积已撤下条目；不提前下载历史卡包或媒体。
 
-### 6.1 生命周期
+该文件属于本地安装的运行信息。世界卡导入不能从包内同名文件建立这份缓存；导出和资源接口继续只处理正式作者内容及 package，不包含根部 releases.json。普通导入仍新建 worldId，不增加管理覆盖导入能力。
+
+### 5.2 读写规则
+
+- 通过现有 WorldFileStore / WorldService 读取和保存，复用该世界已有的文件写串行机制；不另建通用缓存服务。
+- GET 只读文件，校验协议、大小和 package_id 后生成接口投影；文件缺失、损坏或作品身份不符时视为无可用缓存，不影响已安装世界，不隐式访问远端。
+- 来源地址仍只保存在正式 metadata.update_url。原始目录不含本地来源标记，来源一致性由第 6.2 节的写入与失效流程保证，不能仅凭 package_id 相同就认定文件来自当前 URL。
+- 成功获取并通过完整目录校验、同版哈希检查后，在世界根目录写临时文件，再原子 rename 为 releases.json；本次任务结束清理自己的临时文件，读取时忽略临时文件。
+- 网络、协议或写盘失败均保留原 releases.json 及其 mtime；首次失败不生成伪目录或错误 JSON。写盘失败不能返回“刷新成功”。
+- 文件发布前在同一世界写串行区间内复核世界存在、当前来源与任务有效性。保存缓存使用已有目录，不递归创建世界根目录，避免晚到请求重建已删除世界。
+- OTA 只替换 source/package，保留根部 releases.json 原文件及 mtime；删除世界时随整个世界目录一起清理。
+
+### 5.3 检查状态和时间如何得到
+
+文件只保存最后一次成功的远端原始目录。接口需要的本地展示字段按以下方式取得：
+
+| 展示字段 | 来源 |
+| --- | --- |
+| currentVersion | 数据库 metadata.release.version |
+| versions | 校验通过的 releases.json |
+| latestVersion | 从 versions 按数字三段比较计算；空目录为 NULL |
+| lastSuccessAt | 有效 releases.json 的文件修改时间 mtime，表示最后成功保存目录的时间 |
+| checking | 当前进程中该世界是否有有效的正在执行的检查 |
+| lastAttemptAt / errorCode | 当前进程最近一次检查的内存记录，未检查时为空 |
+
+普通读取、升级和回退不重写 releases.json，也不刷新 mtime。检查失败只更新本次 HTTP 结果及内存状态，旧目录与最后成功时间保持；不为失败单独落文件。
+
+服务重启后，可以立即读取上次成功目录和 mtime；上次进程的尝试时间、失败原因及 checking 状态不保留。本轮启动检查产生新的状态，不能把旧错误或旧“检查中”视为持久事实。文件时间用于提示缓存新旧，不作为发行发布时间或永久检查审计。
+
+检查不修改 metadata.release.version、worlds.revision、createdAt/updatedAt、作者内容或运行状态，也不影响列表排序和预览内容身份。
+
+## 6. 启动自动检查与详情主动刷新
+
+### 6.1 启动自动检查生命周期
 
 1. 按现有顺序打开数据库、装配服务并完成 initialize，包括缺失内置卡的导入。
 2. HTTP 开始监听。
@@ -281,32 +353,47 @@ type WorldUpdateCache = {
 
 任务不阻塞服务可用，不让远端失败导致服务启动失败，不递归调用自己，不设置周期定时器。
 
-同一批内可按 package_id + update_url 合并重复请求，再分别回写对应 worldId；这是一次批次内的请求去重，不增加长期服务。
+启动批次逐卡调用与手动刷新相同的单卡检查方法。首版以 worldId + package_id + update_url 管理正在执行的检查，见第 6.4 节；不增加跨安装副本的长期共享缓存或批次结果重放。
 
 建议并发数 3，目录单次请求超时 10 秒、正文上限 2 MiB、最多 1000 个版本、重定向上限 3。超限按检查失败处理，不截断目录。具体值集中定义并可在实施时按现有规范调整。
 
 ### 6.2 异步结果回写条件
 
-请求前捕获：
+请求前捕获 worldId、packageId、updateUrl，并保留本次 inFlight 任务身份。
 
-```text
-worldId + packageId + updateUrl
-```
+网络完成后，进入现有该世界文件写串行区间，在正式发布 releases.json 前复核：
 
-请求完成后确认 world 仍存在、作品与来源绑定未变，再写缓存；否则丢弃。
+- 世界仍存在，当前 package_id/update_url 与请求开始时一致。
+- 本次任务仍有效，未因删除或重新建立本地安装而被撤销。
+- 与当前有效目录的同版本哈希不冲突。
 
-- 仅本地安装 version 变了，不必丢弃同源索引；前端会以新本地版本重新比较。
-- 管理名称、标签、模型变化也不让同源检查结果失效。
-- 删除世界后不允许后台结果重新创建世界。
-- 应用任意版本保留已绑定更新源，见第 9.3 节。
+不满足就丢弃结果；失效任务也不能覆盖新任务的内存错误状态。仅安装 version、管理名称、标签或模型改变，不让同源结果失效；应用任意版本继续保留当前来源。
+
+删除世界先完成现有授权与删除校验。世界记录删除事务成功提交后，在首次后续异步等待前，同步撤销该世界全部在途检查并清除内存检查状态，再清理整个世界目录。删除事务未提交时不改变检查生命周期。缓存发布和目录删除共用现有文件写串行机制；若文件发布已经开始，随后删除会清掉它；若响应晚到，任务及存在性复核阻止写入。不从缓存文件恢复世界，不为缓存写入重新创建目录。
+
+本期没有显式换源入口，OTA 保留当前 update_url。将来若允许修改 package_id/update_url，必须在同一个世界文件写串行区间内撤销旧任务、删除 releases.json、提交新绑定；不能先改绑定再异步删缓存，也不能把删文件和改绑定拆成两个可插队操作。删除缓存失败时不提交新来源。此约束无需增加来源 sidecar 或数据库字段。
 
 ### 6.3 关闭与失败
 
-- 关闭服务时取消未完成网络请求，并让检查 Promise 在关闭数据库前结束。
-- 每张卡失败独立记录，不能中断整批。
+- 关闭服务时取消启动检查和手动刷新尚未完成的网络请求，等待对应 Promise 与正在进行的文件提交/清理结束，再关闭数据库；关闭后不再发布目录文件或复核数据库。
+- 每张卡失败独立记录于当前进程，不能中断整批；不把失败状态写入 releases.json。
 - 不自动重试，不引入持久队列或执行恢复。
 - 有旧成功缓存时仍可展示它，但详情标出上次成功时间和本次失败。
 - 单纯检查成功没有 world.updated 事件；该事件只用于实际覆盖后的会话同步。
+
+### 6.4 用户主动刷新与重复请求
+
+- 详情页提供「获取版本列表」或「刷新版本列表」按钮，调用 POST /api/v1/worlds/:id/versions/refresh。
+- 服务端仅从该世界当前 metadata 取得 package_id/update_url，请求不接受用户临时传入任意下载源。
+- 没有 update_url 时按钮不可用并说明「作者未提供更新源」；服务端也校验此条件，不发送网络请求。
+- 启动检查和手动刷新共用同一套获取、协议校验、同版哈希检查、来源复核及 releases.json 原子写入逻辑。
+- 用单卡检查用例生命周期内的内存 Map 保存正在执行的 Promise，键为 worldId + package_id + update_url，范围覆盖网络请求直至文件发布结束。已有同键有效任务时等待该 Promise，不重复请求；finally 只清理自己的任务，避免删掉后来建立的新任务。
+- inFlight Map 只负责合并正在执行的请求；任务结束后的下一次主动点击会重新获取目录，不因已有 releases.json 而直接返回旧结果。最近一次尝试/错误另由同一用例保存在内存，不落盘。
+- 前端请求期间禁用刷新按钮并显示 loading；启动检查与主动点击重叠时复用正在执行的检查，不再启动第二个同卡请求。
+- 普通 HTTP 请求等待检查结束并返回当前版本投影；不新增后台任务 ID、专用进度 SSE 或轮询。
+- 此操作只更新远端目录缓存，不下载卡包、不改变已安装版本、不重新初始化状态，也不占用世界安装锁或阻塞叙事/AI 帮答。
+- 成功后由 HTTP 响应同步当前客户端的版本列表、详情和列表摘要。失败时保留原列表，结束 loading 并显示错误；可通过已有 GET 接口仅读缓存以同步检查状态。
+
 
 ## 7. 世界列表：前端比较并显示一个红点
 
@@ -323,8 +410,8 @@ type WorldVersionSummary = {
 ```
 
 - currentVersion 来自 metadata.release.version。
-- latestVersion 来自匹配来源的 update_cache_json。
-- no_source / not_checked 根据 metadata 与缓存推导，不要求持久存储这两个状态。
+- latestVersion 从当前世界通过校验的 releases.json 计算，不在数据库或文件顶层重复保存。
+- updateStatus 根据 metadata、有效目录和本进程检查记录推导：无源为 no_source，有有效进行中任务为 checking，最近检查失败为 failed，其余有目录为 ready、无目录为 not_checked；状态均不落盘。
 - 列表不携带完整版本目录，不在 route 中发起远端请求。
 - 不存储 hasUpdate；避免与当前版本、缓存产生三份状态。
 
@@ -350,7 +437,7 @@ const hasUpdate =
 - 检查失败不等于无更新；旧缓存存在时继续按旧缓存比较，详情说明其时效。
 - 尚无结果时没有红点，详情显示「尚未获取」，不显示「已是最新版」。
 
-不为红点单独添加 SSE、定时检查或前端轮询。只要前端再次正常读取列表，就可看到后台完成后保存的结果。
+不为红点单独添加 SSE、定时检查或前端轮询。启动检查结果在正常列表读取时显示；用户主动刷新成功时立即同步当前客户端的摘要缓存，重新计算红点。
 
 ## 8. 世界详情：版本列表与应用指定版本
 
@@ -380,14 +467,24 @@ const hasUpdate =
 
 ### 8.2 目录状态
 
-- 已有缓存：直接展示缓存的完整目录，并显示最后成功检查时间。
-- 检查中：可继续展示上次成功目录，附「本次启动正在检查」。
-- 失败：继续展示旧目录与上次成功时间，附简短失败说明。
-- 首次未完成或新卡尚未检查：显示空态与启动检查规则。
+- 已有缓存：直接展示 releases.json 中的完整目录，并显示由 mtime 得到的最后成功获取时间。
+- 检查中：可继续展示上次成功目录，附「正在获取版本列表」，启动或手动检查共用此文案。
+- 失败：继续展示旧目录与上次成功时间，附本进程本次检查的简短失败说明；重启不恢复旧错误。
+- 首次未完成或新卡尚未检查：显示「尚未获取版本列表」；配置了更新源时提供获取按钮。
 - 未配置更新源：显示「作者未提供版本目录」。
 - 当前安装版已不在远端目录中：仍展示当前版本摘要，但不伪造其下载记录。
 
-打开弹窗只查询本地缓存。这里的目录是最近一次启动所取得的公开版本列表，不声称实时更新。
+打开弹窗只查询本地缓存。这里的目录是最近一次成功检查（启动或手动）取得的公开版本列表，不声称实时更新。
+
+详情作者/版本区域与版本弹窗提供同一主动刷新操作：
+
+- 无成功缓存：按钮「获取版本列表」。
+- 已有成功缓存：按钮「刷新版本列表」，同时展示最后成功时间。
+- 请求失败：显示本次错误并允许重试；保留已有成功目录。首次失败不显示「已是最新版」。
+- 没有更新源：显示原因，按钮不可用。
+- 成功返回空 versions：明确显示「当前更新源暂无公开版本」，不保留已撤下条目充当当前目录。
+
+按钮点击不等于安装。只有用户另行选择目标版本并确认应用，才进入第 8.3 节的覆盖流程。
 
 ### 8.3 应用确认
 
@@ -415,14 +512,14 @@ const hasUpdate =
 - 全部 sessions.worldId。
 - 已有消息、usage、摘要、tip 与玩家身份。
 - worlds.state、sessions.state、entries.state。
-- 用户设置的世界名称、标签、默认预设与默认模型。
+- 用户设置的世界名称、标签、默认叙事/帮答预设、默认模型及封面马赛克开关。
 - 当前绑定的更新源和已有同源版本目录缓存。
 
 目标版本覆盖：
 
 - 介绍、封面、角色、开局、世界书。
 - 状态定义、消息渲染规则。
-- 组件、舞台入口、作者扩展。
+- 组件、舞台入口、作者扩展；extensions 内属于本地管理的键（例如封面马赛克配置）显式保留，不随作者扩展整体覆盖。
 - 作者信息、发行版本、发行说明等 metadata。
 
 名称和标签沿用当前产品允许用户管理的语义，本期全部按本地设置保留；若作者新版改名或调整标签，不自动覆盖用户已安装副本。用户可通过现有管理入口自行调整。
@@ -445,7 +542,7 @@ cardToWorld 当前会生成初始 global 状态；覆盖路径必须丢弃这份
 
 - 包内 package_id 必须与本地作品一致。
 - 保留本地已有 update_url，旧 ZIP 的历史 update_url 不覆盖当前绑定。
-- 保留同源 update_cache_json，因此回退后仍知道远端最新版本。
+- 保留根部 releases.json 原文件及 mtime，因此回退后仍可从目录得知远端最新版本，不把回退操作误记为一次成功检查。
 - 更换更新源不作为发行覆盖的附带动作；将来单独设计显式来源管理。
 
 这里的包哈希校验针对下载原始字节；保存到数据库的作者内容仍会经过现有解析，以及上述本地管理字段/来源保留规则。原始下载文件可作为 source 保存，导出则使用当前 DB 内容和资源，沿用现有导出语义。
@@ -477,9 +574,9 @@ cardToWorld 当前会生成初始 global 状态；覆盖路径必须丢弃这份
 
 ### 10.1 准备阶段
 
-1. 读取当前世界、匹配来源的缓存及用户选定的版本记录。
+1. 读取当前世界及其通过校验的 releases.json，选择用户指定的版本记录；来源一致性沿用第 6.2 节的生命周期约束。
 2. 验证 expectedRevision 和 expectedSha256，拒绝目录已变化或同版本操作。
-3. 若已知该世界正在运行，可提前拒绝以避免无效下载。
+3. 若已知该世界存在叙事或 AI 帮答运行，可提前拒绝以避免无效下载。
 4. 从缓存记录取得 URL；不接受前端任意传入下载 URL。
 5. 在临时目录下载，检查格式、实际大小和 SHA-256。
 6. 复用现有解析、ZIP 路径/资源校验及卡协议验证。
@@ -489,17 +586,17 @@ cardToWorld 当前会生成初始 global 状态；覆盖路径必须丢弃这份
 
 ### 10.2 最后应用阶段
 
-1. 获取目标 worldId 的短暂更新占用；拒绝同世界活跃 Run 或其他覆盖。
+1. 获取目标 worldId 的短暂更新占用；拒绝同世界活跃叙事 Run、AI 帮答或其他覆盖。
 2. 重新读取当前世界，复核 expectedRevision、来源和目标记录。
 3. 检查会话玩家角色及需保留的状态定义兼容。
-4. 将旧目录暂移到本次操作的临时备份位置，再将新目录发布到原位置。
+4. 在该世界文件写串行区间内，仅将旧 source/package 暂移到本次操作的备份位置，再发布新 source/package；世界根目录和 releases.json 原位保留。
 5. 在短同步数据库事务中 CAS 更新作者内容和 metadata，revision 加一；不写运行 state 和本地保留字段。
-6. 数据库成功后清理临时旧目录，释放占用，再发提交后事件。
+6. 数据库成功后清理本次 source/package 备份，释放占用，再发提交后事件。
 7. 返回最新世界详情。
 
 文件/数据库通过暂存和补偿协调，沿用当前仓库原则，不宣称跨文件与数据库的强事务。
 
-普通失败时恢复旧目录并回滚数据库；回滚失败必须给出明确清理/恢复错误，不能假装更新成功。DB 已提交后的临时旧目录清理失败不再把已生效更新当作未完成，应记录清理信息并保留成功结果。
+普通失败时恢复旧 source/package 并回滚数据库；回滚失败必须给出明确清理/恢复错误，不能假装更新成功。DB 已提交后的临时备份清理失败不再把已生效更新当作未完成，应记录清理信息并保留成功结果。根部 releases.json 不参与替换或回滚。
 
 临时备份仅服务本次替换失败补偿，不是长期历史版本。
 
@@ -508,8 +605,9 @@ cardToWorld 当前会生成初始 global 状态；覆盖路径必须丢弃这份
 - 复用 stageImport 和 readImportPackage 的准备/校验能力。
 - 现有 publishImport 拒绝已存在目标，新增明确的替换发布方法。
 - 现有 discardImport 在 published 分支可能删除整个目标目录，不能直接拿来补偿覆盖。
-- 原件和 package 一并切换，确保「下载原件」对应当前安装。
+- 原件 source 和 package 作为同一次覆盖切换，确保「下载原件」对应当前安装。
 - 替换整个 package，不能只将新文件覆盖到旧目录，否则新版已删除文件会残留。
+- 不整体替换世界根目录。根部 releases.json 既不来自新卡包，也不从准备阶段的旧快照复制回来；让它原位保留，避免覆盖下载期间刚刷新的版本目录或改变其 mtime。
 - 删除、导入发布等写操作复用现有文件串行机制；现有导出并没有被该机制串行保护，不能假定它已安全。
 - 导出、组件批量读取和单资源打开，在开始与返回前复核更新占用和捕获的 revision。若覆盖发生，丢弃本次构建结果或关闭已打开流，返回可重试错误，避免交付旧 JSON 加新资源。
 - 完成且通过复核的导出临时 ZIP 可独立流式发送；单资源流使用其打开时对应的验证标识，不能给旧流挂上新版 ETag。无需为此引入通用读写锁。
@@ -522,14 +620,14 @@ cardToWorld 当前会生成初始 global 状态；覆盖路径必须丢弃这份
 
 占用期间：
 
-- 同世界新的 Run 不能开始。
+- 同世界新的叙事 Run 和 AI 帮答不能开始；现有两类运行都必须在准入时记录或可明确取得 worldId。
 - 不能创建该世界的新会话。
 - 不能对该世界关联的 global/session/message 状态或会话执行冲突写入。
 - 阻挡第二次覆盖、删除和管理写入。
 - 世界详情、组件和资源在短暂替换窗口不能读到 DB/文件混合版本，可返回明确的正在更新结果。
 - 其他世界、已有历史读取与停止操作保持现有行为。
 
-只在替换前检查「当前无 Run」不足够：文件 await 期间新 Run 可能开始。因此 acquireRun、会话创建及相应写入口也必须识别世界更新占用。
+只在替换前检查「当前无 Run」不足够：文件 await 期间新 Run 或 AI 帮答可能开始。因此 acquireRun、acquireReplyAssist、会话创建及相应写入口也必须识别世界更新占用。当前 assertGlobalStateWrite 只检查活跃叙事，不能当作完整的 OTA 更新准入。
 
 RuntimeCache 不查询数据库；调用方提供世界归属。内部覆盖 permit 只在服务端持有，不通过 HTTP/SDK 传播。
 
@@ -562,7 +660,7 @@ previewContentIdentity 增加 metadata.release.version；更新版本改变，�
 - workspace 重取世界与组件；SessionPage 以 worldId 与已安装 release.version 组合为 StageHost 的内容 key，发行版本变化时重建舞台 iframe 与桥接，清除同 main 下可能保留的旧错误状态和媒体 DOM。
 - 仅重建舞台，保留会话 workspace、历史、输入草稿和独立叙事连接；只向旧 iframe 发 render 不足以保证资源刷新。
 - SSE 重连补一次当前世界版本核对，避免漏掉短暂通知。
-- 不新增全局 SSE，不对启动版本检查发送该事件，不将更新目录作为会话事件传输。
+- 不新增全局 SSE，不对启动或手动版本检查发送该事件，不将更新目录作为会话事件传输；手动刷新由 HTTP 响应同步发起端。
 
 ## 12. HTTP / Web 契约
 
@@ -572,10 +670,13 @@ previewContentIdentity 增加 metadata.release.version；更新版本改变，�
 | --- | --- |
 | GET /worlds | 本地摘要，增加 currentVersion/latestVersion/updateStatus；零远端调用 |
 | GET /worlds/:id | 当前作者内容和 metadata，提供精简检查状态；零远端调用 |
-| GET /worlds/:id/versions | 返回缓存版本目录、当前版、最新版和检查时间/结果；零远端调用 |
+| GET /worlds/:id/versions | 读取 releases.json，结合 metadata 与内存检查状态返回版本目录、当前版、最新版和时间/结果；零远端调用 |
+| POST /worlds/:id/versions/refresh | 用户主动获取该卡的远端目录，校验并原子保存 releases.json，返回更新后的版本投影 |
 | POST /worlds/:id/apply-version | 依据缓存版本记录下载并覆盖当前世界 |
 
-本期不公开 check-update/refresh 接口，避免与「只启动自动检查一次」混淆。
+这些均为玩家本地 SR 的接口，发布方不需要实现。获取指定版本的原件已由第 4.0 节的 artifact.url GET 完成，不再要求发布方提供固定下载路由，也不把本地“导出当前安装”冒充某个发行版原始文件。
+
+主动刷新 POST 无需业务请求体，复用现有统一响应包络。成功返回与 GET /worlds/:id/versions 相同形状的数据，至少包含 currentVersion、latestVersion、检查状态/时间和完整版本列表。失败返回标准错误，原 releases.json 及其 mtime 保留，本次尝试和错误仅记录在当前进程内存；GET 接口始终仅读本地数据。文件路径不作为 API 字段返回。刷新不修改 metadata.release.version、worlds.revision 或作者内容。
 
 应用请求：
 
@@ -597,13 +698,13 @@ previewContentIdentity 增加 metadata.release.version；更新版本改变，�
 
 ## 13. 创作者操作说明
 
-本节描述创作者自行维护发行源的流程。采用 [集中发布方案](world-card-publishing-hub.md) 时，固定地址、最终包存储、哈希及版本目录由发布中心生成，创作者只需上传卡包和填写版本说明；公开协议保持一致。
+本节描述任意发布方维护发行源的流程。第一版只要求公开 JSON 和文件，可由创作者、社区或第三方服务托管；没有统一源注册、provider 类型或官方域名要求。[集中发布方案](world-card-publishing-hub.md)只是将这些步骤自动化的一种可选实现。
 
 ### 13.1 首次准备
 
 1. 创建世界源码目录，沿用 world.json、components/、assets/ 布局。
 2. 生成一次 package_id 并写入源文件，之后不随打包重新生成。
-3. 填写 authors、homepage 和固定 update_url。
+3. 填写 authors、creator_notes、homepage 和固定 update_url。
 4. 编写当前版本与更新说明。
 5. 将所有希望随版本固定的组件和媒体放进包内，用 sr-asset:// 引用。
 
@@ -638,7 +739,7 @@ fog-harbor.zip
 5. 将发行对象追加到本地 releases.json，保留旧发行对象。
 6. 先上传新 ZIP 到固定版本路径，确认可直接下载。
 7. 再上传覆盖固定 releases.json。
-8. 用户下次启动 SR 后获得新的目录缓存，世界列表按版本差显示红点。
+8. 用户下次启动 SR，或在详情主动刷新版本列表后，获得新的目录缓存；世界列表按版本差显示红点。
 
 不先公布目录再上传文件；不把旧版本下载链接统一重定向到最新 ZIP；不使用 latest.zip 作为每个历史版本的共同下载目标。
 
@@ -685,36 +786,38 @@ pnpm world:release \
 │   ├── services.ts / usecases.ts / app.ts      [修改] 装配读取/覆盖用例
 │   ├── errors.ts                              [修改] 集中更新相关错误
 │   ├── infrastructure/
-│   │   ├── database/connection.ts             [修改] 两列 JSON 及结构迁移
+│   │   ├── database/connection.ts             [修改] 仅新增 metadata_json 的结构迁移
 │   │   └── cache/index.ts                     [修改] 短暂世界覆盖占用
 │   ├── modules/worlds/
-│   │   ├── types.ts                          [修改] metadata/缓存/摘要领域类型
+│   │   ├── types.ts                          [修改] metadata/版本目录/检查摘要类型
 │   │   ├── validation.ts / parser.ts         [修改] 0.2/0.1 解析与导入导出
 │   │   ├── releases.ts                       [新增] 目录校验与版本索引规则
 │   │   ├── downloads.ts                      [新增] 受限目录/发行文件获取
 │   │   ├── update-validation.ts              [新增] 玩家引用及状态兼容检查
-│   │   ├── repository.ts / service.ts        [修改] 缓存写入与 CAS 内容覆盖
-│   │   └── files.ts / assets.ts              [修改] 替换补偿及资源验证元信息
+│   │   ├── repository.ts                    [修改] metadata 读写与 CAS 内容覆盖
+│   │   ├── service.ts                       [修改] 聚合目录文件、metadata 及来源复核
+│   │   ├── files.ts                         [修改] 根部 releases.json 读写、子目录替换与补偿
+│   │   └── assets.ts                        [修改] 资源验证元信息
 │   ├── modules/sessions/service.ts            [修改] 写入口识别世界覆盖占用
 │   ├── usecases/
-│   │   ├── check-world-versions.ts            [新增] 启动单批扫描
+│   │   ├── check-world-versions.ts            [新增] 启动/手动共用获取、文件保存、内存状态与请求合并
 │   │   ├── apply-world-version.ts             [新增] 指定发行版覆盖编排
 │   │   ├── import-world.ts / export-world.ts  [修改] 元信息贯通，缓存不导出
 │   │   ├── create-session.ts / set-state.ts   [修改] 覆盖期写入互斥
-│   │   └── delete-world.ts                    [修改] 删除与覆盖互斥
+│   │   └── delete-world.ts                    [修改] 删除与覆盖互斥，删除提交后撤销检查并清理目录
 │   └── routes/worlds.ts                       [修改] 本地版本接口与资源再验证
 ├── apps/web/src/
 │   ├── features/worlds/
-│   │   ├── api/worlds.ts                      [修改] 版本信息与覆盖接口
+│   │   ├── api/worlds.ts                      [修改] 缓存版本读取、主动刷新与覆盖接口
 │   │   ├── WorldCard.tsx / WorldLibraryPage.tsx[修改] 版本比较及红点
-│   │   ├── WorldDetailPage.tsx                [修改] 作者版本入口与覆盖后刷新
-│   │   ├── WorldVersionsDialog.tsx            [新增] 全版本说明/选择/确认
+│   │   ├── WorldDetailPage.tsx                [修改] 作者版本入口、主动获取按钮与应用后刷新
+│   │   ├── WorldVersionsDialog.tsx            [新增] 全版本说明/主动刷新/选择/确认
 │   │   └── preview-cache.ts / WorldComponentCache.tsx
 │   │                                         [修改] 发行版本变化重建预览
 │   ├── features/sessions/workspace.ts         [修改] 更新后/重连后重载世界内容
 │   ├── features/sessions/SessionPage.tsx       [修改] 发行版本变化时重建舞台，保留 workspace
 │   ├── transport/session-events.ts            [修改] 分发 world.updated
-│   ├── app/ManagementData.tsx                 [修改] 覆盖后刷新摘要
+│   ├── app/ManagementData.tsx                 [修改] 目录刷新或覆盖后同步摘要与红点
 │   └── i18n/locales/                          [修改] 跟随当前中英日文案体系
 ├── packages/sr-sdk/
 │   ├── src/release-version.ts                 [新增] 前后端共享稳定版本比较
@@ -724,32 +827,37 @@ pnpm world:release \
 ├── package.json                              [修改] 发行脚本命令
 ├── docs/
 │   ├── world-card.json                        [修改] 正式 metadata 示例
+│   ├── reference/world-card.md                [修改] 0.2 作者信息与发行字段
+│   ├── reference/world-updates.md             [新增] 实施后公开 OTA v1 的规范契约
 │   ├── creator/world-publishing.md            [新增] 作者发布与链接说明
 │   ├── runtime/server-http.md                 [修改] 列表/版本/覆盖契约
 │   ├── runtime/server-events.md               [修改] 提交后世界更新通知
 │   └── runtime/web-management.md / web-runtime.md
 │                                             [修改] 红点/覆盖/舞台刷新行为
-└── plan/world-card-versioning-v1.md           [新增] 本方案
+└── plan/
+    ├── world-card-versioning-v1.md           [修改] 本协议与实施方案
+    └── world-card-publishing-hub.md          [修改] 明确集中源仅为可选托管方案
 ```
 
 删除文件：无。对应模块函数测试按下节增加或修改，不因本功能重构 context/state 常规算法、资源寻址协议或整个管理页面。
 
-单域知识放 worlds，通过 service.ts 对外；网络/文件/DB多步骤编排归 usecases。检查缓存更新属于 worlds 本域，不能由 routes 直接写 SQL。
+单域知识放 worlds，通过 service.ts 对外；网络/文件/DB 多步骤编排归 usecases。版本目录文件复用现有 files.ts 和该世界文件写串行机制，repository 只处理正式数据库记录，routes 不直接操作 SQL 或文件。不新增独立版本缓存模块，也不扩展全局 RuntimeCache 来存目录；它在本方案中仅负责运行与覆盖占用。运行时数据布局见第 5.1 节，releases.json 由检查流程生成，不是仓库交付文件。
 
 ## 15. 实施顺序与验收
 
 ### 第一步：协议和本地投影
 
-- 0.2 metadata、0.1 卡兼容、两个 JSON 列。
+- 0.2 metadata、0.1 卡兼容、唯一新增的 metadata_json 列，以及世界根部 releases.json 的原始目录读写。
 - 导入导出保留 metadata 且不带检查缓存。
 - 全版本目录校验与共享版本比较。
 - 列表/详情的本地字段投影。
 
-### 第二步：启动检查和版本展示
+### 第二步：启动检查、主动刷新和版本展示
 
-- 单次异步批次、失败保留缓存、来源绑定回写。
-- 列表红点、版本详情与未知/失败状态。
-- 不在列表/详情/导入流程增加远端检查。
+- 单次自动批次与用户单卡主动刷新，共用检查与文件原子保存；合并同卡正在执行的请求。
+- 失败保留原文件及 mtime、来源与任务有效性复核、内存检查状态、列表红点和版本详情。
+- 主动刷新成功后立即同步当前客户端摘要与版本列表。
+- 不在普通列表/详情 GET、打开页面或导入完成时隐式增加远端检查。
 
 ### 第三步：指定版本覆盖
 
@@ -765,21 +873,32 @@ pnpm world:release \
 ### 必要验收场景
 
 1. 1.10.0 大于 1.9.0；非法/预发行版本不混入本期排序。
-2. 单次启动每个来源最多检查一次；首次页面请求与重复页面请求都不新增目录 GET。
-3. 服务已可用时检查仍可进行；远端失败不影响启动；关闭后无晚到数据库写入。
-4. 失败保留上次目录和 latestVersion；没有缓存不假装最新版。
-5. 来源变化、世界删除后的晚到结果被丢弃。
-6. 新导入卡明确等下次启动；启动首屏读取时序符合第 1.1 节。
+2. 单次启动自动批次每张世界卡至多检查一次；普通页面 GET 不新增远端请求，明确的主动刷新 POST 可以再次获取。
+3. 服务已可用时检查仍可进行；远端失败不影响启动；关闭等待检查和文件提交结束，随后无晚到目录发布或数据库访问。
+4. 失败保留原 releases.json 与 mtime，latestVersion 仍从旧目录计算；没有有效文件不假装最新版。
+5. 来源变化或世界删除使旧任务失效；晚到成功或失败都被丢弃，不重建目录，也不污染后来任务的内存状态。
+6. 新导入卡不自动补查，但用户可立即主动获取版本列表，无需重启；启动首屏读取时序符合第 1.1 节。
 7. 查看说明不消红点，升级后消失，回退后重新出现。
 8. 同名不同 package_id 拒绝应用；重复版本/同版哈希变更拒绝目录。
 9. ZIP/JSON 下载失败、哈希不符、解包或 DB 失败时当前内容保持或恢复。
 10. 覆盖不改变世界 ID、消息、三 scope 状态、默认模型/预设和本地管理字段。
 11. 缺少已有玩家角色、状态根/类型不兼容、范围收紧时在替换前拒绝。
-12. 下载期间可正常运行；最终覆盖与新 Run/会话/状态写入互斥，其他世界不受影响。
+12. 下载期间可正常运行；最终覆盖与叙事/AI 帮答、新会话、状态写入互斥，其他世界不受影响。
 13. 同路径组件替换后重新获取，资源不沿用旧验证标识；管理名称变化不重建预览。覆盖前已开始的导出/组件读取若横跨替换，结果被丢弃而非交付混合包。
 14. 已打开会话能通过 sessionId 校验接收 world.updated，发行版本变化重建舞台；断线重连可补查，输入草稿和历史保持。
-15. 回退不改变 update_url；目录/源未变时缓存保持有效。
+15. 升级和回退不改变 update_url；只置换 source/package，保留 releases.json 原内容及 mtime，包括下载期间刷新得到的新目录。
 16. 发行脚本给出真实 SHA-256 与大小，同版重复发布被拒绝。
+17. 两个不同来源、任意路径的合规目录都能被同一客户端读取；目录与文件跨域无需 provider 分支。
+18. 指定旧版本只下载该记录的 artifact.url；不访问 latest 路径，不用当前安装导出代替原件。
+19. creator_notes 与 release.notes 分别导入、导出、展示；作者说明不注入模型提示词。
+20. 未部署 Hub、Discord 或其他集中服务时，仅有静态 JSON 与 ZIP 的来源即可完成检查与应用。
+21. 主动刷新成功后立即更新版本弹窗、详情与列表红点；远端已撤下条目不被累计保留。
+22. 启动检查与手动刷新重叠、重复点击时，同卡仅有一个正在执行的请求；结束后再次点击可重新获取，不出现旧结果晚到覆盖。
+23. 主动刷新失败保留旧目录/lastSuccessAt，本次尝试和失败只留在内存；重启可读旧文件，但不恢复旧错误或 checking。首次失败不生成错误目录、不显示最新版。
+24. 主动刷新持久写入仅涉及世界根部 releases.json，不改数据库字段、内容 revision、作者文件和运行状态；不添加本地包装字段或状态 sidecar。
+25. 自定义 SERVER_DATA_ROOT 时，版本文件仍位于该根下 worlds/<worldId>/；成功保存保留原始 JSON 正文及允许的未知扩展字段，写盘失败不得覆盖旧文件或返回成功。
+26. 文件缺失、损坏、package_id 不符时按无可用缓存返回，普通 GET 不触发网络；之后启动检查或手动刷新可重新建立文件。
+27. 导入不信任包内同名文件作为本地目录；导出和资源接口不包含世界根部 releases.json；删除世界会一并删除文件，晚到检查不能创建已删除的目录。
 
 按仓库现有约束，实施阶段先用函数级测试、临时目录/临时库、typecheck/lint 验证；不启动真实服务、不触碰真实凭据。此次仅文档保存，验证文档结构、示例 JSON 和写入路径即可。
 
@@ -791,5 +910,7 @@ pnpm world:release \
 - Foundry 发行记录与更新说明：https://foundryvtt.com/article/package-management/
 - SillyTavern 作者与角色版本元信息：https://docs.sillytavern.app/usage/core-concepts/characterdesign/
 - Character Card V2 将格式版本与内容版本分开：https://github.com/malfoyslastname/character-card-spec-v2/blob/main/spec_v2.md
+- Character Card V3 的作者说明与来源定义：https://github.com/kwaroran/character-card-spec-v3/blob/main/SPEC_V3.md
+- SemVer 的数字分段比较与发行后内容不变原则：https://semver.org/lang/zh-CN/ 。本方案首版仅采用不含预发布/构建后缀的数字三段子集。
 
-本方案正式收口为：metadata + 全版本目录 + 启动一次缓存 + 前端红点 + 同 worldId 覆盖。没有增加本地多版本安装、周期检测或会话迁移框架。
+本方案正式收口为：metadata_json 保存正式作者/发行信息 + 每个世界根目录一份原始 releases.json + 启动自动一轮/用户主动刷新 + 前端红点 + 同 worldId 覆盖。最新版从文件计算，检查状态只在内存维护；没有增加公开版本数据库缓存、独立缓存目录、本地多版本安装、周期检测或会话迁移框架。
