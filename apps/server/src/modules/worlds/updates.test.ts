@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, lstat, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, lstat, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { DatabaseSync } from 'node:sqlite';
@@ -115,6 +115,42 @@ describe('raw release directory storage', () => {
 });
 
 describe('in-place world replacement', () => {
+  it('rejects malformed author templates on content updates and releases without changing the installed world', async () => {
+    const world = await install();
+    const original = await services.worlds.readOriginal(world.id);
+    const characterPatch = {
+      characters: [{ id: 'player', name: '旅人', player_selectable: true, content: 'First line\n{% else %}' }],
+    };
+    const lorePatch = {
+      lorebook: { entries: [{ id: 'broken', content: "First line\n{% if process.exit() %}x{% endif %}" }] },
+    };
+    expect(() => services.worlds.update(world.id, characterPatch)).toThrow('$.data.characters[0].content');
+    expect(() => services.worlds.update(world.id, lorePatch)).toThrow('$.data.lorebook.entries[0].content');
+    const release = card('1.1.0');
+    await expect(replacement(world, { ...release, data: { ...release.data, ...lorePatch } }))
+      .rejects.toThrow('$.data.lorebook.entries[0].content');
+    expect(services.worlds.require(world.id)).toEqual(world);
+    expect(await services.worlds.readOriginal(world.id)).toEqual(original);
+  });
+
+  it('preserves conditional template source through author edits and release replacement', async () => {
+    const world = await install();
+    const source = "{% if getState('future_affinity', {scope: 'message'}) >= 60 %}Trust {{user}}{% else %}Wait {{custom.note}}{% endif %}";
+    const patch = {
+      characters: [{ id: 'player', name: '旅人', player_selectable: true, content: source }],
+      lorebook: { entries: [{ id: 'relationship', content: source }] },
+    };
+    const edited = services.worlds.update(world.id, patch)!;
+    expect(edited.characters).toEqual(patch.characters);
+    expect(edited.lorebook).toEqual(patch.lorebook);
+    const release = card('1.1.0');
+    const next = { ...release, data: { ...release.data, ...patch } };
+    const updated = await replacement(edited, next);
+    expect(updated.characters).toEqual(patch.characters);
+    expect(updated.lorebook).toEqual(patch.lorebook);
+    expect(await services.worlds.readOriginal(world.id)).toEqual({ format: 'json', bytes: bytes(next) });
+  });
+
   it('preserves local identity, preferences and runtime state while replacing author content and originals', async () => {
     let world = await install();
     services.presets.create({ ...narrativePreset('Local'), id: 'local-preset' });
@@ -153,7 +189,7 @@ describe('in-place world replacement', () => {
     const world = await install('zip'), before = await cacheIndex(world);
     const source = await services.worlds.readOriginal(world.id);
     const originalWorldJson = await readFile(join(services.worlds.paths(world.id).package, 'world.json'));
-    const packagePath = services.worlds.paths(world.id).package;
+    const packagePath = await realpath(services.worlds.paths(world.id).package);
     let failed = false;
     vi.mocked(rename).mockImplementation(async (from, to) => {
       if (!failed && to === packagePath) { failed = true; throw new Error('simulated disk failure'); }

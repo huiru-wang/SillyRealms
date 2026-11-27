@@ -78,7 +78,7 @@ export default function Preview() {
 }
 ```
 
-`getState(path, scope?)` 默认 global；`batchGetState([{path,scope?}])` 返回对应查询值。没有事件订阅或隐式实时刷新。详情运行环境中的 `useSRStateAPI` 是相同只读 API 的别名；作者使用 `useSRWorldStateAPI` 可获得准确的只读类型。
+`getState(path, scope?)` 默认 global；`batchGetState([{path,scope?}])` 返回对应查询值。没有事件订阅或隐式实时刷新。详情预览通过 `useSRWorldStateAPI` 提供此只读接口。
 
 禁止 session/message 状态、状态写入、Session API、事件订阅和直接 Server HTTP。权限由 Host 再次校验，不能靠伪造 iframe 请求绕过。组件不接收原始世界卡、状态定义、会话对象、凭据或底层 transport。Web 使用 `GET /api/v1/state/global/:worldId`，仅供可信 Host 查询当前 global 状态，再按路径返回结果给组件。初始消息状态查看器仍由平台 UI 提供，不能被预览组件读取。
 

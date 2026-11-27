@@ -1,3 +1,4 @@
+import {statePathParts} from '@sillyrealms/sdk/state-validation';
 import type {StateValue} from '../../../../../packages/sr-sdk/src/state-contract.js';
 /** The Host independently checks every request; the iframe SDK is not an authority boundary. */
 export function worldStateQueries(method:unknown,data:unknown):Array<{path:string;scope:'global'}> {
@@ -6,7 +7,7 @@ export function worldStateQueries(method:unknown,data:unknown):Array<{path:strin
   if(!Array.isArray(entries)||entries.length>100)throw Error('INVALID_STATE_QUERY');
   return entries.map(entry=>{
     if(!entry||typeof entry!=='object'||Object.keys(entry).some(key=>!['path','scope'].includes(key))||entry.scope!==undefined&&entry.scope!=='global')throw Error('STATE_SCOPE_NOT_ALLOWED');
-    if(typeof entry.path!=='string'||entry.path.length>2048||entry.path.split('.').length>32||entry.path.split('.').some((part:string)=>!part||['__proto__','prototype','constructor'].includes(part)))throw Error('INVALID_STATE_PATH');
+    if(typeof entry.path!=='string'||entry.path.length>2048||!statePathParts(entry.path))throw Error('INVALID_STATE_PATH');
     return {path:entry.path,scope:'global'};
   });
 }

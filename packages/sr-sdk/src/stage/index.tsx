@@ -4,7 +4,6 @@ import {ActionSuggestions} from './action-suggestions.js';
 import {LoadingText} from '../loading-text.js';
 export {LoadingText};
 export type {LoadingTextProps} from '../loading-text.js';
-export {RichText} from '../rich-text.js';
 export {SRAssetProvider, useSRAssetUrl, useSRAssetBaseUrl} from '../asset-context.js';
 export {WorldDocumentRenderer} from './document.js';
 export type {WorldDocumentRendererProps} from './document.js';

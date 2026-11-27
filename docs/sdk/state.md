@@ -52,7 +52,7 @@ export default function Purse() {
 
 ## useSRWorldStateAPI()
 
-在正式舞台和介绍、开局预览中都返回 `SRWorldStateAPI`，只有两个方法。适合需要在两种环境复用的只读组件。详情预览中的 `useSRStateAPI()` 是这个接口的别名，实际没有更新或订阅方法。
+在正式舞台和介绍、开局预览中都返回 `SRWorldStateAPI`，只有两个方法。适合需要在两种环境复用的只读组件。
 
 | 方法 | 示例 | 注意事项 |
 | --- | --- | --- |

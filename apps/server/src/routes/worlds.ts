@@ -8,11 +8,11 @@ import { readMultipart } from '../http/multipart.js';
 import { requireSessionAccess, type SessionAccessCheck } from '../http/session-access.js';
 import type { DeleteWorld } from '../usecases/delete-world.js';
 import type { SessionService } from '../modules/sessions/service.js';
-import { worldImportLimits, type World, type WorldDownload, type WorldManagementPatch, type WorldService } from '../modules/worlds/service.js';
+import { worldImportLimits, type World, type WorldDownload, type WorldContentDownload, type WorldManagementPatch, type WorldService } from '../modules/worlds/service.js';
 import type { ImportWorld } from '../usecases/import-world.js';
 import type { ExportWorld } from '../usecases/export-world.js';
 import type { RuntimeCache } from '../infrastructure/cache/index.js';
-import type { ApplyWorldVersionInput, WorldUpdates, WorldVersionSummary } from '../usecases/world-updates/index.js';
+import type { ApplyWorldVersionInput, WorldUpdates } from '../usecases/world-updates/index.js';
 
 const mediaTypes: Record<string, string> = {
   ts: 'text/plain', tsx: 'text/plain', jsx: 'text/plain',
@@ -61,37 +61,33 @@ function worldDetail(world: World) {
 }
 
 export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld, deleteWorld, worldUpdates, cache, canAccessSession, shutdownSignal }: {
-  worlds: WorldService; sessions: SessionService; importWorld?: ImportWorld; exportWorld?: ExportWorld;
-  worldUpdates?: WorldUpdates; cache?: RuntimeCache;
-  deleteWorld?: DeleteWorld; canAccessSession?: SessionAccessCheck; shutdownSignal?: AbortSignal;
+  worlds: WorldService; sessions: SessionService; importWorld: ImportWorld; exportWorld: ExportWorld;
+  worldUpdates: WorldUpdates; cache: RuntimeCache;
+  deleteWorld: DeleteWorld; canAccessSession?: SessionAccessCheck; shutdownSignal?: AbortSignal;
 }): Hono {
   const routes = new Hono();
-  const fallbackSummary = (world: Pick<World, 'publication'>): WorldVersionSummary => ({
-    currentVersion: world.publication?.release.version ?? null, latestVersion: null,
-    updateStatus: world.publication?.update_url ? 'not_checked' : 'no_source',
-  });
   async function detail(world: World) {
-    const epoch = cache?.captureWorldRead(world.id);
-    const summaries = await worldUpdates?.getSummaries([world]);
-    cache?.assertWorldRead(world.id, epoch);
+    const epoch = cache.captureWorldRead(world.id);
+    const summaries = await worldUpdates.getSummaries([world]);
+    cache.assertWorldRead(world.id, epoch);
     if (worlds.require(world.id).revision !== world.revision) throw new AppError('WORLD_REVISION_CONFLICT');
-    return { ...worldDetail(world), ...(summaries?.[world.id] ?? fallbackSummary(world)) };
+    return { ...worldDetail(world), ...summaries[world.id] };
   }
   async function contentResponse(
-    worldId: string, path: string, file: WorldDownload & { revision?: number; readEpoch?: number },
+    worldId: string, path: string, file: WorldContentDownload,
     head: boolean, ifNoneMatch: string | undefined, attachment = false,
   ): Promise<Response> {
     let world: World;
     try {
-      cache?.assertWorldRead(worldId, file.readEpoch);
+      cache.assertWorldRead(worldId, file.readEpoch);
       world = worlds.require(worldId);
-      if (file.revision !== undefined && world.revision !== file.revision) throw new AppError('WORLD_REVISION_CONFLICT');
+      if (world.revision !== file.revision) throw new AppError('WORLD_REVISION_CONFLICT');
     } catch (error) {
       await file.body.cancel().catch(() => {});
       throw error;
     }
-    const identity = JSON.stringify([world.id, world.publication?.package_id ?? null,
-      world.publication?.release.version ?? null, world.revision, path, file.size]);
+    const identity = JSON.stringify([world.id, world.publication.package_id,
+      world.publication.release.version, world.revision, path, file.size]);
     const etag = '"' + createHash('sha256').update(identity).digest('hex') + '"';
     if (ifNoneMatch?.split(',').some(value => value.trim().replace(/^W\//, '') === etag || value.trim() === '*')) {
       await file.body.cancel();
@@ -115,14 +111,13 @@ export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld, 
     }
     const page = worlds.listPage({ q, tag: tag || undefined, before, limit: numberQuery(c, 'limit') ?? 24 });
     const counts = sessions.countByWorldIds(page.items.map(world => world.id));
-    const summaries = await worldUpdates?.getSummaries(page.items);
-    const items = page.items.map(world => ({ ...world, ...(summaries?.[world.id] ?? fallbackSummary(world)), sessionCount: counts[world.id] ?? 0 }));
+    const summaries = await worldUpdates.getSummaries(page.items);
+    const items = page.items.map(world => ({ ...world, ...summaries[world.id], sessionCount: counts[world.id] ?? 0 }));
     const last = items.at(-1);
     return success(c, { items, hasMore: page.hasMore, nextCursor: page.hasMore && last ? encodeCursor(scope, { createdAt: last.createdAt, id: last.id }) : null });
   });
   routes.get('/tags', c => success(c, { items: worlds.listTags() }));
   routes.post('/import', async c => {
-    if (!importWorld) throw new AppError('SERVICE_UNAVAILABLE');
     if (!c.req.header('content-type')?.toLowerCase().startsWith('multipart/form-data')) {
       throw new AppError('INVALID_REQUEST', '世界导入需要 multipart/form-data');
     }
@@ -138,7 +133,6 @@ export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld, 
     return success(c, { item: await detail(world) }, 201);
   });
   routes.get('/:id/export', async c => {
-    if (!exportWorld) throw new AppError('SERVICE_UNAVAILABLE');
     const response = await fileResponse(await exportWorld(c.req.param('id'), c.req.raw.signal), c.req.method === 'HEAD', true);
     response.headers.set('Cache-Control', 'no-store');
     return response;
@@ -151,24 +145,21 @@ export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld, 
       c.req.method === 'HEAD', c.req.header('if-none-match')));
   routes.get('/:id/character-sprites', c => success(c, worlds.getCharacterSpriteCatalog(c.req.param('id'))));
   routes.get('/:id/components', async c => {
-    const id = c.req.param('id'), epoch = cache?.captureWorldRead(id), revision = worlds.require(id).revision;
+    const id = c.req.param('id'), epoch = cache.captureWorldRead(id), revision = worlds.require(id).revision;
     const components = await worlds.getComponents(id);
-    cache?.assertWorldRead(id, epoch);
+    cache.assertWorldRead(id, epoch);
     if (worlds.require(id).revision !== revision) throw new AppError('WORLD_REVISION_CONFLICT');
     c.header('Cache-Control', 'no-cache');
     return success(c, components);
   });
   routes.get('/:id/versions', async c => {
-    if (!worldUpdates) throw new AppError('SERVICE_UNAVAILABLE');
     c.header('Cache-Control', 'no-store');
     return success(c, { item: await worldUpdates.getVersions(c.req.param('id')) });
   });
   routes.post('/:id/versions/refresh', async c => {
-    if (!worldUpdates) throw new AppError('SERVICE_UNAVAILABLE');
     return success(c, { item: await worldUpdates.refresh(c.req.param('id')) });
   });
   routes.post('/:id/apply-version', async c => {
-    if (!worldUpdates) throw new AppError('SERVICE_UNAVAILABLE');
     const world = await worldUpdates.applyVersion(c.req.param('id'), await readJson<ApplyWorldVersionInput>(c));
     return success(c, { item: await detail(world) });
   });
@@ -182,7 +173,6 @@ export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld, 
     return success(c, { item: await detail(item) });
   });
   routes.delete('/:id', async c => {
-    if (!deleteWorld) throw new AppError('SERVICE_UNAVAILABLE');
     const raw = c.req.query('deleteSessions');
     if (raw !== undefined && raw !== 'false' && raw !== 'true') {
       throw new AppError('INVALID_REQUEST', 'deleteSessions 必须为 true 或 false');

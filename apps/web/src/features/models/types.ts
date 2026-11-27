@@ -21,7 +21,6 @@ export type CatalogModel = {
   thinkingLevels: ThinkingLevel[];
   thinkingLevelMap: Partial<Record<ThinkingLevel, string | null>> | null;
   promptCache: { short: number | null; long: number | null } | null;
-  narrativeCompatible: boolean;
   supportsMidConversationSystemMessages: boolean;
 };
 export type ProviderModelGroup = { providerId: string; name: string; models: CatalogModel[] };

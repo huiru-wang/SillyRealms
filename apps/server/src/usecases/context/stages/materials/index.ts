@@ -4,6 +4,7 @@ import { narrativeForActivation } from '@sillyrealms/roleplay';
 import { validateStateSchema } from '@sillyrealms/sdk/state-validation';
 import { AppError } from '../../../../errors.js';
 import { parsePromptTemplate } from '../../../../lib/prompt-template.js';
+import { AuthorTemplateError, parseAuthorTemplate, renderAuthorTemplate } from '../../../../lib/author-template.js';
 import { readStateVariable, type VisibleRoots } from '../../lib/state-variable.js';
 import type { StateService, StateViews } from '../../../../modules/state/service.js';
 import type { CharacterSpriteCatalogItem, World, WorldCard } from '../../../../modules/worlds/service.js';
@@ -37,6 +38,12 @@ type LoadRule = NonNullable<Character['load']>;
 type Conditions = Pick<StateService, 'evaluateWhen'>;
 
 const text = (value: string): PromptVariable => ({ type: 'text', value });
+
+/** Author conditions run only when a compiled node consumes the material, once per candidate. */
+const lazyText = (render: () => string): PromptVariable => {
+  let value: string | undefined;
+  return { type: 'text', get value() { return value ??= render(); } };
+};
 
 type LoadEvaluation = Pick<ContextMaterialDiagnostic, 'reason' | 'keywordMatch' | 'whenMatch'> & { active: boolean };
 
@@ -124,18 +131,36 @@ export function selectNarrativeMaterials(input: MaterialSources, conditions: Con
   const session = stateMaterial('session');
   const global = stateMaterial('global');
   const visibleRoots = { message: new Set(message.roots), session: new Set(session.roots), global: new Set(global.roots) };
-  const authorPrompt = (prompt: string) => escapeMaterialText(parsePromptTemplate(prompt, ['user'], 'author').map(segment => {
+  const renderAuthorText = (source: string) => parsePromptTemplate(source, ['user'], 'author').map(segment => {
     if (segment.type === 'text') return segment.value;
     if (segment.type === 'variable') return playerName;
     return readStateVariable(segment, views, visibleRoots);
-  }).join(''));
+  }).join('');
+  const authorPrompt = (source: string, path: string) => {
+    try {
+      return escapeMaterialText(renderAuthorTemplate(parseAuthorTemplate(source), {
+        evaluateCondition: expression => conditions.evaluateWhen(expression, views),
+        renderText: renderAuthorText,
+      }));
+    } catch (error) {
+      if (error instanceof AuthorTemplateError) {
+        throw new AppError('INVALID_NARRATIVE_TEMPLATE', path + ': ' + error.message);
+      }
+      throw error;
+    }
+  };
   return {
     variables: {
       'system.language': text(languageNames[input.locale]),
       user: text(playerName),
-      'persona.content': text(playerActive ? authorPrompt(player.content ?? '') : ''),
-      'characters.content': text(selected.map(({ character }) => authorPrompt(character.content ?? '')).filter(Boolean).join('\n\n')),
-      'world.lore': text(lore.map(({ entry }) => authorPrompt(entry.content)).join('\n\n')),
+      'persona.content': lazyText(() => playerActive
+        ? authorPrompt(player.content ?? '', 'characters[' + characters.indexOf(player) + '].content (id: ' + JSON.stringify(player.id) + ')')
+        : ''),
+      'characters.content': lazyText(() => selected.map(({ character, index }) =>
+        authorPrompt(character.content ?? '', 'characters[' + index + '].content (id: ' + JSON.stringify(character.id) + ')'))
+        .filter(Boolean).join('\n\n')),
+      'world.lore': lazyText(() => lore.map(({ entry, index }) =>
+        authorPrompt(entry.content, 'lorebook.entries[' + index + '].content (id: ' + JSON.stringify(entry.id) + ')')).join('\n\n')),
       'history.summary': text(input.summary ?? ''),
       'history.messages': { type: 'messages', value: history },
       'input.text': text(inputText),

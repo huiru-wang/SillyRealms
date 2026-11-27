@@ -3,17 +3,17 @@ import { isDeepStrictEqual } from 'node:util';
 import { AppError } from '../../errors.js';
 import type { SessionReader } from '../sessions/service.js';
 import type { WorldReader } from '../worlds/service.js';
-import { validateStateJson } from '@sillyrealms/sdk/state-validation';
+import { statePathParts, validateStateJson } from '@sillyrealms/sdk/state-validation';
 import { evaluateWhen, type StateViews } from './when.js';
 import { parseStatePath, prepareStatePatch } from './patch.js';
 import { messageValues, replaceMessageValue } from './snapshot.js';
 import { prepareInitialSnapshots } from './initial.js';
 import { prepareMessageUpdates } from './message-updates.js';
-import type { PreparedStatePatch, StateUpdate, StateEvent, PreparedMessageUpdates } from './types.js';
+import type { PreparedStatePatch, StateQueryRow, StateUpdate, StateEvent, PreparedMessageUpdates } from './types.js';
 
 export type { StateViews } from './when.js';
 export type {
-  PreparedStatePatch, StateUpdate, StateWriteResult, StateEvent,
+  PreparedStatePatch, StateQueryRow, StateUpdate, StateWriteResult, StateEvent,
   AcceptedMessageUpdate, MessageUpdateResult, PreparedMessageUpdates,
 } from './types.js';
 export type { StateDefinition, StateDiagnostic, StateSchema, StateScope, StateValidationCode } from '@sillyrealms/sdk/state-validation';
@@ -93,27 +93,31 @@ export class StateService {
     return { event: 'state.changed', data: { scope, path: next === undefined ? '' : path, value: structuredClone(next === undefined ? after : next) } };
   }
 
-  prepareGlobalPatch(worldId: string, update: StateUpdate): PreparedStatePatch<JsonObject> {
-    const world = this.#worlds.require(identifier(worldId));
-    return prepareStatePatch(world.state, world.stateDefinition, 'global', update);
+  selectPaths(snapshot: JsonObject | JsonValue[] | null, paths?: readonly string[]): StateQueryRow[] {
+    if (paths?.length === 0) return [];
+    const values = Array.isArray(snapshot) || snapshot === null ? messageValues(snapshot) : snapshot;
+    if (paths === undefined) return Object.entries(values).map(([path, value]) => ({ path, value }));
+    return paths.map(path => {
+      const parts = statePathParts(path);
+      if (!parts) throw new AppError('INVALID_REQUEST', '查询路径无效');
+      let value: JsonValue = values;
+      for (const part of parts) {
+        if (Array.isArray(value)) throw new AppError('INVALID_REQUEST', '数组只能作为完整字段读取');
+        if (value === null || typeof value !== 'object' || !Object.hasOwn(value, part)) return { path };
+        value = value[part]!;
+      }
+      return { path, value };
+    });
   }
 
-  prepareSessionPatch(sessionId: string, update: StateUpdate): PreparedStatePatch<JsonObject> {
-    const session = this.#sessions.require(identifier(sessionId));
-    const world = this.#worlds.require(session.worldId);
-    return prepareStatePatch(session.state, world.stateDefinition, 'session', update);
+  prepareObjectPatch(scope: 'global' | 'session', snapshot: JsonObject, definition: JsonValue | null, update: StateUpdate) {
+    return prepareStatePatch(snapshot, definition, scope, update);
   }
 
-  prepareMessagePatch(sessionId: string, entryId: string, update: StateUpdate): PreparedStatePatch<JsonValue[] | null> {
-    const session = this.#sessions.require(identifier(sessionId));
-    const entry = this.#sessions.getEntry(session.id, identifier(entryId));
-    if (!entry) throw new AppError('ENTRY_NOT_FOUND');
-    const world = this.#worlds.require(session.worldId);
+  prepareMessagePatch(inherited: JsonValue[] | null, definition: JsonValue | null, update: StateUpdate): PreparedStatePatch<JsonValue[] | null> {
     const root = parseStatePath(update.path, 'message')[0]!;
-    const inherited = this.getMessage(session.id, entry.id);
-    const prepared = prepareStatePatch(messageValues(inherited, root), world.stateDefinition, 'message', update);
-    // Ignored or equal writes must not materialize an inherited snapshot.
-    if (!prepared.changed) return { snapshot: entry.state, changed: false };
+    const prepared = prepareStatePatch(messageValues(inherited, root), definition, 'message', update);
+    if (!prepared.changed) return { snapshot: inherited, changed: false };
     return { snapshot: replaceMessageValue(inherited!, root, prepared.snapshot[root]!), changed: true };
   }
 

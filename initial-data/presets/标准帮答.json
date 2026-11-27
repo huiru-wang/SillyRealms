@@ -2,8 +2,8 @@
   "type": "reply_assist",
   "name": "标准帮答",
   "description": "根据当前会话为玩家拟写待发送的输入。",
-  "config_json": {
-    "schemaVersion": 3,
+  "config": {
+    "schemaVersion": 1,
     "nodes": [
       {
         "id": "main",
@@ -61,14 +61,15 @@
         "prompt": "{{history.summary}}\n{{history.messages}}",
         "enabled": true
       }
-    ]
-  },
-  "context_strategy": {
-    "strategy": "sliding_window",
-    "max_context_tokens": 12000,
-    "max_output_tokens": 512
-  },
-  "model_parameters": {
-    "thinking_enabled": false
+    ],
+    "contextStrategy": {
+      "strategy": "sliding_window",
+      "maxContextTokens": 12000,
+      "maxOutputTokens": 512,
+      "summaryPrompt": ""
+    },
+    "modelParameters": {
+      "thinkingEnabled": false
+    }
   }
 }

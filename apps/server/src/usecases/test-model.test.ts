@@ -16,7 +16,7 @@ const model: ModelInfo = {
   providerId: 'test', modelId: 'test-model', name: 'Test model', api: 'openai-completions',
   input: ['text'], reasoning: false, contextWindow: 8192, maxTokens: 8,
   thinkingLevels: ['off'], thinkingLevelMap: null, promptCache: null,
-  narrativeCompatible: true, supportsMidConversationSystemMessages: true,
+  supportsMidConversationSystemMessages: true,
 };
 const usage: ModelUsage = { inputTokens: 5, outputTokens: 1, totalTokens: 6, cacheReadTokens: 0, cacheWriteTokens: 0 };
 const snapshot = (content = 'OK'): ModelSnapshot => ({ role: 'assistant', content, reasoning_content: '', tool_calls: [] });

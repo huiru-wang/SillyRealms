@@ -46,7 +46,7 @@ try {
 | `isSafeStateKey(key)` | `isSafeStateKey('coins')` → true | 验证单个字符串键。空串、含点号或方括号的键与原型相关保留名返回 false。完整点路径需逐段检查。 |
 | `validateStateJson(value, depth?, scope?, path?)` | `validateStateJson({bag: ['茶叶']})` | 根深度默认 0，验证 JSON 值、有限数字、对象键与深度。单独调用不执行字节大小校验。可传 scope、path 以定位错误。 |
 | `validateStateValue(definition, value, root, scope?)` | `validateStateValue(coins, 8, 'coins')` | 校验完整根值、类型、数值上下界、JSON 合法性及大小。更新嵌套字段时应先构造新的完整根值。默认 scope 为 message。 |
-| `validateStateDefinition(root, definition, scope?, source?)` | `validateStateDefinition('coins', coins, 'message', 'author')` | 验证单条定义的初值、描述、类型、范围、可选 rules 和 load。作者数据使用默认 author；stored 模式用于兼容已存 rules。`load.when` 的表达式语法另用 `validateWhen` 校验。 |
+| `validateStateDefinition(root, definition, scope?, source?)` | `validateStateDefinition('coins', coins, 'message', 'author')` | 验证单条定义的初值、描述、类型、范围、可选 rules 和 load。作者数据使用默认 author；stored 模式供运行时读取已校验的定义，规则提示仅在编写或导入定义时校验。`load.when` 的表达式语法另用 `parseWhen` 校验。 |
 | `validateStateSchema(value, source?)` | `validateStateSchema(schema, 'author')` | 检查 `schema_version: 2`、合法 scopes、每个根定义与整体大小。输入是卡片的 `data.state`，不是整张卡。 |
 | `validateStateSnapshot(definitions, value, scope?)` | `validateStateSnapshot({coins}, {coins: 5}, 'message')` | 当前快照必须恰好包含该域声明的所有根，逐根验证值。这里传完整字典，不能传 PATCH 更新数组。 |
 | `StateValidationError(code, scope?, path?, rulePath?)` | `new StateValidationError('INVALID_STATE_PATH', 'message', 'coins')` | 可捕获或创建明确诊断。读取 `code/scope/path/rulePath` 或 `details`；缺省 scope 为 message，path 为空。 |
@@ -56,13 +56,13 @@ try {
 
 ## @sillyrealms/sdk/when-expression
 
-`validateWhen(input, onReference?): void` 做语法验证。成功时可通过回调收集 `WhenStateReference`，其中 `path` 是字符串段数组，`scope` 是显式作用域，省略时为 null。解析错误或不支持的表达式会抛出异常。检查引用是否真的存在，应由调用方结合当前卡片定义完成。
+`parseWhen(input, onReference?)` 校验语法并返回 Acorn 表达式节点。成功时可通过回调收集 `WhenStateReference`，其中 `path` 是字符串段数组，`scope` 是显式作用域，省略时为 null。解析错误或不支持的表达式会抛出异常。检查引用是否真的存在，应由调用方结合当前卡片定义完成。
 
 ```ts
-import { validateWhen, type WhenStateReference } from '@sillyrealms/sdk/when-expression';
+import { parseWhen, type WhenStateReference } from '@sillyrealms/sdk/when-expression';
 
 const refs: WhenStateReference[] = [];
-validateWhen('getState("coins", {scope: "message"}) >= 5', ref => refs.push(ref));
+parseWhen('getState("coins", {scope: "message"}) >= 5', ref => refs.push(ref));
 // refs[0] 对应 {path: ['coins'], scope: 'message'}
 ```
 

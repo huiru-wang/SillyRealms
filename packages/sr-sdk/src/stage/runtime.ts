@@ -1,3 +1,4 @@
+import {statePathParts} from '../state-validation.ts';
 import type {
   AcceptedRun, RegenerateRequest, RunPage, RunQuery, SessionEvent, StageCommand, StageSnapshot,
   StateChangedEvent, StateScope, StateSnapshot, StateValue, StateWrite, StateWriteResult,
@@ -8,8 +9,6 @@ export interface SRSessionAPI {
   send(text: string): Promise<AcceptedRun>;
   regenerate(input: RegenerateRequest): Promise<AcceptedRun>;
   stop(runId: string, assistantEntryId: string): Promise<{runId: string; assistantEntryId: string; stopping: true}>;
-  /** Server returns items/entries; querying never changes the displayed history. */
-  getRuns(options?: RunQuery): Promise<RunPage>;
   subscribe(listener: (event: SessionEvent) => void): () => void;
 }
 export interface SRStateAPI {
@@ -40,11 +39,11 @@ function freeze<T>(value: T): T {
 
 /** Scope snapshots are already normalized by the Host. Only own object keys are readable. */
 export function stateValue(snapshot: StateSnapshot, scope: StateScope, path: string): StateValue | undefined {
-  if (typeof path !== 'string' || !path || !Object.hasOwn(snapshot, scope)) return undefined;
+  const parts = statePathParts(path);
+  if (!parts || !Object.hasOwn(snapshot, scope)) return undefined;
   let value: StateValue | undefined = snapshot[scope];
-  for (const key of path.split('.')) {
-    if (!key || key === '__proto__' || key === 'prototype' || key === 'constructor' ||
-        value === null || typeof value !== 'object' || Array.isArray(value) || !Object.hasOwn(value, key)) return undefined;
+  for (const key of parts) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value) || !Object.hasOwn(value, key)) return undefined;
     value = value[key];
   }
   return value;
@@ -73,7 +72,6 @@ export class StageRuntime {
       send: (text: string) => command('narrative.send', {text}),
       regenerate: (input: RegenerateRequest) => command('narrative.regenerate', input),
       stop: (runId: string, assistantEntryId: string) => command('narrative.stop', {runId, assistantEntryId}),
-      getRuns: (options: RunQuery = {}) => command('history.query', options),
       subscribe,
     });
     const write = (updates: StateWrite[]) => command('state.write', {updates});

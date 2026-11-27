@@ -168,14 +168,14 @@ data: {"assistantEntryId":"m-2","runId":"r-1","sessionId":"s-1","provider":"deep
 
 ## 状态事件
 
-`state.changed` 的 data 保持 `{path,scope,value}`。成功提交后仅推送有效状态的实际变化：PATCH 逐字段发布完整新值；PUT 或追加独立消息快照使用 `path: ""` 和完整对象，接收方替换整个 scope，`{}` 清空，null 仍是普通字段值。空路径不能用于 PATCH 请求。
+`state.changed` 的 data 保持 `{path,scope,value}`。成功提交后仅推送有效状态的实际变化：update 逐字段发布完整新值；追加独立消息快照引起有效变化时使用 `path: ""` 和完整对象，接收方替换整个 scope，`{}` 清空，null 仍是普通字段值。空路径不能用于 字段更新请求。
 
 - global 发送到该世界的全部会话；session/message 只发送到所属会话，所有连接均可接收。
-- message 对应当前 tip 的有效继承视图，存储数组/null 转为对象。历史 entry 修改仅在影响当前 tip 时推送；恢复 null 继承发送继承后的完整对象。
-- 缺失路径忽略、同值、失败及回滚不发布；读取和初始化也不发布。PATCH 每项提交后推送，再处理下一项。
+- message 对应当前 tip 的有效继承视图，存储数组/null 转为对象。历史 entry 修改仅在影响当前 tip 时推送。
+- 缺失路径忽略、同值、失败及回滚不发布；读取和初始化也不发布。update 每项提交后推送，再处理下一项。
 - 普通消息追加若改变有效状态，保存 entry 并推进 tip 后推送完整快照。叙事后处理先计算候选及变更，提交助手/状态并释放执行锁后推送完整 message 快照；partial_success 中有效行造成的真实变化同样发布，无变化继续 null 继承且不发事件。
 
-发布由用例编排，StateService 计算变更，接收会话由 SessionService 查询；EventHub 保持独立。事件没有持久化/重放，初次装载及重连应重新读取状态快照。详见 [状态接口](server-http.md#状态接口)。Web 的 state feature 与 Stage SDK 已按该契约接入，桥接只传递当前投影和原生事件。
+发布由用例编排，StateService 计算变更，接收会话由 SessionService 查询；EventHub 保持独立。事件没有持久化/重放，初次装载及重连应重新读取状态快照。详见 [状态接口](server-http.md#状态接口)。桥接只传递当前投影和原生事件。
 
 ## 行动建议创建
 

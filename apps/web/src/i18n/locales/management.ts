@@ -3,7 +3,6 @@ export const managementZh = {
   "worlds": {
     "publication": {
       "updateAvailable": "有新版本：{{version}}",
-      "undeclared": "未声明发行信息",
       "versions": "版本",
       "refreshVersions": "刷新版本列表",
       "getVersions": "获取版本列表",
@@ -491,7 +490,6 @@ export const managementEn = {
   "worlds": {
     "publication": {
       "updateAvailable": "Update available: {{version}}",
-      "undeclared": "No release information",
       "versions": "Versions",
       "refreshVersions": "Refresh versions",
       "getVersions": "Get versions",
@@ -979,7 +977,6 @@ export const managementJa = {
   "worlds": {
     "publication": {
       "updateAvailable": "新しいバージョン：{{version}}",
-      "undeclared": "公開情報なし",
       "versions": "バージョン",
       "refreshVersions": "バージョン一覧を更新",
       "getVersions": "バージョン一覧を取得",

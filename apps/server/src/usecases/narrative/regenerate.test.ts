@@ -20,7 +20,7 @@ const model: ModelInfo = {
   modelId: 'story-model', name: 'Story model', providerId: 'test-provider', api: 'openai-completions',
   reasoning: false, input: ['text'], contextWindow: 64000, maxTokens: 8192,
   thinkingLevels: ['off'], thinkingLevelMap: null, promptCache: null,
-  narrativeCompatible: true, supportsMidConversationSystemMessages: false,
+  supportsMidConversationSystemMessages: false,
 };
 const usage: ModelUsage = { inputTokens: 20, outputTokens: 5, totalTokens: 25, cacheReadTokens: 10, cacheWriteTokens: 0 };
 const snapshot = (content = '', extra: Partial<ModelSnapshot> = {}): ModelSnapshot => ({
@@ -170,8 +170,8 @@ describe('regeneration of the latest user round', () => {
   });
 
   it('publishes the inherited message state only after deletion commits under the run lock', async () => {
-    const user = services.sessions.appendEntry('session',{id:'user',runId:'round',type:'message',role:'user',payload:{message:{role:'user',content:'Go'}},state:[{key:'coins',value:5}]});
-    services.sessions.appendEntry('session',{id:'old-ai',runId:'round',type:'message',role:'assistant',payload:{message:{role:'assistant',content:'Old'}},state:[{key:'coins',value:3}]});
+    const user = services.sessions.appendEntry('session',{id:'user',runId:'round',type:'message',role:'user',payload:{message:{role:'user',content:'Go',timestamp:1}},state:[{key:'coins',value:5}]});
+    services.sessions.appendEntry('session',{id:'old-ai',runId:'round',type:'message',role:'assistant',payload:{message:{role:'assistant',content:'Old',timestamp:1}},state:[{key:'coins',value:3}]});
     const changes: unknown[] = [], observations: Array<{deleted:boolean;locked:boolean}> = [];
     events.subscribe('session',event=>{
       if(event.event!=='state.changed')return;

@@ -6,7 +6,7 @@ const model=(providerId,overrides={})=>({
  providerId,modelId:'shared-id',name:'SDK model',contextWindow:131072,maxTokens:8192,
  reasoning:true,api:'openai-completions',input:['text','image'],
  thinkingLevels:['off','low','high'],thinkingLevelMap:{off:'disabled',low:'light',high:'full',max:null},
- promptCache:{short:300,long:3600},narrativeCompatible:true,supportsMidConversationSystemMessages:true,...overrides,
+ promptCache:{short:300,long:3600},supportsMidConversationSystemMessages:true,...overrides,
 });
 const catalog=()=>[
  {providerId:'one',name:'Provider One',models:[model('one')]},

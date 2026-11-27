@@ -1,22 +1,34 @@
 import { z } from 'zod';
 import { isReleaseVersion } from '@sillyrealms/sdk/release-version';
 import type { WorldPublication } from './types.js';
-import { validateWhen } from '@sillyrealms/sdk/when-expression';
+import { parseWhen } from '@sillyrealms/sdk/when-expression';
 import { parseSRAssetUri } from '@sillyrealms/sdk/assets';
 import {
   isSafeStateKey, validateStateJson, validateStateSchema, validateStateValue,
   type StateSchema,
 } from '@sillyrealms/sdk/state-validation';
 import { AppError } from '../../errors.js';
+import { AuthorTemplateError, parseAuthorTemplate } from '../../lib/author-template.js';
 import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
 
 
 const atomicStateSchema = z.custom<StateSchema>((value) => value !== null && typeof value === 'object');
 const nonblank=z.string().refine(v=>v.trim().length>0,'Expected nonempty text');
+
+function authorTemplate(source: string, ctx: z.RefinementCtx): void {
+  try { parseAuthorTemplate(source); }
+  catch (error) {
+    if (!(error instanceof AuthorTemplateError)) throw error;
+    ctx.addIssue({ code: 'custom', message: `Invalid author template at line ${error.line}, column ${error.column}: ${error.message}` });
+  }
+}
+
+const authorContent = z.string().superRefine(authorTemplate);
+const authorLoreContent = nonblank.superRefine(authorTemplate);
 const id=z.string().trim().min(1);
 const dict=z.record(z.string(),z.unknown());
 const condition=z.string().superRefine((value,ctx)=>{
-  try {validateWhen(value);} catch {ctx.addIssue({code:'custom',message:'Unsupported when expression'});}
+  try {parseWhen(value);} catch {ctx.addIssue({code:'custom',message:'Unsupported when expression'});}
 });
 const rules={
   mode:z.enum(['always','on_mention','never']).optional(), keywords:z.array(nonblank).optional(),
@@ -25,8 +37,8 @@ const rules={
 function keywords(rule:{mode?:string;keywords?:string[]},ctx:z.RefinementCtx) {
   if(rule.mode==='on_mention' && !rule.keywords?.length) ctx.addIssue({code:'custom',path:['keywords'],message:'Expected at least one keyword'});
 }
-const load=z.object(rules).superRefine(keywords);
-const loreLoad=z.object({...rules,order:z.number().int().optional()}).superRefine(keywords);
+const load=z.object(rules).strict().superRefine(keywords);
+const loreLoad=z.object({...rules,order:z.number().int().optional()}).strict().superRefine(keywords);
 const spriteAsset = nonblank.superRefine((value, ctx) => {
   try {
     if (/^sr-asset:/i.test(value)) parseSRAssetUri(value, 'assets');
@@ -50,9 +62,9 @@ const presentationSchema=z.discriminatedUnion('type', [
   z.object({type:z.literal('markdown'),text:nonblank.refine(value=>Buffer.byteLength(value,'utf8')<=100000,'Exceeds 100000 bytes')}).strict(),
   componentView,
 ]);
-const character=z.object({id,name:nonblank,presentation:presentationSchema.optional(),content:z.string().optional(),avatar:z.string().optional(),order:z.number().int().optional(),player_selectable:z.boolean().optional(),load:load.optional(),sprites:sprites.optional()}).strict();
+const character=z.object({id,name:nonblank,presentation:presentationSchema.optional(),content:authorContent.optional(),avatar:z.string().optional(),order:z.number().int().optional(),player_selectable:z.boolean().optional(),load:load.optional(),sprites:sprites.optional()}).strict();
 export const openingSchema=z.object({id,name:nonblank,content:nonblank,initial_state:dict.optional(),presentation:presentationSchema.optional()}).strict();
-const lore=z.object({id,title:z.string().optional(),content:nonblank,enabled:z.boolean().optional(),load:loreLoad.optional()});
+const lore=z.object({id,title:z.string().optional(),content:authorLoreContent,enabled:z.boolean().optional(),load:loreLoad.optional()}).strict();
 function unique(items:{id:string}[],ctx:z.RefinementCtx) {
   const seen=new Set<string>();
   items.forEach((item,i)=>{if(seen.has(item.id)) ctx.addIssue({code:'custom',path:[i,'id'],message:'Duplicate ID'}); seen.add(item.id);});
@@ -128,7 +140,7 @@ const schema=z.object({spec_version:z.literal('0.2'),data:z.object({
   name:id,presentation:presentationSchema.optional(),tags:z.array(id).optional(),cover:z.string().optional(),
   characters,
   openings:z.array(openingSchema).min(1).superRefine(unique),state:atomicStateSchema.optional(),
-  lorebook:z.object({entries:z.array(lore).superRefine(unique)}).optional(),message_render:messageRender.optional(),ui:z.never().optional(),components:components.optional(),stage_component:componentId.optional(),extensions:extensions.optional()
+  lorebook:z.object({entries:z.array(lore).superRefine(unique)}).strict().optional(),message_render:messageRender.optional(),components:components.optional(),stage_component:componentId.optional(),extensions:extensions.optional()
 }).strict()}).strict();
 
 export type WorldCard = z.infer<typeof schema>;
@@ -148,7 +160,7 @@ export function validateWorldStateDefinition(value: unknown): asserts value is S
     validateStateSchema(value);
     for (const scope of ['global', 'session', 'message'] as const) {
       for (const definition of Object.values(value.scopes[scope] ?? {})) {
-        if (definition.load?.when !== undefined) validateWhen(definition.load.when);
+        if (definition.load?.when !== undefined) parseWhen(definition.load.when);
       }
     }
   } catch (error) {

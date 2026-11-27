@@ -27,7 +27,7 @@ let usecases: ReturnType<typeof createUsecases>;
 const sessionInput = (id: string) => ({
   id, worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player',
 });
-const entryInput = (id: string) => ({ id, runId: 'run', type: 'message', role: 'assistant', payload: { text: id } });
+const entryInput = (id: string) => ({ id, runId: 'run', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: id, timestamp: 1 } } } as const);
 
 beforeEach(() => {
   dataRoot = mkdtempSync(join(tmpdir(), 'sr-session-state-routes-'));
@@ -51,7 +51,7 @@ beforeEach(() => {
   app.route('/api/v1/sessions', createSessionRoutes({
     sessions: services.sessions, worlds: services.worlds, appendEntry: usecases.appendEntry, createSession: usecases.createSession, events, canAccessSession, shutdownSignal: shutdown.signal,
   }));
-  app.route('/api/v1/state', createStateRoutes({ state: services.state, setState: usecases.setState, sessions: services.sessions, canAccessSession, shutdownSignal: shutdown.signal }));
+  app.route('/api/v1/state', createStateRoutes({ state: usecases.state, sessions: services.sessions, canAccessSession, shutdownSignal: shutdown.signal }));
 });
 afterEach(async () => {
   shutdown.abort();
@@ -176,7 +176,7 @@ describe('session HTTP operations', () => {
     const row = db.prepare('SELECT runtime_config FROM sessions WHERE id=?').get(item.id);
     expect(JSON.parse(String(row?.runtime_config))).toEqual({
       narrative_preset_id: 'preset', api_model_config_id: 'model', reply_assist_preset_id: reply.id,
-      replay_assist_goal: 'Explore', font_size: 19,
+      reply_assist_goal: 'Explore', font_size: 19,
     });
     await failure(await request('POST', '/sessions', { ...input, id: 'bad-config', openingId: 'start',
       runtimeConfig: { ...runtimeConfig, replyAssistPresetId: 'preset' } }), 'PRESET_TYPE_MISMATCH', 400);
@@ -249,7 +249,7 @@ describe('session HTTP operations', () => {
     for (const path of ['/sessions/one/entries', '/sessions/one/entries/child', '/sessions/one/narrative/runs/run']) {
       expect((await request('GET', path)).status).toBe(404);
     }
-    expect((await data<{ item: SessionEntry }>(await request('PATCH', '/sessions/one/entries/child', { payload: { text: 'Edited' } }))).item.payload).toEqual({ text: 'Edited' });
+    expect((await data<{ item: SessionEntry }>(await request('PATCH', '/sessions/one/entries/child', { payload: { message: { role: 'assistant', content: 'Edited', timestamp: 1 } } }))).item.payload).toEqual({ message: { role: 'assistant', content: 'Edited', timestamp: 1 } });
     await failure(await request('PATCH', '/sessions/one/entries/child', { parentId: null }), 'INVALID_REQUEST', 400);
     await failure(await request('POST', '/sessions/one/entries', { ...entryInput('metrics'), metrics: null }), 'INVALID_REQUEST', 400);
     await failure(await request('PATCH', '/sessions/one/entries/child', { metrics: null }), 'INVALID_REQUEST', 400);
@@ -276,12 +276,10 @@ describe('session HTTP operations', () => {
       ['POST', '/sessions/blocked/entries', entryInput('leak')],
       ['PATCH', '/sessions/blocked/entries/secret', { payload: { text: 'Overwritten' } }],
       ['GET', '/sessions/blocked/events'],
-      ['GET', '/state/session/blocked'],
-      ['PUT', '/state/session/blocked', { state: { leaked: true } }],
-      ['PATCH', '/state/session/blocked', { updates: [] }],
-      ['GET', '/state/message/blocked/secret'],
-      ['PUT', '/state/message/blocked/secret', { state: [] }],
-      ['PATCH', '/state/message/blocked/secret', { updates: [] }],
+      ['POST', '/state/query', { scope: 'session', sessionId: 'blocked' }],
+      ['POST', '/state/update', { scope: 'session', sessionId: 'blocked', updates: [] }],
+      ['POST', '/state/query', { scope: 'message', sessionId: 'blocked', entryId: 'secret', paths: [] }],
+      ['POST', '/state/update', { scope: 'message', sessionId: 'blocked', entryId: 'secret', updates: [] }],
     ];
     for (const [method, path, body] of checks) await failure(await request(method, path, body), 'SESSION_NOT_FOUND', 404);
     expect(services.sessions.get('blocked')!.title).toBeNull();
@@ -306,50 +304,41 @@ describe('session HTTP operations', () => {
   });
 });
 
-describe('complete scope snapshot HTTP operations', () => {
-  it('replaces global/session snapshots without modifying world definitions or other sessions', async () => {
-    expect((await data<{ item: unknown }>(await request('GET', '/state/global/world'))).item).toEqual({ day: 1, weather: 'rain' });
-    expect((await data<{ item: unknown }>(await request('PUT', '/state/global/world', { state: { day: 2 } }))).item).toEqual({ day: 2 });
-    expect((await data<{ item: unknown }>(await request('PUT', '/state/session/one', { state: { coins: 7 } }))).item).toEqual({ coins: 7 });
-    expect((await data<{ item: unknown }>(await request('GET', '/state/session/one'))).item).toEqual({ coins: 7 });
-    expect(services.state.getSession('blocked')).toEqual({});
-    expect(services.worlds.get('world')!.stateDefinition).toEqual({ schema_version: 2, scopes: {} });
-    expect(services.state.getGlobal('world')).toEqual({ day: 2 });
+describe('state field queries', () => {
+  it('returns all root rows or selected paths and distinguishes empty selection', async () => {
+    const owner = { scope: 'session', sessionId: 'one' };
+    services.sessions.setState('one', { coins: 1, inventory: { items: ['map'], reward: null } });
+    expect(await data(await request('POST', '/state/query', owner))).toEqual([
+      { path: 'coins', value: 1 }, { path: 'inventory', value: { items: ['map'], reward: null } },
+    ]);
+    expect(await data(await request('POST', '/state/query', { ...owner, paths: ['inventory.reward', 'inventory.items', 'missing'] }))).toEqual([
+      { path: 'inventory.reward', value: null }, { path: 'inventory.items', value: ['map'] }, { path: 'missing' },
+    ]);
+    expect(await data(await request('POST', '/state/query', { ...owner, paths: [] }))).toEqual([]);
+    for (const paths of [null, {}, '', [1], [''], ['coins', 'a..b'], ['constructor'], ['inventory.items[0]']]) {
+      await failure(await request('POST', '/state/query', { ...owner, paths }), 'INVALID_REQUEST', 400);
+    }
   });
 
-  it('distinguishes missing entries, empty snapshots and valid null inheritance', async () => {
-    services.sessions.appendEntry('one', { ...entryInput('root'), type: 'message', role: 'assistant' });
-    expect((await data<{ item: unknown }>(await request('GET', '/state/message/one/root'))).item).toBeNull();
-    await data(await request('PUT', '/state/message/one/root', { state: [{ key: 'coins', value: 3 }] }));
-    services.sessions.appendEntry('one', { ...entryInput('child'), type: 'message', role: 'assistant' });
-    expect((await data<{ item: unknown }>(await request('GET', '/state/message/one/child'))).item).toEqual([{ key: 'coins', value: 3 }]);
-    await data(await request('PUT', '/state/message/one/child', { state: [] }));
-    expect((await data<{ item: unknown }>(await request('GET', '/state/message/one/child'))).item).toEqual([]);
-    expect((await data<{ item: unknown }>(await request('PUT', '/state/message/one/child', { state: null }))).item).toBeNull();
-    expect((await data<{ item: unknown }>(await request('GET', '/state/message/one/child'))).item).toEqual([{ key: 'coins', value: 3 }]);
-    expect(services.sessions.getEntryState('one', 'child')).toBeNull();
-    expect(services.sessions.getEntryState('one', 'root')).toEqual([{ key: 'coins', value: 3 }]);
-    await failure(await request('GET', '/state/message/one/missing'), 'ENTRY_NOT_FOUND', 404);
-    await failure(await request('PUT', '/state/message/one/missing', { state: null }), 'ENTRY_NOT_FOUND', 404);
-    await failure(await request('GET', '/state/message/blocked/root'), 'ENTRY_NOT_FOUND', 404);
+  it('resolves message inheritance and scopes entry ownership', async () => {
+    const owner = { scope: 'message', sessionId: 'one', entryId: 'root' };
+    services.sessions.appendEntry('one', entryInput('root'));
+    expect(await data(await request('POST', '/state/query', owner))).toEqual([]);
+    services.sessions.setEntryState('one', 'root', [{ key: 'coins', value: 3 }]);
+    services.sessions.appendEntry('one', entryInput('child'));
+    expect(await data(await request('POST', '/state/query', { ...owner, entryId: 'child' }))).toEqual([{ path: 'coins', value: 3 }]);
+    services.sessions.setEntryState('one', 'child', []);
+    expect(await data(await request('POST', '/state/query', { ...owner, entryId: 'child' }))).toEqual([]);
+    await failure(await request('POST', '/state/query', { ...owner, sessionId: 'blocked', paths: [] }), 'ENTRY_NOT_FOUND', 404);
   });
 
-  it('rejects absent owners, absent state fields and invalid snapshot shapes', async () => {
-    services.sessions.appendEntry('one', { ...entryInput('root'), type: 'message', role: 'assistant' });
-    for (const [method, path, body, code] of [
-      ['GET', '/state/global/missing', undefined, 'WORLD_NOT_FOUND'],
-      ['PUT', '/state/global/missing', { state: {} }, 'WORLD_NOT_FOUND'],
-      ['GET', '/state/session/missing', undefined, 'SESSION_NOT_FOUND'],
-      ['PUT', '/state/session/missing', { state: {} }, 'SESSION_NOT_FOUND'],
-    ] as const) await failure(await request(method, path, body), code, 404);
-    for (const body of [{}, { state: null }, { state: [] }, { state: 1 }, { state: {}, extra: true }]) {
-      await failure(await request('PUT', '/state/session/one', body), 'INVALID_REQUEST', 400);
+  it('rejects ambiguous targets and unknown fields for both operations', async () => {
+    for (const target of [{}, { scope: 'other' }, { scope: 'global' }, { scope: 'session', sessionId: ' ' },
+      { scope: 'global', worldId: 'world', sessionId: 'one' }, { scope: 'message', entryId: 'root' },
+      { scope: 'session', sessionId: 'one', extra: 2 }]) {
+      await failure(await request('POST', '/state/query', target), 'INVALID_REQUEST', 400);
+      await failure(await request('POST', '/state/update', { ...target, updates: [] }), 'INVALID_REQUEST', 400);
     }
-    for (const body of [{}, { state: {} }, { state: 1 }, { state: null, extra: true }]) {
-      await failure(await request('PUT', '/state/message/one/root', body), 'INVALID_REQUEST', 400);
-    }
-    expect(services.state.getSession('one')).toEqual({ coins: 1, reputation: 0 });
-    expect(services.sessions.getEntryState('one', 'root')).toBeNull();
   });
 });
 
@@ -381,7 +370,7 @@ describe('field state HTTP operations', () => {
 
   it('returns ordered field results, ignores missing paths and leaves other roots unchecked', async () => {
     services.sessions.setState('one', { coins: 1, reputation: 'previous invalid value' });
-    const results = await data<StateWriteResult[]>(await request('PATCH', '/state/session/one', {
+    const results = await data<StateWriteResult[]>(await request('POST', '/state/update', { scope: 'session', sessionId: 'one',
       updates: [
         { path: 'coins', value: 7 },
         { path: 'coins', value: 'invalid number' },
@@ -407,10 +396,10 @@ describe('field state HTTP operations', () => {
 
   it('publishes changed global fields to all sessions of the world', async () => {
     const publish = vi.spyOn(events, 'publish');
-    expect(await data(await request('PATCH', '/state/global/world', { updates: [{ path: 'day', value: 2 }] }))).toEqual([
+    expect(await data(await request('POST', '/state/update', { scope: 'global', worldId: 'world', updates: [{ path: 'day', value: 2 }] }))).toEqual([
       { path: 'day', scope: 'global', success: true, errorCode: null, errorMessage: '' },
     ]);
-    expect((await data<{ item: unknown }>(await request('GET', '/state/global/world'))).item).toEqual({ day: 2, weather: 'rain' });
+    expect(await data(await request('POST', '/state/query', { scope: 'global', worldId: 'world', paths: ['day'] }))).toEqual([{ path: 'day', value: 2 }]);
     expect(publish.mock.calls).toEqual([
       ['blocked', { event: 'state.changed', data: { scope: 'global', path: 'day', value: 2 } }],
       ['one', { event: 'state.changed', data: { scope: 'global', path: 'day', value: 2 } }],
@@ -421,18 +410,18 @@ describe('field state HTTP operations', () => {
     services.sessions.appendEntry('one', { ...entryInput('root'), type: 'message', role: 'assistant' });
     services.sessions.setEntryState('one', 'root', [{ key: 'coins', value: 3 }, { key: 'inventory', value: { keys: 1 } }]);
     services.sessions.appendEntry('one', { ...entryInput('child'), type: 'message', role: 'assistant' });
-    const ignored = await data<StateWriteResult[]>(await request('PATCH', '/state/message/one/child', {
+    const ignored = await data<StateWriteResult[]>(await request('POST', '/state/update', { scope: 'message', sessionId: 'one', entryId: 'child',
       updates: [{ path: 'inventory.missing', value: 2 }, { path: 'coins', value: 3 }],
     }));
     expect(ignored.every(result => result.success)).toBe(true);
     expect(services.sessions.getEntryState('one', 'child')).toBeNull();
-    expect(await data(await request('PATCH', '/state/message/one/child', { updates: [{ path: 'inventory.keys', value: 2 }] }))).toEqual([
+    expect(await data(await request('POST', '/state/update', { scope: 'message', sessionId: 'one', entryId: 'child', updates: [{ path: 'inventory.keys', value: 2 }] }))).toEqual([
       { path: 'inventory.keys', scope: 'message', success: true, errorCode: null, errorMessage: '' },
     ]);
     expect(services.sessions.getEntryState('one', 'child')).toEqual([{ key: 'coins', value: 3 }, { key: 'inventory', value: { keys: 2 } }]);
     expect(services.sessions.getEntryState('one', 'root')).toEqual([{ key: 'coins', value: 3 }, { key: 'inventory', value: { keys: 1 } }]);
-    await data(await request('PUT', '/state/message/one/child', { state: [] }));
-    expect((await data<StateWriteResult[]>(await request('PATCH', '/state/message/one/child', {
+    services.sessions.setEntryState('one', 'child', []);
+    expect((await data<StateWriteResult[]>(await request('POST', '/state/update', { scope: 'message', sessionId: 'one', entryId: 'child',
       updates: [{ path: 'coins', value: 4 }],
     })))[0]!.success).toBe(true);
     expect(services.sessions.getEntryState('one', 'child')).toEqual([]);
@@ -447,16 +436,16 @@ describe('field state HTTP operations', () => {
       { updates: [{ path: 1, value: 2 }] }, { updates: [{ path: '', value: 2 }] },
       { updates: [valid, { ...valid, scope: 'global' }] },
       { updates: [valid, { ...valid, extra: true }] },
-    ]) await failure(await request('PATCH', '/state/session/one', body), 'INVALID_REQUEST', 400);
+    ]) await failure(await request('POST', '/state/update', { scope: 'session', sessionId: 'one', ...body }), 'INVALID_REQUEST', 400);
     expect(services.state.requireSession('one')).toEqual({ coins: 1, reputation: 0 });
-    await failure(await app.request('/api/v1/state/session/one', {
-      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{',
+    await failure(await app.request('/api/v1/state/update', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{',
     }), 'INVALID_JSON', 400);
-    await failure(await app.request('/api/v1/state/session/one', { method: 'PATCH', body: '{}' }), 'UNSUPPORTED_MEDIA_TYPE', 415);
+    await failure(await app.request('/api/v1/state/update', { method: 'POST', body: '{}' }), 'UNSUPPORTED_MEDIA_TYPE', 415);
   });
 
   it('reports unsafe paths as field failures and continues the request', async () => {
-    const results = await data<StateWriteResult[]>(await request('PATCH', '/state/session/one', {
+    const results = await data<StateWriteResult[]>(await request('POST', '/state/update', { scope: 'session', sessionId: 'one',
       updates: [{ path: '__proto__.polluted', value: true }, { path: 'coins', value: 2 }],
     }));
     expect(results[0]).toMatchObject({ path: '__proto__.polluted', scope: 'session', success: false, errorCode: 'INVALID_STATE_PATH' });
@@ -467,51 +456,58 @@ describe('field state HTTP operations', () => {
 
   it('checks owner existence and message ownership even for empty batches', async () => {
     services.sessions.appendEntry('one', { ...entryInput('root'), type: 'message', role: 'assistant' });
-    for (const path of ['/state/global/world', '/state/session/one', '/state/message/one/root']) {
-      expect(await data(await request('PATCH', path, { updates: [] }))).toEqual([]);
-    }
-    for (const [path, code] of [
-      ['/state/global/missing', 'WORLD_NOT_FOUND'],
-      ['/state/session/missing', 'SESSION_NOT_FOUND'],
-      ['/state/message/missing/root', 'SESSION_NOT_FOUND'],
-      ['/state/message/one/missing', 'ENTRY_NOT_FOUND'],
-      ['/state/message/blocked/root', 'ENTRY_NOT_FOUND'],
-    ]) {
-      await failure(await request('PATCH', path!, { updates: [] }), code!, 404);
-      await failure(await request('PATCH', path!, { updates: [{ path: 'coins', value: 2 }] }), code!, 404);
+    const targets = [
+      { scope: 'global', worldId: 'world' },
+      { scope: 'session', sessionId: 'one' },
+      { scope: 'message', sessionId: 'one', entryId: 'root' },
+    ];
+    for (const target of targets) expect(await data(await request('POST', '/state/update', { ...target, updates: [] }))).toEqual([]);
+    for (const [target, code] of [
+      [{ scope: 'global', worldId: 'missing' }, 'WORLD_NOT_FOUND'],
+      [{ scope: 'session', sessionId: 'missing' }, 'SESSION_NOT_FOUND'],
+      [{ scope: 'message', sessionId: 'missing', entryId: 'root' }, 'SESSION_NOT_FOUND'],
+      [{ scope: 'message', sessionId: 'one', entryId: 'missing' }, 'ENTRY_NOT_FOUND'],
+      [{ scope: 'message', sessionId: 'blocked', entryId: 'root' }, 'ENTRY_NOT_FOUND'],
+    ] as const) {
+      await failure(await request('POST', '/state/query', { ...target, paths: [] }), code, 404);
+      await failure(await request('POST', '/state/update', { ...target, updates: [] }), code, 404);
     }
   });
 
-  it('rechecks access before PATCH so a deleted session cannot receive updates', async () => {
+  it('accepts queries under the run lock and rejects even empty updates', async () => {
+    const permit = services.cache.acquireRun({ worldId: 'world', sessionId: 'one', runId: 'held' });
+    try {
+      const target = { scope: 'session', sessionId: 'one' };
+      expect(await data(await request('POST', '/state/query', { ...target, paths: ['coins'] }))).toEqual([{ path: 'coins', value: 1 }]);
+      await failure(await request('POST', '/state/update', { ...target, updates: [] }), 'STATE_WRITE_LOCKED', 409);
+    } finally {
+      services.cache.releaseRun(permit);
+    }
+  });
+
+  it('rechecks access before updating so a deleted session cannot receive updates', async () => {
     let allow!: (value: boolean) => void;
     const pending = new Promise<boolean>(resolve => { allow = resolve; });
     const gate = vi.fn(() => pending);
     access = gate;
-    const response = request('PATCH', '/state/session/one', { updates: [{ path: 'coins', value: 2 }] });
+    const response = request('POST', '/state/update', { scope: 'session', sessionId: 'one', updates: [{ path: 'coins', value: 2 }] });
     await vi.waitFor(() => expect(gate).toHaveBeenCalledOnce());
     services.sessions.delete('one');
     allow(true);
     await failure(await response, 'SESSION_NOT_FOUND', 404);
   });
 
-  it('mounts only the nine scope endpoints and removes old paths and aggregate views', async () => {
-    services.sessions.appendEntry('one', { ...entryInput('root'), type: 'message', role: 'assistant' });
+  it('mounts the two POST operations and retires all scope routes', async () => {
     const application = createApp({ events, services, usecases });
     try {
-      for (const [path, snapshot] of [
-        ['/state/global/world', { day: 1, weather: 'rain' }],
-        ['/state/session/one', { coins: 1, reputation: 0 }],
-        ['/state/message/one/root', null],
-      ] as const) {
-        expect((await data<{ item: unknown }>(await application.request('/api/v1' + path))).item).toEqual(snapshot);
-        expect(await data(await application.request('/api/v1' + path, {
-          method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ updates: [] }),
+      for (const [operation, options] of [['query', { paths: [] }], ['update', { updates: [] }]] as const) {
+        expect(await data(await application.request('/api/v1/state/' + operation, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ scope: 'global', worldId: 'world', ...options }),
         }))).toEqual([]);
-        expect((await data<{ item: unknown }>(await application.request('/api/v1' + path, {
-          method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ state: snapshot }),
-        }))).item).toEqual(snapshot);
       }
-      for (const path of ['/worlds/world/state', '/sessions/one/state', '/sessions/one/entries/root/state', '/state/views']) {
+      for (const path of ['/state/global/world', '/state/session/one', '/state/message/one/root', '/state/views',
+        '/worlds/world/state', '/sessions/one/state', '/sessions/one/entries/root/state']) {
         for (const method of ['GET', 'PUT', 'PATCH']) {
           await failure(await application.request('/api/v1' + path, { method }), 'NOT_FOUND', 404);
         }

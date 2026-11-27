@@ -15,7 +15,7 @@ import { prepareContext, type ContextDependencies, type ContextProgress, type Pr
 const model: ModelInfo = {
   providerId: 'provider', modelId: 'model', name: 'Model', contextWindow: 64000, maxTokens: 8192,
   api: 'test', input: ['text'], reasoning: false, thinkingLevels: ['off'], thinkingLevelMap: null,
-  promptCache: null, narrativeCompatible: true, supportsMidConversationSystemMessages: true,
+  promptCache: null, supportsMidConversationSystemMessages: true,
 };
 const metrics: EntryMetrics = { requests: [{
   requestId: 'summary-request', provider: 'provider', modelId: 'model',
@@ -93,6 +93,91 @@ describe('public context preparation', () => {
     if (!next.ok) throw new Error(next.failure.code);
     expect(next.request.messages[0]?.content).toBe('Reply in 简体中文.');
     expect(summarize).toHaveBeenCalledOnce();
+  });
+
+  it('renders author conditions from one captured state and switches on the next preparation only', async () => {
+    const content = "{% if getState('affinity', {scope: 'message'}) >= 60 %}Trusted {{user}}/{{state.message.affinity}}{% else %}Guarded {{user}}/{{state.message.affinity}}{% endif %}";
+    services.worlds.update('world', {
+      characters: [{ id: 'player', name: 'Player', player_selectable: true, content }],
+      stateDefinition: { schema_version: 2, scopes: { message: {
+        affinity: { type: 'number', initial: 0, description: 'Affinity', min: 0, max: 100 },
+      } } },
+    });
+    const history = '{% if false %}historical literal{% endif %}';
+    appendHistory('old', history);
+    const request = input();
+    services.sessions.setEntryState('session', 'current', [{ key: 'affinity', value: 70 }]);
+    const pending = prepareContext(dependencies, request);
+    services.sessions.setEntryState('session', 'current', [{ key: 'affinity', value: 40 }]);
+
+    const first = await pending;
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error(first.failure.code);
+    const contents = first.request.messages.map(message => message.content);
+    expect(contents).toContain('Trusted Player/70');
+    expect(contents.join('\n')).toContain(history);
+    expect(contents.join('\n')).not.toContain('Guarded Player/40');
+
+    const second = await prepareContext(dependencies, request);
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error(second.failure.code);
+    expect(second.request.messages.map(message => message.content)).toContain('Guarded Player/40');
+    expect(services.worlds.require('world').characters[0]).toMatchObject({ content });
+    expect(summarize).not.toHaveBeenCalled();
+  });
+
+  it('retains author condition source diagnostics and does not prepare a model request after a failure', async () => {
+    const content = "Role\n{% if getState('missing', {scope: 'message'}) > 0 %}yes{% else %}wrong fallback{% endif %}";
+    services.worlds.update('world', {
+      characters: [{ id: 'player', name: 'Player', player_selectable: true, content }],
+    });
+    const prepared = await prepareContext(dependencies, input());
+    expect(prepared).toMatchObject({ ok: false, parentEntryId: 'current', failure: { code: 'INVALID_NARRATIVE_TEMPLATE' } });
+    if (prepared.ok) throw new Error('Expected author template failure');
+    expect(prepared.failure.detail).toContain('characters[0].content (id: "player")');
+    expect(prepared.failure.detail).toMatch(/line 2|第 2 行/);
+    expect(prepared.failure.detail).not.toContain('wrong fallback');
+    expect(dependencies.modelClient.resolve).toHaveBeenCalledExactlyOnceWith('provider', 'model');
+    expect(summarize).not.toHaveBeenCalled();
+    expect(services.sessions.getHistory('session')).toHaveLength(1);
+    expect(services.worlds.require('world').characters[0]).toMatchObject({ content });
+  });
+
+  it.each([
+    ['persona.content', 'personaInfo', 'characters[0].content'],
+    ['characters.content', 'characterInfo', 'characters[1].content'],
+    ['world.lore', 'worldInfo', 'lorebook.entries[0].content'],
+  ] as const)('evaluates %s only when an enabled preset node actually references it', async (variable, builtinId, path) => {
+    const source = "Role\n{% if getState('missing', {scope: 'message'}) > 0 %}unreachable facts{% endif %}";
+    services.worlds.update('world', {
+      characters: [
+        { id: 'player', name: 'Player', player_selectable: true, content: variable === 'persona.content' ? source : 'Player facts' },
+        { id: 'alice', name: 'Alice', content: variable === 'characters.content' ? source : 'Alice facts' },
+      ],
+      lorebook: { entries: [{ id: 'facts', content: variable === 'world.lore' ? source : 'World facts' }] },
+    });
+    const preset = services.presets.require('preset');
+    // Narrative system nodes stay enabled; removing their variable reference is supported.
+    preset.config.nodes.find(node => node.id === builtinId)!.prompt = 'No author material in this node.';
+    preset.config.nodes.push({ id: 'optionalAuthorMaterial', name: 'Optional author material',
+      kind: 'text', role: 'system', enabled: false, prompt: 'Custom {{' + variable + '}}' });
+    services.presets.update('preset', { config: preset.config });
+    const request = input();
+
+    const unused = await prepareContext(dependencies, request);
+    expect(unused.ok).toBe(true);
+    if (!unused.ok) throw new Error(unused.failure.code);
+    expect(unused.request.messages.map(message => message.content).join('\n')).not.toContain('unreachable facts');
+
+    preset.config.nodes.find(node => node.id === 'optionalAuthorMaterial')!.enabled = true;
+    services.presets.update('preset', { config: preset.config });
+    const consumed = await prepareContext(dependencies, request);
+    expect(consumed).toMatchObject({ ok: false, parentEntryId: 'current', failure: { code: 'INVALID_NARRATIVE_TEMPLATE' } });
+    if (consumed.ok) throw new Error('Expected the custom node to evaluate its author material');
+    expect(consumed.failure.detail).toContain(path);
+    expect(consumed.failure.detail).toMatch(/line 2|第 2 行/);
+    expect(summarize).not.toHaveBeenCalled();
+    expect(services.sessions.getHistory('session')).toHaveLength(1);
   });
 
   it('builds an empty session without saving a user or inventing an input turn', async () => {

@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from './app.js';
 import { EventHub } from './infrastructure/events/event-hub.js';
 import type { Services } from './services.js';
 import { narrativePreset } from './testing/fixtures.js';
@@ -75,14 +74,6 @@ afterEach(async () => {
 });
 
 describe('Server over HTTP', () => {
-  it('requires the business Services even when a custom access check permits a request', async () => {
-    const app = createApp({ events: new EventHub(), canAccessSession: () => true });
-    const response = await app.request('/api/v1/sessions/anything/events');
-    expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ success: false, errorCode: 'SERVICE_UNAVAILABLE', errorMessage: '业务服务尚未就绪', data: null });
-    await app.shutdown();
-  });
-
   it('opens independent storage and rejects missing sessions instead of accepting fake sessions', async () => {
     const { url } = await launch({ canAccessSession: () => true });
     const health = await fetch(`${url}/health`);
@@ -112,9 +103,9 @@ describe('Server over HTTP', () => {
       worldId: world.id, runtimeConfig: { narrativePresetId: preset.id, apiModelConfigId: model.id }, userCharacterId: 'player',
     });
     const entry = running.services.sessions.appendEntry(session.id, {
-      runId: 'run-1', type: 'message', role: 'assistant', payload: { text: 'Saved story' }, state: [],
+      runId: 'run-1', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: 'Saved story', timestamp: 1 } }, state: [],
     });
-    running.usecases.setState.setSession(session.id, { gold: 12 });
+    running.services.sessions.setState(session.id, { gold: 12 });
     const stream = await connect(running.url, session.id);
     running.events.publish(session.id, { event: 'storage.ready', data: { entryId: entry.id } });
     expect(await stream.readFrame()).toContain(entry.id);

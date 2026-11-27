@@ -31,9 +31,6 @@ importers:
       hono:
         specifier: 4.13.16
         version: 4.13.16
-      lodash:
-        specifier: 4.18.1
-        version: 4.18.1
       yauzl:
         specifier: 3.4.0
         version: 3.4.0
@@ -44,9 +41,6 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
-      '@types/lodash':
-        specifier: 4.17.27
-        version: 4.17.27
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -74,12 +68,6 @@ importers:
 
   apps/web:
     dependencies:
-      '@lexical/history':
-        specifier: ^0.53.0
-        version: 0.53.0(typescript@6.0.3)
-      '@lexical/plain-text':
-        specifier: ^0.53.0
-        version: 0.53.0(typescript@6.0.3)
       '@lexical/react':
         specifier: ^0.53.0
         version: 0.53.0(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@6.0.3)(yjs@13.6.33)

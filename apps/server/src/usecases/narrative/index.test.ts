@@ -21,7 +21,7 @@ const model: ModelInfo = {
   modelId: 'story-model', name: 'Story model', providerId: 'test-provider', api: 'openai-completions',
   reasoning: false, input: ['text'], contextWindow: 64000, maxTokens: 8192,
   thinkingLevels: ['off'], thinkingLevelMap: null, promptCache: null,
-  narrativeCompatible: true, supportsMidConversationSystemMessages: false,
+  supportsMidConversationSystemMessages: false,
 };
 const usage: ModelUsage = { inputTokens: 20, outputTokens: 5, totalTokens: 25, cacheReadTokens: 10, cacheWriteTokens: 0 };
 const zeroUsage: ModelUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
@@ -372,7 +372,8 @@ describe('pre-request and persistence failures', () => {
   });
 
   it('retains saved users on unsupported context and preserves provider/model metadata where known', async () => {
-    services.sessions.appendEntry('session', { id: 'bad', runId: 'old', type: 'message', role: 'assistant', payload: { message: { role: 'user', content: 'Wrong role', timestamp: 100 } } });
+    services.sessions.appendEntry('session', { id: 'bad', runId: 'old', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: 'Wrong role', timestamp: 100 } } });
+    db.prepare("UPDATE entries SET role='user' WHERE id='bad'").run();
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'invalid_context' } });
     expect(seen[0]).toMatchObject({ event: 'run.created', data: { provider: model.providerId, model: model.modelId } });

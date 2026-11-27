@@ -25,7 +25,7 @@ export function WorldDocumentRenderer({content,title,presentation='isolated',den
   const rendered=useMemo(()=>renderWorldDocument(content,{profile:presentation==='isolated'?'document':'message',assetBaseUrl}),[content,presentation,assetBaseUrl]);
   const srcDoc=useMemo(()=>{
     const hostStyle=getComputedStyle(document.documentElement);
-    const ink=hostStyle.getPropertyValue('--ink').trim()||hostStyle.getPropertyValue('--text').trim();
+    const ink=hostStyle.getPropertyValue('--text').trim();
     const color=CSS.supports('color',ink)?ink:'#20212a';
     const bg=CSS.supports('color',background)?background:'#fff';
     const border=hostStyle.getPropertyValue('--reading-border').trim();

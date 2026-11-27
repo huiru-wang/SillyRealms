@@ -18,7 +18,7 @@ export function assertWorldReplacementCompatible(
   playerCharacterIds: readonly string[],
 ): void {
   const fail = (detail: string): never => { throw new AppError('WORLD_UPDATE_INCOMPATIBLE', detail); };
-  if (next.specVersion !== '0.2' || !current.publication || !next.publication ||
+  if (next.specVersion !== '0.2' ||
     current.publication.package_id !== next.publication.package_id) fail('publication.package_id 或卡片协议不匹配');
   const players = new Set(validateCharacters(next.characters).filter(character => character.player_selectable === true).map(character => character.id));
   for (const id of playerCharacterIds) if (!players.has(id)) fail('会话玩家角色不可用：' + id);

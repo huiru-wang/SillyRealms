@@ -20,7 +20,7 @@ const input: CreateSessionInput = { id: 'session', worldId: 'world', openingId: 
 const model: ModelInfo = {
   providerId: 'provider', modelId: 'model', name: 'Model', contextWindow: 64000, maxTokens: 8192,
   api: 'test', input: ['text'], reasoning: false, thinkingLevels: ['off'], thinkingLevelMap: null,
-  promptCache: null, narrativeCompatible: true, supportsMidConversationSystemMessages: true,
+  promptCache: null, supportsMidConversationSystemMessages: true,
 };
 const number = (key: string, initial: number) => ({ type: 'number', initial, min: 0, max: 100, description: key, rules: { [key]: 'Change with the story.' } });
 beforeEach(() => {
@@ -169,7 +169,7 @@ describe('create a ready session', () => {
   it('keeps runs unclassified and paginates the initial message as an ordinary group', () => {
     const result = usecases.createSession(input);
     for (let index = 0; index < 5; index++) services.sessions.appendEntry('session', {
-      runId: 'run-' + index, type: 'message', role: 'assistant', payload: { text: 'Body' },
+      runId: 'run-' + index, type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: 'Body', timestamp: 1 } },
     });
     const first = usecases.narrative.list('session');
     expect(first.items).toHaveLength(5);

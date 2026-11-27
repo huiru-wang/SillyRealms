@@ -7,10 +7,9 @@ import type { ModelReader } from '../models/service.js';
 import type { PresetReader } from '../presets/service.js';
 import type { WorldReader } from '../worlds/service.js';
 import { SessionRepository, type EntryRow, type SessionRow } from './repository.js';
-import { narrativeOutputSchema, readCharacterSpriteOutput, type CharacterSpriteOutput, type NarrativeOutput } from './output.js';
-import { readStoredNarrativeOutput } from './stored-output.js';
+import { storedNarrativeOutputSchema, narrativeOutputSchema, readCharacterSpriteOutput, type CharacterSpriteOutput, type NarrativeOutput } from './output.js';
 import {
-  appendEntrySchema, createSessionSchema, identifier, metricsSchema,
+  appendEntrySchema, createSessionSchema, identifier,
   sessionListSchema, updateEntrySchema, updateSessionSchema, narrativeOutcomeSchema, entryRunListSchema,
 } from './schema.js';
 import type {
@@ -41,7 +40,7 @@ function toSession(row: SessionRow): Session {
   return {
     id: row.id, worldId: row.world_id, runtimeConfig: row.runtime_config,
     userCharacterId: row.user_character_id, tipEntryId: row.tip_entry_id, title: row.title,
-    state: row.state, usage: row.usage_json, createdAt: row.created_at, updatedAt: row.updated_at,
+    state: row.state, createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
 
@@ -53,8 +52,8 @@ function toSessionEntry(row: EntryRow): SessionEntry {
     ...kind,
     id: row.id, sessionId: row.session_id, parentId: row.parent_id, runId: row.run_id, seq: row.seq,
     timestamp: row.timestamp, payload: row.payload, state: row.state,
-    extData: row.ext_data.output === undefined ? row.ext_data : { ...row.ext_data, output: readStoredNarrativeOutput(row.ext_data.output) },
-    metrics: row.metrics_json === null ? null : metricsSchema.parse(row.metrics_json),
+    extData: row.ext_data.output === undefined ? row.ext_data : { ...row.ext_data, output: storedNarrativeOutputSchema.parse(row.ext_data.output) },
+    metrics: row.metrics_json,
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
@@ -199,7 +198,7 @@ export class SessionService {
       const selected = this.#dependencies.models.get(session.runtimeConfig.apiModelConfigId);
       const tipSeq = session.tipEntryId === null ? 0 : this.#repository.getEntry(sessionId, session.tipEntryId)?.seq ?? 0;
       const stale = latest.seq > tipSeq || !selected || selected.modelId !== request.modelId ||
-        (request.provider !== null && selected.providerId !== request.provider) ||
+        selected.providerId !== request.provider ||
         (snapshot !== undefined && snapshot.apiModelConfigId !== session.runtimeConfig.apiModelConfigId);
       latestContext = {
         inputTokens: request.usage?.inputTokens ?? null,
@@ -244,15 +243,6 @@ export class SessionService {
       throw new AppError('INVALID_REQUEST', '摘要内容及覆盖范围仅允许由服务内部维护');
     }
     return toSessionEntry(this.#repository.updateEntry(sessionId, entryId, patch));
-  }
-
-  /** NULL means no record; usage:null means a real request without reported usage. */
-  setMetrics(sessionId: string, entryId: string, value: EntryMetrics | null): SessionEntry {
-    this.#assertSessionWrite(identifier.parse(sessionId));
-    const metrics = value === null ? null : metricsSchema.parse(value);
-    const current = this.#requireEntry(sessionId, entryId);
-    this.#assertMetricsRole(current.role, metrics);
-    return toSessionEntry(this.#repository.setMetrics(sessionId, entryId, metrics));
   }
 
   getState(sessionId: string): JsonObject | null {

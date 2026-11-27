@@ -66,7 +66,7 @@ function PublicationContent({world,controller}:{world:WorldDetail;controller:Ret
   const {t}=useTranslation('worlds');
   const state=useSyncExternalStore(controller.subscribe,controller.getSnapshot,controller.getSnapshot);
   const [open,setOpen]=useState(false);
-  const [selected,setSelected]=useState<{release:WorldRelease;revision:number;from:string|null}|null>(null);
+  const [selected,setSelected]=useState<{release:WorldRelease;revision:number;from:string}|null>(null);
   const publication=world.publication,view=state.view,summary=view??world;
   const hasSource=!!publication.update_url;
   const refreshing=state.refreshing,applying=!!state.applying,busy=state.loading||refreshing||applying;
@@ -105,14 +105,14 @@ function PublicationContent({world,controller}:{world:WorldDetail;controller:Ret
       </>:<Button onClick={close}>{t('common:closeDialog')}</Button>}>
       <div className={styles.dialog}>
         {selected?<>
-          <p>{t('publication.confirmCopy',{from:selected.from??t('publication.undeclared'),to:selected.release.version})}</p>
+          <p>{t('publication.confirmCopy',{from:selected.from,to:selected.release.version})}</p>
           <p className={styles.hint}>{t('publication.confirmPreserved')}</p>
           <div className={styles.releaseTitle}><strong>v{selected.release.version}</strong>{selected.release.title&&<span>{selected.release.title}</span>}</div>
           <ReleaseNotes text={selected.release.notes||t('publication.noNotes')}/>
           <VersionError reason={state.error}/>
         </>:<>
           <section className={styles.installed} aria-label={t('publication.installed')}>
-            <div className={styles.installedHeader}><span>{t('publication.installed')}</span><strong>{summary.currentVersion?'v'+summary.currentVersion:t('publication.undeclared')}</strong>
+            <div className={styles.installedHeader}><span>{t('publication.installed')}</span><strong>v{summary.currentVersion}</strong>
               {homepage&&<ActionLink href={homepage} target="_blank" rel="noopener noreferrer" size="compact" variant="ghost">{t('publication.homepage')} <ExternalLink size={13}/></ActionLink>}
             </div>
             <>

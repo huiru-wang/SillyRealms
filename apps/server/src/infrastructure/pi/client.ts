@@ -53,7 +53,7 @@ function modelInfo(model: SdkModel): ModelInfo {
     reasoning: model.reasoning, thinkingLevels: [...getSupportedThinkingLevels(model)], thinkingLevelMap,
     promptCache: model.promptCache === undefined ? null
       : { short: model.promptCache.short ?? null, long: model.promptCache.long ?? null },
-    narrativeCompatible: ordered, supportsMidConversationSystemMessages: ordered,
+    supportsMidConversationSystemMessages: ordered,
   };
 }
 

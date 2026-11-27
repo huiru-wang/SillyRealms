@@ -7,7 +7,7 @@ export type WorldPublication={
  release:{version:string;published_at:string;notes:string};homepage?:string;update_url?:string;
 };
 export type WorldVersionSummary={
- currentVersion:string|null;latestVersion:string|null;
+ currentVersion:string;latestVersion:string|null;
  updateStatus:'no_source'|'not_checked'|'checking'|'ready'|'failed';
 };
 export type WorldRelease={

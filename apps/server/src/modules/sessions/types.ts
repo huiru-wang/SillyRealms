@@ -10,7 +10,7 @@ export type SessionRuntimeConfig = z.infer<typeof runtimeConfigSchema>;
 export type Session = {
   id: string; worldId: string; runtimeConfig: SessionRuntimeConfig;
   userCharacterId: string; tipEntryId: string | null; title: string | null;
-  state: JsonObject; usage: JsonObject | null; createdAt: number; updatedAt: number;
+  state: JsonObject; createdAt: number; updatedAt: number;
 };
 export type SessionEntry = {
   id: string; sessionId: string; parentId: string | null; runId: string; seq: number;

@@ -11,7 +11,7 @@ import { createApp } from '../../app.js';
 import { memoryCredentials } from '../../testing/credentials.js';
 
 const model: ModelInfo = { providerId:'test', modelId:'writer', name:'Writer', api:'test', input:['text'],
-  contextWindow:8192, maxTokens:1024, narrativeCompatible:true, supportsMidConversationSystemMessages:true,
+  contextWindow:8192, maxTokens:1024, supportsMidConversationSystemMessages:true,
   reasoning:false, thinkingLevelMap:null, thinkingLevels:['off'], promptCache:null };
 const makeFixture = async () => {
   const db=openDatabase(':memory:'), events=new EventHub();
@@ -104,6 +104,84 @@ describe('AI reply assist',()=>{
     expect(JSON.stringify(f.seen)).not.toContain('private');
     expect(sessions.getHistory('a')).toEqual([entry]);
   });
+  it('uses the same state-driven author templates for persona, characters and lore without persisting rendered text',async()=>{
+    f.bind();
+    const content="{% if getState('affinity', {scope: 'message'}) >= 60 %}Trusted {{user}}/{{state.message.affinity}}{% else %}Guarded{% endif %}";
+    f.services.worlds.update('world',{
+      characters:[
+        {id:'p',name:'Player',player_selectable:true,content:"{% if true %}Ready {{user}}{% endif %}"},
+        {id:'alice',name:'Alice',content},
+      ],
+      lorebook:{entries:[{id:'clue',content:"{% if getState('affinity', {scope: 'message'}) >= 60 %}Available clue{% endif %}"}]},
+      stateDefinition:{schema_version:2,scopes:{message:{
+        affinity:{type:'number',initial:0,description:'Affinity',min:0,max:100},
+      }}},
+    });
+    const entry=f.services.sessions.appendEntry('a',{type:'message',role:'assistant',runId:'opening',
+      payload:{message:{role:'assistant',content:'Opening',timestamp:1}}});
+    f.services.sessions.setEntryState('a',entry.id,[{key:'affinity',value:70}]);
+    const history=f.services.sessions.getHistory('a');
+    const draft='{% if false %}unprocessed draft{% endif %}';
+    f.submit('a',draft);
+    await vi.waitFor(()=>expect(f.seen.at(-1)?.event).toBe('reply_assist.completed'));
+    const messages=f.stream.mock.calls[0]![1];
+    const rendered=messages.map(message=>message.content).join('\n');
+    expect(rendered).toContain('Ready Player');
+    expect(rendered).toContain('Trusted Player/70');
+    expect(rendered).toContain('Available clue');
+    expect(rendered).not.toContain('Guarded');
+    expect(messages.at(-1)?.content).toContain(draft);
+    expect(f.services.worlds.require('world').characters[1]).toMatchObject({content});
+    expect(f.services.sessions.getHistory('a')).toEqual(history);
+  });
+
+  it('rejects an author condition error before calling the model and releases the reply-assist lock',()=>{
+    f.bind();
+    f.services.worlds.update('world',{
+      characters:[{id:'p',name:'Player',player_selectable:true,
+        content:"Persona\n{% if getState('missing', {scope: 'message'}) > 0 %}yes{% else %}wrong fallback{% endif %}"}],
+    });
+    expect(()=>f.submit()).toThrow('INVALID_NARRATIVE_TEMPLATE: characters[0].content (id: "p")');
+    expect(f.stream).not.toHaveBeenCalled();
+    expect(f.seen).toEqual([]);
+    expect(f.services.sessions.getHistory('a')).toEqual([]);
+    expect(()=>f.services.sessions.update('a',{runtimeConfig:{replyAssistGoal:'Unlocked'}})).not.toThrow();
+  });
+
+  it.each([
+    ['persona.content','personaInfo','characters[0].content'],
+    ['characters.content','characterInfo','characters[1].content'],
+    ['world.lore','worldInfo','lorebook.entries[0].content'],
+  ] as const)('ignores disabled %s material until a custom node consumes it',async(variable,builtinId,path)=>{
+    const preset=f.bind()!;
+    const source="Role\n{% if getState('missing', {scope: 'message'}) > 0 %}unreachable facts{% endif %}";
+    f.services.worlds.update('world',{
+      characters:[
+        {id:'p',name:'Player',player_selectable:true,content:variable==='persona.content'?source:'Player facts'},
+        {id:'alice',name:'Alice',content:variable==='characters.content'?source:'Alice facts'},
+      ],
+      lorebook:{entries:[{id:'facts',content:variable==='world.lore'?source:'World facts'}]},
+    });
+    preset.config.nodes.find(node=>node.id===builtinId)!.enabled=false;
+    preset.config.nodes.push({id:'optionalAuthorMaterial',name:'Optional author material',
+      kind:'text',role:'system',enabled:false,prompt:'Custom {{'+variable+'}}'});
+    f.services.presets.update(preset.id,{config:preset.config});
+
+    f.submit();
+    await vi.waitFor(()=>expect(f.seen.at(-1)?.event).toBe('reply_assist.completed'));
+    expect(f.stream).toHaveBeenCalledOnce();
+    expect(f.stream.mock.calls[0]![1].map(message=>message.content).join('\n')).not.toContain('unreachable facts');
+    const previousEvents=[...f.seen];
+
+    preset.config.nodes.find(node=>node.id==='optionalAuthorMaterial')!.enabled=true;
+    f.services.presets.update(preset.id,{config:preset.config});
+    expect(()=>f.submit()).toThrow('INVALID_NARRATIVE_TEMPLATE: '+path);
+    expect(f.stream).toHaveBeenCalledOnce();
+    expect(f.seen).toEqual(previousEvents);
+    expect(f.services.sessions.getHistory('a')).toEqual([]);
+    expect(()=>f.services.sessions.update('a',{runtimeConfig:{replyAssistGoal:'Unlocked'}})).not.toThrow();
+  });
+
   it('uses request identity for stop, releases before terminal, and cancels a blocked credential read at shutdown',async()=>{
     f.bind();
     vi.spyOn(f.services.credentials,'get').mockImplementation(()=>new Promise(()=>{}));
@@ -146,7 +224,7 @@ describe('AI reply assist',()=>{
     const bound=f.bind()!;
     const doc=f.services.presets.toDocument(bound);
     expect(doc.type).toBe('reply_assist');expect(doc).not.toHaveProperty('apiModelConfigId');
-    expect(doc.context_strategy).not.toHaveProperty('summary_prompt');
+    expect(doc.config.contextStrategy.summaryPrompt).toBe('');
     expect(f.services.presets.importDocument(doc)).toMatchObject({type:'reply_assist',apiModelConfigId:null});
     expect(()=>f.services.sessions.update('a',{runtimeConfig:{narrativePresetId:bound.id}})).toThrow('PRESET_TYPE_MISMATCH');
     expect(()=>f.services.settings.update({defaultReplyAssistPresetId:'sr-default-preset'})).toThrow('PRESET_TYPE_MISMATCH');

@@ -2,13 +2,13 @@
 
 ## 调用边界
 
-HTTP适配器位于 `apps/server/src/routes/`，可调用业务模块Service或应用usecase的读写能力。单域操作直接调用Service，跨模块写编排及导入导出流程交给usecases；跨模块只读展示投影可在route组合。业务模块位于modules/<name>，唯一出口是service.ts，Repository 及 parser/validation/assets/archive/files、预设 card/default 等内部实现私有。Service跨模块只依赖Reader只读能力；usecase不写SQL，需要事务的用例只接收绑定到共享连接的同步事务能力，Repository保留本域必要原子性。叙事用例不接收事务能力，用户与助手分别保存。
+HTTP适配器位于 `apps/server/src/routes/`，可调用业务模块Service或应用usecase的读写能力。单域操作直接调用Service，跨模块写编排及世界文件导入导出流程交给usecases；跨模块只读展示投影可在route组合。业务模块位于modules/<name>，唯一出口是service.ts，Repository 及 parser/validation/assets/archive/files、预设 card/default 等内部实现私有。Service跨模块只依赖Reader只读能力；usecase不写SQL，需要事务的用例只接收绑定到共享连接的同步事务能力，Repository保留本域必要原子性。叙事用例不接收事务能力，用户与助手分别保存。
 
 数据库连接与结构、EventHub/SSE、pi 模型适配分别位于 `src/infrastructure/database/`、`src/infrastructure/events/`、`src/infrastructure/pi/`。叙事生命周期位于 `src/usecases/narrative/`，不进入 transport 或基础设施；pi 适配不读写业务存储、不发布业务事件。
 
 Service 公共输入输出采用显式驼峰领域类型，存储行到领域对象的转换位于 Service，存储行及列名留在模块内部。HTTP 使用 V2 管理接口契约；跨模块展示字段由 route 调属主 Service 组合，不放回 Repository JOIN 或相互依赖的 Service 展示逻辑。作者 JSON、状态键及文档协议里的键不做递归改名。
 
-业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；Web 接入世界内容库、预设、模型配置、设置和基础会话和叙事运行页。数据库 `user_version=13`，直接创建完整当前结构；只重开结构完全匹配的 v13 数据库。旧 v1–v12、未知结构和旧 Server 库均在写入前拒绝，不执行迁移、重置或删除。世界展示使用可空的 `worlds.presentation_json`，作品发行信息使用必填的 `worlds.publication_json`。createApp传入services时必须同时传入usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureBuiltins 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 和 sr-default-reply-assist-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
+业务接口统一前缀为 `/api/v1`。以下路径均省略此前缀，健康检查 `GET /health` 除外。V2 使用独立数据库；Web 接入世界内容库、预设、模型配置、设置和基础会话和叙事运行页。数据库 `user_version=14`，直接创建完整当前结构；只重开结构完全匹配的 v14 数据库。旧 v1–v13、未知结构和旧 Server 库均在写入前拒绝，不执行迁移、重置或删除。世界展示使用可空的 `worlds.presentation_json`，作品发行信息使用必填的 `worlds.publication_json`。createApp 必须同时装配 services 和 usecases；server在每次监听HTTP前执行initialize，业务播种不在openDatabase内。initialize 在同一同步事务中调用 presets.ensureBuiltins 和 settings.ensure，缺失时恢复稳定 ID 为 sr-default-preset 和 sr-default-reply-assist-preset 的内置预设并补齐设置记录。已存在的预设内容、revision、时间戳和设置（包括自定义默认项、显式 null）不覆盖；同名自定义预设不覆盖，恢复项采用名称避重。默认模型保持 null，不创建模型或凭据；不需要前端向导。
 
 ## 普通 JSON 响应
 
@@ -47,7 +47,7 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 - 错误码、中文描述及 HTTP 状态统一定义在 `src/errors.ts`。可公开的参数详情并入 errorMessage，不新增 detail/error 等字段。
 - 未知异常统一为 INTERNAL_ERROR/500，不暴露原始 SQL、路径、堆栈或回调异常内容。
 
-普通JSON写入请求使用 `Content-Type: application/json`（也接受 application/*+json），正文必须是 JSON 对象。普通结构字段使用 Service 的 camelCase 命名。世界卡 data 及预设导入导出文件保留各自文档协议；预设 CRUD 使用领域配置结构。业务校验由对应 Service 或用例完成。叙事 stop 与模型 test 不要求请求正文。
+普通JSON写入请求使用 `Content-Type: application/json`（也接受 application/*+json），正文必须是 JSON 对象。普通结构字段使用 Service 的 camelCase 命名。世界卡 data 保留作者协议。预设文件和 CRUD 使用相同的 config。业务校验由对应 Service 或用例完成。叙事 stop 与模型 test 不要求请求正文。
 
 | 情况 | HTTP | 常用 errorCode |
 |---|---|---|
@@ -60,7 +60,7 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 | 世界存在关联会话，需确认一并删除 | 409 | WORLD_HAS_SESSIONS |
 | 追加前驱不是当前 tip | 409 | TIP_CONFLICT |
 | 存储暂时繁忙 | 503 | STORAGE_BUSY |
-| 业务 Service 未装配、服务关闭中 | 503 | SERVICE_UNAVAILABLE、SERVER_SHUTTING_DOWN |
+| 服务关闭中 | 503 | SERVER_SHUTTING_DOWN |
 | 世界管理版本已过期 | 409 | WORLD_REVISION_CONFLICT |
 | 请求来源不被允许 | 403 | ORIGIN_NOT_ALLOWED |
 | 世界卡或资源包无效 | 422 | INVALID_WORLD_CARD、INVALID_WORLD_PACKAGE |
@@ -95,15 +95,15 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 
 预设详情返回 `{id,revision,type,name,description,config,createdAt,updatedAt}`；列表仅返回去掉 config 的摘要，不读取每个预设的配置正文。类型支持 `narrative` 与 `reply_assist`，创建后固定。列表和默认模板的 type 查询参数默认 narrative。帮答详情另含本机模型绑定 `apiModelConfigId`（可空）。config 为 `{schemaVersion:1,nodes,contextStrategy,modelParameters}`。CRUD 不再接受 config_json/context_strategy/model_parameters 顶层字段。
 
-modelParameters 包含可选有限数值 temperature（0–2）、topP（0–1）、frequencyPenalty 与 presencePenalty（各 −2–2），以及 thinkingEnabled 开关及可选 thinkingLevel（minimal、low、medium、high、xhigh、max）。思考深度不指定时保留默认行为；关闭思考或模型不支持思考时不传思考参数。模型支持思考但不支持所选深度时，仅忽略该深度选择并沿用既有默认深度，保持思考开关语义。便携文档及内部存储分别对应 model_parameters.thinking_enabled / thinking_level，旧记录缺少深度时无需迁移。
+modelParameters 包含可选有限数值 temperature（0–2）、topP（0–1）、frequencyPenalty 与 presencePenalty（各 −2–2），以及 thinkingEnabled 开关及可选 thinkingLevel（minimal、low、medium、high、xhigh、max）。思考深度不指定时保留默认行为；关闭思考或模型不支持思考时不传思考参数。模型支持思考但不支持所选深度时，仅忽略该深度选择并沿用既有默认深度，保持思考开关语义。便携文件及 SQLite JSON 使用相同的 modelParameters 字段。
 
-采样区间包含端点。省略键表示使用模型默认，显式 0 是有效值。便携文件与 SQLite JSON 的 model_parameters 使用 temperature、top_p、frequency_penalty、presence_penalty；旧记录及文件省略新增项即可读取。保存完整 config 时移除对应键即可恢复默认。
+采样区间包含端点。省略键表示使用模型默认，显式 0 是有效值。保存完整 config 时移除对应键即可恢复默认。
 
 创建接收 `{name,description,type,config}`（可提供 id）。PATCH 接收修改字段及必填 expectedRevision，成功后 revision 加一；版本过期返回 PRESET_REVISION_CONFLICT/409，保持服务端内容不变。温度可省略，表示未指定；summaryPrompt 只有 rolling_summary 策略要求非空。
 
 叙事预设中的 worldState 是 worldInfo 与 chatHistory 之间必需的 system 节点。{{state.update.message}} 仅可在 stateUpdate 中引用。能力节点按 stateUpdate → actionSuggestions → characterSprite 的相对顺序保存；节点可缺失或关闭。启用能力节点必须有非空 prompt，禁止引用 input.text/history.messages/history.summary；不在读取时补节点、补默认提示词或转换 state.entries。正式变量包含 {{characterSprite.catalog}}，启用及素材条件见 [预设创作](../creator/presets-and-models.md)。
 
-默认模板接口返回 `data.item`，没有 ID/revision，不创建持久化记录。导入接收便携文档 `{type,name,description,config_json:{schemaVersion:3,nodes},context_strategy,model_parameters}`，旧文件缺少 type 时按 narrative 解释。帮答文件使用 sliding_window、输入与输出预算，省略 summary_prompt。模型绑定不随文件传输，导入后为 null。导入成功返回领域详情。导出使用同一便携文档协议，当前名称加 .json，排除 ID、revision、时间戳；GET/HEAD 下载成功不套包络。文件协议转换属于 presets 模块，不影响 CRUD 配置结构。
+默认模板接口返回 `data.item`，没有 ID/revision，不创建持久化记录。便携文档为 `{type,name,description,config}`，type 必填，config.schemaVersion 必须为 1。帮答预设使用 sliding_window，summaryPrompt 为空字符串。模型绑定不随文件传输，导入后为 null。导入成功返回领域详情。导出使用同一便携文档协议，当前名称加 .json，排除 ID、revision、时间戳；GET/HEAD 下载成功不套包络。文件导入与导出由 PresetService 校验。
 
 模型创建接收 `{name,providerId,modelId,apiKey}`，ID 由服务端生成；PATCH 接收上述字段的非空子集，省略 apiKey 保留原值，更换 providerId 必须同时提供新 apiKey。客户端不能传 credentialRef。响应为 `{id,name,providerId,modelId,credentialStatus,createdAt,updatedAt}`，不返回密钥或引用。credentialStatus 为 configured（凭据存在）、missing（未保存或不属于当前存储）、unavailable（存储不可访问），不代表已验证模型调用。
 
@@ -119,11 +119,11 @@ modelParameters 包含可选有限数值 temperature（0–2）、topP（0–1�
 | api | 模型所用协议标识 |
 | input | 支持的输入模态列表 |
 | promptCache | SDK 缓存元信息 `{short:number|null,long:number|null}` 或 null，单位秒；缺少某档时该档为 null |
-| narrativeCompatible、supportsMidConversationSystemMessages | 是否可保持叙事编排中的中途 system 消息顺序 |
+| supportsMidConversationSystemMessages | 是否可保持叙事编排中的中途 system 消息顺序 |
 
 promptCache 是 SDK 提供的最佳估计保留时长，缺失表示未提供，不等于不支持；它与请求 cacheRetention 偏好不同，返回长档时长不表示当前调用已启用长档，也不保证供应商实际保留期限。本次只展示目录能力，不修改生成或缓存请求配置。接口不返回 SDK baseUrl、headers、凭据或原始模型对象。
 
-`narrativeCompatible` 为 false 的模型，在实际编译结果没有中途 system 消息时仍可调用。未知模型不会自动替换。
+`supportsMidConversationSystemMessages` 为 false 的模型，在实际编译结果没有中途 system 消息时仍可调用。未知模型不会自动替换。
 
 `POST /api-model-configs/:id/test` 只读取已保存模型配置及其凭据，发起一次短文本调用，传给 pi 的 maxTokens 为 min(64, model.maxTokens)，整体等待上限 30 秒，不自动重试。成功返回 `data:{connected:true,providerId,modelId,durationMs,usage}`；usage 为标准 token 字段或 null。失败使用普通错误包络，不返回 `connected:false`、供应商原文、模型回复或凭据引用。此接口不创建会话、entry 或 run，也不修改 credentialStatus；检测成功不保证任意叙事消息顺序都兼容。
 
@@ -192,7 +192,7 @@ DELETE `/worlds/:id` 未确认关联删除时，有关联会话返回 WORLD_HAS_
 ~~~ts
 {
   worldId: string;
-  currentVersion: string | null;
+  currentVersion: string;
   latestVersion: string | null;
   updateStatus: 'no_source' | 'not_checked' | 'checking' | 'ready' | 'failed';
   lastSuccessAt: number | null;
@@ -256,7 +256,7 @@ SHA-256 示例需替换为所选目录记录真实值。服务端校验当前目
 | narrativePresetId | narrative_preset_id | 必填，叙事预设 |
 | apiModelConfigId | api_model_config_id | 必填，叙事模型配置 |
 | replyAssistPresetId | reply_assist_preset_id | 帮答预设，默认 null，表示跟随应用默认值 |
-| replyAssistGoal | replay_assist_goal | 帮答目标，最多 2000 字符，默认空字符串 |
+| replyAssistGoal | reply_assist_goal | 帮答目标，最多 2000 字符，默认空字符串 |
 | fontSize | font_size | 故事正文字号，13–21 的整数，默认 16 |
 
 `PATCH /sessions/:id` 接受 `title` 和部分 `runtimeConfig`。例如 `{"runtimeConfig":{"fontSize":18,"replyAssistPresetId":null}}` 只调整字号并恢复跟随应用默认，其他配置在同一事务内保留。
@@ -270,8 +270,8 @@ SHA-256 示例需替换为所选目录记录真实值。服务端校验当前目
 | 被拦截的写入 | HTTP | errorCode |
 |---|---|---|
 | 当前会话 PATCH/DELETE、entries POST/PATCH，以及服务内部的无持有者计量/结果写入 | 409 | `SESSION_WRITE_LOCKED` |
-| 当前会话 session/message 状态 PUT/PATCH，包括空更新、同值和原本会忽略的缺失路径 | 409 | `STATE_WRITE_LOCKED` |
-| 该世界任意会话运行期间，global 状态 PUT/PATCH | 409 | `STATE_WRITE_LOCKED` |
+| 当前会话 session/message 状态 update，包括空更新、同值和原本会忽略的缺失路径 | 409 | `STATE_WRITE_LOCKED` |
+| 该世界任意会话运行期间，global 状态 update | 409 | `STATE_WRITE_LOCKED` |
 | 同会话再次提交 run | 409 | `RUN_ALREADY_ACTIVE` |
 
 错误继续使用标准 `{success,errorCode,errorMessage,data}` 包络。读取、事件连接和显式 stop 可以正常使用；其他会话的独立状态及其他世界不受影响。新建不同 ID 的会话不受阻断，因为不修改已有会话或 global 快照。`GET /sessions/:id/history` 已删除，不保留别名；内部 `getHistory` 仍用于上下文构建。
@@ -292,7 +292,9 @@ create-session 用例在同一个同步事务中校验选择、计算初始快�
 
 消息保持线性父链，重新生成支持删除最新回复。parentId 可省略，默认当前 tip；显式值不匹配时返回 TIP_CONFLICT。追加只核对本会话当前 tip 与最大 seq。新条目、seq 与 tip 的原子更新归 SessionRepository；没有 setTip 或分支切换接口。
 
-SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt/updatedAt，payload 与状态内容保持原键。HTTP 追加条目不接受 metrics，也不提供编辑计量的 HTTP 路由；计量由进程内 SessionService 写入。runId 仅关联同组已保存消息，不区分创建时的首条消息与模型生成；轮次列表组合 entries 与本组首条 entry 的 extData.narrative；缺少结束结果且无活跃运行时状态为 unknown。
+普通消息追加和正文编辑只接受 `payload: {message: {role, content, timestamp, ...}}`。role 必须与条目一致，content 是字符串，timestamp 是非负整数毫秒。助手消息还可保存 reasoning_content 和 tool_calls，包括中断时尚未完整的函数参数字符串。结构无效时返回 400。
+
+SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt/updatedAt，状态内容保持原键。HTTP 追加条目不接受 metrics，也不提供编辑计量的 HTTP 路由；计量随助手或摘要条目原子写入。runId 仅关联同组已保存消息，不区分创建时的首条消息与模型生成；轮次列表组合 entries 与本组首条 entry 的 extData.narrative；缺少结束结果且无活跃运行时状态为 unknown。
 
 会话范围的读取、修改、状态及 SSE 入口先确认真实会话，再执行可选访问检查；拒绝与不存在统一返回 SESSION_NOT_FOUND。异步检查结束后先检查停机，再确认会话仍存在。配置了访问检查时，会话列表只返回获准条目。
 
@@ -351,9 +353,9 @@ type NarrativeOutcome =
 
 finishedAt 为结算 Unix 毫秒；stopReason 与当前 SSE 的原因类型一致，例如 cancelled、provider_error、output_incomplete、message_persist_failed。创建用户时仍为 extData:{}；先保存已有助手内容，再记录用户结束结果，最后发布终态。没有助手输出也会记录结果。写入仅替换 narrative 字段，保留其他扩展；通用 POST/PATCH entry 不能传 narrative/output，通用 extData 替换会保留服务端已存 narrative/output；正文编辑不重新执行或回滚能力结果。结果写入失败不回滚已有消息，刷新后可能 unknown；不持久化 running 或执行恢复日志，不新增表。
 
-metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstTextMs?}`，不再写 status。新请求 provider 取实际调用的 providerId；读取旧 metrics 时移除 status，缺少 provider 返回 null，不根据当前模型配置推断。旧 JSON 不做批量重写，新写入严格使用新结构。
+metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstTextMs?}`。provider 必须是本次实际调用的 providerId。读取和写入使用同一 schema。
 
-`GET /sessions/:id/narrative/usage` 返回 `data:{knownUsage,recordedRequestCount,unknownUsageRequestCount,latestContext}`。knownUsage 包含 inputTokens/outputTokens/totalTokens/cacheReadTokens/cacheWriteTokens，是已有 metrics 中可信 usage 的合计；unknownUsageRequestCount 统计 usage:null 的已记录请求，不将其视为零。没有助手 entry 等原因导致未记录的请求不在计数中，因此这是已记录用量而非完整账单；不写 session.usage 或增加计量表。
+`GET /sessions/:id/narrative/usage` 返回 `data:{knownUsage,recordedRequestCount,unknownUsageRequestCount,latestContext}`。knownUsage 包含 inputTokens/outputTokens/totalTokens/cacheReadTokens/cacheWriteTokens，是已有 metrics 中可信 usage 的合计；unknownUsageRequestCount 统计 usage:null 的已记录请求，不将其视为零。没有助手 entry 等原因导致未记录的请求不在计数中，因此这是已记录用量而非完整账单；按 entry 汇总。
 
 主叙事调用在实际请求发生后将最终编译快照附加到助手 `metrics.context`：
 
@@ -378,7 +380,7 @@ metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstT
 }
 ```
 
-它只选最新已保存的主叙事 assistant 请求，排除 compaction；输入量取该请求真实 usage，未知时为 null，不拿上一轮已知用量替代。旧记录没有快照时窗口为 null、组成省略，不猜测历史模型窗口。切换配置、当前配置的供应商/模型改变或快照条目的 seq 超过当前 tip时 stale=true；正常追加下一轮或改标题不使旧快照自动过期。没有实际请求或没有保存助手时不产生新快照。
+它只选最新已保存的主叙事 assistant 请求，排除 compaction；输入量取该请求真实 usage，未知时为 null，不拿上一轮已知用量替代。记录没有快照时窗口为 null、组成省略，不猜测历史模型窗口。切换配置、当前配置的供应商/模型改变或快照条目的 seq 超过当前 tip时 stale=true；正常追加下一轮或改标题不使旧快照自动过期。没有实际请求或没有保存助手时不产生新快照。
 
 组成来自最终发给模型的 UTF-8 文本：系统模板/材料/后处理说明归 system，摘要归 summary，历史正文/模型旁注/本次 input.text 归 history。沿用 V1 每消息 16 B 的约定开销，普通拼装消息归 system、历史消息归 history。只统计实际发出的内容；这是字节占比，不是逐类计费 Token。上下文窗口占比使用实际 inputTokens/contextWindowTokens，累计 Token 包含已记录摘要及主叙事请求，缓存读写作为输入细分不重复相加。
 
@@ -422,7 +424,7 @@ metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstT
 
 run.completed 表示正文主流程完成，不等同于能力全部成功。能力异常记录在 output，查询方可查看能力状态与状态更新行诊断；模型取消、错误、length 等未执行后处理时，部分助手不产生 output。旧消息没有 output 不补造结果。
 
-新写入严格校验上述结构。既有 state/action 输出读取归一化保持原规则：旧成功 results 与 updates 按顺序配对，保留重复路径与 reason，不虚构已应用更新；旧建议只移除 results。立绘字段存在但结构损坏时，投影为 processing_error、items=[]、错误码 CHARACTER_SPRITE_STORED_RESULT_INVALID；字段缺失保持缺失。读取不使用当前目录重新否定历史合法角色/素材 ID，不重写原存储，不增加数据库迁移。
+输出读写共用能力 schema。状态或建议结果结构损坏时，该能力返回 processing_error、空列表及 STATE_UPDATE_STORED_RESULT_INVALID 或 ACTION_SUGGESTIONS_STORED_RESULT_INVALID。立绘字段存在但结构损坏时，投影为 processing_error、items=[]、错误码 CHARACTER_SPRITE_STORED_RESULT_INVALID；字段缺失保持缺失。读取不使用当前目录重新否定历史合法角色/素材 ID，不重写原存储，不增加数据库迁移。
 
 公开与持久化正文保持干净。context 先选捕获历史中最近两条有可见正文的 assistant，再按当前节点与材料条件构建来源；仅最终保留消息才附旁注。状态只取成功 updates，建议只取有效 items，立绘只取该消息 success/partial_success 的有效 items，均不注入错误诊断。启用的立绘来源在无结果、失败、损坏或读取/序列化异常时附完整空标签，关闭或无素材时不附。历史空标签不将 null/失败改为成功，不回写消息或触发清场。旁注只进入主模型和实际预算，不进入 HTTP 正文、摘要或关键词。状态/建议不持久化行号；立绘 errors.line 按上述契约保存。不新增 notes 表或历史重建接口。
 
@@ -526,85 +528,60 @@ HTTP 200 成功包络：
 
 ## 状态接口
 
-状态 HTTP 统一归属 state 模块。以下三个 scope 各提供 GET、PATCH、PUT，共 9 个接口；本表仍省略统一的 `/api/v1` 前缀。
+两个接口均使用 POST，目标和操作参数放在同一个 JSON 对象中。每次请求只操作一个目标，成功包络的 `data` 直接返回结果数组。
 
-| Scope | 方法 | 路径 | GET/PUT 的状态值 |
-|---|---|---|---|
-| global | GET / PATCH / PUT | /state/global/:worldId | 完整 JSON 对象 |
-| session | GET / PATCH / PUT | /state/session/:sessionId | 完整 JSON 对象 |
-| message | GET / PATCH / PUT | /state/message/:sessionId/:entryId | 完整 JSON 数组或 null |
+| 路径 | 操作参数 | 结果 |
+|---|---|---|
+| `/api/v1/state/query` | 可选 `paths` 字符串数组 | 字段行，每行包含 `path`，存在的值包含 `value` |
+| `/api/v1/state/update` | 必填 `updates` 数组 | 按输入顺序返回 `StateWriteResult[]` |
 
-不提供 `GET /state/views`。需要全部状态时，调用方分别请求三个 scope。原 `/worlds/:worldId/state`、`/sessions/:id/state`、`/sessions/:id/entries/:entryId/state` 的 GET/PUT 全部移除，不保留别名。
+| 正文中的 scope | 必填目标字段 |
+|---|---|
+| `global` | `worldId` |
+| `session` | `sessionId` |
+| `message` | `sessionId`、`entryId` |
 
-session/message 的所有方法按路径中的 sessionId 调用 `requireSessionAccess`；message 还检查 entryId 是否属于该会话。global 检查 worldId 对应世界存在。权限及所属对象错误在请求层返回，空 PATCH 批次也不能绕过这些检查。
+未知字段、混用目标 ID、缺少 ID、空白或带首尾空白的 ID 均返回 400。session/message 使用现有会话访问检查，无权访问或会话缺失返回 `404 SESSION_NOT_FOUND`。条目缺失或属于其他会话返回 `404 ENTRY_NOT_FOUND`，世界缺失返回 `404 WORLD_NOT_FOUND`。按 scope 区分的旧 GET/PATCH/PUT 路由已移除。
 
-### 读取与整快照写
+### 查询字段
 
-GET 和 PUT 的成功 data 均为 `{ item: 状态值 }`。PUT 正文必须且只能包含 state，例如：
+查询一个会话的全部根字段时发送 `{"scope":"session","sessionId":"s1"}`。每个实际存在的根返回一行，对象和数组保留完整 JSON 值。指定路径时发送：
 
 ```json
-{ "state": { "gold": 20, "weather": "rain" } }
+{"scope":"session","sessionId":"s1","paths":["coins","inventory.keys","reward","unknown"]}
 ```
-
-PUT 完整替换所选 scope，用于初始化、重置或恢复已保存快照。global/session 接受 JSON 对象。message 接受 `[{ "key": "gold", "value": 20 }]` 形式的快照数组或 null；GET 返回沿前驱继承后的有效快照，PUT 写入指定条目自身。消息 null 恢复继承，显式空数组终止继承；没有有效继承值时 GET 成功返回 null，消息不存在返回 404。
-
-### 字段级写
-
-PATCH 正文必须且只能包含 updates，数组每项必须且只能包含字符串 path 和显式 value；scope 由 URL 决定，不在每项中重复提供：
 
 ```json
 {
-  "updates": [
-    { "path": "coins", "value": 20 },
-    { "path": "inventory.keys", "value": 1 }
-  ]
+  "success": true, "errorCode": null, "errorMessage": "",
+  "data": [{"path":"coins","value":8},{"path":"inventory.keys","value":2},{"path":"reward","value":null},{"path":"unknown"}]
 }
 ```
 
-一次请求只操作一个 scope。空 updates 返回空结果数组。请求结构错误整体拒绝；结构有效后，按输入顺序逐项处理，结果顺序与输入一致，重复路径的后项读取前项已提交的值。
+指定字段从同一份目标快照读取，按输入顺序返回，保留重复路径。只有缺失行省略 value。空 paths 通过目标与权限检查后返回空数组。显式 null、非法路径、尝试访问数组元素等查询错误整体返回 400。对象路径遵守现有点分语法，支持直接读取完整数组。message 查询读取指定条目的有效继承快照。显式空快照和没有可继承值在全量查询时均返回空数组。
 
-每项采用独立同步事务：读取当前状态、计算候选值、校验目标根、保存变更。某项失败仅回滚该项，保留先前成功项并继续后续项。不存在跨项或跨 scope 的整体事务。
+### 更新字段
 
-path 支持根名及对象点分路径，例如 `inventory.keys`。目标根、中间节点或末级字段不存在时，成功忽略且不创建节点；快照中的根没有对应 state 定义时也成功忽略。非法路径仍返回字段错误；不接受原型相关危险键、数组索引或 rules 中的 `[]` 模板路径。数组通过已有路径整体替换；value 是完整新值，null 是值而非删除操作。
+```json
+{"scope":"message","sessionId":"s1","entryId":"e2","updates":[{"path":"coins","value":10}]}
+```
 
-字段实际存在时，使用共享 `state-validation` 检查受影响根的声明和更新后完整根值；不扫描同 scope 的其他根。检查包含根类型、number 根的 min/max、安全 JSON、大小和深度。可选的 rules 仅为给模型的自然语言说明，不决定字段能否更新；SDK 字段写不受根的 load 激活条件限制。
+```json
+{
+  "success": true, "errorCode": null, "errorMessage": "",
+  "data": [{"scope":"message","path":"coins","success":true,"errorCode":null,"errorMessage":""}]
+}
+```
 
-缺失路径以及新值与当前值相同的成功项都不写数据库。message PATCH 从指定条目的有效继承状态计算；实际变更时将结果保存为该条目的独立快照，不改前驱。成功忽略及未变化项保持该条目原有的 null 继承状态。
+每项必须且只能包含非空字符串 path 和显式 value。请求结构错误整体拒绝。合法批次按输入顺序逐项开启同步事务，读取最新值、计算候选并校验受影响的根。已存在的对象属性或整数组可被替换。缺失路径、没有对应定义的根和同值更新成功忽略。rules 是模型提示，不能授权或阻止公共字段更新。message 更新从指定条目的继承值计算，仅在实际变更时保存独立快照。
 
-PATCH 成功接受批次时使用标准 HTTP 成功包络，`data` 为 `StateWriteResult[]`。单项均包含 path、scope、success、errorCode、errorMessage：
-
-- 成功项：`success:true, errorCode:null, errorMessage:""`，包括实际写入、未变化和缺失路径忽略。
-- 失败项：`success:false`，携带业务 errorCode/errorMessage；状态校验错误可附加 stateScope、statePath、rulePath，指向实际失败的根、字段或规则。
-- 外层 success 表示批次已处理，不代表每项均成功。即使全部项失败，逐项结果仍在 data 数组中返回。
-
-StateService 负责读取、继承、业务校验和候选快照计算。set-state 用例通过绑定的 TransactionRunner 管理每项事务，并调用表属主 World/Session Service 写入。state 不增加表或 Repository，路由不写 SQL、不管理事务。内部 getViews/evaluateWhen 保留给叙事上下文和材料条件使用；叙事后处理使用纯 prepareMessageUpdates 计算模型 JSONL 候选，仅允许本轮激活的 message 根与已存在路径，缺失路径记录该行 invalid_path；公共 PATCH 仍成功忽略缺失路径。不增加 Run/State 并发锁或时序保证。
+批次接受后返回 200，失败行含业务 errorCode/errorMessage，校验失败可含 stateScope、statePath、rulePath。单项失败仅回滚该项，其他项继续处理。写锁在批次开始和每项事务内检查，冲突返回 `409 STATE_WRITE_LOCKED`。空 updates 同样检查目标、权限和锁。
 
 ### 事件与调用方接入边界
 
-`state.changed` 使用既有事件契约，通过 `/api/v1/sessions/:id/events` 推送：
+state 用例组合属主服务和 StateService，每项实际变化在提交后通过现有会话 SSE 发布 `state.changed`，然后处理下一项。事件仍为 `{path,scope,value}`。global 广播到世界下的全部会话，session/message 仅通知所属会话。message 比较当前 tip 的有效状态，修改历史条目仅在影响当前 tip 时通知。完整快照追加等内部流程仍以空事件路径表示整个 scope 替换。查询、同值、缺失路径忽略和回滚均不发布事件。
 
-```ts
-{ event: 'state.changed', data: { path, scope, value } }
-```
-
-仅在成功提交且有效状态实际变化后发布。PATCH 每项独立提交，提交后发布该项事件，再处理下一项；缺失路径成功忽略、同值、校验失败及回滚均不发事件。PUT 对有效快照做前后比较；GET 和初始化不发事件。
-
-- PATCH：path 为改变的对象点分路径，value 为该路径的完整新值，数组整体替换，null 是有效值而非删除。
-- PUT 与带独立 state 的消息追加：path 为 `""`，value 为该 scope 的完整有效对象快照。接收方必须替换整个 scope，不能合并；`{}` 表示清空。空 path 仅用于事件，PATCH 输入仍禁止空 path。
-- global：通过 SessionService 查询该世界的全部会话 ID，逐会话发布；不受列表分页限制，不影响其他世界。
-- session：只发布到所属会话的所有订阅连接。
-- message：比较当前 tip 的有效继承状态，`[{key,value}]` / null 解码为对象后发布。修改历史 entry 仅在影响当前 tip 时通知；被后继独立快照覆盖的历史修改不通知。PUT null 恢复继承时发送继承后的对象，不发送 null 作为清空标记。
-
-set-state 用例在同步事务内读取、保存、计算变更与收集接收会话，提交成功后经同一个 EventHub 发布。普通 entry 追加通过 append-entry 用例处理 tip 状态变化；追加 null 状态仅继承前驱，不发事件。叙事后处理在收尾事务内预计算状态变化，再保存助手、output 与有效快照，提交并释放执行锁后发布实际变化；无变化继续 null 继承。StateService 只负责继承和变更计算，EventHub 不查询数据库。订阅监听器异常由 EventHub 隔离，不把已提交写入判为失败。
-
-不新增连接、SSE id、事件持久化或回放。断线期间的状态事件不补发；接入方初次装载和重连时读取最新快照。
-
-Web 的 state feature 与 Stage SDK 已按以下规则接入；世界组件预览使用新 global 路径。
-
-- 按需读取各 scope；message GET 的数组/null 需解码成 SDK 读取使用的对象视图，全部状态由三个 GET 的结果组合。
-- 混合 scope 的 batch 按 scope 分组请求对应 PATCH，再按原输入顺序合并结果。
-- 订阅现有会话 SSE 的 state.changed；识别 `path: ""` 整体替换和普通路径替换。message 事件表示当前 tip，不应用到任意历史消息的缓存。
-- success:true 包含成功忽略，不能将每个成功结果都当成已写入并把提交值直接加入本地快照。transport 以重新读取的服务端状态等权威结果同步缓存，避免缺失路径在客户端出现未保存的值。
+初次加载和重连可省略 paths 查询各 scope 的全部根。更新成功可能表示字段缺失或值相同，调用方通过查询或已提交事件同步有效值。叙事上下文继续使用内部 getViews/evaluateWhen，模型后处理仅允许本轮激活的 message 根。详见[会话事件](server-events.md#状态事件)。
 
 ## SSE 与下载例外
 

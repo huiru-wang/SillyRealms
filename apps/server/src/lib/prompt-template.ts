@@ -1,6 +1,5 @@
-import type { StateScope } from '@sillyrealms/sdk/state-validation';
+import { statePathParts, type StateScope } from '@sillyrealms/sdk/state-validation';
 import { AppError } from '../errors.js';
-import { statePathParts } from './state-path.js';
 
 export type StateReference = { type: 'state'; scope: StateScope; parts: string[] };
 type Segment<Name extends string> = { type: 'text'; value: string } | { type: 'variable'; name: Name } | StateReference;

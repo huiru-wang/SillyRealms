@@ -10,13 +10,13 @@ import { openDatabase } from '../infrastructure/database/connection.js';
 import { bindTransaction } from '../infrastructure/database/transaction.js';
 import { createServices, type Services } from '../services.js';
 import { narrativePreset } from '../testing/fixtures.js';
-import { createSetState, type SetState } from './set-state.js';
+import { createStateUsecase, type StateUsecase } from './state.js';
 
-let db: DatabaseSync, services: Services, setState: SetState, dataRoot: string, events: EventHub;
+let db: DatabaseSync, services: Services, stateUsecase: StateUsecase, dataRoot: string, events: EventHub;
 beforeEach(() => {
   db = openDatabase(':memory:');
   events = new EventHub();
-  dataRoot = mkdtempSync(join(tmpdir(), 'sr-set-state-'));
+  dataRoot = mkdtempSync(join(tmpdir(), 'sr-state-usecase-'));
   services = createServices(db, dataRoot);
   services.models.create({ id: 'model', name: 'Model', providerId: 'provider', modelId: 'model', credentialRef: 'credential-ref' });
   services.presets.create({ ...narrativePreset(), id: 'preset' });
@@ -28,16 +28,28 @@ beforeEach(() => {
     id, worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player',
     state: { reputation: 0, coins: 1 },
   });
-  setState = createSetState({ worlds: services.worlds, sessions: services.sessions, state: services.state, cache: services.cache, transaction: bindTransaction(db), events });
+  stateUsecase = createStateUsecase({ worlds: services.worlds, sessions: services.sessions, state: services.state, cache: services.cache, transaction: bindTransaction(db), events });
 });
 afterEach(() => { vi.restoreAllMocks(); db.close(); rmSync(dataRoot, { recursive: true, force: true }); });
 
 function append(id: string) {
   return services.sessions.appendEntry('one', {
-    id, runId: 'run', type: 'message', role: 'assistant', payload: { text: id }, extData: { author_key: true },
+    id, runId: 'run', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: id, timestamp: 1 } }, extData: { author_key: true },
   });
 }
 
+
+it('queries multiple fields of the specified entry with one inherited snapshot read', () => {
+  append('root');
+  services.sessions.setEntryState('one', 'root', [{ key: 'coins', value: 8 }]);
+  append('child');
+  const read = vi.spyOn(services.sessions, 'inheritedEntryState');
+  expect(stateUsecase.query({ scope: 'message', sessionId: 'one', entryId: 'child' }, ['coins', 'other', 'coins'])).toEqual([
+    { path: 'coins', value: 8 }, { path: 'other' }, { path: 'coins', value: 8 },
+  ]);
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(read).toHaveBeenCalledWith('one', 'child');
+});
 
 describe('independent state field writes', () => {
   beforeEach(() => {
@@ -69,7 +81,7 @@ describe('independent state field writes', () => {
       if (value.coins === 3) throw new Error('private SQL storage detail');
       return result;
     });
-    const result = setState.patchSession('one', [
+    const result = stateUsecase.update({ scope: 'session', sessionId: 'one' }, [
       { path: 'coins', value: 2 },
       { path: 'coins', value: 3 },
       { path: 'reputation', value: 5 },
@@ -93,8 +105,8 @@ describe('independent state field writes', () => {
   });
 
   it('does not reject an existing field because other scope roots are missing or invalid', () => {
-    setState.setSession('one', { coins: 1, reputation: 'invalid old value', extra: true });
-    expect(setState.patchSession('one', [{ path: 'coins', value: 4 }])).toEqual([
+    services.sessions.setState('one', { coins: 1, reputation: 'invalid old value', extra: true });
+    expect(stateUsecase.update({ scope: 'session', sessionId: 'one' }, [{ path: 'coins', value: 4 }])).toEqual([
       { path: 'coins', scope: 'session', success: true, errorCode: null, errorMessage: '' },
     ]);
     expect(services.state.requireSession('one')).toEqual({ coins: 4, reputation: 'invalid old value', extra: true });
@@ -102,9 +114,9 @@ describe('independent state field writes', () => {
 
   it('ignores missing paths in every scope without writing or materializing inherited message state', () => {
     append('root');
-    setState.setMessage('one', 'root', [{ key: 'profile', value: { name: 'Alice', score: 0 } }]);
+    services.sessions.setEntryState('one', 'root', [{ key: 'profile', value: { name: 'Alice', score: 0 } }]);
     append('child');
-    setState.setSession('one', { coins: 1, profile: { name: 'Alice', score: 0 } });
+    services.sessions.setState('one', { coins: 1, profile: { name: 'Alice', score: 0 } });
     const globalWrite = vi.spyOn(services.worlds, 'setState');
     const sessionWrite = vi.spyOn(services.sessions, 'setState');
     const messageWrite = vi.spyOn(services.sessions, 'setEntryState');
@@ -114,9 +126,9 @@ describe('independent state field writes', () => {
       { path: 'profile.missing.child', value: 3 },
     ];
     for (const results of [
-      setState.patchGlobal('world', updates),
-      setState.patchSession('one', updates),
-      setState.patchMessage('one', 'child', updates),
+      stateUsecase.update({ scope: 'global', worldId: 'world' }, updates),
+      stateUsecase.update({ scope: 'session', sessionId: 'one' }, updates),
+      stateUsecase.update({ scope: 'message', sessionId: 'one', entryId: 'child' }, updates),
     ]) {
       expect(results).toHaveLength(3);
       expect(results.every(result => result.success && result.errorCode === null && result.errorMessage === '')).toBe(true);
@@ -131,24 +143,50 @@ describe('independent state field writes', () => {
   it('writes a changed inherited value only to the selected message and preserves the predecessor', () => {
     append('root');
     const previous = [{ key: 'profile', value: { name: 'Alice', score: 0 } }];
-    setState.setMessage('one', 'root', previous);
+    services.sessions.setEntryState('one', 'root', previous);
     append('child');
-    setState.patchMessage('one', 'child', [{ path: 'profile.name', value: 'Alice' }]);
+    stateUsecase.update({ scope: 'message', sessionId: 'one', entryId: 'child' }, [{ path: 'profile.name', value: 'Alice' }]);
     expect(services.sessions.getEntryState('one', 'child')).toBeNull();
-    expect(setState.patchMessage('one', 'child', [{ path: 'profile.name', value: 'Bob' }])[0]?.success).toBe(true);
+    expect(stateUsecase.update({ scope: 'message', sessionId: 'one', entryId: 'child' }, [{ path: 'profile.name', value: 'Bob' }])[0]?.success).toBe(true);
     expect(services.sessions.getEntryState('one', 'root')).toEqual(previous);
     expect(services.sessions.getEntryState('one', 'child')).toEqual([{ key: 'profile', value: { name: 'Bob', score: 0 } }]);
-    setState.setMessage('one', 'child', null);
+    services.sessions.setEntryState('one', 'child', null);
     expect(services.state.requireMessage('one', 'child')).toEqual(previous);
-    setState.setMessage('one', 'child', []);
-    setState.patchMessage('one', 'child', [{ path: 'profile.name', value: 'Carol' }]);
+    services.sessions.setEntryState('one', 'child', []);
+    stateUsecase.update({ scope: 'message', sessionId: 'one', entryId: 'child' }, [{ path: 'profile.name', value: 'Carol' }]);
     expect(services.sessions.getEntryState('one', 'child')).toEqual([]);
+  });
+
+  it('changes only state and the timestamp of the selected message', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(100);
+    const entry = services.sessions.appendEntry('one', {
+      id: 'root', runId: 'run', type: 'message', role: 'assistant',
+      payload: { message: { role: 'assistant', content: 'Story', timestamp: 100 } },
+      extData: { author_key: true }, state: [{ key: 'coins', value: 1 }],
+      metrics: { requests: [{ requestId: 'request', modelId: 'actual', provider: 'provider', usage: null }] },
+    });
+    vi.mocked(Date.now).mockReturnValue(200);
+    expect(stateUsecase.update({ scope: 'message', sessionId: 'one', entryId: entry.id }, [{ path: 'coins', value: 7 }])[0]?.success).toBe(true);
+    expect(services.sessions.getEntry('one', entry.id)).toEqual({ ...entry, state: [{ key: 'coins', value: 7 }], updatedAt: 200 });
+    expect(services.sessions.require('one').updatedAt).toBe(100);
+  });
+
+  it('discards the change and event if the transaction cannot commit', () => {
+    const run = bindTransaction(db);
+    const usecase = createStateUsecase({
+      ...services, events, transaction: work => run(() => { work(); throw new Error('commit failed'); }),
+    });
+    const notify = vi.spyOn(events, 'publish');
+    expect(usecase.update({ scope: 'global', worldId: 'world' }, [{ path: 'day', value: 4 }])[0])
+      .toMatchObject({ success: false, errorCode: 'INTERNAL_ERROR' });
+    expect(services.state.requireGlobal('world').day).toBe(1);
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it('publishes after each commit, isolates failing listeners and preserves field order', () => {
     const order: string[] = [], observedCoins: unknown[] = [];
     const transaction = bindTransaction(db);
-    setState = createSetState({
+    stateUsecase = createStateUsecase({
       worlds: services.worlds, sessions: services.sessions, state: services.state, cache: services.cache, events,
       transaction: work => { const result = transaction(work); order.push('commit'); return result; },
     });
@@ -159,7 +197,7 @@ describe('independent state field writes', () => {
       order.push(connection + ':' + String(event.data.value));
       observedCoins.push(services.state.requireSession('one').coins);
     });
-    expect(setState.patchSession('one', [{ path: 'coins', value: 2 }, { path: 'coins', value: 3 }]).every(result => result.success)).toBe(true);
+    expect(stateUsecase.update({ scope: 'session', sessionId: 'one' }, [{ path: 'coins', value: 2 }, { path: 'coins', value: 3 }]).every(result => result.success)).toBe(true);
     expect(order).toEqual(['commit', 'first:2', 'second:2', 'commit', 'first:3', 'second:3']);
     expect(observedCoins).toEqual([2, 2, 3, 3]);
     expect(other).not.toHaveBeenCalled();
@@ -167,28 +205,28 @@ describe('independent state field writes', () => {
 
   it('publishes nested paths only when the current tip inherits the modified entry', () => {
     append('root');
-    setState.setMessage('one', 'root', [{ key: 'profile', value: { name: 'Alice', score: 0 } }]);
+    services.sessions.setEntryState('one', 'root', [{ key: 'profile', value: { name: 'Alice', score: 0 } }]);
     append('child');
     const received: SessionEvent[] = [];
     events.subscribe('one', event => received.push(event));
-    setState.patchMessage('one', 'root', [{ path: 'profile.name', value: 'Bob' }]);
+    stateUsecase.update({ scope: 'message', sessionId: 'one', entryId: 'root' }, [{ path: 'profile.name', value: 'Bob' }]);
     expect(received).toEqual([{ event: 'state.changed', data: { scope: 'message', path: 'profile.name', value: 'Bob' } }]);
-    setState.setMessage('one', 'child', [{ key: 'profile', value: { name: 'Carol', score: 0 } }]);
+    services.sessions.setEntryState('one', 'child', [{ key: 'profile', value: { name: 'Carol', score: 0 } }]);
     received.length = 0;
-    expect(setState.patchMessage('one', 'root', [{ path: 'profile.name', value: 'Dave' }])[0]?.success).toBe(true);
+    expect(stateUsecase.update({ scope: 'message', sessionId: 'one', entryId: 'root' }, [{ path: 'profile.name', value: 'Dave' }])[0]?.success).toBe(true);
     expect(received).toEqual([]);
     expect(services.state.getCurrentMessage('one')).toEqual({ profile: { name: 'Carol', score: 0 } });
   });
 
   it('does not publish ignored, equal or rejected fields in any scope', () => {
     append('root');
-    setState.setMessage('one', 'root', [{ key: 'coins', value: 1 }]);
+    services.sessions.setEntryState('one', 'root', [{ key: 'coins', value: 1 }]);
     const listener = vi.fn();
     events.subscribe('one', listener);
-    expect(setState.patchGlobal('world', [{ path: 'day', value: 1 }, { path: 'missing', value: 2 }]).every(result => result.success)).toBe(true);
+    expect(stateUsecase.update({ scope: 'global', worldId: 'world' }, [{ path: 'day', value: 1 }, { path: 'missing', value: 2 }]).every(result => result.success)).toBe(true);
     for (const patch of [
-      (updates: Parameters<SetState['patchSession']>[1]) => setState.patchSession('one', updates),
-      (updates: Parameters<SetState['patchSession']>[1]) => setState.patchMessage('one', 'root', updates),
+      (updates: Parameters<StateUsecase['update']>[1]) => stateUsecase.update({ scope: 'session', sessionId: 'one' }, updates),
+      (updates: Parameters<StateUsecase['update']>[1]) => stateUsecase.update({ scope: 'message', sessionId: 'one', entryId: 'root' }, updates),
     ]) {
       expect(patch([{ path: 'coins', value: 1 }, { path: 'missing', value: 2 }, { path: 'coins', value: 99 }, { path: '', value: 1 }])
         .map(result => result.success)).toEqual([true, true, false, false]);
@@ -197,8 +235,8 @@ describe('independent state field writes', () => {
   });
 
   it('persists complete replacement objects including fields without rule text', () => {
-    setState.setSession('one', { coins: 1, profile: { name: 'Alice', score: 0 } });
-    const result = setState.patchSession('one', [
+    services.sessions.setState('one', { coins: 1, profile: { name: 'Alice', score: 0 } });
+    const result = stateUsecase.update({ scope: 'session', sessionId: 'one' }, [
       { path: 'profile', value: { name: 'Bob', score: 1, unknown: true } },
       { path: 'coins', value: 2 },
     ]);
@@ -208,77 +246,14 @@ describe('independent state field writes', () => {
 
   it('rejects absent owners and foreign messages even for an empty update list', () => {
     append('root');
-    expect(() => setState.patchGlobal('missing', [])).toThrow('WORLD_NOT_FOUND');
-    expect(() => setState.patchSession('missing', [])).toThrow('SESSION_NOT_FOUND');
-    expect(() => setState.patchMessage('missing', 'root', [])).toThrow('SESSION_NOT_FOUND');
-    expect(() => setState.patchMessage('one', 'missing', [])).toThrow('ENTRY_NOT_FOUND');
-    expect(() => setState.patchMessage('two', 'root', [])).toThrow('ENTRY_NOT_FOUND');
-    expect(setState.patchGlobal('world', [])).toEqual([]);
-    expect(setState.patchSession('one', [])).toEqual([]);
-    expect(setState.patchMessage('one', 'root', [])).toEqual([]);
-  });
-});
-
-describe('set-state use case', () => {
-  it('replaces each complete scope through its owning service and preserves unrelated data', () => {
-    const definition = services.worlds.require('world').stateDefinition;
-    expect(setState.setGlobal('world', { world_day: 2 })).toEqual({ world_day: 2 });
-    expect(setState.setSession('one', { player_coins: 7 })).toEqual({ player_coins: 7 });
-    expect(services.worlds.require('world').state).toEqual({ world_day: 2 });
-    expect(services.sessions.require('one').state).toEqual({ player_coins: 7 });
-    expect(services.state.requireGlobal('world')).toEqual({ world_day: 2 });
-    expect(services.state.requireSession('one')).toEqual({ player_coins: 7 });
-    expect(services.state.requireSession('two')).toEqual({ reputation: 0, coins: 1 });
-    expect(services.worlds.require('world').stateDefinition).toEqual(definition);
-  });
-
-  it('persists explicit empty snapshots and NULL inheritance without changing predecessors', () => {
-    append('root');
-    expect(setState.setMessage('one', 'root', [{ key: 'coins', value: 3 }])).toEqual([{ key: 'coins', value: 3 }]);
-    append('child');
-    expect(services.state.requireMessage('one', 'child')).toEqual([{ key: 'coins', value: 3 }]);
-    expect(setState.setMessage('one', 'child', [])).toEqual([]);
-    expect(services.sessions.getEntryState('one', 'child')).toEqual([]);
-    expect(services.state.requireMessage('one', 'child')).toEqual([]);
-    expect(setState.setMessage('one', 'child', null)).toBeNull();
-    expect(services.sessions.getEntryState('one', 'child')).toBeNull();
-    expect(services.state.requireMessage('one', 'child')).toEqual([{ key: 'coins', value: 3 }]);
-    expect(services.sessions.getEntryState('one', 'root')).toEqual([{ key: 'coins', value: 3 }]);
-    expect(services.sessions.getEntry('one', 'child')!.parentId).toBe('root');
-  });
-
-  it('changes only the selected message snapshot and its metadata timestamp', () => {
-    vi.spyOn(Date, 'now').mockReturnValue(100);
-    const entry = append('root');
-    services.sessions.setMetrics('one', entry.id, {
-      requests: [{ requestId: 'request', modelId: 'actual', provider: 'provider', usage: null }],
-    });
-    const before = services.sessions.getEntry('one', entry.id)!;
-    vi.mocked(Date.now).mockReturnValue(200);
-    setState.setMessage('one', entry.id, [{ key: 'inventory', value: { gold_count: 7 } }]);
-    expect(services.sessions.getEntry('one', entry.id)).toEqual({
-      ...before, state: [{ key: 'inventory', value: { gold_count: 7 } }], updatedAt: 200,
-    });
-    expect(services.sessions.require('one').updatedAt).toBe(100);
-    expect(services.sessions.require('one').tipEntryId).toBe(entry.id);
-  });
-
-  it('rejects missing owners and invalid snapshots without mutating stored values', () => {
-    append('root');
-    expect(() => setState.setGlobal('missing', {})).toThrow('WORLD_NOT_FOUND');
-    expect(() => setState.setSession('missing', {})).toThrow('SESSION_NOT_FOUND');
-    expect(() => setState.setMessage('one', 'missing', null)).toThrow('ENTRY_NOT_FOUND');
-    expect(() => setState.setMessage('two', 'root', [])).toThrow('ENTRY_NOT_FOUND');
-    expect(() => setState.setGlobal(' world', {})).toThrow('INVALID_STATE_OWNER');
-    expect(() => setState.setSession('', {})).toThrow('INVALID_STATE_OWNER');
-    expect(() => setState.setMessage('one', 'root ', null)).toThrow('INVALID_STATE_OWNER');
-    expect(() => setState.setGlobal('world', [] as unknown as Parameters<SetState['setGlobal']>[1])).toThrow();
-    expect(() => setState.setSession('one', { value: NaN })).toThrow();
-    expect(() => setState.setMessage('one', 'root', {} as Parameters<SetState['setMessage']>[2])).toThrow();
-    expect(() => setState.setMessage('one', 'root', [undefined] as unknown as Parameters<SetState['setMessage']>[2])).toThrow();
-    expect(services.state.requireGlobal('world')).toEqual({ day: 1, weather: 'rain' });
-    expect(services.state.requireSession('one')).toEqual({ reputation: 0, coins: 1 });
-    expect(services.state.requireMessage('one', 'root')).toBeNull();
+    expect(() => stateUsecase.update({ scope: 'global', worldId: 'missing' }, [])).toThrow('WORLD_NOT_FOUND');
+    expect(() => stateUsecase.update({ scope: 'session', sessionId: 'missing' }, [])).toThrow('SESSION_NOT_FOUND');
+    expect(() => stateUsecase.update({ scope: 'message', sessionId: 'missing', entryId: 'root' }, [])).toThrow('SESSION_NOT_FOUND');
+    expect(() => stateUsecase.update({ scope: 'message', sessionId: 'one', entryId: 'missing' }, [])).toThrow('ENTRY_NOT_FOUND');
+    expect(() => stateUsecase.update({ scope: 'message', sessionId: 'two', entryId: 'root' }, [])).toThrow('ENTRY_NOT_FOUND');
+    expect(stateUsecase.update({ scope: 'global', worldId: 'world' }, [])).toEqual([]);
+    expect(stateUsecase.update({ scope: 'session', sessionId: 'one' }, [])).toEqual([]);
+    expect(stateUsecase.update({ scope: 'message', sessionId: 'one', entryId: 'root' }, [])).toEqual([]);
   });
 });
 
@@ -296,76 +271,20 @@ describe('effective state events', () => {
     const foreign = vi.fn();
     events.subscribe('foreign', foreign);
     for (const id of ids) events.subscribe(id, event => received.push({ id, event }));
-    setState.setGlobal('world', { nullable: null });
+    services.worlds.update('world', { stateDefinition: { schema_version: 2, scopes: {
+      global: { day: { type: 'number', initial: 1, description: 'Day' } },
+    } } });
+    stateUsecase.update({ scope: 'global', worldId: 'world' }, [{ path: 'day', value: 2 }]);
     expect(received.map(item => item.id).sort()).toEqual(ids.sort());
-    expect(received.every(item => JSON.stringify(item.event) === JSON.stringify({ event: 'state.changed', data: { scope: 'global', path: '', value: { nullable: null } } }))).toBe(true);
+    for (const { event } of received) expect(event).toEqual({ event: 'state.changed', data: { scope: 'global', path: 'day', value: 2 } });
     expect(foreign).not.toHaveBeenCalled();
-  });
-
-  it('sends whole snapshots for replacement, clear and restored inheritance; null remains a value', () => {
-    append('root');
-    setState.setMessage('one', 'root', [{ key: 'coins', value: 3 }, { key: 'optional', value: null }]);
-    append('child');
-    const received: SessionEvent[] = [];
-    events.subscribe('one', event => received.push(event));
-    setState.setMessage('one', 'child', []);
-    setState.setMessage('one', 'child', null);
-    setState.setSession('one', {});
-    setState.setGlobal('world', {});
-    expect(received).toEqual([
-      { event: 'state.changed', data: { scope: 'message', path: '', value: {} } },
-      { event: 'state.changed', data: { scope: 'message', path: '', value: { coins: 3, optional: null } } },
-      { event: 'state.changed', data: { scope: 'session', path: '', value: {} } },
-      { event: 'state.changed', data: { scope: 'global', path: '', value: {} } },
-    ]);
-    received.length = 0;
-    setState.setMessage('one', 'child', [{ key: 'optional', value: null }, { key: 'coins', value: 3 }]);
-    setState.setMessage('one', 'child', null);
-    setState.setSession('one', {});
-    setState.setGlobal('world', {});
-    services.state.requireGlobal('world');
-    services.state.requireSession('one');
-    services.state.requireMessage('one', 'child');
-    expect(received).toEqual([]);
-  });
-
-  it('does not publish a historical replacement hidden by a newer snapshot', () => {
-    append('root');
-    setState.setMessage('one', 'root', [{ key: 'coins', value: 1 }]);
-    append('child');
-    setState.setMessage('one', 'child', [{ key: 'coins', value: 2 }]);
-    const received = vi.fn();
-    events.subscribe('one', received);
-    setState.setMessage('one', 'root', [{ key: 'coins', value: 3 }]);
-    expect(received).not.toHaveBeenCalled();
-    expect(services.state.requireMessage('one', 'root')).toEqual([{ key: 'coins', value: 3 }]);
-  });
-
-  it('rolls back replacements and publishes nothing when a write or commit fails', () => {
-    const received = vi.fn();
-    events.subscribe('one', received);
-    const persist = services.worlds.setState.bind(services.worlds);
-    vi.spyOn(services.worlds, 'setState').mockImplementation((id, value) => {
-      persist(id, value);
-      throw new Error('write failed');
-    });
-    expect(() => setState.setGlobal('world', { day: 2 })).toThrow('write failed');
-    expect(services.state.requireGlobal('world')).toEqual({ day: 1, weather: 'rain' });
-    const transaction = bindTransaction(db);
-    const failing = createSetState({
-      worlds: services.worlds, sessions: services.sessions, state: services.state, cache: services.cache, events,
-      transaction: work => transaction(() => { work(); throw new Error('commit failed'); }),
-    });
-    expect(() => failing.setSession('one', { coins: 4 })).toThrow('commit failed');
-    expect(services.state.requireSession('one')).toEqual({ coins: 1, reputation: 0 });
-    expect(received).not.toHaveBeenCalled();
   });
 
   it('publishes tip replacement after an entry is saved, and skips inherited or equal state', () => {
     const appendEntry = createAppendEntry({ sessions: services.sessions, state: services.state, events, transaction: bindTransaction(db) });
     const received: SessionEvent[] = [], tips: (string | null)[] = [];
     events.subscribe('one', event => { received.push(event); tips.push(services.sessions.require('one').tipEntryId); });
-    const input = { runId: 'run', type: 'message', role: 'assistant', payload: {} } as const;
+    const input = { runId: 'run', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: 'State', timestamp: 1 } } } as const;
     appendEntry('one', { ...input, id: 'first', state: [{ key: 'coins', value: 4 }] });
     appendEntry('one', { ...input, id: 'inherited', state: null });
     appendEntry('one', { ...input, id: 'same', state: [{ key: 'coins', value: 4 }] });

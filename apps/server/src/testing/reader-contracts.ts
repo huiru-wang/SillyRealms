@@ -27,7 +27,7 @@ export function readerContracts(world: WorldReader, session: SessionReader, pres
   // @ts-expect-error A SessionReader cannot delete a session.
   session.delete('session');
   // @ts-expect-error A PresetReader cannot create the default preset.
-  preset.ensureDefault();
+  preset.ensureBuiltins();
   // @ts-expect-error A PresetReader cannot change preset metadata.
   preset.update('preset', { name: 'Changed' });
   // @ts-expect-error A ModelReader cannot change connection metadata.

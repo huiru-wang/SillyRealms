@@ -1,9 +1,9 @@
-import {validateWhen, type WhenStateReference} from '@sillyrealms/sdk/when-expression';
+import {parseWhen, type WhenStateReference} from '@sillyrealms/sdk/when-expression';
 
 export function loreStateReferences(expression: string): WhenStateReference[] | null {
   const references = new Map<string, WhenStateReference>();
   try {
-    validateWhen(expression, reference => {
+    parseWhen(expression, reference => {
       references.set(JSON.stringify(reference), reference);
     });
   } catch {

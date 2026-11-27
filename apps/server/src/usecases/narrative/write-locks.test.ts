@@ -13,7 +13,7 @@ import type { ModelClient, ModelEvent, ModelInfo } from '../../infrastructure/mo
 import { createServices, type Services } from '../../services.js';
 import { memoryCredentials } from '../../testing/credentials.js';
 import { narrativePreset } from '../../testing/fixtures.js';
-import { createSetState, type SetState } from '../set-state.js';
+import { createStateUsecase, type StateUsecase } from '../state.js';
 import type { NarrativeTerminalEvent } from './events.js';
 import { createNarrativeUsecases, type NarrativeUsecases } from './index.js';
 
@@ -21,7 +21,7 @@ const model: ModelInfo = {
   modelId: 'story-model', name: 'Story', providerId: 'test-provider', api: 'openai-completions',
   reasoning: false, input: ['text'], contextWindow: 64000, maxTokens: 8192,
   thinkingLevels: ['off'], thinkingLevelMap: null, promptCache: null,
-  narrativeCompatible: true, supportsMidConversationSystemMessages: false,
+  supportsMidConversationSystemMessages: false,
 };
 const usage = { inputTokens: 20, outputTokens: 5, totalTokens: 25, cacheReadTokens: 0, cacheWriteTokens: 0 };
 const snapshot = { role: 'assistant' as const, content: 'Saved answer', reasoning_content: '', tool_calls: [] };
@@ -34,7 +34,7 @@ function deferred() {
 }
 
 let db: DatabaseSync, dataRoot: string, services: Services, events: EventHub;
-let narrative: NarrativeUsecases, setState: SetState;
+let narrative: NarrativeUsecases, stateUsecase: StateUsecase;
 let stream: ReturnType<typeof vi.fn<ModelClient['stream']>>;
 let resolveModel: ReturnType<typeof vi.fn<ModelClient['resolve']>>;
 let permits: RunWritePermit[], gates: ReturnType<typeof deferred>[];
@@ -60,7 +60,7 @@ beforeEach(async () => {
   narrative = createNarrativeUsecases({
     ...shared, modelClient: { resolve: resolveModel, assertMessageOrder: vi.fn(), stream }, logSink: () => {},
   });
-  setState = createSetState(shared);
+  stateUsecase = createStateUsecase(shared);
 });
 
 afterEach(async () => {
@@ -135,7 +135,6 @@ describe('run write locks across session and state operations', () => {
       ['setNarrativeOutcome', () => services.sessions.setNarrativeOutcome('session', 'user', { status: 'completed', finishedAt: 123 })],
       ['updateEntry', () => services.sessions.updateEntry('session', 'assistant', { payload: { text: 'Blocked' } })],
       ['empty entry update', () => services.sessions.updateEntry('session', 'assistant', {})],
-      ['setMetrics', () => services.sessions.setMetrics('session', 'assistant', null)],
     ];
     for (const [name, write] of sessionWrites) expect(write, name).toThrow(new AppError('SESSION_WRITE_LOCKED'));
 
@@ -143,15 +142,12 @@ describe('run write locks across session and state operations', () => {
       ['sessions.setState', () => services.sessions.setState('session', { coins: 2 })],
       ['sessions.setEntryState', () => services.sessions.setEntryState('session', 'assistant', null)],
       ['worlds.setState', () => services.worlds.setState('world', { day: 1 })],
-      ['setGlobal', () => setState.setGlobal('world', { day: 1 })],
-      ['setSession', () => setState.setSession('session', { coins: 2 })],
-      ['setMessage', () => setState.setMessage('session', 'assistant', null)],
-      ['empty patchGlobal', () => setState.patchGlobal('world', [])],
-      ['empty patchSession', () => setState.patchSession('session', [])],
-      ['empty patchMessage', () => setState.patchMessage('session', 'assistant', [])],
-      ['unchanged patchGlobal', () => setState.patchGlobal('world', [{ path: 'day', value: 1 }])],
-      ['unchanged patchSession', () => setState.patchSession('session', [{ path: 'coins', value: 2 }])],
-      ['missing path patchMessage', () => setState.patchMessage('session', 'assistant', [{ path: 'absent', value: 1 }])],
+      ['empty global update', () => stateUsecase.update({ scope: 'global', worldId: 'world' }, [])],
+      ['empty session update', () => stateUsecase.update({ scope: 'session', sessionId: 'session' }, [])],
+      ['empty message update', () => stateUsecase.update({ scope: 'message', sessionId: 'session', entryId: 'assistant' }, [])],
+      ['unchanged global update', () => stateUsecase.update({ scope: 'global', worldId: 'world' }, [{ path: 'day', value: 1 }])],
+      ['unchanged session update', () => stateUsecase.update({ scope: 'session', sessionId: 'session' }, [{ path: 'coins', value: 2 }])],
+      ['missing path message update', () => stateUsecase.update({ scope: 'message', sessionId: 'session', entryId: 'assistant' }, [{ path: 'absent', value: 1 }])],
     ];
     for (const [name, write] of stateWrites) expect(write, name).toThrow(new AppError('STATE_WRITE_LOCKED'));
     expect(services.sessions.getHistory('session')).toEqual(before);
@@ -164,17 +160,17 @@ describe('run write locks across session and state operations', () => {
     createWorld('other-world'); createSession('elsewhere', 'other-world');
     const first = acquire();
     expect(() => services.sessions.update('other-session', { title: 'Allowed' })).not.toThrow();
-    expect(setState.setSession('other-session', { coins: 7 })).toEqual({ coins: 7 });
+    expect(services.sessions.setState('other-session', { coins: 7 })).toEqual({ coins: 7 });
     expect(append('other-entry', 'assistant', 'other-session').sessionId).toBe('other-session');
-    expect(setState.setMessage('other-session', 'other-entry', [{ key: 'coins', value: 4 }])).toEqual([{ key: 'coins', value: 4 }]);
-    expect(setState.setGlobal('other-world', { day: 3 })).toEqual({ day: 3 });
+    expect(services.sessions.setEntryState('other-session', 'other-entry', [{ key: 'coins', value: 4 }])).toEqual([{ key: 'coins', value: 4 }]);
+    expect(services.worlds.setState('other-world', { day: 3 })).toEqual({ day: 3 });
     expect(() => services.sessions.update('elsewhere', { title: 'Allowed' })).not.toThrow();
     const second = acquire('other-session');
     services.cache.releaseRun(first);
     expect(() => services.sessions.update('session', { title: 'Released' })).not.toThrow();
-    expect(() => setState.setGlobal('world', { day: 4 })).toThrow(new AppError('STATE_WRITE_LOCKED'));
+    expect(() => services.worlds.setState('world', { day: 4 })).toThrow(new AppError('STATE_WRITE_LOCKED'));
     services.cache.releaseRun(second);
-    expect(setState.setGlobal('world', { day: 4 })).toEqual({ day: 4 });
+    expect(services.worlds.setState('world', { day: 4 })).toEqual({ day: 4 });
   });
 
   it('locks immediately at acceptance while allowing reads and stop, then releases after cancellation settlement', async () => {
@@ -187,7 +183,7 @@ describe('run write locks across session and state operations', () => {
     });
     const run = submit();
     expect(() => services.sessions.update('session', {})).toThrow(new AppError('SESSION_WRITE_LOCKED'));
-    expect(() => setState.patchSession('session', [])).toThrow(new AppError('STATE_WRITE_LOCKED'));
+    expect(() => stateUsecase.update({ scope: 'session', sessionId: 'session' }, [])).toThrow(new AppError('STATE_WRITE_LOCKED'));
     await entered.promise;
     expect(narrative.list('session').activeRunId).toBe(run.accepted.runId);
     expect(narrative.list('session').items.find(item => item.runId === run.accepted.runId)!.status).toBe('running');
@@ -259,8 +255,8 @@ describe('run write locks across session and state operations', () => {
     await Promise.resolve();
     expect(narrative.list('session').activeRunId).toBe(next!.accepted.runId);
     expect(() => services.sessions.update('session', {})).toThrow(new AppError('SESSION_WRITE_LOCKED'));
-    expect(() => setState.patchSession('session', [])).toThrow(new AppError('STATE_WRITE_LOCKED'));
-    expect(() => setState.patchGlobal('world', [])).toThrow(new AppError('STATE_WRITE_LOCKED'));
+    expect(() => stateUsecase.update({ scope: 'session', sessionId: 'session' }, [])).toThrow(new AppError('STATE_WRITE_LOCKED'));
+    expect(() => stateUsecase.update({ scope: 'global', worldId: 'world' }, [])).toThrow(new AppError('STATE_WRITE_LOCKED'));
     held.resolve();
     expect((await next!.finished).event).toBe('run.completed');
     expectWritable();

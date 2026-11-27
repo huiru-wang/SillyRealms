@@ -124,10 +124,14 @@ const replyConfigSchema = configShape.extend({
 });
 
 const sharedValue = z.object({ name: z.string().trim().min(1), description: z.string().nullable().default(null) });
+const narrative = sharedValue.extend({ type: z.literal('narrative'), config: narrativeConfigSchema }).strict();
+const replyAssist = sharedValue.extend({ type: z.literal('reply_assist'), config: replyConfigSchema }).strict();
+
+export const presetDocumentSchema = z.discriminatedUnion('type', [narrative, replyAssist]);
+export type PresetDocument = z.output<typeof presetDocumentSchema>;
 export const presetValueSchema = z.discriminatedUnion('type', [
-  sharedValue.extend({ type: z.literal('narrative'), config: narrativeConfigSchema }).strict(),
-  sharedValue.extend({ type: z.literal('reply_assist'), config: replyConfigSchema,
-    apiModelConfigId: z.string().trim().min(1).nullable().default(null) }).strict(),
+  narrative,
+  replyAssist.extend({ apiModelConfigId: z.string().trim().min(1).nullable().default(null) }),
 ]);
 
 export type NarrativePresetConfig = z.infer<typeof narrativeConfigSchema>;

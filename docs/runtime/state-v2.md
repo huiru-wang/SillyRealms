@@ -16,6 +16,6 @@
 
 全局、会话、消息三个 scope 分别对应世界、会话和消息条目。开局的 `initial_state` 按 message 根覆盖，创建会话时随开场消息保存。后续消息可以继承前驱状态。
 
-SDK 按 scope 读取快照或按已有路径提交字段更新。字段结果按输入顺序返回，实际变更在提交后通过会话 SSE 发布。读取、路径写入、完整快照和事件内容见 [HTTP 状态接口](server-http.md) 和 [会话事件](server-events.md)。
+服务端 `POST /api/v1/state/query` 读取单个目标的有效字段。省略 paths 返回所有根，指定 paths 返回有序字段行。`POST /api/v1/state/update` 逐项更新已有路径，有效变化在提交后通过会话 SSE 发布。见 [HTTP 状态接口](server-http.md#状态接口) 和 [会话事件](server-events.md#状态事件)。
 
 预设和自定义 prompt 可引用三个整组变量 `{{state.global}}`、`{{state.session}}`、`{{state.message}}`。每组只包含本轮满足 load 条件的已声明根，读取当前快照。global 和 session 作为只读背景，状态更新节点开启时才授权模型更新本轮激活的 message 根。该节点的 {{state.update.message}} 展开根名及可选的作者规则。正文、模型状态更新结果、行动建议以及调试展示的持久化和发布规则见 [叙事执行](server-narrative.md) 与 [舞台接入](web-runtime.md)。

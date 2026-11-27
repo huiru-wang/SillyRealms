@@ -3,7 +3,7 @@ import test, { type TestContext } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -103,7 +103,7 @@ test('release writes the real ZIP digest and size, preserves notes/source, and u
   assert.equal(index.community.label, '保留扩展');
   assert.equal(index.versions[1].attribution, '旧版本扩展');
   assert.ok(indexText.endsWith('\n'));
-  assert.equal(result.report.output, f.zip);
+  assert.equal(result.report.output, await realpath(f.zip));
   const packed = await inspectWorldSource(f.zip);
   assert.deepEqual(packed.card.data.publication?.release, {
     version: '1.10.0', published_at: publishedAt, notes: f.notesText,

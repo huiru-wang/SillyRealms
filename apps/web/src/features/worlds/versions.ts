@@ -3,12 +3,11 @@ import {api,ApiError,json} from '../../api.ts';
 import type {HttpRequest} from '../../transport/http.ts';
 import type {WorldDetail,WorldVersionsView,WorldVersionSummary,WorldVersionApplication} from './api/worlds.ts';
 
-export function releaseDirection(current:string|null|undefined,target:string):'upgrade'|'downgrade'|'current'|null {
-  if(!current)return null;
+export function releaseDirection(current:string,target:string):'upgrade'|'downgrade'|'current'|null {
   try{const order=compareReleaseVersion(target,current);return order>0?'upgrade':order<0?'downgrade':'current';}
   catch{return null;}
 }
-export function hasWorldUpdate(world:Partial<WorldVersionSummary>):boolean {
+export function hasWorldUpdate(world:Pick<WorldVersionSummary,'currentVersion'|'latestVersion'>):boolean {
   return !!world.latestVersion&&releaseDirection(world.currentVersion,world.latestVersion)==='upgrade';
 }
 /** Installed content changes independently of management edits and update checks. */

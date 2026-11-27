@@ -1,6 +1,6 @@
 import { transaction } from '../../infrastructure/database/transaction.js';
 import type { DatabaseSync } from 'node:sqlite';
-import { readStoredMetrics, runtimeConfigSchema } from './schema.js';
+import { metricsSchema, runtimeConfigSchema, validateMessagePayload } from './schema.js';
 import { AppError } from '../../errors.js';
 import { encodeJson, type JsonObject, type JsonValue } from '../../infrastructure/database/connection.js';
 import type {
@@ -11,7 +11,7 @@ import type {
 export type SessionRow = {
   id: string; world_id: string; runtime_config: SessionRuntimeConfig;
   user_character_id: string; tip_entry_id: string | null; title: string | null;
-  state: JsonObject; usage_json: JsonObject | null; created_at: number; updated_at: number;
+  state: JsonObject; created_at: number; updated_at: number;
 };
 export type EntryRow = {
   id: string; session_id: string; parent_id: string | null; run_id: string; seq: number;
@@ -22,7 +22,7 @@ export type EntryRow = {
 function encodeConfig(config: SessionRuntimeConfig) {
   return encodeJson({
     narrative_preset_id: config.narrativePresetId, api_model_config_id: config.apiModelConfigId,
-    reply_assist_preset_id: config.replyAssistPresetId, replay_assist_goal: config.replyAssistGoal,
+    reply_assist_preset_id: config.replyAssistPresetId, reply_assist_goal: config.replyAssistGoal,
     font_size: config.fontSize,
   }, 'object');
 }
@@ -33,15 +33,20 @@ function decodeSession(row: Record<string, unknown>): SessionRow {
     id: String(row.id), world_id: String(row.world_id), user_character_id: String(row.user_character_id),
     runtime_config: runtimeConfigSchema.parse({
       narrativePresetId: config.narrative_preset_id, apiModelConfigId: config.api_model_config_id,
-      replyAssistPresetId: config.reply_assist_preset_id, replyAssistGoal: config.replay_assist_goal,
+      replyAssistPresetId: config.reply_assist_preset_id, replyAssistGoal: config.reply_assist_goal,
       fontSize: config.font_size,
     }),
     tip_entry_id: row.tip_entry_id === null ? null : String(row.tip_entry_id),
     title: row.title === null ? null : String(row.title),
     state: JSON.parse(String(row.state)) as JsonObject,
-    usage_json: row.usage_json === null ? null : JSON.parse(String(row.usage_json)) as JsonObject,
     created_at: Number(row.created_at), updated_at: Number(row.updated_at),
   };
+}
+
+function decodeMetrics(json: unknown): EntryMetrics {
+  const parsed = metricsSchema.safeParse(JSON.parse(String(json)));
+  if (!parsed.success) throw new AppError('INTERNAL_ERROR', 'Invalid stored entry metrics');
+  return parsed.data;
 }
 
 function decodeEntry(row: Record<string, unknown>): EntryRow {
@@ -60,7 +65,7 @@ function decodeEntry(row: Record<string, unknown>): EntryRow {
     payload: JSON.parse(String(row.payload)) as JsonObject,
     state: row.state === null ? null : JSON.parse(String(row.state)) as JsonValue[],
     ext_data: JSON.parse(String(row.ext_data)) as JsonObject,
-    metrics_json: row.metrics_json === null ? null : readStoredMetrics(JSON.parse(String(row.metrics_json))),
+    metrics_json: row.metrics_json === null ? null : decodeMetrics(row.metrics_json),
     created_at: Number(row.created_at), updated_at: Number(row.updated_at),
   };
 }
@@ -80,8 +85,8 @@ export class SessionRepository {
     const state = encodeJson(value.state ?? {}, 'object');
     const now = Date.now();
     this.#db.prepare(
-      'INSERT INTO sessions(id,world_id,runtime_config,user_character_id,tip_entry_id,title,state,usage_json,created_at,updated_at) ' +
-      'VALUES(?,?,?,?,NULL,?,?,NULL,?,?)',
+      'INSERT INTO sessions(id,world_id,runtime_config,user_character_id,tip_entry_id,title,state,created_at,updated_at) ' +
+      'VALUES(?,?,?,?,NULL,?,?,?,?)',
     ).run(value.id, value.worldId, encodeConfig(value.runtimeConfig), value.userCharacterId, value.title ?? null, state, now, now);
     return this.#requireSession(value.id);
   }
@@ -151,6 +156,7 @@ export class SessionRepository {
   /** Check the expected predecessor and advance the tip with the insertion in one transaction. */
   appendEntry(sessionId: string, value: AppendEntryInput & { id: string }): EntryRow {
     const payload = encodeJson(value.payload, 'object'), ext = encodeJson(value.extData ?? {}, 'object');
+    if (value.type === 'message') validateMessagePayload(JSON.parse(payload), value.role);
     const state = value.state == null ? null : encodeJson(value.state, 'array');
     const metrics = value.metrics ?? null;
     return transaction(this.#db, () => {
@@ -160,7 +166,7 @@ export class SessionRepository {
       const latest = this.#db.prepare('SELECT id,seq FROM entries WHERE session_id=? ORDER BY seq DESC LIMIT 1').get(sessionId);
       if (parent !== (latest?.id ?? null)) throw new AppError('INVALID_PARENT_CHAIN');
       const seq = Number(latest?.seq ?? 0) + 1;
-      this.#assertMetricsUnique(sessionId, value.id, metrics);
+      this.#assertMetricsUnique(sessionId, metrics);
       const now = Date.now();
       this.#db.prepare(
         'INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,timestamp,payload,state,ext_data,metrics_json,created_at,updated_at) ' +
@@ -213,7 +219,7 @@ export class SessionRepository {
 
   listMetrics(sessionId: string): EntryMetrics[] {
     return this.#db.prepare('SELECT metrics_json FROM entries WHERE session_id=? AND metrics_json IS NOT NULL')
-      .all(sessionId).map(row => readStoredMetrics(JSON.parse(String(row.metrics_json))));
+      .all(sessionId).map(row => decodeMetrics(row.metrics_json));
   }
 
   latestNarrativeMetrics(sessionId: string): { seq: number; metrics: EntryMetrics } | null {
@@ -221,7 +227,7 @@ export class SessionRepository {
       "SELECT seq,metrics_json FROM entries WHERE session_id=? AND type='message' AND role='assistant' " +
       "AND metrics_json IS NOT NULL AND json_array_length(metrics_json,'$.requests')>0 ORDER BY seq DESC LIMIT 1",
     ).get(sessionId);
-    return row ? { seq: Number(row.seq), metrics: readStoredMetrics(JSON.parse(String(row.metrics_json))) } : null;
+    return row ? { seq: Number(row.seq), metrics: decodeMetrics(row.metrics_json) } : null;
   }
 
   deleteEntry(sessionId: string, entryId: string, expectedTipEntryId: string | null) {
@@ -256,6 +262,7 @@ export class SessionRepository {
       const current = this.#requireEntry(sessionId, entryId);
       if (patch.payload === undefined && patch.extData === undefined) return current;
       const payload = encodeJson(patch.payload ?? current.payload, 'object');
+      if (current.type === 'message' && patch.payload !== undefined) validateMessagePayload(JSON.parse(payload), current.role);
       const ext = encodeJson(patch.extData === undefined ? current.ext_data : { ...patch.extData,
         ...(current.ext_data.narrative === undefined ? {} : { narrative: current.ext_data.narrative }),
         ...(current.ext_data.output === undefined ? {} : { output: current.ext_data.output }) }, 'object');
@@ -267,24 +274,14 @@ export class SessionRepository {
     });
   }
 
-  setMetrics(sessionId: string, entryId: string, value: EntryMetrics | null): EntryRow {
-    return transaction(this.#db, () => {
-      this.#requireEntry(sessionId, entryId);
-      this.#assertMetricsUnique(sessionId, entryId, value);
-      this.#db.prepare('UPDATE entries SET metrics_json=?,updated_at=? WHERE session_id=? AND id=?')
-        .run(value === null ? null : encodeJson(value, 'object'), Date.now(), sessionId, entryId);
-      return this.#requireEntry(sessionId, entryId);
-    });
-  }
-
-  #assertMetricsUnique(sessionId: string, entryId: string, metrics: EntryMetrics | null): void {
+  #assertMetricsUnique(sessionId: string, metrics: EntryMetrics | null): void {
     if (metrics === null) return;
     const select = this.#db.prepare(
       "SELECT e.id FROM entries e, json_each(e.metrics_json,'$.requests') AS request " +
-      "WHERE e.session_id=? AND e.id<>? AND json_extract(request.value,'$.requestId')=? LIMIT 1",
+      "WHERE e.session_id=? AND json_extract(request.value,'$.requestId')=? LIMIT 1",
     );
     for (const request of metrics.requests) {
-      if (select.get(sessionId, entryId, request.requestId)) throw new AppError('DUPLICATE_REQUEST_METRICS');
+      if (select.get(sessionId, request.requestId)) throw new AppError('DUPLICATE_REQUEST_METRICS');
     }
   }
 

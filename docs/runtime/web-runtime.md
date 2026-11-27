@@ -31,7 +31,7 @@ SSE 跟随会话页面，MessagePort 跟随 iframe。重新加载舞台只替换
 - 历史和状态：使用 narrative/runs 的完整轮次、nextCursor、nextAfterSeq、activeRunId，以及三作用域 state 路径。真实 tip 从 session、摘要事件和终态取得，不能以最后可见 assistant 替代 compaction tip。
 - 当前事件：message.deleted、run.created/summarizing/summarized/delta/usage/completed/stopped、state.changed、action_suggestions.created、character_sprite.changed、world.updated。旧 run.phase/run.failed、usage.updated、action_suggestions.changed 均不参与 V2。
 - 临时输出按 messageId 归属，delta 追加，snapshot 整体替换。snapshot 不表示已保存；终态先按 savedMessageIds 移除未保存输出，再补查 runs 页，持久 entries 按相同 ID 接管，未保存输出不冒充历史。
-- action_suggestions.created 整体替换当前建议；接受新执行时清空，同一执行的重复确认不再次清空。建议事件可以早于 run.completed，终态不无条件擦除本次建议。恢复只读最新 run 最后一条普通 message 的 output.actionSuggestions：须为有效完成的 assistant，且整体 status 为 success/partial_success、有有效非空 items。最后是 user、无结果或结果无效时为空，不回找更早助手。history 仍透传 output 供诊断；stateUpdate 使用带逐项 status 的 updates。两类结果没有 results，旧格式由服务端读取时归一化。
+- action_suggestions.created 整体替换当前建议；接受新执行时清空，同一执行的重复确认不再次清空。建议事件可以早于 run.completed，终态不无条件擦除本次建议。恢复只读最新 run 最后一条普通 message 的 output.actionSuggestions：须为有效完成的 assistant，且整体 status 为 success/partial_success、有有效非空 items。最后是 user、无结果或结果无效时为空，不回找更早助手。history 仍透传 output 供诊断；stateUpdate 使用带逐项 status 的 updates。能力结果损坏时读取服务端返回的处理错误。
 - 状态 path:"" 替换完整 scope；null 是普通字段值。PATCH success 可以表示路径不存在而被忽略；字段请求值不能直接写入本地缓存。按真实事件/补读同步，混合作用域写入按原顺序分组，无跨 scope 原子承诺。
 
 ## 初次读取与连接恢复
@@ -77,7 +77,7 @@ V2 frame 直接注入作者导入的包根入口 `@sillyrealms/sdk`。公共值�
 | `useSRSession().send(text)` | 真实 accepted IDs 与已保存的 userMessage |
 | `useSRSession().stop(runId, assistantEntryId)` | 真实 stopping 回执 |
 | `useSRSession().regenerate({userEntryId,assistantEntryId})` | 删除最新 AI 后重新生成的受理回执，无 AI 时 assistantEntryId=null |
-| `useSRSession().getRuns(query)` | 原生 `RunPage` 的 items/entries 和游标 |
+| `useSRHistory().query(options)` | 原生 `RunPage` 的 items/entries 和游标 |
 | `useSRStageSnapshot().connected` | 宿主 SSE 的当前连接状态，首次挂载、断线和重连时均以快照为准 |
 | `useSRSession().subscribe(listener)` | 原生 SessionEvent 名称和数据 |
 | `useSRSession().setDraft(text)` | 受限命令更新平台输入草稿，返回 Promise |
@@ -121,7 +121,7 @@ StageHost 在受校验的 MessagePort 外观消息中同步 locale。frame 只�
 
 用量面板通过 body portal 展示，按触发按钮和可视窗口定位。透明外部点击层覆盖舞台 iframe，外部点击只收起面板，不触发底层操作；内部交互不收起。Escape 收起并恢复按钮焦点，移出面板的键盘焦点不被强制拉回。布局监听随面板卸载释放，显示/隐藏不改变用量数据读取和会话连接。
 
-数据来自 `narrative/usage` 的已记录合计与 `latestContext`。窗口占比用主叙事实际 inputTokens 除以请求时真实窗口；组成用最终编译文本 UTF-8 字节加 V1 约定消息开销的比例，明确标注不代表逐类实际计费 Token。无快照、旧记录缺窗口/组成、最新请求未知输入均展示未知，不使用上一轮数据补齐。stale 显示旧快照提示，切换 apiModelConfigId 后立即触发用量重读。
+数据来自 `narrative/usage` 的已记录合计与 `latestContext`。窗口占比用主叙事实际 inputTokens 除以请求时真实窗口；组成用最终编译文本 UTF-8 字节加 V1 约定消息开销的比例，明确标注不代表逐类实际计费 Token。缺少快照或最新请求用量未知均展示未知，不使用上一轮数据补齐。stale 显示旧快照提示，切换 apiModelConfigId 后立即触发用量重读。
 
 输入包含缓存，非缓存输入为 inputTokens-cacheReadTokens-cacheWriteTokens，累计图不会重复计算缓存。存在未知用量请求时提示累计不完整并隐藏缓存命中率。实时 run.usage 包含摘要与主叙事总量，独立展示且不再次加到持久合计，也不充当主叙事上下文输入量。
 

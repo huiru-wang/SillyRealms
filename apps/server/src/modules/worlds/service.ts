@@ -191,7 +191,7 @@ export class WorldService {
   ): Promise<ReleaseIndexSnapshot | null> {
     return this.#files.saveReleaseIndex(worldId, input.text, () => {
       const current = this.get(worldId);
-      return current?.publication?.package_id === input.packageId &&
+      return current?.publication.package_id === input.packageId &&
         current.publication.update_url === input.updateUrl && isCurrent();
     });
   }
@@ -275,19 +275,14 @@ export class WorldService {
     if (!changes.length) return current;
     const next = normalizeContent({ ...current, ...Object.fromEntries(changes) });
     // Source changes require a future queued cache invalidation operation.
-    if (current.publication?.package_id !== next.publication?.package_id ||
-      current.publication?.update_url !== next.publication?.update_url) throw new AppError('WORLD_UPDATE_SOURCE_CHANGED');
+    if (current.publication.package_id !== next.publication.package_id ||
+      current.publication.update_url !== next.publication.update_url) throw new AppError('WORLD_UPDATE_SOURCE_CHANGED');
     if (patch.stateDefinition != null) validateWorldStateDefinition(patch.stateDefinition);
     if (patch.characters !== undefined) next.characters = validateCharacters(patch.characters);
     const tags = patch.tags === undefined ? undefined : tagsFrom(patch.tags);
     worldToCard({ ...next, tags: tags ?? current.tags });
     this.checkReferences(next);
     return toWorld(this.#repository.update(id, toContentRow(next), tags));
-  }
-
-  setTags(id: string, tags: readonly string[]): World | null {
-    if (!Array.isArray(tags)) throw new AppError('INVALID_WORLD_TAGS');
-    return this.update(id, { tags });
   }
 
   listTags(): WorldTag[] {
@@ -433,10 +428,10 @@ export class WorldService {
       this.#dependencies.cache.assertWorldWrite(stage.id, options.permit);
       const world = this.require(stage.id);
       if (world.revision !== options.expectedRevision) throw new AppError('WORLD_REVISION_CONFLICT');
-      if (!world.publication || world.publication.package_id !== options.packageId ||
+      if (world.publication.package_id !== options.packageId ||
         world.publication.update_url !== options.updateUrl) throw new AppError('WORLD_UPDATE_SOURCE_CHANGED');
       assertWorldReplacementCompatible(world, incoming, options.playerCharacterIds);
-      if (world.publication.release.version === incoming.publication?.release.version) {
+      if (world.publication.release.version === incoming.publication.release.version) {
         throw new AppError('WORLD_UPDATE_INCOMPATIBLE', '不能覆盖为当前发行版本');
       }
       options.guard?.(snapshot);

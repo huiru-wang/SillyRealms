@@ -1,4 +1,4 @@
-import {isSafeStateKey,STATE_MAX_DEPTH} from '@sillyrealms/sdk/state-validation';
+import {isSafeStateKey,statePathParts,STATE_MAX_DEPTH} from '@sillyrealms/sdk/state-validation';
 import type {StateScope,StateValue} from '../../../../../packages/sr-sdk/src/stage-contract.js';
 
 export type StateObject=Record<string,StateValue>;
@@ -19,7 +19,7 @@ export function isStateValue(value:unknown,depth=0,parents=new Set<object>()):va
   parents.delete(value);return valid;
 }
 export function isStatePath(path:unknown):path is string {
-  return typeof path==='string'&&path.length>0&&path.split('.').every(isSafeStateKey);
+  return statePathParts(path)!==null;
 }
 export function objectValues(value:unknown):StateObject {
   if(!isStateObject(value)||!isStateValue(value))throw Error("sessions:invalidStateResponse");

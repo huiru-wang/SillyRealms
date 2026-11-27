@@ -92,6 +92,19 @@ export const narrativeOutputSchema = z.object({
   characterSprite: characterSpriteOutputSchema.optional(),
 }).strict();
 
+/** Corrupt capability data stays isolated to its own processing result. */
+export const storedNarrativeOutputSchema = narrativeOutputSchema.extend({
+  stateUpdate: stateUpdateOutputSchema.catch({
+    status: 'processing_error', updates: [], errors: [{ errorCode: 'STATE_UPDATE_STORED_RESULT_INVALID' }],
+  }),
+  actionSuggestions: actionSuggestionsOutputSchema.catch({
+    status: 'processing_error', items: [], errors: [{ errorCode: 'ACTION_SUGGESTIONS_STORED_RESULT_INVALID' }],
+  }),
+  characterSprite: characterSpriteOutputSchema.catch({
+    status: 'processing_error', items: [], errors: [{ errorCode: 'CHARACTER_SPRITE_STORED_RESULT_INVALID' }],
+  }).optional(),
+});
+
 export type NarrativeOutput = z.infer<typeof narrativeOutputSchema>;
 export type StateUpdateOutput = z.infer<typeof stateUpdateOutputSchema>;
 export type StateUpdateItem = StateUpdateOutput['updates'][number];

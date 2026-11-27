@@ -8,7 +8,7 @@ Web 已接入管理、作者预览与文本叙事运行页，见 [运行接入](
 
 会话创建由独立 create-session 用例完成开局选择、{{user}} 替换、session/message 初始状态和首条 assistant 消息的一次事务保存，只发 session.created。首条消息是普通 run 分组的一部分，不分类；其正文参与后续历史，状态被后继继承。服务端按应用开局覆盖后的 message 快照逐根写入 extData.output.stateUpdate.updates，每行保存成功状态、根路径及完整值。有更新时状态为 success，空快照为 no_updates。行动建议保存为 no_suggestions 和空数组，模型请求计数为零。开局不自动创建持久立绘结果。
 
-状态 HTTP 独立提供三个 scope 的 GET/PATCH/PUT。叙事后处理只更新本轮激活且已存在的 message 路径，不向模型开放 global/session 写入；公共 PATCH 的缺失路径忽略语义保持不变。state.changed 保持 `{path,scope,value}` 契约，在成功提交实际变化后发布；message 事件表示当前 tip 的有效继承视图。叙事有变化时保存完整助手状态快照，无变化时继续 null 继承；内部 getViews/evaluateWhen 服务于叙事上下文。具体写入与读取语义见 [状态接口](server-http.md#状态接口)。Web 的 state feature 与 Stage SDK 按这些路径和事件语义接入，写后读取权威状态，不乐观推导被忽略的值。
+状态 HTTP 通过 POST /state/query 和 POST /state/update 按正文定位目标。叙事后处理只更新本轮激活且已存在的 message 路径，不向模型开放 global/session 写入；公共字段更新的缺失路径忽略语义保持不变。state.changed 保持 `{path,scope,value}` 契约，在成功提交实际变化后发布；message 事件表示当前 tip 的有效继承视图。叙事有变化时保存完整助手状态快照，无变化时继续 null 继承；内部 getViews/evaluateWhen 服务于叙事上下文。具体写入与读取语义见 [状态接口](server-http.md#状态接口)。调用方通过查询和已提交事件同步有效值。
 
 | 位置 | 职责 |
 | --- | --- |
@@ -32,7 +32,7 @@ Web 已接入管理、作者预览与文本叙事运行页，见 [运行接入](
 | `src/infrastructure/database/`、`events/` | 数据库连接/同步事务及 EventHub/SSE 传输 |
 | `src/modules/sessions/` | entries、线性历史、指标和受控 output 的属主持久化 |
 | `src/modules/state/` | 状态读取、继承、字段候选及受限 when 求值 |
-| `src/usecases/set-state.ts` | 经属主 Service 保存快照或逐项字段写入 |
+| `src/usecases/state.ts` | 按目标查询有效字段，经属主 Service 逐项更新并发布已提交的有效变化 |
 | `src/usecases/test-model.ts` | 已保存模型配置的一次短文本连通性检测 |
 
 业务模块只通过 `service.ts` 提供能力；叙事用例不读取 Repository、存储行或 SQL，不接收数据库连接；装配注入同步 TransactionRunner，事务仅覆盖收尾读取、候选计算和助手保存，不包含模型/网络等待。用例、路由和编译器依赖自有 ModelClient/ModelInfo/ModelMessage，不接触 SDK Model、StopReason 或具体 PiClient；只在装配入口选择 PiClient 实现。pi 不依赖业务模块、会话、entry、EventHub 或 HTTP。装配方为叙事与 SSE 注入同一个 EventHub。context 生产代码不依赖 narrative、其他 usecase 或事件传输，只通过进度通知交由外层映射 run 事件；外部代码和类型只能从 context/index.ts 导入。
@@ -64,7 +64,7 @@ pi-ai 1.5.0 的 OpenAI 兼容适配器在模型及思考档位默认值之后合
 6. 模型结束、错误、输出不完整或停止都进入保存步骤。仅正常 stop、无工具请求且干净正文有效时执行后处理，分别记录能力结果并准备 message 状态候选。助手正文、output、state 和 metrics 同步事务保存；部分助手保存公开内容但不生成 output。parentId 为成功 compaction ID，没有摘要时为 userEntryId；完全没有公开内容时不造空助手。
 7. 保存助手后将结束结果写入用户 entry 的 extData.narrative，再释放当前会话占位，发布已提交状态变化及有效建议，然后发布唯一一次 run.usage 和唯一终态。每条能力通知异常独立隔离，继续后续通知和终态。stop_reason 区分取消、关闭和主流程失败，保存失败优先；能力错误只留在 output，不改正常 run.completed。
 
-同会话同时只允许一轮，冲突返回 RUN_ALREADY_ACTIVE/409，不排队；不同会话独立执行。services.ts 装配的 RuntimeCache 在全应用共享，用户保存前加锁，覆盖摘要、正文、后处理和结算；失败/取消/关闭均释放。会话编辑、删除、手工追加、正文/扩展/计量/结束结果写入返回 SESSION_WRITE_LOCKED/409；session/message 状态写入及该世界任意 run 活跃时的 global 状态写入返回 STATE_WRITE_LOCKED/409，空 PATCH 和同值也不例外。内部本轮持有者令牌只授权消息、摘要和结束结果落库，不向外部事件订阅者传播。结算完成、通知之前解锁，finally 按对象身份幂等释放，避免覆盖新 run。active Map 仅保留停止/查询所需的执行句柄；读取、SSE、stop 不受写锁影响。不提供多进程锁或可恢复任务存储。
+同会话同时只允许一轮，冲突返回 RUN_ALREADY_ACTIVE/409，不排队；不同会话独立执行。services.ts 装配的 RuntimeCache 在全应用共享，用户保存前加锁，覆盖摘要、正文、后处理和结算；失败/取消/关闭均释放。会话编辑、删除、手工追加、正文/扩展/计量/结束结果写入返回 SESSION_WRITE_LOCKED/409；session/message 状态写入及该世界任意 run 活跃时的 global 状态写入返回 STATE_WRITE_LOCKED/409，空更新批次和同值也不例外。内部本轮持有者令牌只授权消息、摘要和结束结果落库，不向外部事件订阅者传播。结算完成、通知之前解锁，finally 按对象身份幂等释放，避免覆盖新 run。active Map 仅保留停止/查询所需的执行句柄；读取、SSE、stop 不受写锁影响。不提供多进程锁或可恢复任务存储。
 
 run.completed 要求模型正常 done、finishReason=stop、无工具请求、正文非空且助手写入成功。叙事正文请求因 length 截断时按 output_limit_reached 结束，舞台提示调高当前预设的「最大输出长度」。deferred 或缺少终态仍按 output_incomplete 结束；工具请求按 tool_execution_unsupported 结束；只有 reasoning 的正常结果仍保留但不视为完整正文回答。SDK 最终结果可以修正增量，明确的 snapshot 使用替换语义。模型消息 finish 与 run 持久化成功分开：生成正常而保存失败，最终仍为 run.stopped。
 
@@ -90,7 +90,7 @@ assistant.metrics = {
   requests: [{
     requestId,
     modelId,
-    provider, // 本次调用的 providerId；旧记录缺失时为 null
+    provider, // 本次调用的 providerId
     usage,
     durationMs,
     firstTextMs, // 尚未收到正文时不提供
@@ -110,7 +110,7 @@ entry.role 与 payload.message.role 一致。同轮已有消息共享 runId；re
 | 助手写入失败或 tip 冲突 | 保留用户，savedMessageIds 不包含预分配助手 ID，不宣称已保存 |
 | 只有空白正文和 reasoning、没有工具请求 | 不创建助手消息 |
 
-失败或停止的部分消息是正式可读记录，下一轮只读取其可见正文。只有 reasoning/tool_calls 而没有正文的助手记录不生成伪空模型历史，记录及真实前驱/tip 仍保留，状态从捕获时真实 tip 的有效视图读取。正文计量随助手保存，完全没有可保存助手时没有历史指标载体；实时 run.usage 仍按规则发布，这些指标不是完整账单。session.usage 不累加。
+失败或停止的部分消息是正式可读记录，下一轮只读取其可见正文。只有 reasoning/tool_calls 而没有正文的助手记录不生成伪空模型历史，记录及真实前驱/tip 仍保留，状态从捕获时真实 tip 的有效视图读取。正文计量随助手保存，完全没有可保存助手时没有历史指标载体；实时 run.usage 仍按规则发布，这些指标不是完整账单。
 
 内部 usage 为 `{inputTokens,outputTokens,totalTokens,cacheReadTokens,cacheWriteTokens}` 或 null，SSE run.usage 映射为 snake_case。输入总量包含缓存：inputTokens=input+cacheRead+cacheWrite；cache 字段是输入细分，reasoning 已计入输出时不再次相加。没有 SDK 调用尝试时总量为真实零；尝试后无可信上报、字段无效或总量口径不一致时为 null，不把 SDK 初始零值当作已上报零。每个 accepted run 只发布一次结算总量，不带 messageId/requestId，也不在停止后等待或补发迟到统计。总量为成功保存摘要的调用用量加正文调用用量，任一参与统计的调用 usage 未知则总量为 null。失败/中断摘要既不保存记录也不计量；只有失败摘要而无正文调用时总量为零，允许与供应商实际消耗存在误差。
 
@@ -283,7 +283,7 @@ SessionService.appendNarrativeAssistant 将干净正文、extData.output、可�
 
 run outcome 独立保存失败时，助手及已提交能力结果不回滚；实际状态和可应用立绘仍通知，本轮不发布可点击建议。正常事件顺序为提交、释放锁、state.changed、符合条件的 action_suggestions.created、character_sprite.changed、总 usage、唯一终态。立绘事件携带 sessionId/runId/messageId/items，success/partial_success 每次都通知，success 空数组也通知；无块、全坏行、标签错误或处理异常不发立绘事件。通知异常分别隔离，完整字段见 [会话事件](server-events.md)。
 
-公共追加/编辑禁止写入或删除 output，编辑其他 extData 保留它；正文编辑保留当时结果，不重做或回滚。新 output 严格使用精简结构；既有 state/action 格式仍只在 SessionService 读取投影时归一化，不重写存储。立绘保存结构损坏时投影为 processing_error、items=[]、错误码 CHARACTER_SPRITE_STORED_RESULT_INVALID；不存在该字段时保持缺失。读取只验证保存结构，不依据最新素材目录改写历史合法 ID。结果随 narrative/runs 的 entries 返回，另有立绘目录和指定消息的只读 GET，见 [立绘查询](server-http.md#立绘查询)；无新表、列或能力运行状态缓存。
+公共追加/编辑禁止写入或删除 output，编辑其他 extData 保留它；正文编辑保留当时结果，不重做或回滚。各能力按写入时的 schema 读取。状态或建议结果损坏时，该能力返回 processing_error 和空列表。立绘保存结构损坏时投影为 processing_error、items=[]、错误码 CHARACTER_SPRITE_STORED_RESULT_INVALID；不存在该字段时保持缺失。读取只验证保存结构，不依据最新素材目录改写历史合法 ID。结果随 narrative/runs 的 entries 返回，另有立绘目录和指定消息的只读 GET，见 [立绘查询](server-http.md#立绘查询)；无新表、列或能力运行状态缓存。
 
 聊天、持久化正文、关键词激活与摘要保持干净。主模型的保留历史由 context 在最终组装时附加条目级 model-only notes，读取历史或旁注不重执行更新；规则见[条目级模型旁注](#条目级模型旁注)。没有持久化 notes schema、contextEligible 或能力专用历史重建模块。
 
@@ -295,7 +295,7 @@ PiClient 实现项目自有 ModelClient，固定使用 `@earendil-works/pi-ai@1.
 
 编译结果含中途 system 消息时，仅在适配明确支持保持其位置时调用。不会把中途 system 全部前移以适配模型。兼容性取 pi openai-completions 的 supportsMidConvoSystemMessages，并仅保留已验证 DeepSeek V4.1 Flash 官方端点的窄特例。
 
-目录按 provider 分组提供模型及 SDK 能力元数据（包含有效思考档位和预期缓存保留秒数），字段见 HTTP 契约；目录展示不改变叙事请求参数。目录的 narrativeCompatible 标记表示能处理包含中途 system 节点的叙事编排；标记为 false 的模型仍可能支持没有这种节点的具体请求。检测接口只发短文本，因此检测成功不等于任意预设顺序都可执行。
+目录按 provider 分组提供模型及 SDK 能力元数据（包含有效思考档位和预期缓存保留秒数），字段见 HTTP 契约；目录展示不改变叙事请求参数。目录的 supportsMidConversationSystemMessages 标记表示能处理包含中途 system 节点的叙事编排；标记为 false 的模型仍可能支持没有这种节点的具体请求。检测接口只发短文本，因此检测成功不等于任意预设顺序都可执行。
 
 连通性检测使用已保存配置，单次请求的 maxTokens 传入 min(64, model.maxTokens)，整体等待上限 30 秒。仅返回 connected、providerId、modelId、durationMs 和标准 usage；不创建 entry/run、不回显模型回复或供应商错误文本，也不更新模型配置。具体路径见 [HTTP 契约](server-http.md)。
 
@@ -313,7 +313,7 @@ POST 或 SSE 断开不取消叙事；只有显式 stop 或服务正常关闭触�
 
 结束记录在每个 run 首条 entry 的 extData.narrative（普通叙事为 user，创建会话时为 assistant），结构为 `{status:'completed',finishedAt}` 或 `{status:'stopped',stopReason,finishedAt}`。finishedAt 是 Unix 毫秒，stopReason 使用同一叙事原因枚举。用户尚未完成时不写该字段；助手保存失败仍尝试保存失败原因。结果写入失败保留已保存消息并以 message_persist_failed 发事件，没有结果且不活跃时查询返回 unknown。
 
-通用 entry 编辑不能写入或清除 narrative/output，修改其他 extData 时保留服务端结果；正文编辑不重新执行能力。metrics.requests 不再保存 status，增加 provider；旧 status 在读取时丢弃、未知 provider 为 null，新记录严格校验。usage 查询合计已存 metrics 的已知部分并返回未知用量请求数，不宣称完整计费；同时返回 latestContext，取最新已保存主叙事 assistant 请求的真实输入量、请求时模型窗口、配置与字节组成。execute 只在实际调用 metrics 存在时附加 context，摘要不参与 latestContext 选择。配置/模型改变或条目的 seq 超过当前 tip标记 stale；旧数据缺字段保持未知，不借用上一轮数据。组成含 UTF-8 文本和 V1 约定每消息 16 B 开销，系统/摘要/历史字节不是逐类计费 Token；完整字段见 HTTP 契约。
+通用 entry 编辑不能写入或清除 narrative/output，修改其他 extData 时保留服务端结果；正文编辑不重新执行能力。metrics.requests 在读写时校验实际调用的 providerId。usage 查询合计已存 metrics 的已知部分并返回未知用量请求数，不宣称完整计费；同时返回 latestContext，取最新已保存主叙事 assistant 请求的真实输入量、请求时模型窗口、配置与字节组成。execute 只在实际调用 metrics 存在时附加 context，摘要不参与 latestContext 选择。配置/模型改变或条目的 seq 超过当前 tip标记 stale；缺少快照时保持未知，不借用上一轮数据。组成含 UTF-8 文本和 V1 约定每消息 16 B 开销，系统/摘要/历史字节不是逐类计费 Token；完整字段见 HTTP 契约。
 
 重连只补查已保存 seq；未落库分片不保证补齐，最终 snapshot 替换与终态后的持久化查询负责最终展示。仍活跃的轮次只提供 running/stopping 状态；用户 entry 的结束结果更新不增加 seq，客户端需另查原活跃轮次。接口字段见 [Server HTTP](server-http.md)。
 

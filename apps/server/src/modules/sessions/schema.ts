@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AppError } from '../../errors.js';
 import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
 
 export const identifier = z.string().min(1).refine(value => value === value.trim(), 'Identifiers cannot have surrounding whitespace');
@@ -6,6 +7,25 @@ const jsonObject = z.custom<JsonObject>(value => value !== null && typeof value 
 const jsonArray = z.custom<JsonValue[]>(Array.isArray);
 const tokenCount = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const duration = z.number().nonnegative().finite();
+
+const messageFields = { content: z.string(), timestamp: z.number().int().nonnegative() };
+const messagePayloadSchema = z.object({
+  message: z.discriminatedUnion('role', [
+    z.object({ ...messageFields, role: z.literal('user') }).strict(),
+    z.object({
+      ...messageFields, role: z.literal('assistant'), reasoning_content: z.string().optional(),
+      tool_calls: z.array(z.object({
+        index: z.number().int().nonnegative(), id: z.string(), type: z.literal('function'),
+        function: z.object({ name: z.string(), arguments: z.string() }).strict(),
+      }).strict()).optional(),
+    }).strict(),
+  ]),
+}).strict();
+
+export function validateMessagePayload(payload: unknown, role: 'user' | 'assistant'): void {
+  const { message } = messagePayloadSchema.parse(payload);
+  if (message.role !== role) throw new AppError('INVALID_REQUEST', '消息角色与条目不一致');
+}
 
 const usageSchema = z.object({
   // inputTokens already includes cached input. Cache counters are a breakdown, not extra input.
@@ -19,7 +39,7 @@ export const metricsSchema = z.object({
   requests: z.array(z.object({
     requestId: identifier,
     modelId: identifier,
-    provider: identifier.nullable(),
+    provider: identifier,
     usage: usageSchema.nullable(),
     durationMs: duration.optional(),
     firstTextMs: duration.optional(),
@@ -114,15 +134,3 @@ export const entryRunListSchema = z.object({
   afterSeq: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
 }).strict().refine(value => value.beforeSeq === undefined || value.afterSeq === undefined,
   'beforeSeq 与 afterSeq 不能同时提供');
-
-/** Legacy metrics are normalized on read; all new writes use the strict current schema. */
-export function readStoredMetrics(value: unknown) {
-  if (value && typeof value === 'object' && 'requests' in value && Array.isArray(value.requests)) {
-    return metricsSchema.parse({ ...value, requests: value.requests.map((request: Record<string, unknown>) => {
-      const result = { ...request, provider: request.provider ?? null };
-      Reflect.deleteProperty(result, 'status');
-      return result;
-    }) });
-  }
-  return metricsSchema.parse(value);
-}

@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  narrativeOutputSchema, parseCharacterSpriteItem, readCharacterSpriteOutput, type CharacterSpriteOutput,
+  storedNarrativeOutputSchema, narrativeOutputSchema, parseCharacterSpriteItem, readCharacterSpriteOutput, type CharacterSpriteOutput,
 } from './output.js';
-import { readStoredNarrativeOutput } from './stored-output.js';
 
 const item = { position: 'left' as const, characterId: 'alice', spriteId: 'default' };
 const baseOutput = {
@@ -23,7 +22,7 @@ describe('persisted character sprite output', () => {
     ];
     for (const characterSprite of outputs) {
       expect(narrativeOutputSchema.parse({ ...baseOutput, characterSprite }).characterSprite).toEqual(characterSprite);
-      expect(readStoredNarrativeOutput({ ...baseOutput, characterSprite })).toEqual({ ...baseOutput, characterSprite });
+      expect(storedNarrativeOutputSchema.parse({ ...baseOutput, characterSprite })).toEqual({ ...baseOutput, characterSprite });
     }
   });
 
@@ -49,7 +48,7 @@ describe('persisted character sprite output', () => {
   it('projects a damaged stored record as a failure while keeping absent output absent', () => {
     const damaged = { ...baseOutput, characterSprite: { status: 'success', items: [item, item] } };
     const original = structuredClone(damaged);
-    expect(readStoredNarrativeOutput(damaged)).toEqual({
+    expect(storedNarrativeOutputSchema.parse(damaged)).toEqual({
       ...baseOutput,
       characterSprite: {
         status: 'processing_error', items: [],
@@ -57,7 +56,7 @@ describe('persisted character sprite output', () => {
       },
     });
     expect(damaged).toEqual(original);
-    expect(readStoredNarrativeOutput(baseOutput)).not.toHaveProperty('characterSprite');
+    expect(storedNarrativeOutputSchema.parse(baseOutput)).not.toHaveProperty('characterSprite');
   });
 
   it('validates stored structure without consulting changing world catalogs', () => {

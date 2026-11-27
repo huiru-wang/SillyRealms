@@ -26,7 +26,7 @@ function create(id = 'session') {
 }
 function append(sessionId: string, id: string, patch: Partial<AppendEntryInput> = {}) {
   return sessions.appendEntry(sessionId, {
-    id, runId: 'run', type: 'message', role: 'assistant', payload: { text: id }, ...patch,
+    id, runId: 'run', type: 'message', role: 'assistant', payload: { message: { role: patch.role ?? 'assistant', content: id, timestamp: 1 } }, ...patch,
   } as AppendEntryInput);
 }
 function metrics(id: string, usage: EntryMetrics['requests'][number]['usage'] = null): EntryMetrics {
@@ -34,17 +34,17 @@ function metrics(id: string, usage: EntryMetrics['requests'][number]['usage'] = 
 }
 
 describe('session records and references', () => {
-  it('starts with no tip/usage and changes only the session-owned fields', () => {
+  it('starts with no tip and changes only the session-owned fields', () => {
     vi.spyOn(Date, 'now').mockReturnValue(100);
     const created = create();
-    expect(created).toMatchObject({ tipEntryId: null, state: {}, usage: null, createdAt: 100, updatedAt: 100 });
+    expect(created).toMatchObject({ tipEntryId: null, state: {}, createdAt: 100, updatedAt: 100 });
     expect(Object.keys(created).sort()).toEqual([
-      'createdAt', 'id', 'runtimeConfig', 'state', 'tipEntryId', 'title', 'updatedAt', 'usage', 'userCharacterId', 'worldId',
+      'createdAt', 'id', 'runtimeConfig', 'state', 'tipEntryId', 'title', 'updatedAt', 'userCharacterId', 'worldId',
     ]);
     sessions.setState(created.id, { coins: 7 });
     vi.mocked(Date.now).mockReturnValue(200);
     expect(sessions.update(created.id, { title: 'Renamed' })).toMatchObject({
-      title: 'Renamed', state: { coins: 7 }, usage: null, createdAt: 100, updatedAt: 200,
+      title: 'Renamed', state: { coins: 7 }, createdAt: 100, updatedAt: 200,
     });
     expect(() => sessions.update(created.id, { state: {} } as unknown as UpdateSessionInput)).toThrow();
     expect(sessions.get('missing')).toBeNull();
@@ -146,16 +146,32 @@ describe('linear history and field ownership', () => {
     expect(append('session', 'next').seq).toBe(2);
   });
 
+  it('rejects unreadable message bodies before advancing the tip or replacing saved prose', () => {
+    create();
+    const invalidPayloads: AppendEntryInput['payload'][] = [
+      { text: 'retired' },
+      { message: { role: 'assistant', content: 'Missing timestamp' } },
+      { message: { role: 'user', content: 'Wrong role', timestamp: 1 } },
+    ];
+    for (const payload of invalidPayloads) {
+      expect(() => append('session', 'bad', { payload })).toThrow();
+    }
+    expect(sessions.require('session').tipEntryId).toBeNull();
+    const entry = append('session', 'saved');
+    expect(() => sessions.updateEntry('session', entry.id, { payload: { text: 'retired' } })).toThrow();
+    expect(sessions.getEntry('session', entry.id)?.payload).toEqual(entry.payload);
+  });
+
   it('changes payload/extData without overwriting snapshots, metrics, ancestry or display time', () => {
     create();
     const original = append('session', 'root', {
       timestamp: 42, state: [{ key: 'coins', value: 7 }],
       metrics: metrics('request'), extData: { actions: ['Wait'] },
     });
-    const edited = sessions.updateEntry('session', 'root', { payload: { text: 'Edited' } });
+    const edited = sessions.updateEntry('session', 'root', { payload: { message: { role: 'assistant', content: 'Edited', timestamp: 1 } } });
     expect(edited).toMatchObject({
       parentId: original.parentId, timestamp: 42, state: original.state,
-      metrics: original.metrics, extData: original.extData, payload: { text: 'Edited' },
+      metrics: original.metrics, extData: original.extData, payload: { message: { role: 'assistant', content: 'Edited', timestamp: 1 } },
     });
     expect(() => sessions.updateEntry('session', 'root', { state: [] } as unknown as UpdateEntryInput)).toThrow();
     expect(() => sessions.updateEntry('session', 'root', { parentId: 'root' } as unknown as UpdateEntryInput)).toThrow();
@@ -208,21 +224,21 @@ describe('one canonical metrics shape', () => {
   it('distinguishes absent metrics, unknown usage, and real zero consumption', () => {
     create(); append('session', 'assistant');
     expect(sessions.getEntry('session', 'assistant')!.metrics).toBeNull();
-    expect(sessions.setMetrics('session', 'assistant', metrics('unknown')).metrics!.requests[0]!.usage).toBeNull();
+    expect(append('session', 'unknown', { metrics: metrics('unknown') }).metrics!.requests[0]!.usage).toBeNull();
     const zero = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
-    expect(sessions.setMetrics('session', 'assistant', metrics('zero', zero)).metrics!.requests[0]!.usage).toEqual(zero);
+    expect(append('session', 'zero', { metrics: metrics('zero', zero) }).metrics!.requests[0]!.usage).toEqual(zero);
     services.models.update('model', { modelId: 'new-model' });
-    expect(sessions.getEntry('session', 'assistant')!.metrics!.requests[0]!.modelId).toBe('actual-model-snapshot');
+    expect(sessions.getEntry('session', 'zero')!.metrics!.requests[0]!.modelId).toBe('actual-model-snapshot');
   });
 
   it('preserves normalized inclusive input and provider total without adding cache tokens again', () => {
-    create(); append('session', 'assistant');
+    create();
     const usage = { inputTokens: 1200, outputTokens: 300, totalTokens: 1500, cacheReadTokens: 600, cacheWriteTokens: 100 };
-    expect(sessions.setMetrics('session', 'assistant', metrics('cached', usage)).metrics!.requests[0]!.usage).toEqual(usage);
-    expect(() => sessions.setMetrics('session', 'assistant', metrics('invalid', { ...usage, inputTokens: 20 }))).toThrow();
+    expect(append('session', 'assistant', { metrics: metrics('cached', usage) }).metrics!.requests[0]!.usage).toEqual(usage);
+    expect(() => append('session', 'invalid', { metrics: metrics('invalid', { ...usage, inputTokens: 20 }) })).toThrow();
     const missing = metrics('missing', usage);
     delete (missing.requests[0]!.usage as unknown as Record<string, unknown>).outputTokens;
-    expect(() => sessions.setMetrics('session', 'assistant', missing)).toThrow();
+    expect(() => append('session', 'missing', { metrics: missing })).toThrow();
     expect(sessions.getEntry('session', 'assistant')!.metrics!.requests[0]!.requestId).toBe('cached');
   });
 
@@ -230,27 +246,22 @@ describe('one canonical metrics shape', () => {
     create();
     append('session', 'root', { metrics: metrics('request') });
     append('session', 'user', { role: 'user' });
-    expect(() => sessions.setMetrics('session', 'user', metrics('request'))).toThrow('USER_ENTRY_METRICS_NOT_ALLOWED');
+    expect(() => append('session', 'invalid-user', { role: 'user', metrics: metrics('request') })).toThrow('USER_ENTRY_METRICS_NOT_ALLOWED');
     expect(() => append('session', 'copy', { metrics: metrics('request') })).toThrow('DUPLICATE_REQUEST_METRICS');
     expect(sessions.get('session')!.tipEntryId).toBe('user');
-    append('session', 'answer');
-    sessions.setMetrics('session', 'answer', metrics('other'));
-    expect(() => sessions.setMetrics('session', 'answer', { requests: [...metrics('duplicate').requests, ...metrics('duplicate').requests] })).toThrow();
+    append('session', 'answer', { metrics: metrics('other') });
+    expect(() => append('session', 'invalid', { metrics: { requests: [...metrics('duplicate').requests, ...metrics('duplicate').requests] } })).toThrow();
     expect(sessions.getEntry('session', 'answer')!.metrics!.requests[0]!.requestId).toBe('other');
   });
 
-  it('stores compaction metrics and updates only metadata time, with strict terminal/numeric fields', () => {
-    vi.spyOn(Date, 'now').mockReturnValue(100);
+  it('stores metrics with a compaction entry and rejects invalid metrics before append', () => {
     create();
-    const entry = sessions.appendEntry('session', { id: 'summary', runId: 'compact', type: 'compaction', role: null, payload: { summary: 'Summary' } });
-    vi.mocked(Date.now).mockReturnValue(200);
-    const saved = sessions.setMetrics('session', 'summary', metrics('summary-request'));
-    expect(saved.timestamp).toBe(entry.timestamp);
-    expect(saved.updatedAt).toBe(200);
-    expect(sessions.get('session')!.updatedAt).toBe(100);
+    const input = { runId: 'compact', type: 'compaction', role: null, payload: { summary: 'Summary' } } as const;
+    const saved = sessions.appendEntry('session', { ...input, metrics: metrics('summary-request') });
+    expect(saved.metrics).toEqual(metrics('summary-request'));
     for (const patch of [{ durationMs: -1 }, { durationMs: Infinity }, { status: 'started' }, { phase: 'summary' }]) {
       const invalid = { requests: [{ ...metrics('invalid').requests[0], ...patch }] } as unknown as EntryMetrics;
-      expect(() => sessions.setMetrics('session', 'summary', invalid)).toThrow();
+      expect(() => sessions.appendEntry('session', { ...input, metrics: invalid })).toThrow();
     }
   });
 });
@@ -392,13 +403,13 @@ describe('run pages, outcomes and recorded usage', () => {
         contextComposition: { systemBytes: 300, summaryBytes: 0, historyBytes: 200 },
       },
     };
-    append('session', 'answer', { metrics: main });
-    expect(() => sessions.setMetrics('session', 'answer', { ...main, context: { ...main.context!, requestId: 'not-recorded' } })).toThrow();
-    expect(() => sessions.setMetrics('session', 'answer', { ...main, context: { ...main.context!, contextWindowTokens: 0 } })).toThrow();
-    expect(() => sessions.setMetrics('session', 'answer', { ...main, context: {
+    const save = (value: EntryMetrics) => append('session', 'answer', { metrics: value });
+    expect(() => save({ ...main, context: { ...main.context!, requestId: 'not-recorded' } })).toThrow();
+    expect(() => save({ ...main, context: { ...main.context!, contextWindowTokens: 0 } })).toThrow();
+    expect(() => save({ ...main, context: {
       ...main.context!, contextComposition: { systemBytes: -1, summaryBytes: 0, historyBytes: 0 },
     } })).toThrow();
-    sessions.setMetrics('session', 'answer', {
+    save({
       ...main, requests: [...main.requests, { requestId: 'later', modelId: 'actual-model', provider: 'provider', usage: null }],
     });
     expect(sessions.recordedUsage('session').latestContext).toEqual({
@@ -406,24 +417,14 @@ describe('run pages, outcomes and recorded usage', () => {
     });
   });
 
-  it('normalizes legacy request status without guessing the provider and only totals recorded usage', () => {
+  it('rejects obsolete request metrics on every storage read', () => {
     create();
-    const known = { inputTokens: 10, outputTokens: 4, totalTokens: 14, cacheReadTokens: 3, cacheWriteTokens: 0 };
-    append('session', 'legacy');
+    append('session', 'entry');
     db.prepare('UPDATE entries SET metrics_json=? WHERE id=?').run(JSON.stringify({ requests: [{
-      requestId: 'old', modelId: 'old-model', status: 'failed', usage: known,
-    }] }), 'legacy');
-    append('session', 'new', { metrics: metrics('new') });
-    const request = sessions.getEntry('session', 'legacy')!.metrics!.requests[0]!;
-    expect(request).toEqual({ requestId: 'old', modelId: 'old-model', provider: null, usage: known });
-    expect(sessions.recordedUsage('session')).toEqual({
-      knownUsage: known, recordedRequestCount: 2, unknownUsageRequestCount: 1,
-      latestContext: { inputTokens: null, contextWindowTokens: null, modelId: 'actual-model-snapshot', stale: true },
-    });
-    expect(sessions.getEntry('session', 'new')!.metrics!.requests[0]!.provider).toBe('test-provider');
-    expect(() => sessions.setMetrics('session', 'new', { requests: [{
-      ...metrics('bad').requests[0]!, status: 'completed',
-    }] } as unknown as EntryMetrics)).toThrow();
+      requestId: 'request', modelId: 'model', status: 'failed', usage: null,
+    }] }), 'entry');
+    expect(() => sessions.getEntry('session', 'entry')).toThrow('INTERNAL_ERROR');
+    expect(() => sessions.recordedUsage('session')).toThrow('INTERNAL_ERROR');
   });
 });
 
@@ -445,7 +446,7 @@ describe('server-owned narrative output', () => {
   function save(value = output()) {
     return sessions.appendNarrativeAssistant('session', {
       id: 'assistant', runId: 'run', parentId: null, type: 'message', role: 'assistant',
-      payload: { message: { role: 'assistant', content: 'Clean story' } },
+      payload: { message: { role: 'assistant', content: 'Clean story', timestamp: 1 } },
       state: [{ key: 'coins', value: 8 }], extData: { note: 'keep' }, metrics: metrics('output-request'),
     }, value);
   }
@@ -458,7 +459,7 @@ describe('server-owned narrative output', () => {
     value.actionSuggestions.items.length = 0;
     value.stateUpdate.updates[0]!.value = 999;
     expect(saved).toMatchObject({
-      seq: 1, payload: { message: { role: 'assistant', content: 'Clean story' } },
+      seq: 1, payload: { message: { role: 'assistant', content: 'Clean story', timestamp: 1 } },
       state: [{ key: 'coins', value: 8 }], extData: { note: 'keep', output: expected },
       metrics: metrics('output-request'),
     });
@@ -475,7 +476,7 @@ describe('server-owned narrative output', () => {
     expect(() => sessions.updateEntry('session', saved.id, { extData: { output: null } })).toThrow();
     expect(() => sessions.updateEntry('session', saved.id, { extData: { output: output() } })).toThrow();
     const changed = sessions.updateEntry('session', saved.id, {
-      payload: { message: { role: 'assistant', content: 'Edited story' } },
+      payload: { message: { role: 'assistant', content: 'Edited story', timestamp: 1 } },
       extData: { label: 'changed' },
     });
     expect(changed.extData).toEqual({
@@ -509,61 +510,16 @@ describe('server-owned narrative output', () => {
     expect(save().extData.output).toEqual(value);
   });
 
-  it('projects legacy output by result order, preserving repeated paths and reasons without rewriting storage', () => {
+  it('reports obsolete capability shapes as invalid without pairing or applying their results', () => {
     create();
-    append('session', 'legacy');
-    const legacy = {
-      note: 'keep',
-      output: {
-        stateUpdate: {
-          status: 'partial_success',
-          updates: [{ path: 'coins', value: 8, reason: 'Bought food' }, { path: 'coins', value: 9, reason: 'Refund' }],
-          results: [
-            { status: 'invalid_json', errorCode: 'STATE_UPDATE_JSON_INVALID' },
-            { status: 'success', path: 'coins' },
-            { status: 'invalid_value', path: 'coins', errorCode: 'STATE_VALUE_INVALID', statePath: 'coins', rulePath: 'min' },
-            { status: 'success', path: 'coins' },
-          ],
-        },
-        actionSuggestions: {
-          status: 'partial_success', items: ['Ask the keeper.'],
-          results: [{ status: 'success' }, { status: 'empty_suggestion', errorCode: 'ACTION_SUGGESTION_EMPTY' }],
-        },
-      },
-    };
-    const encoded = JSON.stringify(legacy);
-    db.prepare('UPDATE entries SET ext_data=? WHERE id=?').run(encoded, 'legacy');
-    const expected = {
-      note: 'keep', output: {
-        stateUpdate: { status: 'partial_success', updates: [
-          { status: 'invalid_json', errorCode: 'STATE_UPDATE_JSON_INVALID' },
-          { status: 'success', path: 'coins', value: 8, reason: 'Bought food' },
-          { status: 'invalid_value', path: 'coins', errorCode: 'STATE_VALUE_INVALID', statePath: 'coins', rulePath: 'min' },
-          { status: 'success', path: 'coins', value: 9, reason: 'Refund' },
-        ] },
-        actionSuggestions: { status: 'partial_success', items: ['Ask the keeper.'] },
-      },
-    };
-    for (const entry of [
-      sessions.getEntry('session', 'legacy'),
-      sessions.getHistory('session')[0],
-      sessions.listEntryRuns('session').items[0]!.entries[0],
-    ]) expect(entry!.extData).toEqual(expected);
-    expect(db.prepare('SELECT ext_data FROM entries WHERE id=?').get('legacy')!.ext_data).toBe(encoded);
-    expect(sessions.updateEntry('session', 'legacy', { payload: { text: 'Edited' } }).extData).toEqual(expected);
-    expect(db.prepare('SELECT ext_data FROM entries WHERE id=?').get('legacy')!.ext_data).toBe(encoded);
-  });
-
-  it('does not turn incomplete legacy state receipts into success or disturb action output', () => {
-    create();
-    append('session', 'legacy');
+    const entry = save();
+    const value = output();
     db.prepare('UPDATE entries SET ext_data=? WHERE id=?').run(JSON.stringify({ output: {
-      stateUpdate: { status: 'success', updates: [], results: [{ status: 'success', path: 'coins' }] },
-      actionSuggestions: { status: 'success', items: ['Continue.'], results: [{ status: 'success' }] },
-    } }), 'legacy');
-    expect(sessions.getEntry('session', 'legacy')!.extData.output).toEqual({
-      stateUpdate: { status: 'invalid_updates', updates: [{ status: 'processing_error', errorCode: 'STATE_UPDATE_STORED_RESULT_INVALID' }] },
-      actionSuggestions: { status: 'success', items: ['Continue.'] },
+      ...value, stateUpdate: { ...value.stateUpdate, results: [] },
+    } }), entry.id);
+    expect(sessions.getEntry('session', entry.id)?.extData.output).toEqual({
+      actionSuggestions: value.actionSuggestions,
+      stateUpdate: { status: 'processing_error', updates: [], errors: [{ errorCode: 'STATE_UPDATE_STORED_RESULT_INVALID' }] },
     });
   });
 

@@ -8,7 +8,7 @@ import { openDatabase, type JsonValue } from '../../infrastructure/database/conn
 import { createServices, type Services } from '../../services.js';
 import type { SessionService } from '../sessions/service.js';
 import { narrativePreset } from '../../testing/fixtures.js';
-import type { StateService } from './service.js';
+import type { StateService, StateUpdate } from './service.js';
 
 let db: DatabaseSync, services: Services, sessions: SessionService, state: StateService, dataRoot: string;
 beforeEach(() => {
@@ -32,7 +32,7 @@ afterEach(() => { vi.restoreAllMocks(); db.close(); rmSync(dataRoot, { recursive
 function append(id: string, parentId?: string, sessionId = 'one') {
   return sessions.appendEntry(sessionId, {
     id, parentId, runId: 'run', type: 'message', role: 'assistant',
-    payload: { text: id }, extData: { custom: true },
+    payload: { message: { role: 'assistant', content: id, timestamp: 1 } }, extData: { custom: true },
   });
 }
 
@@ -139,12 +139,33 @@ describe('read-only field preparation with state v2 definitions', () => {
     append('child');
   });
 
+  function prepareObject(scope: 'global' | 'session', update: StateUpdate) {
+    const world = services.worlds.require('world');
+    return state.prepareObjectPatch(scope, scope === 'global' ? world.state : state.requireSession('one'), world.stateDefinition, update);
+  }
+
+  function prepareMessage(update: StateUpdate) {
+    return state.prepareMessagePatch(state.requireMessage('one', 'child'), services.worlds.require('world').stateDefinition, update);
+  }
+
+  it('selects native root values and distinguishes missing paths from explicit null', () => {
+    const inventory = { keys: 0, items: ['map'], reward: null, visible: false, title: '' };
+    expect(state.selectPaths({ inventory })).toEqual([{ path: 'inventory', value: inventory }]);
+    expect(state.selectPaths({ inventory }, ['inventory.reward', 'missing', 'inventory.keys', 'inventory.keys', 'inventory.items', 'inventory.visible', 'inventory.title'])).toEqual([
+      { path: 'inventory.reward', value: null }, { path: 'missing' },
+      { path: 'inventory.keys', value: 0 }, { path: 'inventory.keys', value: 0 },
+      { path: 'inventory.items', value: ['map'] }, { path: 'inventory.visible', value: false }, { path: 'inventory.title', value: '' },
+    ]);
+    expect(state.selectPaths({ inventory }, [])).toEqual([]);
+    expect(() => state.selectPaths({ inventory }, ['inventory.items.0'])).toThrow('INVALID_REQUEST');
+  });
+
   it('prepares independent object and root replacements without persisting', () => {
-    const prepared = state.prepareGlobalPatch('world', { path: 'profile.nested.value', value: 7 });
+    const prepared = prepareObject('global', { path: 'profile.nested.value', value: 7 });
     expect(prepared).toEqual({ changed: true, snapshot: { count: 1, profile: { ...profile.initial, nested: { value: 7 } } } });
     expect(state.getGlobal('world')).toEqual({ count: 1, profile: profile.initial });
     const input = { coins: 9 };
-    const session = state.prepareSessionPatch('one', { path: 'profile', value: input });
+    const session = prepareObject('session', { path: 'profile', value: input });
     input.coins = 99;
     expect(session).toEqual({ changed: true, snapshot: { count: 1, profile: { coins: 9 } } });
     expect(state.getSession('one')).toEqual({ count: 1, profile: profile.initial });
@@ -152,7 +173,7 @@ describe('read-only field preparation with state v2 definitions', () => {
 
   it('ignores missing roots, intermediate nodes and leaves without creating them', () => {
     for (const path of ['missing', 'absent', 'profile.missing', 'profile.optional', 'profile.optional.child', 'profile.coins.child']) {
-      expect(state.prepareGlobalPatch('world', { path, value: 8 })).toEqual({
+      expect(prepareObject('global', { path, value: 8 })).toEqual({
         changed: false, snapshot: { count: 1, profile: profile.initial },
       });
     }
@@ -161,25 +182,25 @@ describe('read-only field preparation with state v2 definitions', () => {
 
   it('ignores paths without a declared root even when a snapshot contains a value', () => {
     services.worlds.setState('world', { unregistered: 3 });
-    expect(state.prepareGlobalPatch('world', { path: 'unregistered', value: 4 })).toEqual({
+    expect(prepareObject('global', { path: 'unregistered', value: 4 })).toEqual({
       changed: false, snapshot: { unregistered: 3 },
     });
   });
 
   it('checks type and range without requiring rules for replacement fields or array elements', () => {
-    expect(() => state.prepareGlobalPatch('world', { path: 'count', value: 11 })).toThrow('STATE_OUT_OF_RANGE');
-    expect(() => state.prepareSessionPatch('one', { path: 'count', value: 'invalid' })).toThrow('INVALID_STATE_VALUE');
-    expect(state.prepareMessagePatch('one', 'child', { path: 'profile', value: { coins: 9, unruled: true } }).changed).toBe(true);
-    expect(state.prepareGlobalPatch('world', { path: 'profile.items', value: [{ name: 'key', extra: true }] }).changed).toBe(true);
+    expect(() => prepareObject('global', { path: 'count', value: 11 })).toThrow('STATE_OUT_OF_RANGE');
+    expect(() => prepareObject('session', { path: 'count', value: 'invalid' })).toThrow('INVALID_STATE_VALUE');
+    expect(prepareMessage({ path: 'profile', value: { coins: 9, unruled: true } }).changed).toBe(true);
+    expect(prepareObject('global', { path: 'profile.items', value: [{ name: 'key', extra: true }] }).changed).toBe(true);
     expect(state.getGlobal('world')).toEqual({ count: 1, profile: profile.initial });
     expect(sessions.getEntryState('one', 'child')).toBeNull();
   });
 
   it('rejects unsafe or unsupported paths even when the root is absent', () => {
     for (const path of ['', 'missing..value', '__proto__.value', 'profile.constructor', 'profile.items[0]', 'profile.items.0.name']) {
-      expect(() => state.prepareGlobalPatch('world', { path, value: 7 })).toThrow('INVALID_STATE_PATH');
+      expect(() => prepareObject('global', { path, value: 7 })).toThrow('INVALID_STATE_PATH');
     }
-    expect(() => state.prepareGlobalPatch('world', { path: 'profile', value: JSON.parse('{"__proto__":{"polluted":true}}') }))
+    expect(() => prepareObject('global', { path: 'profile', value: JSON.parse('{"__proto__":{"polluted":true}}') }))
       .toThrow('INVALID_STATE_KEY');
     expect(Object.hasOwn(Object.prototype, 'polluted')).toBe(false);
   });
@@ -191,13 +212,13 @@ describe('read-only field preparation with state v2 definitions', () => {
       stateDefinition: { schema_version: 2, scopes: { global: { count, broken: 'invalid definition' }, session: 'invalid scope' } },
       state: { count: 1, broken: { unruled: true } },
     });
-    expect(state.prepareGlobalPatch('world', { path: 'count', value: 2 })).toEqual({
+    expect(prepareObject('global', { path: 'count', value: 2 })).toEqual({
       changed: true, snapshot: { count: 2, broken: { unruled: true } },
     });
   });
 
   it('copies inherited message state while leaving the owner and predecessor untouched', () => {
-    const prepared = state.prepareMessagePatch('one', 'child', { path: 'profile.coins', value: 8 });
+    const prepared = prepareMessage({ path: 'profile.coins', value: 8 });
     expect(prepared).toEqual({
       changed: true,
       snapshot: [{ key: 'count', value: 1 }, { key: 'profile', value: { ...profile.initial, coins: 8 } }],
@@ -208,26 +229,21 @@ describe('read-only field preparation with state v2 definitions', () => {
 
   it('never materializes inheritance for ignored or unchanged message writes', () => {
     for (const [path, value] of [['missing', 8], ['profile.optional.child', 8], ['profile.coins', 1]] as const) {
-      expect(state.prepareMessagePatch('one', 'child', { path, value })).toEqual({ changed: false, snapshot: null });
+      expect(prepareMessage({ path, value })).toEqual({ changed: false, snapshot: state.requireMessage('one', 'child') });
     }
     sessions.setEntryState('one', 'child', []);
-    expect(state.prepareMessagePatch('one', 'child', { path: 'count', value: 3 })).toEqual({ changed: false, snapshot: [] });
+    expect(prepareMessage({ path: 'count', value: 3 })).toEqual({ changed: false, snapshot: [] });
     expect(sessions.getEntryState('one', 'child')).toEqual([]);
   });
 
   it('preserves unrelated message values without validating their definitions', () => {
     sessions.setEntryState('one', 'root', [{ key: 'count', value: 'invalid number' }, { key: 'profile', value: profile.initial }]);
-    expect(state.prepareMessagePatch('one', 'child', { path: 'profile.coins', value: 8 })).toEqual({
+    expect(prepareMessage({ path: 'profile.coins', value: 8 })).toEqual({
       changed: true,
       snapshot: [{ key: 'count', value: 'invalid number' }, { key: 'profile', value: { ...profile.initial, coins: 8 } }],
     });
   });
 
-  it('keeps owner lookup failures distinct from field validation failures', () => {
-    expect(() => state.prepareGlobalPatch('missing', { path: 'count', value: 2 })).toThrow('WORLD_NOT_FOUND');
-    expect(() => state.prepareSessionPatch('missing', { path: 'count', value: 2 })).toThrow('SESSION_NOT_FOUND');
-    expect(() => state.prepareMessagePatch('one', 'missing', { path: 'count', value: 2 })).toThrow('ENTRY_NOT_FOUND');
-  });
   describe('model message update candidates', () => {
     const prepare = (updates: readonly unknown[], allowedRoots: readonly string[] = ['count', 'profile']) =>
       state.prepareMessageUpdates({ sessionId: 'one', parentId: 'child', allowedRoots, updates });
@@ -281,7 +297,7 @@ describe('read-only field preparation with state v2 definitions', () => {
       expect(prepared.updates).toHaveLength(3);
     });
 
-    it('rejects missing paths and undeclared roots while public PATCH continues ignoring them', () => {
+    it('rejects missing paths and undeclared roots while public field updates continue ignoring them', () => {
       sessions.setEntryState('one', 'root', [
         { key: 'count', value: 1 }, { key: 'profile', value: profile.initial }, { key: 'unregistered', value: 3 },
       ]);
@@ -292,8 +308,8 @@ describe('read-only field preparation with state v2 definitions', () => {
       expect(prepared.results).toEqual(paths.map(path => ({
         path, status: 'invalid_path', errorCode: 'STATE_NOT_FOUND', statePath: path,
       })));
-      expect(state.prepareMessagePatch('one', 'child', { path: 'profile.optional.child', value: 8 }))
-        .toEqual({ snapshot: null, changed: false });
+      expect(prepareMessage({ path: 'profile.optional.child', value: 8 }))
+        .toEqual({ snapshot: state.requireMessage('one', 'child'), changed: false });
     });
 
     it('isolates malformed updates, unsupported paths and forbidden value keys', () => {

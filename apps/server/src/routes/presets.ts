@@ -3,20 +3,9 @@ import { z } from 'zod';
 import { AppError } from '../errors.js';
 import { offsetPage, readOffsetPagination } from '../http/pagination.js';
 import { readJson, success } from '../http/response.js';
-import type { ImportPreset } from '../usecases/import-preset.js';
-import type { ExportPreset } from '../usecases/export-preset.js';
-import type { CreatePresetInput, PresetSummary, PresetListOptions, PresetService, UpdatePresetInput } from '../modules/presets/service.js';
+import type { CreatePresetInput, PresetListOptions, PresetService, UpdatePresetInput } from '../modules/presets/service.js';
 
-function presetSummary(preset: PresetSummary) {
-  return {
-    id: preset.id, revision: preset.revision, type: preset.type, name: preset.name, description: preset.description,
-    createdAt: preset.createdAt, updatedAt: preset.updatedAt,
-  };
-}
-
-type PresetUsecases = { importPreset: ImportPreset; exportPreset: ExportPreset; deletePreset: (id: string) => void };
-
-export function createPresetRoutes(presets: PresetService, usecases?: PresetUsecases) {
+export function createPresetRoutes(presets: PresetService, deletePreset: (id: string) => void) {
   const routes = new Hono();
 
   routes.get('/default', c => {
@@ -24,15 +13,13 @@ export function createPresetRoutes(presets: PresetService, usecases?: PresetUsec
     return success(c, { item: presets.getDefault(type) });
   });
   routes.post('/import', async c => {
-    if (!usecases) throw new AppError('SERVICE_UNAVAILABLE');
-    const item = usecases.importPreset(await readJson(c));
+    const item = presets.importDocument(await readJson(c));
     return success(c, { item }, 201);
   });
   routes.get('/:id/export', c => {
-    if (!usecases) throw new AppError('SERVICE_UNAVAILABLE');
-    const file = usecases.exportPreset(c.req.param('id'));
-    const body = JSON.stringify(file.document, null, 2) + '\n';
-    const filename = encodeURIComponent(file.filename).replace(/[!'()*]/g, value =>
+    const document = presets.toDocument(presets.require(c.req.param('id')));
+    const body = JSON.stringify(document, null, 2) + '\n';
+    const filename = encodeURIComponent(document.name + '.json').replace(/[!'()*]/g, value =>
       '%' + value.charCodeAt(0).toString(16).toUpperCase());
     return new Response(c.req.method === 'HEAD' ? null : body, {
       headers: {
@@ -47,7 +34,7 @@ export function createPresetRoutes(presets: PresetService, usecases?: PresetUsec
     const type = c.req.query('type') ?? 'narrative', scope = 'presets:' + type;
     const pagination = readOffsetPagination(c, scope, { defaultLimit: 100, maxLimit: 1000 });
     const { items, hasMore } = presets.listPage({ ...pagination, type: type as PresetListOptions['type'] });
-    return success(c, offsetPage(items.map(presetSummary), hasMore, pagination, scope));
+    return success(c, offsetPage(items, hasMore, pagination, scope));
   });
   routes.get('/:id', c => success(c, { item: presets.require(c.req.param('id')) }));
   routes.post('/', async c => {
@@ -66,8 +53,7 @@ export function createPresetRoutes(presets: PresetService, usecases?: PresetUsec
   });
   routes.delete('/:id', c => {
     const id = c.req.param('id');
-    if (!usecases) throw new AppError('SERVICE_UNAVAILABLE');
-    usecases.deletePreset(id);
+    deletePreset(id);
     return success(c, { id });
   });
 

@@ -173,9 +173,9 @@ describe('world definitions and tags', () => {
     expect(await worlds.delete(first.id)).toBe(true);
     expect(await worlds.delete(first.id)).toBe(false);
     expect(worlds.listTags()).toEqual([{ name: 'shared', worldCount: 1 }]);
-    expect(() => worlds.setTags(second.id, undefined as never)).toThrow('INVALID_WORLD_TAGS');
+    expect(() => worlds.update(second.id, { tags: null as never })).toThrow('INVALID_WORLD_TAGS');
     expect(worlds.get(second.id)?.tags).toEqual(['shared']);
-    worlds.setTags(second.id, []);
+    worlds.update(second.id, { tags: [] });
     expect(worlds.listTags()).toEqual([]);
     expect(() => worlds.list({ limit: 0 })).toThrow('INVALID_WORLD_PAGINATION');
   });

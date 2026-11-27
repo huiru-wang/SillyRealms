@@ -12,7 +12,7 @@ import * as JSXRuntime from 'react/jsx-runtime';
 import '@tailwindcss/browser';
 import {createModuleLoader} from '../../../packages/sr-ui-compiler/src/loader';
 import {WorldStateContext,WorldDocumentContent,useSRWorldStateAPI,type SRWorldStateAPI} from '../../../packages/sr-sdk/src/world-state';
-import {RichText,SRAssetProvider,useSRAssetUrl} from '@sillyrealms/sdk';
+import {WorldDocumentRenderer,SRAssetProvider,useSRAssetUrl} from '@sillyrealms/sdk';
 import './world-component-frame.css';
 import {createPreviewActivity} from './features/worlds/preview-activity';
 import {createPreviewDialogFrame} from './features/worlds/preview-dialog';
@@ -28,7 +28,7 @@ function read(entries:Array<{path:string;scope?:'global'}>):Promise<any> {
 }
 const state:SRWorldStateAPI=Object.freeze({getState:async(path:string,scope?:'global')=>(await read([{path,scope}]))[0]?.value,batchGetState:read});
 // No session runtime, subscriptions, mutable state API, card object, or raw transport is exported.
-const sdk=Object.freeze({useSRWorldStateAPI,useSRStateAPI:useSRWorldStateAPI,WorldDocumentContent,RichText,useSRAssetUrl});
+const sdk=Object.freeze({useSRWorldStateAPI,WorldDocumentContent,WorldDocumentRenderer,useSRAssetUrl});
 class Boundary extends React.Component<{children:React.ReactNode},{failed:boolean}> {
   state={failed:false};static getDerivedStateFromError(){return {failed:true};}
   componentDidCatch(error:Error){port?.postMessage({type:'ui-error',message:error.message});}

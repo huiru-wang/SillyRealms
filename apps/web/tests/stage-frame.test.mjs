@@ -103,7 +103,7 @@ test('V2 session commands return acceptance IDs, the saved user and raw history 
     if (method === 'narrative.stop') return {runId: input.runId, stopping: true};
   });
   assert.deepEqual(await runtime.session.send('继续'), accepted);
-  assert.deepEqual(await runtime.session.getRuns({afterSeq: 1}), page);
+  assert.deepEqual(await runtime.history.query({afterSeq: 1}), page);
   await runtime.history.loadMore(); await runtime.session.setDraft('查看线索');
   assert.deepEqual(requests.map(request => request.method), ['narrative.send', 'history.query', 'history.loadMore', 'composer.setDraft']);
   assert.equal(Object.hasOwn(accepted, 'requestId'), false);

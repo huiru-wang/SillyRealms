@@ -20,7 +20,7 @@ WEB_ORIGIN=http://203.0.113.10 STAGE_ORIGIN=http://203.0.113.10:8081 ./deploy.sh
 - 成功后保存 `/etc/sillyrealms/deploy.json`。已有部署配置、主密钥和 systemd 服务可复用；数据目录仅在数据库符合当前结构时可继续使用。备份时同时保存整个数据目录和 `/etc/sillyrealms/`。如果之前自定义过 `SR_CONFIG_DIR`，每次执行都要指定原目录。
 - 自定义路径和端口可设置 `SERVER_DATA_ROOT`、`STATIC_ROOT`、`NGINX_DIR`、`SERVER_PORT`。环境变量优先于已保存的值。Nginx 服务须使用该目录下的 nginx.conf，并在 http 块包含 conf.d/*.conf 和 mime.types。
 - 主站与舞台使用不同的端口或域名。HTTPS 首次部署还需设置 `WEB_TLS_CERT`、`WEB_TLS_KEY`、`STAGE_TLS_CERT`、`STAGE_TLS_KEY`；使用私有 CA 时用 `TLS_CA_FILE` 指定部署检查所需的 CA 文件。公网访问需通过已有的访问控制入口。
-- 当前未发布版本使用数据库 v13。旧 v1–v12 数据库会在启动时明确拒绝，不执行迁移或自动删除。按当前格式重新开始时，先备份原数据，再通过 `SERVER_DATA_ROOT` 指定一个新的空目录；保留原目录及主密钥。部署失败后根据报错修正配置，再执行同一命令；若配置或服务已切换，需要手动恢复或重新部署。
+- 当前版本使用数据库 v14。旧 v1–v13 数据库会在启动时明确拒绝，不执行迁移或自动删除。按当前格式重新开始时，先备份原数据，再通过 `SERVER_DATA_ROOT` 指定一个新的空目录；保留原目录及主密钥。部署失败后根据报错修正配置，再执行同一命令；若配置或服务已切换，需要手动恢复或重新部署。
 
 ## 检查与日志
 

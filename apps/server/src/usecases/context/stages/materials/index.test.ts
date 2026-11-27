@@ -176,6 +176,72 @@ describe('narrative material selection', () => {
     expect(filtered.activeRoots).toEqual(['name']);
   });
 
+  it.each([[59, 'Guarded'], [60, 'Trusted'], [80, 'Close']] as const)(
+    'renders character, persona and lore branches from affinity %s without changing their source',
+    (affinity, attitude) => {
+      const input = sources();
+      const source = [
+        "Alice: {% if getState('alice.affinity', {scope: 'message'}) >= 80 %}Close",
+        "{% elif getState('alice.affinity', {scope: 'message'}) >= 60 %}Trusted",
+        '{% else %}Guarded{% endif %}',
+        "{% if getState('alice.injured', {scope: 'message'}) === true %}/injured{% endif %}",
+        '/{{state.message.alice.affinity}}',
+      ].join('');
+      input.world.characters[0] = { id: 'player', name: 'Robin', player_selectable: true,
+        content: "{% if getState('unlocked', {scope: 'session'}) %}Ready {{user}}{% endif %}" };
+      input.world.characters.push({ id: 'alice', name: 'Alice', content: source });
+      input.world.lorebook = { entries: [{ id: 'attitude', content:
+        "{% if getState('alice.affinity', {scope: 'message'}) >= 60 %}Known to {{user}}{% else %}Hidden{% endif %}",
+      }] };
+      input.world.stateDefinition = { schema_version: 2, scopes: { message: {
+        alice: { type: 'json', initial: { affinity: 0, injured: false }, description: 'Alice state' },
+      } } };
+      input.views.message.alice = { affinity, injured: true };
+      const before = structuredClone(input);
+      const result = selectNarrativeMaterials(input, conditions);
+      expect(result.variables['persona.content']).toEqual({ type: 'text', value: 'Ready Robin' });
+      expect(result.variables['characters.content']).toEqual({ type: 'text', value: 'Alice: ' + attitude + '/injured/' + affinity });
+      expect(result.variables['world.lore']).toEqual({ type: 'text', value: affinity >= 60 ? 'Known to Robin' : 'Hidden' });
+      expect(result.activeRoots).toEqual(['alice']);
+      expect(input).toEqual(before);
+    },
+  );
+
+  it('keeps condition reads separate from visible interpolation and never executes inserted state text', () => {
+    const input = sources();
+    const inserted = '{% if true %}literal{% endif %} {{user}} {{state.message.hidden}}';
+    input.world.stateDefinition = { schema_version: 2, scopes: { message: {
+      mood: { type: 'string', initial: '', description: 'Mood' },
+      hidden: { type: 'boolean', initial: false, description: 'Control flag', load: { mode: 'never' } },
+    } } };
+    input.views.message.mood = inserted;
+    input.views.message.hidden = true;
+    input.world.characters.push({ id: 'alice', name: 'Alice', content: [
+      "{% if getState('hidden', {scope: 'message'}) %}visible={{state.message.hidden}};mood={{state.message.mood}}",
+      "{% else %}{% if getState('missing') > 0 %}unreachable{% endif %}{% endif %}",
+    ].join('') });
+    input.world.characters.push({ id: 'disabled', name: 'Disabled', load: { mode: 'never' },
+      content: "{% if getState('missing') > 0 %}not rendered{% endif %}" });
+    const result = selectNarrativeMaterials(input, conditions);
+    expect(result.variables['characters.content'].value).toBe('visible=;mood=' + inserted);
+    expect(result.activeRoots).toEqual(['mood']);
+    expect(result.variables['state.message'].value).not.toContain('Control flag');
+  });
+
+  it.each(['character', 'lore'] as const)('reports a selected %s condition failure instead of using else', source => {
+    const input = sources();
+    const content = "Heading\n{% if getState('missing', {scope: 'message'}) >= 60 %}trusted{% else %}wrong fallback{% endif %}";
+    if (source === 'character') input.world.characters.push({ id: 'alice', name: 'Alice', content });
+    else input.world.lorebook = { entries: [{ id: 'attitude', content }] };
+    let error: unknown;
+    try { variable(input, source === 'character' ? 'characters.content' : 'world.lore'); } catch (caught) { error = caught; }
+    expect(error).toMatchObject({ code: 'INVALID_NARRATIVE_TEMPLATE' });
+    expect(String(error)).toContain(source === 'character'
+      ? 'characters[1].content (id: "alice")' : 'lorebook.entries[0].content (id: "attitude")');
+    expect(String(error)).toMatch(/line 2|第 2 行/);
+    expect(String(error)).not.toContain('wrong fallback');
+  });
+
   it('records names, rules and the actual keyword/when outcomes without reevaluating conditions or copying material content', () => {
     const input = sources();
     input.world.characters.push(

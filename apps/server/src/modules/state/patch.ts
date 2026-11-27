@@ -1,11 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
 import {
-  StateValidationError, validateStateDefinition, validateStateJson,
+  StateValidationError, statePathParts, validateStateDefinition, validateStateJson,
   validateStateValue, type StateScope,
 } from '@sillyrealms/sdk/state-validation';
 import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
 import type { PreparedStatePatch, StateUpdate } from './types.js';
-import { statePathParts } from '../../lib/state-path.js';
 
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 

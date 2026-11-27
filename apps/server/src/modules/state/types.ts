@@ -1,6 +1,7 @@
 import type { JsonValue } from '../../infrastructure/database/connection.js';
 import type { StateScope } from '@sillyrealms/sdk/state-validation';
 
+export type StateQueryRow = { path: string; value?: JsonValue };
 export type StateUpdate = { path: string; value: JsonValue };
 export type PreparedStatePatch<T> = { snapshot: T; changed: boolean };
 

@@ -37,7 +37,11 @@ export type ContextModelRequest = Omit<CompiledNarrativeContext, 'diagnostics'> 
   model: ModelInfo;
   credentialRef: ModelConfig['credentialRef'];
 };
-export type ContextFailure = { code: ErrorCode | 'SUMMARY_FAILED' };
+export type ContextFailure = {
+  code: ErrorCode | 'SUMMARY_FAILED';
+  /** Author/preset template source diagnostics for the outer run log; never a state value or SSE payload. */
+  detail?: string;
+};
 export type SummaryReceipt = { entryId: string; metrics: EntryMetrics | null };
 type ContextReceipt = { parentEntryId: string | null; summary?: SummaryReceipt };
 export type PreparedContext = ContextReceipt & (

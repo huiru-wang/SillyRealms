@@ -23,7 +23,7 @@ export type WorldVersionIndex = {
 
 export type WorldUpdateStatus = 'no_source' | 'not_checked' | 'checking' | 'ready' | 'failed';
 export type WorldVersionSummary = {
-  currentVersion: string | null;
+  currentVersion: string;
   latestVersion: string | null;
   updateStatus: WorldUpdateStatus;
 };

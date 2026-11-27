@@ -26,11 +26,10 @@ async function run(){
   document.documentElement.dataset.theme='light';await wait();
   plain=read('plain');card=read('card');
   checks.push({name:'switching back restores light theme',pass:plain?.bg==='rgb(247, 248, 251)'&&card?.bg==='rgb(255, 255, 255)'&&plain.color==='rgb(32, 36, 52)'});
-  document.documentElement.style.setProperty('--ink',' ');
   document.documentElement.style.setProperty('--text','#f3eef7');
   document.documentElement.dataset.theme='dark';await wait();
   plain=read('plain');
-  checks.push({name:'Web text token keeps isolated prose readable without legacy ink',pass:plain?.color==='rgb(243, 238, 247)'});
+  checks.push({name:'Web text token keeps isolated prose readable',pass:plain?.color==='rgb(243, 238, 247)'});
   root.unmount();document.querySelector('#results')!.textContent=JSON.stringify(checks,null,2);document.title=checks.every(c=>c.pass)?'PASS':'FAIL';
 }
 void run();

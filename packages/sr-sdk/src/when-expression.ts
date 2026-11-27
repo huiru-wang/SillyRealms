@@ -9,8 +9,34 @@ const operators = new Set(['===', '!==', '<', '<=', '>', '>=', '+', '-', '*', '/
 const logical = new Set(['&&', '||', '??']);
 function unsupported(): never { throw new Error('Unsupported when expression'); }
 
+export function whenStateReference(node: Extract<AnyNode, { type: 'CallExpression' }>): WhenStateReference {
+  if (node.optional || node.callee.type !== 'Identifier' || node.callee.name !== 'getState' ||
+    node.arguments.length < 1 || node.arguments.length > 2) unsupported();
+  const path = node.arguments[0]!;
+  let parts: string[];
+  if (path.type === 'Literal' && typeof path.value === 'string') parts = toPath(path.value);
+  else if (path.type === 'ArrayExpression') {
+    parts = path.elements.map(element => {
+      if (element?.type !== 'Literal' || typeof element.value !== 'string') unsupported();
+      return element.value;
+    });
+  } else unsupported();
+  if (!parts.length || parts.length > 32 || parts.some(part => !part || blocked.has(part))) unsupported();
+  const options = node.arguments[1];
+  let scope: StateScope | null = null;
+  if (options) {
+    if (options.type !== 'ObjectExpression' || options.properties.length !== 1) unsupported();
+    const property = options.properties[0]!;
+    if (property.type !== 'Property' || property.computed || property.key.type !== 'Identifier' ||
+      property.key.name !== 'scope' || property.value.type !== 'Literal' ||
+      typeof property.value.value !== 'string' || !['global', 'session', 'message'].includes(property.value.value)) unsupported();
+    scope = property.value.value as StateScope;
+  }
+  return { path: parts, scope };
+}
+
 /** Validate the bounded author expression grammar; this module never evaluates expressions. */
-export function validateWhen(input: string, onReference?: (reference: WhenStateReference) => void): void {
+export function parseWhen(input: string, onReference?: (reference: WhenStateReference) => void): AnyNode {
   if (new TextEncoder().encode(input).length > 4096) unsupported();
   const root = parseExpressionAt(input, 0, { ecmaVersion: 'latest' });
   if (input.slice(root.end).trim()) unsupported();
@@ -33,33 +59,13 @@ export function validateWhen(input: string, onReference?: (reference: WhenStateR
       case 'ConditionalExpression':
         validate(node.test); validate(node.consequent); validate(node.alternate); break;
       case 'CallExpression': {
-        if (node.optional || node.callee.type !== 'Identifier' || node.callee.name !== 'getState' ||
-          node.arguments.length < 1 || node.arguments.length > 2) unsupported();
-        const path = node.arguments[0]!;
-        let parts: string[];
-        if (path.type === 'Literal' && typeof path.value === 'string') parts = toPath(path.value);
-        else if (path.type === 'ArrayExpression') {
-          parts = path.elements.map(element => {
-            if (element?.type !== 'Literal' || typeof element.value !== 'string') unsupported();
-            return element.value;
-          });
-        } else unsupported();
-        if (!parts.length || parts.length > 32 || parts.some(part => !part || blocked.has(part))) unsupported();
-        const options = node.arguments[1];
-        let scope: StateScope | null = null;
-        if (options) {
-          if (options.type !== 'ObjectExpression' || options.properties.length !== 1) unsupported();
-          const property = options.properties[0]!;
-          if (property.type !== 'Property' || property.computed || property.key.type !== 'Identifier' ||
-            property.key.name !== 'scope' || property.value.type !== 'Literal' ||
-            typeof property.value.value !== 'string' || !['global', 'session', 'message'].includes(property.value.value)) unsupported();
-          scope = property.value.value as StateScope;
-        }
-        onReference?.({ path: parts, scope });
+        const reference = whenStateReference(node);
+        onReference?.(reference);
         break;
       }
       default: unsupported();
     }
   };
   validate(root);
+  return root;
 }

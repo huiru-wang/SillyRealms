@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '../infrastructure/database/connection.js';
 import { bindTransaction } from '../infrastructure/database/transaction.js';
 import type { SessionAccessCheck } from '../http/session-access.js';
+import { EventHub } from '../infrastructure/events/event-hub.js';
+import { createWorldUpdates } from '../usecases/world-updates/index.js';
 import { createDeleteWorld } from '../usecases/delete-world.js';
 import type { Page } from '../http/pagination.js';
 import { errorHandler, type SuccessResponse } from '../http/response.js';
@@ -52,18 +54,18 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-function worldRoutes(canAccessSession?: SessionAccessCheck) {
+function worldRoutes(canAccessSession?: SessionAccessCheck, importWorld = createImportWorld(services)) {
   return createWorldRoutes({
     worlds: services.worlds, sessions: services.sessions, canAccessSession,
     deleteWorld: createDeleteWorld({ worlds: services.worlds, sessions: services.sessions, transaction: bindTransaction(db) }),
-    importWorld: createImportWorld({ worlds: services.worlds, settings: services.settings }),
+    importWorld, cache: services.cache, worldUpdates: createWorldUpdates({ ...services, events: new EventHub() }),
     exportWorld: createExportWorld({ worlds: services.worlds }),
   });
 }
 function sessionWithEntry(worldId: string, id: string, config: ReturnType<typeof configuration>) {
   const session = services.sessions.create({ runtimeConfig: { narrativePresetId: config.presetId, apiModelConfigId: config.apiModelConfigId }, id, worldId, userCharacterId: 'player' });
   const entry = services.sessions.appendEntry(id, {
-    id: id + '-entry', runId: 'opening', type: 'message', role: 'assistant', payload: { content: 'Opening' },
+    id: id + '-entry', runId: 'opening', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: 'Opening', timestamp: 1 } },
   });
   return { session, entry };
 }
@@ -414,7 +416,7 @@ describe('world routes', () => {
     await failure(await app.request(base + '/missing/export'), 'WORLD_NOT_FOUND', 404);
   });
 
-  it('imports ZIP resources through multipart and reports absent import/export capabilities', async () => {
+  it('imports ZIP resources through multipart', async () => {
     const bytes = await zipBytes([
       { name: 'world.json', data: JSON.stringify(worldCardFixture()) },
       { name: 'assets/asset.txt', data: 'resource' },
@@ -423,11 +425,6 @@ describe('world routes', () => {
     form.set('file', new File([new Uint8Array(bytes)], 'different-upload.zip'));
     const { item } = await data<{ item: WorldDetail }>(await app.request(base + '/import', { method: 'POST', body: form }), 201);
     expect(await (await app.request(base + '/' + item.id + '/resources/assets/asset.txt')).text()).toBe('resource');
-    const unavailable = new Hono().onError(errorHandler).route(base, createWorldRoutes({
-      worlds: services.worlds, sessions: services.sessions,
-    }));
-    await failure(await unavailable.request(base + '/import', { method: 'POST' }), 'SERVICE_UNAVAILABLE', 503);
-    await failure(await unavailable.request(base + '/' + item.id + '/export'), 'SERVICE_UNAVAILABLE', 503);
   });
 
   it('rejects invalid multipart and oversized files with the ordinary error envelope', async () => {
@@ -446,9 +443,7 @@ describe('world routes', () => {
 
   it('bounds actual multipart bytes before parsing even without or with a false Content-Length', async () => {
     const importSpy = vi.fn(createImportWorld({ worlds: services.worlds, settings: services.settings }));
-    const bounded = new Hono().onError(errorHandler).route(base, createWorldRoutes({
-      worlds: services.worlds, sessions: services.sessions, importWorld: importSpy,
-    }));
+    const bounded = new Hono().onError(errorHandler).route(base, worldRoutes(undefined, importSpy));
     const variants: Record<string, string>[] = [{}, { 'content-length': '1' }, { 'transfer-encoding': 'chunked' }];
     for (const extra of variants) {
       const cancel = vi.fn();

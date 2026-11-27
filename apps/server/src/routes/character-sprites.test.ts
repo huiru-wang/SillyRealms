@@ -85,7 +85,7 @@ describe('specified message character sprite query', () => {
     save('with-sprites', { status: 'success', items: [item] });
     save('no-sprites');
     services.sessions.appendEntry('one', {
-      id: 'user', runId: 'next', type: 'message', role: 'user', payload: { text: 'Continue' },
+      id: 'user', runId: 'next', type: 'message', role: 'user', payload: { message: { role: 'user', content: 'Continue', timestamp: 1 } },
     });
     expect(await result('with-sprites')).toEqual({ status: 'success', items: [item] });
     expect(await result('no-sprites')).toBeNull();
@@ -122,7 +122,7 @@ describe('specified message character sprite query', () => {
   it('keeps saved output through ordinary edits and rejects a caller-supplied replacement', async () => {
     const snapshot: CharacterSpriteOutput = { status: 'success', items: [item] };
     save('saved', snapshot);
-    services.sessions.updateEntry('one', 'saved', { payload: { text: 'Edited story' }, extData: { note: 'changed' } });
+    services.sessions.updateEntry('one', 'saved', { payload: { message: { role: 'assistant', content: 'Edited story', timestamp: 1 } }, extData: { note: 'changed' } });
     expect(await result('saved')).toEqual(snapshot);
     expect(() => services.sessions.updateEntry('one', 'saved', { extData: { output: {
       characterSprite: { status: 'success', items: [] },

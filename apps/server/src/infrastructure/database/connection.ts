@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { AppError } from '../../errors.js';
 
-export const DATABASE_VERSION = 13;
+export const DATABASE_VERSION = 14;
 export const DATABASE_APPLICATION_ID = 0x53525632; // SRV2; distinct from the old Server database.
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
@@ -77,7 +77,6 @@ CREATE TABLE sessions (
     tip_entry_id        TEXT,
     title               TEXT,
     state               TEXT NOT NULL CHECK(json_valid(state) AND json_type(state) = 'object'),
-    usage_json          TEXT CHECK(usage_json IS NULL OR (json_valid(usage_json) AND json_type(usage_json) = 'object')),
     created_at          INTEGER NOT NULL,
     updated_at          INTEGER NOT NULL
 );

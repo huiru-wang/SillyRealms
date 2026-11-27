@@ -24,7 +24,7 @@ export type WorldUpdatesContext = Omit<WorldUpdatesDependencies, 'downloads'> & 
 
 export function sourceOf(world: Pick<World, 'id' | 'publication'>): WorldUpdateSource | null {
   const publication = world.publication;
-  return publication?.update_url
+  return publication.update_url
     ? { worldId: world.id, packageId: publication.package_id, updateUrl: publication.update_url }
     : null;
 }

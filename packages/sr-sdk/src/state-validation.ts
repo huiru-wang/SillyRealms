@@ -61,6 +61,12 @@ export function isSafeStateKey(key: string): boolean {
   return key.length > 0 && !key.includes('.') && !key.includes('[') && !key.includes(']') && !unsafeKeys.has(key);
 }
 
+export function statePathParts(path: unknown): string[] | null {
+  if (typeof path !== 'string') return null;
+  const parts = path.split('.');
+  return parts.length <= STATE_MAX_DEPTH && parts.every(isSafeStateKey) ? parts : null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);

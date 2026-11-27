@@ -184,8 +184,9 @@ describe('synchronous session snapshot', () => {
   it('rejects mismatched history roles rather than replacing malformed data with an empty message', () => {
     services.sessions.appendEntry('session', {
       id: 'bad', runId: 'bad', type: 'message', role: 'assistant',
-      payload: { message: { role: 'user', content: 'Mismatch', timestamp: 100 } },
+      payload: { message: { role: 'assistant', content: 'Mismatch', timestamp: 100 } },
     });
+    db.prepare("UPDATE entries SET role='user' WHERE id='bad'").run();
     expect(() => capture()).toThrow('INVALID_NARRATIVE_HISTORY');
     expect(services.sessions.getEntry('session', 'current-user')).not.toBeNull();
   });

@@ -24,10 +24,9 @@ export type AppOptions = {
   stageOrigin?: string;
   debug?: boolean;
   canAccessSession?: SessionAccessCheck;
-} & (
-  | { services: Services; usecases: Usecases }
-  | { services?: undefined; usecases?: undefined }
-);
+  services: Services;
+  usecases: Usecases;
+};
 
 export function createApp({ events, services, usecases, canAccessSession, webOrigin, stageOrigin, debug }: AppOptions) {
   const trustedWebOrigin = parseWebOrigin(webOrigin ?? 'http://127.0.0.1:5176');
@@ -45,57 +44,54 @@ export function createApp({ events, services, usecases, canAccessSession, webOri
   });
   app.use('/api/*', async (c, next) => {
     if (!allowApiOrigin(c.req.header('origin'), c.req.url, c.req.method, trustedWebOrigin)) return failure(c, 'ORIGIN_NOT_ALLOWED');
-    if (!services) return failure(c, 'SERVICE_UNAVAILABLE');
     await next();
   });
   app.onError(errorHandler);
   app.notFound(c => failure(c, 'NOT_FOUND'));
   app.get('/health', c => success(c, { ok: true }));
-  if (services) {
-    app.get('/api/v1/runtime/config', async c => {
-      c.header('Cache-Control', 'no-store');
-      const deployment = localConfigs.get(new URL(c.req.url).origin) ?? config;
-      const id = c.req.query('sessionId');
-      if (id === undefined) return success(c, deployment);
+  app.get('/api/v1/runtime/config', async c => {
+    c.header('Cache-Control', 'no-store');
+    const deployment = localConfigs.get(new URL(c.req.url).origin) ?? config;
+    const id = c.req.query('sessionId');
+    if (id === undefined) return success(c, deployment);
 
-      await requireSessionAccess(services.sessions, id, c.req.raw, canAccessSession, shutdown.signal);
-      const session = services.sessions.require(id);
-      const prompts = resolvePostprocessPrompts(services.presets.require(session.runtimeConfig.narrativePresetId).config);
-      const catalog = services.worlds.getCharacterSpriteCatalog(session.worldId);
-      return success(c, {
-        ...deployment,
-        capabilities: { characterSprite: { available: characterSpriteAvailable(prompts, catalog.items.length) } },
-      });
+    await requireSessionAccess(services.sessions, id, c.req.raw, canAccessSession, shutdown.signal);
+    const session = services.sessions.require(id);
+    const prompts = resolvePostprocessPrompts(services.presets.require(session.runtimeConfig.narrativePresetId).config);
+    const catalog = services.worlds.getCharacterSpriteCatalog(session.worldId);
+    return success(c, {
+      ...deployment,
+      capabilities: { characterSprite: { available: characterSpriteAvailable(prompts, catalog.items.length) } },
     });
-    app.route('/api/v1/presets', createPresetRoutes(services.presets, usecases));
-    app.route('/api/v1/api-model-configs', createModelRoutes(
-      services.models, services.credentials, usecases.modelConfigs, usecases.testModel, shutdown.signal,
-    ));
-    app.route('/api/v1/providers', createProviderRoutes({ listProviders: usecases.listProviders }));
-    app.route('/api/v1/sessions', createReplyAssistRoutes({ sessions: services.sessions, replyAssist: usecases.replyAssist, canAccessSession, shutdownSignal: shutdown.signal }));
-    app.route('/api/v1/sessions', createNarrativeRoutes({
-      sessions: services.sessions, narrative: usecases.narrative, canAccessSession, shutdownSignal: shutdown.signal,
-    }));
-    app.route('/api/v1/app-settings', createSettingsRoutes(services.settings));
-    app.route('/api/v1/worlds', createWorldRoutes({
-      worlds: services.worlds, sessions: services.sessions, cache: services.cache, worldUpdates: usecases.worldUpdates,
-      importWorld: usecases.importWorld, exportWorld: usecases.exportWorld,
-      deleteWorld: usecases.deleteWorld, canAccessSession, shutdownSignal: shutdown.signal,
-    }));
-    app.route('/api/v1/sessions', createSessionRoutes({
-      appendEntry: usecases.appendEntry, createSession: usecases.createSession,
-      sessions: services.sessions, worlds: services.worlds, events, canAccessSession, shutdownSignal: shutdown.signal, streamShutdownSignal: streams.signal,
-    }));
-    app.route('/api/v1/state', createStateRoutes({
-      state: services.state, setState: usecases.setState, sessions: services.sessions, canAccessSession, shutdownSignal: shutdown.signal,
-    }));
-  }
+  });
+  app.route('/api/v1/presets', createPresetRoutes(services.presets, usecases.deletePreset));
+  app.route('/api/v1/api-model-configs', createModelRoutes(
+    services.models, services.credentials, usecases.modelConfigs, usecases.testModel, shutdown.signal,
+  ));
+  app.route('/api/v1/providers', createProviderRoutes({ listProviders: usecases.listProviders }));
+  app.route('/api/v1/sessions', createReplyAssistRoutes({ sessions: services.sessions, replyAssist: usecases.replyAssist, canAccessSession, shutdownSignal: shutdown.signal }));
+  app.route('/api/v1/sessions', createNarrativeRoutes({
+    sessions: services.sessions, narrative: usecases.narrative, canAccessSession, shutdownSignal: shutdown.signal,
+  }));
+  app.route('/api/v1/app-settings', createSettingsRoutes(services.settings));
+  app.route('/api/v1/worlds', createWorldRoutes({
+    worlds: services.worlds, sessions: services.sessions, cache: services.cache, worldUpdates: usecases.worldUpdates,
+    importWorld: usecases.importWorld, exportWorld: usecases.exportWorld,
+    deleteWorld: usecases.deleteWorld, canAccessSession, shutdownSignal: shutdown.signal,
+  }));
+  app.route('/api/v1/sessions', createSessionRoutes({
+    appendEntry: usecases.appendEntry, createSession: usecases.createSession,
+    sessions: services.sessions, worlds: services.worlds, events, canAccessSession, shutdownSignal: shutdown.signal, streamShutdownSignal: streams.signal,
+  }));
+  app.route('/api/v1/state', createStateRoutes({
+    state: usecases.state, sessions: services.sessions, canAccessSession, shutdownSignal: shutdown.signal,
+  }));
   return Object.assign(app, { shutdown: (): Promise<void> => {
     if (closing) return closing;
     stopping = true;
     shutdown.abort();
     // Keep SSE alive until every accepted run has saved its already received body and published its terminal event.
-    closing = Promise.all([usecases?.narrative.shutdown(), usecases?.replyAssist.shutdown(), usecases?.worldUpdates.shutdown()]).then(() => {}).finally(() => streams.abort());
+    closing = Promise.all([usecases.narrative.shutdown(), usecases.replyAssist.shutdown(), usecases.worldUpdates.shutdown()]).then(() => {}).finally(() => streams.abort());
     return closing;
   } });
 }

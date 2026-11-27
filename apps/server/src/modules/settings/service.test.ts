@@ -20,7 +20,7 @@ describe('settings initialization', () => {
     expect(() => settings.get()).toThrow('APP_SETTINGS_MISSING');
     expect(() => settings.ensure({ defaultPresetId: 'missing', defaultApiModelConfigId: null })).toThrow('PRESET_NOT_FOUND');
     expect(settings.getOptional()).toBeNull();
-    const preset = presets.ensureDefault();
+    const preset = presets.require(presets.ensureBuiltins());
     expect(() => settings.ensure({ defaultPresetId: preset.id, defaultApiModelConfigId: 'missing' })).toThrow('MODEL_CONFIG_NOT_FOUND');
     expect(settings.getOptional()).toBeNull();
     const created = settings.ensure({ defaultPresetId: preset.id, defaultApiModelConfigId: null });
@@ -29,7 +29,7 @@ describe('settings initialization', () => {
   });
 
   it.each(['zh-CN', 'en', 'ja'] as const)('persists %s without resetting it when other settings change or initialization repeats', locale => {
-    const preset = presets.ensureDefault();
+    const preset = presets.require(presets.ensureBuiltins());
     settings.ensure({ defaultPresetId: preset.id, defaultApiModelConfigId: null });
     const saved = settings.update({ locale });
     expect(saved.locale).toBe(locale);
@@ -40,7 +40,7 @@ describe('settings initialization', () => {
   });
 
   it('returns existing choices unchanged instead of treating ensure as an update', () => {
-    const preset = presets.ensureDefault();
+    const preset = presets.require(presets.ensureBuiltins());
     settings.ensure({ defaultPresetId: preset.id, defaultApiModelConfigId: null });
     const cleared = settings.update({ defaultPresetId: null });
     expect(settings.ensure({ defaultPresetId: 'ignored-missing', defaultApiModelConfigId: 'ignored-missing' })).toEqual(cleared);
@@ -51,7 +51,7 @@ describe('settings initialization', () => {
 
 describe('cover mosaic density', () => {
   it('persists density independently of language, defaults and repeated initialization', () => {
-    const preset = presets.ensureDefault();
+    const preset = presets.require(presets.ensureBuiltins());
     settings.ensure({ defaultPresetId: preset.id, defaultApiModelConfigId: null });
     for (const coverMosaicDensity of [8, 32, 64]) {
       expect(settings.update({ coverMosaicDensity })).toMatchObject({

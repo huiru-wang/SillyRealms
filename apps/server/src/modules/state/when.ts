@@ -1,70 +1,11 @@
-import { parseExpressionAt, type AnyNode } from 'acorn';
-import lodash from 'lodash';
+import type { AnyNode } from 'acorn';
+import { parseWhen, whenStateReference } from '@sillyrealms/sdk/when-expression';
 import type { JsonObject } from '../../infrastructure/database/connection.js';
 
 export type StateViews = Record<'global' | 'session' | 'message', JsonObject>;
-const blocked = new Set(['__proto__', 'constructor', 'prototype']);
-const operators = new Set(['===', '!==', '<', '<=', '>', '>=', '+', '-', '*', '/', '%']);
-const logical = new Set(['&&', '||', '??']);
 const scopes = ['global', 'session', 'message'] as const;
 
 function unsupported(): never { throw new Error('Unsupported when expression'); }
-
-function statePath(node: AnyNode): string[] {
-  let parts: string[];
-  if (node.type === 'Literal' && typeof node.value === 'string') parts = lodash.toPath(node.value);
-  else if (node.type === 'ArrayExpression') {
-    parts = node.elements.map(element => {
-      if (element?.type !== 'Literal' || typeof element.value !== 'string') unsupported();
-      return element.value;
-    });
-  } else unsupported();
-  if (!parts.length || parts.length > 32 || parts.some(part => !part || blocked.has(part))) unsupported();
-  return parts;
-}
-
-function parse(input: string): AnyNode {
-  if (Buffer.byteLength(input) > 4096) unsupported();
-  const root = parseExpressionAt(input, 0, { ecmaVersion: 'latest' });
-  if (input.slice(root.end).trim()) unsupported();
-  let count = 0;
-  const validate = (node: AnyNode): void => {
-    if (++count > 256) unsupported();
-    switch (node.type) {
-      case 'Literal':
-        if (!(node.value === null || ['string', 'number', 'boolean'].includes(typeof node.value))) unsupported();
-        break;
-      case 'UnaryExpression':
-        if (!['!', '+', '-'].includes(node.operator)) unsupported();
-        validate(node.argument); break;
-      case 'BinaryExpression':
-        if (!operators.has(node.operator)) unsupported();
-        validate(node.left); validate(node.right); break;
-      case 'LogicalExpression':
-        if (!logical.has(node.operator)) unsupported();
-        validate(node.left); validate(node.right); break;
-      case 'ConditionalExpression':
-        validate(node.test); validate(node.consequent); validate(node.alternate); break;
-      case 'CallExpression': {
-        if (node.optional || node.callee.type !== 'Identifier' || node.callee.name !== 'getState' ||
-          node.arguments.length < 1 || node.arguments.length > 2) unsupported();
-        statePath(node.arguments[0]!);
-        const options = node.arguments[1];
-        if (options) {
-          if (options.type !== 'ObjectExpression' || options.properties.length !== 1) unsupported();
-          const property = options.properties[0]!;
-          if (property.type !== 'Property' || property.computed || property.key.type !== 'Identifier' ||
-            property.key.name !== 'scope' || property.value.type !== 'Literal' ||
-            !scopes.includes(property.value.value as typeof scopes[number])) unsupported();
-        }
-        break;
-      }
-      default: unsupported();
-    }
-  };
-  validate(root);
-  return root;
-}
 
 /** Interpret only the bounded author grammar; no JS evaluation or object method calls. */
 export function evaluateWhen(input: string, state: StateViews): boolean {
@@ -92,11 +33,7 @@ export function evaluateWhen(input: string, state: StateViews): boolean {
         return left ?? evaluate(node.right);
       }
       case 'CallExpression': {
-        const path = statePath(node.arguments[0]!);
-        const options = node.arguments[1];
-        const property = options?.type === 'ObjectExpression' ? options.properties[0] : undefined;
-        const scope = property?.type === 'Property' && property.value.type === 'Literal'
-          ? property.value.value as typeof scopes[number] : undefined;
+        const { path, scope } = whenStateReference(node);
         for (const name of scope ? [scope] : scopes) {
           let current: unknown = state[name], found = true;
           for (const part of path) {
@@ -137,7 +74,7 @@ export function evaluateWhen(input: string, state: StateViews): boolean {
       default: return unsupported();
     }
   };
-  const result = evaluate(parse(input));
+  const result = evaluate(parseWhen(input));
   if (typeof result !== 'boolean') unsupported();
   return result;
 }

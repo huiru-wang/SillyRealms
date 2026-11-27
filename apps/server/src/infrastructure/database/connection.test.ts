@@ -46,7 +46,7 @@ describe('V2 database lifecycle and constraints', () => {
     finally { second.close(); }
   });
 
-  it.each(Array.from({ length: 12 }, (_, index) => index + 1))('rejects previous V%s databases without modifying their data', version => {
+  it.each(Array.from({ length: DATABASE_VERSION - 1 }, (_, index) => index + 1))('rejects previous V%s databases without modifying their data', version => {
     const path = file();
     const previous = openDatabase(path);
     previous.prepare('INSERT INTO app_settings(id,created_at,updated_at) VALUES(1,123,456)').run();
@@ -108,8 +108,7 @@ describe('V2 database lifecycle and constraints', () => {
     db.prepare("INSERT INTO worlds(id,spec_version,publication_json,name,characters_json,openings_json,state,created_at,updated_at) VALUES('w','0.2','{}','World','[]','[]','{}',1,1)").run();
     db.prepare("INSERT INTO world_tags VALUES('w','adventure',0)").run();
     db.prepare("INSERT INTO sessions(id,world_id,runtime_config,user_character_id,state,created_at,updated_at) VALUES('s','w',?,'player','{}',1,1)").run(
-      JSON.stringify({ narrative_preset_id: 'p', api_model_config_id: 'm', reply_assist_preset_id: null, replay_assist_goal: '', font_size: 16 }));
-    expect(db.prepare("SELECT usage_json FROM sessions WHERE id='s'").get()?.usage_json).toBeNull();
+      JSON.stringify({ narrative_preset_id: 'p', api_model_config_id: 'm', reply_assist_preset_id: null, reply_assist_goal: '', font_size: 16 }));
     expect(() => db.prepare("DELETE FROM worlds WHERE id='w'").run()).toThrow();
     expect(() => db.prepare("DELETE FROM presets WHERE id='p'").run()).toThrow();
     const insert = db.prepare('INSERT INTO entries(id,session_id,run_id,seq,type,role,timestamp,payload,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)');

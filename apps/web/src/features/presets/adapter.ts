@@ -54,7 +54,7 @@ export function getPresetValidationError(preset: WebPreset): string | null {
 
 export function presetInput(preset: WebPreset):PresetInput {
   return {
-    type:preset.type??'narrative',...(preset.type==='reply_assist'?{apiModelConfigId:preset.apiModelConfigId??null}:{}),name:preset.name.trim(),description:preset.description,
+    type:preset.type,...(preset.type==='reply_assist'?{apiModelConfigId:preset.apiModelConfigId??null}:{}),name:preset.name.trim(),description:preset.description,
     config:{
       schemaVersion:1,nodes:preset.nodes.map(({id,name,kind,role,enabled,prompt})=>({id,name,kind,role,enabled,prompt})),
       contextStrategy:{strategy:preset.contextStrategy,maxContextTokens:preset.maxContextTokens,maxOutputTokens:preset.maxOutputTokens,summaryPrompt:preset.summaryPrompt},

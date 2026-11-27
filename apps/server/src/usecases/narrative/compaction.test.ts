@@ -19,7 +19,7 @@ import { bindTransaction } from '../../infrastructure/database/transaction.js';
 const model: ModelInfo = {
   providerId: 'provider', modelId: 'model', name: 'Model', contextWindow: 64000, maxTokens: 8192,
   api: 'test', input: ['text'], reasoning: false, thinkingLevels: ['off'], thinkingLevelMap: null,
-  promptCache: null, narrativeCompatible: true, supportsMidConversationSystemMessages: true,
+  promptCache: null, supportsMidConversationSystemMessages: true,
 };
 const usage: ModelUsage = { inputTokens: 20, outputTokens: 5, totalTokens: 25, cacheReadTokens: 0, cacheWriteTokens: 0 };
 function done(content = 'summary', measured: ModelUsage | null = usage): ModelEvent {

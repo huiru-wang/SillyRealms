@@ -12,6 +12,9 @@ import { errorHandler, type SuccessResponse } from '../http/response.js';
 import type { World, WorldImportInput } from '../modules/worlds/service.js';
 import { worldCardFixture, zipBytes } from '../modules/worlds/test-fixtures.js';
 import { createServices } from '../services.js';
+import { createExportWorld } from '../usecases/export-world.js';
+import { createDeleteWorld } from '../usecases/delete-world.js';
+import { bindTransaction } from '../infrastructure/database/transaction.js';
 import { createImportWorld } from '../usecases/import-world.js';
 import {
   createWorldUpdates, type WorldUpdates, type WorldReleaseRecord, type WorldVersions,
@@ -81,7 +84,8 @@ beforeEach(async () => {
   world = await createImportWorld(services)(artifacts.get('1.0.0')!);
   updates = createWorldUpdates({ ...services, events: new EventHub(), downloads });
   app = new Hono().onError(errorHandler).route(base, createWorldRoutes({
-    ...services, worldUpdates: updates,
+    ...services, worldUpdates: updates, importWorld: createImportWorld(services), exportWorld: createExportWorld(services),
+    deleteWorld: createDeleteWorld({ ...services, transaction: bindTransaction(db), onWorldDeleted: updates.cancelForWorld }),
   }));
 });
 afterEach(async () => {

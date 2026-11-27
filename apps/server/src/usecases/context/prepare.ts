@@ -8,7 +8,10 @@ import type { ContextDependencies, ContextFailure, ContextProgress, PrepareConte
 function failure(error: unknown): ContextFailure {
   if (error === 'summary_failed') return { code: 'SUMMARY_FAILED' };
   if (error === 'summary_capacity_exceeded') return { code: 'SUMMARY_CAPACITY_EXCEEDED' };
-  return { code: error instanceof AppError ? error.code : 'INTERNAL_ERROR' };
+  if (!(error instanceof AppError)) return { code: 'INTERNAL_ERROR' };
+  return { code: error.code,
+    ...(error.code === 'INVALID_NARRATIVE_TEMPLATE' && error.detail ? { detail: error.detail } : {}),
+  };
 }
 const assertRunning = (signal: AbortSignal) => {
   if (signal.aborted) throw new AppError('RUN_STOPPED');

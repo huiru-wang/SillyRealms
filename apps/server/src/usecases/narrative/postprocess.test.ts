@@ -20,7 +20,7 @@ import { processNarrativeOutput } from './postprocess/processor.js';
 const model: ModelInfo = {
   providerId: 'provider', modelId: 'model', name: 'Model', contextWindow: 64000, maxTokens: 8192,
   api: 'test', input: ['text'], reasoning: false, thinkingLevels: ['off'], thinkingLevelMap: null,
-  promptCache: null, narrativeCompatible: true, supportsMidConversationSystemMessages: true,
+  promptCache: null, supportsMidConversationSystemMessages: true,
 };
 const usage: ModelUsage = { inputTokens: 123, outputTokens: 55, totalTokens: 178, cacheReadTokens: 40, cacheWriteTokens: 0 };
 const body = '店主递来一碗热汤。';

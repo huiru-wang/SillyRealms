@@ -4,11 +4,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { Hono } from 'hono';
 import { createApp } from '../app.js';
 import { bindTransaction } from '../infrastructure/database/transaction.js';
-import { errorHandler } from '../http/response.js';
-import { createPresetRoutes } from './presets.js';
 import { createUsecases } from '../usecases.js';
 import { openDatabase } from '../infrastructure/database/connection.js';
 import { EventHub } from '../infrastructure/events/event-hub.js';
@@ -42,25 +39,6 @@ async function expectFailure(response: Response, status: number, errorCode?: str
 }
 
 const base = '/api/v1/presets';
-
-function portablePreset(name = 'Story') {
-  const value = narrativePreset(name);
-  return {
-    name: value.name,
-    description: value.description,
-    config_json: { schemaVersion: 3, nodes: structuredClone(value.config.nodes) },
-    context_strategy: {
-      strategy: value.config.contextStrategy.strategy,
-      max_context_tokens: value.config.contextStrategy.maxContextTokens,
-      max_output_tokens: value.config.contextStrategy.maxOutputTokens,
-      summary_prompt: value.config.contextStrategy.summaryPrompt,
-    },
-    model_parameters: {
-      temperature: value.config.modelParameters.temperature,
-      thinking_enabled: value.config.modelParameters.thinkingEnabled,
-    },
-  };
-}
 
 const webPreset = narrativePreset;
 
@@ -234,7 +212,7 @@ describe('preset HTTP operations', () => {
   });
 
   it('imports Web documents with unique names and exports the current saved document as a download', async () => {
-    const document = portablePreset('导入预设');
+    const document = narrativePreset('导入预设');
     const first = await app.request(base + '/import', write('POST', document));
     expect(first.status).toBe(201);
     const item = (await first.json()).data.item;
@@ -264,7 +242,7 @@ describe('preset HTTP operations', () => {
     expect((await app.request(base + '/import', write('POST', value))).status).toBe(201);
   });
 
-  it('keeps import and export errors enveloped and reports unavailable usecases', async () => {
+  it('keeps import and export errors enveloped', async () => {
     await expectFailure(await app.request(base + '/import', write('POST', {
       ...webPreset(), unknown: true,
     })), 400, 'INVALID_REQUEST');
@@ -273,9 +251,5 @@ describe('preset HTTP operations', () => {
     }), 400, 'INVALID_JSON');
     expect(services.presets.list()).toEqual([]);
     await expectFailure(await app.request(base + '/missing/export'), 404, 'PRESET_NOT_FOUND');
-
-    const unavailable = new Hono().onError(errorHandler).route(base, createPresetRoutes(services.presets));
-    await expectFailure(await unavailable.request(base + '/import', write('POST', webPreset())), 503, 'SERVICE_UNAVAILABLE');
-    await expectFailure(await unavailable.request(base + '/missing/export'), 503, 'SERVICE_UNAVAILABLE');
   });
 });

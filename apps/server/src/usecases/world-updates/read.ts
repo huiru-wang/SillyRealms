@@ -26,7 +26,7 @@ function checkState(ctx: WorldUpdatesContext, source: WorldUpdateSource, hasInde
 /** Reuse an existing list/detail projection instead of loading whole worlds or building version DTOs. */
 export async function getWorldSummary(ctx: WorldUpdatesContext, world: Pick<World, 'id' | 'publication'>): Promise<WorldVersionSummary> {
   const source = sourceOf(world);
-  const currentVersion = world.publication?.release.version ?? null;
+  const currentVersion = world.publication.release.version;
   if (!source) return { currentVersion, latestVersion: null, updateStatus: 'no_source' };
   const cached = await readIndex(ctx, source);
   return { currentVersion, latestVersion: cached.index?.versions[0]?.version ?? null,
@@ -40,7 +40,7 @@ export async function getWorldVersions(ctx: WorldUpdatesContext, worldId: string
   const world = ctx.worlds.require(worldId);
   const current = sourceOf(world);
   const result: WorldVersions = {
-    worldId, currentVersion: world.publication?.release.version ?? null, latestVersion: null,
+    worldId, currentVersion: world.publication.release.version, latestVersion: null,
     updateStatus: current ? 'not_checked' : 'no_source', lastSuccessAt: null, lastAttemptAt: null, errorCode: null, versions: [],
   };
   if (!current || !source || sourceKey(current) !== sourceKey(source)) return result;

@@ -121,6 +121,60 @@ describe('world card protocol', () => {
   });
 });
 
+
+describe('author conditional template import', () => {
+  it('preserves nested templates and custom placeholders through import and export without reading state', () => {
+    const raw = worldCardFixture();
+    const source = [
+      '{{user}} / {{custom.note}}',
+      "{% if getState('not_declared', {scope: 'message'}) >= 60 %}",
+      'Trusted {{state.message.not_declared}}',
+      "{% elif getState('not_declared', {scope: 'message'}) >= 30 %}",
+      '{% if true %}Cautious{% else %}Unused{% endif %}',
+      '{% else %}Stranger{% endif %}',
+    ].join('\n');
+    const card = parseCard({ ...raw, data: { ...raw.data,
+      characters: [{ ...raw.data.characters[0], content: source }],
+      lorebook: { entries: [{ id: 'relationship', content: source }] },
+    } });
+    expect(card.data.characters[0]?.content).toBe(source);
+    expect(card.data.lorebook?.entries[0]?.content).toBe(source);
+    const world = cardToWorld(card);
+    expect(worldToCard({ ...world, tags: world.tags ?? [] } as Parameters<typeof worldToCard>[0])).toEqual(card);
+  });
+
+  it.each([
+    ['character', '$.data.characters[0].content'],
+    ['lore', '$.data.lorebook.entries[0].content'],
+  ] as const)('reports the %s content field and template line for invalid syntax', (target, path) => {
+    const raw = worldCardFixture();
+    for (const directive of ['{% else %}', '{% if process.exit() %}x{% endif %}']) {
+      const content = 'First line\n' + directive;
+      const parse = () => parseCard({ ...raw, data: { ...raw.data,
+        ...(target === 'character'
+          ? { characters: [{ ...raw.data.characters[0], content }] }
+          : { lorebook: { entries: [{ id: 'broken', content }] } }),
+      } });
+      expect(parse).toThrow(path);
+      expect(parse).toThrow('line 2, column 1');
+    }
+  });
+
+  it('leaves opening and presentation text outside conditional template validation', () => {
+    const raw = worldCardFixture();
+    const literal = 'Literal {% else %} and {{custom.note}}';
+    const card = parseCard({ ...raw, data: { ...raw.data,
+      presentation: { type: 'markdown', text: literal },
+      characters: [{ ...raw.data.characters[0], presentation: { type: 'markdown', text: literal } }],
+      openings: [{ ...raw.data.openings[0], content: literal, presentation: { type: 'markdown', text: literal } }],
+    } });
+    expect(card.data.openings[0]?.content).toBe(literal);
+    expect(card.data.presentation).toEqual({ type: 'markdown', text: literal });
+    expect(card.data.characters[0]?.presentation).toEqual({ type: 'markdown', text: literal });
+    expect(card.data.openings[0]?.presentation).toEqual({ type: 'markdown', text: literal });
+  });
+});
+
 describe('world content and presentation contract', () => {
   it('round-trips all presentation positions and the message replacement text without changing model content', () => {
     const raw = worldCardFixture();
@@ -143,6 +197,10 @@ describe('world content and presentation contract', () => {
     const raw = worldCardFixture();
     const base = raw.data;
     const invalidData = [
+      { ...base, lorebook: { entries: [], oldEntries: [] } },
+      { ...base, lorebook: { entries: [{ id: 'lore', content: 'Story', keywords: ['lost'] }] } },
+      { ...base, lorebook: { entries: [{ id: 'lore', content: 'Story', load: { keyword: 'lost' } }] } },
+      { ...base, characters: [{ ...base.characters[0], load: { keyword: 'lost' } }] },
       { ...base, description: { type: 'component', component: 'Intro' } },
       { ...base, characters: [{ ...base.characters[0], prompt: 'Would be silently lost' }] },
       { ...base, characters: [{ ...base.characters[0], description: 'Old introduction' }] },

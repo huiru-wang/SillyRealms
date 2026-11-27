@@ -39,7 +39,6 @@ Hook 只读宿主注入的数据，不提供消息 ID、setter、清空方法、
 | `send(text)` | `const accepted = await session.send('推门进店');` | `Promise<AcceptedRun>`。直接提交新的用户轮次，受理不等于生成完成；不会先填入或清除现有草稿。文本须有非空白内容；send 和 setDraft 的桥接上限均为 100000 个 JS 字符串长度单位。生成中或提交中应禁用发送。 |
 | `regenerate(input)` | `await session.regenerate({ userEntryId: user.id, assistantEntryId: reply.id });` | `Promise<AcceptedRun>`。仅最新普通用户轮次有效。已有回复传旧助手消息 ID；仅剩用户消息时传 `null` 重试。目标必须与当前历史一致。服务端先删除旧回复，生成失败也不会恢复它。 |
 | `stop(runId, assistantEntryId)` | `if (snap.activeRunId && snap.activeAssistantEntryId) await session.stop(snap.activeRunId, snap.activeAssistantEntryId);` | 返回 `{runId, assistantEntryId, stopping: true}`。按执行身份停止；等待终态或快照反映完成。 |
-| `getRuns(options?)` | `const page = await session.getRuns({limit: 2});` | `Promise<RunPage>`，读取完整已存轮次，不更改舞台列表。分页规则见下节。 |
 | `subscribe(listener)` | `React.useEffect(() => session.subscribe(e => { if (e.event === 'run.stopped') console.info(e.data.stop_reason); }), [session]);` | 返回取消函数。回调收到当前会话的 `SessionEvent`；监听期间消费通知，重连时从快照和历史恢复。 |
 
 `RegenerateRequest` 有 `userEntryId: string` 和 `assistantEntryId: string | null`。`AcceptedRun` 含 `runId/userEntryId/assistantEntryId/userMessage/tipEntryId/deletedMessageIds`。`userMessage` 带 `id/role/content/timestamp`。重新生成沿用原 `runId` 与用户条目，每次分配新 `assistantEntryId`；同一用户消息在界面只展示一次。
@@ -106,23 +105,23 @@ export default function StoryStage() {
 
 ## useSRHistory()
 
-返回 `runs`、`loading/loadingMore/hasMore/error` 和以下三个异步方法。想显示当前画面时订阅 Hook，独立检索记录时调用 `query` 或 `session.getRuns`。
+返回 `runs`、`loading/loadingMore/hasMore/error` 和以下三个异步方法。想显示当前画面时订阅 Hook，独立检索记录时调用 `query`。
 
 | 方法 | 调用示例 | 行为 |
 | --- | --- | --- |
 | `loadMore()` | `if (history.hasMore && !history.loadingMore) await history.loadMore();` | `Promise<void>`。宿主把更早的轮次并入列表。下一次渲染读 `history.runs`。 |
 | `refresh()` | `await history.refresh();` | `Promise<void>`。从最近页重新同步历史、会话和状态，先前翻出的旧页可能被替换。 |
-| `query(options?)` | `const page = await history.query({limit: 3});` | 和 `session.getRuns` 共用 `history.query` 命令，结果只返回给调用方。 |
+| `query(options?)` | `const page = await history.query({limit: 3});` | 返回完整轮次，仅供调用方使用。 |
 
 `RunQuery` 可传 `limit`（1–5，默认 5）及 `cursor` 或 `afterSeq`，两种游标互斥。普通查询以最新轮次开头，`entries` 在每轮内按 seq 升序。增量查询用非负整数 `afterSeq`，按最后 seq 升序返回有变动的完整轮次。`RunPage` 返回 `items/hasMore/nextCursor/nextAfterSeq/activeRunId`。游标属于当前会话。删除和重新生成可能复用 seq，重连时用 `refresh()`。
 
 ```ts
-import type { SRSessionAPI } from '@sillyrealms/sdk';
+import type { useSRHistory } from '@sillyrealms/sdk';
 
-export async function readOlder(session: SRSessionAPI) {
-  const first = await session.getRuns({limit: 2});
+export async function readOlder(history: ReturnType<typeof useSRHistory>) {
+  const first = await history.query({limit: 2});
   if (!first.hasMore || !first.nextCursor) return [];
-  const older = await session.getRuns({cursor: first.nextCursor, limit: 2});
+  const older = await history.query({cursor: first.nextCursor, limit: 2});
   return older.items.flatMap(run => run.entries);
 }
 ```

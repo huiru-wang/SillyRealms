@@ -10,7 +10,7 @@ export type ModelInfo = {
   thinkingLevelMap: ModelThinkingLevelMap | null;
   /** Catalog estimates in seconds; not the selected request cache policy. */
   promptCache: { short: number | null; long: number | null } | null;
-  narrativeCompatible: boolean; supportsMidConversationSystemMessages: boolean;
+  supportsMidConversationSystemMessages: boolean;
 };
 export type ProviderInfo = { providerId: string; name: string; models: ModelInfo[] };
 

@@ -30,10 +30,10 @@ describe('typed preset persistence', () => {
     template.config.nodes[0]!.prompt = 'changed by caller';
     expect(presets.getDefault().config.nodes[0]!.prompt).not.toBe('changed by caller');
     expect(presets.list()).toEqual([]);
-    const first = presets.ensureDefault();
+    const first = presets.require(presets.ensureBuiltins());
     expect(first.id).toBe('sr-default-preset');
     const changed = presets.update(first.id, { name: 'My saved default' });
-    expect(presets.ensureDefault()).toEqual(changed);
+    expect(presets.require(presets.ensureBuiltins())).toEqual(changed);
     expect(presets.list()).toHaveLength(1);
   });
 
@@ -54,10 +54,10 @@ describe('typed preset persistence', () => {
 
   it('keeps an existing same-name preset while reserving the fixed default identity', () => {
     const existing = presets.create({ ...preset('标准叙事'), id: 'custom' });
-    const seeded = presets.ensureDefault();
+    const seeded = presets.require(presets.ensureBuiltins());
     expect(seeded).toMatchObject({ id: 'sr-default-preset', name: '标准叙事(1)' });
     expect(presets.require(existing.id)).toEqual(existing);
-    expect(presets.ensureDefault()).toEqual(seeded);
+    expect(presets.require(presets.ensureBuiltins())).toEqual(seeded);
     expect(presets.list()).toHaveLength(2);
   });
 
@@ -66,7 +66,7 @@ describe('typed preset persistence', () => {
     const created = presets.create({ ...preset(), id: 'preset-story' });
     expect(created).toEqual({ ...preset(), id: 'preset-story', revision: 1, createdAt: 1000, updatedAt: 1000 });
     const stored = db.prepare('SELECT config_json FROM presets WHERE id=?').get(created.id)!;
-    expect(JSON.parse(String(stored.config_json))).toHaveProperty('schema_version', 1);
+    expect(JSON.parse(String(stored.config_json))).toEqual(created.config);
     expect(created).not.toHaveProperty('config_json');
     expect(created.config).not.toHaveProperty('context_strategy');
     clock.mockReturnValue(2000);
@@ -106,15 +106,13 @@ describe('typed preset persistence', () => {
     const saved = presets.create(input);
     expect(presets.require(saved.id).config.modelParameters).toEqual(parameters);
     const document = presets.toDocument(saved);
-    expect(document.model_parameters).toEqual({
-      temperature: 0.735, top_p: 0, frequency_penalty: -2, presence_penalty: 2, thinking_enabled: false,
-    });
+    expect(document.config.modelParameters).toEqual(parameters);
     expect(presets.importDocument(document).config.modelParameters).toEqual(parameters);
-    for (const patch of [{ top_p: 1.1 }, { presence_penalty: -3 }, { frequency_penalty: null }, { top_p: '1' }]) {
-      expect(() => presets.importDocument({ ...document, model_parameters: { ...document.model_parameters, ...patch } })).toThrow();
+    for (const patch of [{ topP: 1.1 }, { presencePenalty: -3 }, { frequencyPenalty: null }, { topP: '1' }]) {
+      expect(() => presets.importDocument({ ...document, config: { ...document.config, modelParameters: { ...document.config.modelParameters, ...patch } } })).toThrow();
     }
     presets.update(saved.id, { config: { ...saved.config, modelParameters: { thinkingEnabled: false } } });
-    expect(presets.toDocument(presets.require(saved.id)).model_parameters).toEqual({ thinking_enabled: false });
+    expect(presets.toDocument(presets.require(saved.id)).config.modelParameters).toEqual({ thinkingEnabled: false });
   });
 
   it.each(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const)('persists and imports/exports the %s thinking depth', level => {
@@ -123,9 +121,9 @@ describe('typed preset persistence', () => {
     const saved = presets.create(input);
     expect(presets.require(saved.id).config.modelParameters).toEqual(input.config.modelParameters);
     const stored = db.prepare('SELECT config_json FROM presets WHERE id=?').get(saved.id)!;
-    expect(JSON.parse(String(stored.config_json)).model_parameters).toEqual({ thinking_enabled: true, thinking_level: level });
+    expect(JSON.parse(String(stored.config_json)).modelParameters).toEqual({ thinkingEnabled: true, thinkingLevel: level });
     const document = presets.toDocument(saved);
-    expect(document.model_parameters).toEqual({ thinking_enabled: true, thinking_level: level });
+    expect(document.config.modelParameters).toEqual({ thinkingEnabled: true, thinkingLevel: level });
     expect(presets.importDocument(document).config.modelParameters).toEqual(input.config.modelParameters);
   });
 
@@ -133,11 +131,11 @@ describe('typed preset persistence', () => {
     const saved = presets.create(preset());
     expect(saved.config.modelParameters).not.toHaveProperty('thinkingLevel');
     const document = presets.toDocument(saved);
-    expect(document.model_parameters).not.toHaveProperty('thinking_level');
+    expect(document.config.modelParameters).not.toHaveProperty('thinkingLevel');
     expect(presets.importDocument(document).config.modelParameters).not.toHaveProperty('thinkingLevel');
     for (const value of ['off', 'ultra', '', 3, null]) {
       expect(() => presets.importDocument({
-        ...document, model_parameters: { ...document.model_parameters, thinking_level: value },
+        ...document, config: { ...document.config, modelParameters: { ...document.config.modelParameters, thinkingLevel: value } },
       })).toThrow();
     }
   });
@@ -268,7 +266,7 @@ describe('model configurations and application defaults', () => {
 
 describe('declared postprocess prompt resolution', () => {
   it('provides explicit default nodes and variables without hardcoding capabilities into main', () => {
-    const config = presets.ensureDefault().config;
+    const config = presets.require(presets.ensureBuiltins()).config;
     const resolved = resolvePostprocessPrompts(config);
     const facts = config.nodes.find(node => node.id === 'worldState')!;
     expect(facts).toMatchObject({ kind: 'system', enabled: true });
@@ -284,7 +282,7 @@ describe('declared postprocess prompt resolution', () => {
   });
 
   it('honors disabled and absent nodes without rewriting the preset or injecting defaults', () => {
-    const current = presets.ensureDefault();
+    const current = presets.require(presets.ensureBuiltins());
     const config = structuredClone(current.config);
     config.nodes = config.nodes.filter(node => node.id !== 'stateUpdate');
     config.nodes.find(node => node.id === 'actionSuggestions')!.enabled = false;
@@ -298,14 +296,14 @@ describe('declared postprocess prompt resolution', () => {
 
   it('rejects legacy variables rather than migrating them and preserves escaped literals', () => {
     const document = presets.toDocument(preset());
-    const node = document.config_json.nodes[0]!;
+    const node = document.config.nodes[0]!;
     node.prompt = '{{ state.entries }}';
     expect(() => presets.importDocument(document)).toThrow('状态变量路径无效');
     node.prompt = String.raw`literal \{{state.entries}} and {{state.message}}`;
     const imported = presets.importDocument(document);
-    expect(presets.toDocument(imported).config_json.nodes[0]!.prompt).toBe(node.prompt);
+    expect(presets.toDocument(imported).config.nodes[0]!.prompt).toBe(node.prompt);
     node.prompt = '{{state.session.人设.姓名}}';
-    expect(presets.toDocument(presets.importDocument(document)).config_json.nodes[0]!.prompt).toBe(node.prompt);
+    expect(presets.toDocument(presets.importDocument(document)).config.nodes[0]!.prompt).toBe(node.prompt);
     node.prompt = '{{state.session.人设..姓名}}';
     expect(() => presets.importDocument(document)).toThrow('状态变量路径无效');
   });
@@ -326,7 +324,7 @@ describe('declared postprocess prompt resolution', () => {
     value.config.nodes.find(node => node.id === id)!.prompt = '{{state.update.message}}';
     expect(() => presets.create(value)).toThrow('只能用于状态更新节点');
     const document = presets.toDocument(presets.getDefault());
-    document.config_json.nodes.find(node => node.id === id)!.prompt = '{{state.update.message}}';
+    document.config.nodes.find(node => node.id === id)!.prompt = '{{state.update.message}}';
     expect(() => presets.importDocument(document)).toThrow('只能用于状态更新节点');
   });
 

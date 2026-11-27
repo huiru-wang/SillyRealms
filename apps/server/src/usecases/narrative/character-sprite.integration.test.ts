@@ -18,7 +18,7 @@ import type { NarrativeTerminalEvent } from './events.js';
 const model: ModelInfo = {
   providerId: 'provider', modelId: 'model', name: 'Model', contextWindow: 64000, maxTokens: 8192,
   api: 'test', input: ['text'], reasoning: false, thinkingLevels: ['off'], thinkingLevelMap: null,
-  promptCache: null, narrativeCompatible: true, supportsMidConversationSystemMessages: true,
+  promptCache: null, supportsMidConversationSystemMessages: true,
 };
 const body = '三人走进大厅。';
 const rows = [

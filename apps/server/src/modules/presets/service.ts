@@ -1,23 +1,21 @@
-import { decodeParameters } from './model-parameters.js';
 import type { ModelReader } from '../models/service.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { AppError } from '../../errors.js';
-import { parsePresetDocument, toPresetDocument, type PresetDocument } from './card.js';
 import { builtinPresets } from './default.js';
 import { loadInitialData, resourceError } from '../../infrastructure/initial-data/catalog.js';
 import { PresetRepository, type StoredPreset } from './repository.js';
-import { presetValueSchema } from './schema.js';
+import { presetDocumentSchema, type PresetDocument, presetValueSchema } from './schema.js';
 import type { CreatePresetInput, Preset, PresetListOptions, PresetPage, PresetSummary, UpdatePresetInput } from './types.js';
 
 export type { CreatePresetInput, Preset, PresetListOptions, PresetPage, PresetSummary, UpdatePresetInput } from './types.js';
 export { replyVariableNames, parsePresetNodePrompt, postprocessNodeIds, systemVariableNames } from './schema.js';
 export type { NarrativePresetConfig, PresetNode } from './schema.js';
-export type { PresetDocument } from './card.js';
+export type { PresetDocument } from './schema.js';
 export { characterSpriteAvailable, resolvePostprocessPrompts } from './postprocess.js';
 export type { PostprocessNodeId, PostprocessPrompts } from './postprocess.js';
-export type PresetReader = Pick<PresetService, 'get' | 'require' | 'list' | 'listPage' | 'getDefault' | 'toDocument'>;
+export type PresetReader = Pick<PresetService, 'get' | 'require' | 'list' | 'listPage' | 'getDefault'>;
 
 const presetType = z.enum(['narrative', 'reply_assist']);
 const patchSchema = z.object({
@@ -31,7 +29,6 @@ const listSchema = z.object({
 }).strict();
 
 function toPreset(record: StoredPreset): Preset {
-  const config = record.config_json;
   return {
     id: record.id,
     revision: record.revision,
@@ -40,17 +37,7 @@ function toPreset(record: StoredPreset): Preset {
       ...(record.type === 'reply_assist' ? { apiModelConfigId: record.api_model_config_id } : {}),
       name: record.name,
       description: record.description,
-      config: {
-        schemaVersion: config.schema_version,
-        nodes: config.nodes,
-        contextStrategy: {
-          strategy: config.context_strategy.strategy,
-          maxContextTokens: config.context_strategy.max_context_tokens,
-          maxOutputTokens: config.context_strategy.max_output_tokens,
-          summaryPrompt: config.context_strategy.summary_prompt,
-        },
-        modelParameters: decodeParameters(config.model_parameters),
-      },
+      config: record.config_json,
     }),
     createdAt: record.created_at,
     updatedAt: record.updated_at,
@@ -78,17 +65,14 @@ export class PresetService {
     const template = id && this.#templates.get(id);
     if (!template) throw new AppError('PRESET_NOT_FOUND');
     if (template.value.type !== type) throw new AppError('PRESET_TYPE_MISMATCH');
-    return structuredClone(template.value);
-  }
-
-  ensureDefault(): Preset {
-    return this.ensureBuiltin(this.#defaultId);
+    const value = structuredClone(template.value);
+    return value.type === 'reply_assist' ? { ...value, apiModelConfigId: null } : value;
   }
 
   ensureBuiltins(): string {
-    for (const [id, { file }] of this.#templates) {
+    for (const [id, { file, value }] of this.#templates) {
       try {
-        this.ensureBuiltin(id);
+        this.installDocument(value, id);
       } catch (error) {
         throw resourceError('presets/' + file + ' (' + id + ')', error);
       }
@@ -96,29 +80,26 @@ export class PresetService {
     return this.#defaultId;
   }
 
-  private ensureBuiltin(id: string): Preset {
-    const { value } = this.#templates.get(id)!;
+  importDocument(input: unknown): Preset {
+    return this.installDocument(presetDocumentSchema.parse(input));
+  }
+
+  private installDocument(value: PresetDocument, builtinId?: string): Preset {
     for (let suffix = 0; ; suffix++) {
-      const current = this.get(id);
-      if (current) return current;
+      if (builtinId !== undefined) {
+        const existing = this.get(builtinId);
+        if (existing) return existing;
+      }
+      const id = builtinId ?? randomUUID();
       const name = suffix === 0 ? value.name : value.name + '(' + suffix + ')';
       if (this.#repository.createIfAvailable(id, { ...value, name })) return this.require(id);
     }
   }
 
-  importDocument(input: unknown): Preset {
-    const value = parsePresetDocument(input);
-    for (let suffix = 0; ; suffix++) {
-      const id = randomUUID(), name = suffix === 0 ? value.name : value.name + '(' + suffix + ')';
-      if (this.#repository.createIfAvailable(id, { ...value, name })) return this.require(id);
-    }
-  }
-
   toDocument(input: CreatePresetInput): PresetDocument {
-    const value = presetValueSchema.parse({
+    return presetDocumentSchema.parse({
       type: input.type, name: input.name, description: input.description, config: input.config,
     });
-    return toPresetDocument(value);
   }
 
   get(id: string): Preset | null {

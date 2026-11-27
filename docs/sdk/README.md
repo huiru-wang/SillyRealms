@@ -21,12 +21,12 @@
 | `useSRActionSuggestions` | 当前建议的只读 items | 无 |
 | `useSRComposerButtons` | 当前舞台统一声明输入区快捷按钮 | 无 |
 | `useSRState` | 三个作用域的响应式字段 | 无 |
-| `useSRStateAPI` | 三个作用域的读、写、事件订阅 | `useSRWorldStateAPI` 的只读别名 |
+| `useSRStateAPI` | 三个作用域的读、写、事件订阅 | 无 |
 | `useSRWorldStateAPI` | 只读 global | 只读 global |
 | `useSRAssetUrl` | 可用 | 可用 |
 | `useSRAssetBaseUrl`、`SRAssetProvider` | 可用，宿主已提供资源地址 | 由宿主提供上下文，作者仅可调用 `useSRAssetUrl` |
-| `SR.WorldStory`、`SR.ActionSuggestions`、`WorldDocumentRenderer` | 可用 | 无 |
-| `RichText`、`WorldDocumentContent` | 可用 | 可用 |
+| `SR.WorldStory`、`SR.ActionSuggestions` | 可用 | 无 |
+| `WorldDocumentRenderer`、`WorldDocumentContent` | 可用 | 可用 |
 
 Stage iframe 接收宿主投递的只读快照，并通过 SDK 命令与宿主通信。宿主负责会话身份、HTTP、事件连接和历史同步。作者组件应通过 Hook 获取所需数据；文件里的包子路径、任意 npm 包、直接请求 Server API 都不属于卡内导入接口。详情预览没有会话身份。类型导入请使用 `import type`。
 
@@ -94,7 +94,7 @@ export default function InnStage() {
 ## 编写与排错
 
 - 在 React 组件或自定义 Hook 顶层调用 Hook，将异步命令放在用户操作或 effect 中。界面用快照渲染，监听事件用 effect 注册并返回取消函数。将命令拒绝和状态写入的逐项结果分别处理。
-- 组件提示缺少导出时，先按上表检查运行位置。预览中的 `useSRStateAPI` 虽然同名，但运行时仅有两个查询方法。可跨两端使用的只读组件优先导入 `useSRWorldStateAPI`。
+- 组件提示缺少导出时，先按上表检查运行位置。跨两端使用的只读组件导入 `useSRWorldStateAPI`。
 - 加载、离线和刚挂载都是正常状态。读取 `runs.at(-1)`、活动执行 ID 或可选资源前处理空值。命令超时或连接中断时先恢复同步再判断结果，避免重复发送消息。
 - 作者预览在详情切换时可能保留 React 状态；隐藏时普通 JavaScript 仍可能运行。在 effect 清理函数中解除订阅、定时器，并避免在组件卸载后写回异步读取的结果。
 

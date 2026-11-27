@@ -432,7 +432,7 @@ describe('PiClient SDK boundary', () => {
       baseUrl: 'https://api.deepseek.com', compat: {}, headers: { Authorization: 'secret-test-key' } });
     const client = new PiClient(sdk(finite([]), [flash]));
     const resolved = client.resolve('deepseek', 'deepseek-flash');
-    expect(resolved).toMatchObject({ narrativeCompatible: true, supportsMidConversationSystemMessages: true });
+    expect(resolved).toMatchObject({ supportsMidConversationSystemMessages: true });
     expect(flash.compat).toEqual({});
     expect(resolved).not.toHaveProperty('compat');
     expect(resolved).not.toHaveProperty('baseUrl');
@@ -445,7 +445,7 @@ describe('PiClient SDK boundary', () => {
       model({ ...flash, api: 'openai-responses' }),
     ]) {
       const other = new PiClient(sdk(finite([]), [variant]));
-      expect(other.listProviders()[0]?.models[0]?.narrativeCompatible).toBe(false);
+      expect(other.listProviders()[0]?.models[0]?.supportsMidConversationSystemMessages).toBe(false);
     }
   });
 });

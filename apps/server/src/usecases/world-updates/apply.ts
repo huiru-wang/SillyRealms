@@ -17,7 +17,7 @@ function assertWorld(ctx: WorldUpdatesContext, source: WorldUpdateSource, input:
   const world = ctx.worlds.require(source.worldId);
   if (!sameSource(world, source)) throw new AppError('WORLD_UPDATE_SOURCE_CHANGED');
   if (world.revision !== input.expectedRevision) throw new AppError('WORLD_REVISION_CONFLICT');
-  if (world.publication!.release.version === input.version) throw new AppError('WORLD_RELEASE_ALREADY_INSTALLED');
+  if (world.publication.release.version === input.version) throw new AppError('WORLD_RELEASE_ALREADY_INSTALLED');
   return world;
 }
 
@@ -46,7 +46,7 @@ export function applyWorldVersion(ctx: WorldUpdatesContext, worldId: string, inp
       stage = await ctx.worlds.prepareImport(artifact, worldId);
       assertActive(ctx, controller.signal);
       const publication = stage.content.publication;
-      if (stage.content.specVersion !== release.spec_version || publication?.package_id !== source.packageId
+      if (stage.content.specVersion !== release.spec_version || publication.package_id !== source.packageId
         || publication.release.version !== release.version) throw new AppError('WORLD_UPDATE_CONFLICT');
       const permit = ctx.cache.acquireWorldUpdate(worldId);
       try {

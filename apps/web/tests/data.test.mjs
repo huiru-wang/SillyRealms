@@ -36,7 +36,7 @@ test('draft nodes do not mutate a saved server object',()=>{
 });
 test('saving model defaults preserves the standard preset nodes including optional character sprites',()=>{
  const saved=detail();
- saved.config.nodes=standardPreset.config_json.nodes;
+ saved.config.nodes=standardPreset.config.nodes;
  const draft=fromServer(saved);
  draft.temperature=undefined;
  assert.equal(getPresetValidationError(draft),null);
@@ -54,7 +54,7 @@ test('saving model defaults preserves the standard preset nodes including option
 });
 test('the state facts are fixed while state updates can be edited, disabled or omitted',()=>{
  const saved=detail();
- saved.config.nodes=standardPreset.config_json.nodes;
+ saved.config.nodes=standardPreset.config.nodes;
  const draft=fromServer(saved);
  const facts=draft.nodes.find(n=>n.id==='worldState');
  const update=draft.nodes.find(n=>n.id==='stateUpdate');

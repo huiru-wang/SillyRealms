@@ -199,7 +199,7 @@ describe('world update orchestration', () => {
     world = services.worlds.updateManagement(world.id, { expectedRevision: world.revision, name: '本地名称', tags: ['本地标签'], coverMosaicEnabled: true, defaultPresetId: preset.id, defaultApiModelConfigId: model.id });
     services.worlds.setState(world.id, { coins: 99, extra: true });
     const session = services.sessions.create({ worldId: world.id, userCharacterId: 'player', runtimeConfig: { narrativePresetId: preset.id, apiModelConfigId: model.id }, state: { personal: 'keep' } });
-    const entry = services.sessions.appendEntry(session.id, { type: 'message', role: 'user', runId: 'run', payload: { content: 'keep history' } });
+    const entry = services.sessions.appendEntry(session.id, { type: 'message', role: 'user', runId: 'run', payload: { message: { role: 'user', content: 'keep history', timestamp: 1 } } });
     const messages: SessionEvent[] = [];
     events.subscribe(session.id, event => { services.cache.assertWorldRead(world.id); messages.push(event); });
     const originalSession = services.sessions.require(session.id);
