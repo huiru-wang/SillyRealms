@@ -1,4 +1,13 @@
 import type {CharacterSpriteItem} from '../../../../../packages/sr-sdk/src/stage-contract.ts';
+import type {Character} from '../worlds/api/worlds.ts';
+
+export type DisplaySprite = CharacterSpriteItem & {asset?: string};
+
+export function spriteResource(item: DisplaySprite, characters: readonly Character[]) {
+  const character = characters.find(row => row.id === item.characterId);
+  const asset = item.asset ?? character?.sprites?.find(sprite => sprite.id === item.spriteId)?.asset;
+  return {asset, name: character?.name ?? item.characterId};
+}
 
 const positions = new Set(['left', 'right', 'center', 'top', 'topleft', 'topright', 'truecenter']);
 

@@ -39,7 +39,7 @@ Service 公共输入输出采用显式驼峰领域类型，存储行到领域对
 }
 ```
 
-- 常规单项读取、创建及更新的 data 为 `{ item }`，包括会话详情和预设默认模板；删除为 `{ id }`。立绘目录与指定消息查询使用各自明确的 data 结构，见[立绘查询](#立绘查询)。
+- 常规单项读取、创建及更新的 data 为 `{ item }`，包括会话详情和预设默认模板；删除为 `{ id }`。指定消息的立绘查询使用独立的 data 结构，见[立绘查询](#立绘查询)。
 - 世界、预设、模型、会话列表返回 `{ items, hasMore, nextCursor }`；标签、条目和线性历史返回 `{ items }`。
 - 资源创建返回 201，叙事受理返回 202，普通成功返回 200。删除也返回 200 包络，不使用无正文的 204。
 - 健康检查返回成功包络，data 为 `{ ok: true }`。
@@ -141,7 +141,6 @@ promptCache 是 SDK 提供的最佳估计保留时长，缺失表示未提供，
 | GET / PATCH / DELETE | /worlds/:id | 领域详情 / 管理字段修改 / 删除世界及确认后的关联会话 |
 | GET | /worlds/tags | 已绑定标签 `{name,worldCount}` |
 | GET | /worlds/:id/components | 已解析组件源码及按组件 ID 返回的错误 |
-| GET | /worlds/:id/character-sprites | 世界声明的完整立绘素材目录 |
 | GET / HEAD | /worlds/:id/original | 下载或检查已保存原件 |
 | GET / HEAD | /worlds/:id/resources/* | 读取或检查包内组件、素材等资源 |
 
@@ -236,8 +235,6 @@ SHA-256 示例需替换为所选目录记录真实值。服务端校验当前目
 |---|---|---|
 | GET / POST | /sessions | 会话列表 / 创建 |
 | GET / PATCH / DELETE | /sessions/:id | 会话读取 / 修改 / 删除 |
-| POST | /sessions/:id/entries | 追加普通消息 |
-| PATCH | /sessions/:id/entries/:entryId | 普通消息正文或 extData 更新 |
 | GET | /sessions/:id/entries/:entryId/character-sprites | 指定消息自身的立绘结果，缺失为 null |
 | POST | /sessions/:id/reply-assist | 提交 {requestId,draftText}，UUID 由宿主生成，草稿上限 100000 字符。成功返回 202 和 {sessionId,requestId,accepted:true} |
 | POST | /sessions/:id/reply-assist/:requestId/stop | 取消匹配的帮答，返回 {sessionId,requestId,stopping:true}。已结束或不匹配返回 404 |
@@ -261,7 +258,7 @@ SHA-256 示例需替换为所选目录记录真实值。服务端校验当前目
 
 `PATCH /sessions/:id` 接受 `title` 和部分 `runtimeConfig`。例如 `{"runtimeConfig":{"fontSize":18,"replyAssistPresetId":null}}` 只调整字号并恢复跟随应用默认，其他配置在同一事务内保留。
 
-摘要仅由叙事流程生成：POST entries 禁止 type=compaction；PATCH entries 禁止修改 compaction 的 payload/extData，也禁止向普通消息写入 summary 元数据。成功摘要通过 narrative/runs 分页中的 entries 读取，payload.summary 为文本，extData.summary 为 {coveredThroughEntryId,sourceHash}，指标保存在该 entry.metrics；state=null 继承。savedMessageIds 不包含摘要，tipEntryId 可以指向摘要。
+开场消息由创建会话流程写入，后续消息和摘要由叙事流程写入。成功摘要通过 narrative/runs 分页中的 entries 读取，payload.summary 为文本，extData.summary 为 {coveredThroughEntryId,sourceHash}，指标保存在该 entry.metrics；state=null 继承。savedMessageIds 不包含摘要，tipEntryId 可以指向摘要。
 
 ### 运行期间写入锁
 
@@ -269,7 +266,7 @@ SHA-256 示例需替换为所选目录记录真实值。服务端校验当前目
 
 | 被拦截的写入 | HTTP | errorCode |
 |---|---|---|
-| 当前会话 PATCH/DELETE、entries POST/PATCH，以及服务内部的无持有者计量/结果写入 | 409 | `SESSION_WRITE_LOCKED` |
+| 当前会话 PATCH/DELETE，以及服务内部的无持有者计量/结果写入 | 409 | `SESSION_WRITE_LOCKED` |
 | 当前会话 session/message 状态 update，包括空更新、同值和原本会忽略的缺失路径 | 409 | `STATE_WRITE_LOCKED` |
 | 该世界任意会话运行期间，global 状态 update | 409 | `STATE_WRITE_LOCKED` |
 | 同会话再次提交 run | 409 | `RUN_ALREADY_ACTIVE` |
@@ -292,9 +289,9 @@ create-session 用例在同一个同步事务中校验选择、计算初始快�
 
 消息保持线性父链，重新生成支持删除最新回复。parentId 可省略，默认当前 tip；显式值不匹配时返回 TIP_CONFLICT。追加只核对本会话当前 tip 与最大 seq。新条目、seq 与 tip 的原子更新归 SessionRepository；没有 setTip 或分支切换接口。
 
-普通消息追加和正文编辑只接受 `payload: {message: {role, content, timestamp, ...}}`。role 必须与条目一致，content 是字符串，timestamp 是非负整数毫秒。助手消息还可保存 reasoning_content 和 tool_calls，包括中断时尚未完整的函数参数字符串。结构无效时返回 400。
+普通消息的存储结构为 `payload: {message: {role, content, timestamp, ...}}`。role 必须与条目一致，content 是字符串，timestamp 是非负整数毫秒。助手消息还可保存 reasoning_content 和 tool_calls，包括中断时尚未完整的函数参数字符串。
 
-SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt/updatedAt，状态内容保持原键。HTTP 追加条目不接受 metrics，也不提供编辑计量的 HTTP 路由；计量随助手或摘要条目原子写入。runId 仅关联同组已保存消息，不区分创建时的首条消息与模型生成；轮次列表组合 entries 与本组首条 entry 的 extData.narrative；缺少结束结果且无活跃运行时状态为 unknown。
+SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt/updatedAt，状态内容保持原键。计量随助手或摘要条目原子写入。runId 仅关联同组已保存消息，不区分创建时的首条消息与模型生成；轮次列表组合 entries 与本组首条 entry 的 extData.narrative；缺少结束结果且无活跃运行时状态为 unknown。
 
 会话范围的读取、修改、状态及 SSE 入口先确认真实会话，再执行可选访问检查；拒绝与不存在统一返回 SESSION_NOT_FOUND。异步检查结束后先检查停机，再确认会话仍存在。配置了访问检查时，会话列表只返回获准条目。
 
@@ -321,7 +318,7 @@ SessionEntry 使用 sessionId、parentId、runId、extData、metrics、createdAt
 
 受理前取得会话写锁，在一个事务内删除旧 AI、衔接直接后继、修正 tip 并清除旧结束结果。保留原用户、runId 和摘要，为新输出分配新 assistantEntryId；202 使用普通受理结构，tipEntryId 是提交删除后的实际 tip，deletedMessageIds 为已删 ID（普通发送/无 AI 重试为 []）。提交后发布 message.deleted 与实际 message 状态变化，再使用正常 run.created/增量/用量/终态。准备或生成失败不恢复旧 AI；部分输出按普通发送规则保存，无输出则可对同一用户重试。用量仍汇总现存 entries，不保留已删 AI 的计量。没有额外的通用消息删除 HTTP 入口。
 
-客户端应先连接 `/sessions/:id/events` 再提交；事件可能早于 POST 响应，按 runId/messageId 关联。断线后重新读取 entries 或 narrative/runs 判断已保存内容，不自动重发提交。没有事件回放、重启续跑、自动重试或请求去重接口；Web 按这些约束接入会话运行，详见 [Web 运行接入](web-runtime.md)。
+客户端应先连接 `/sessions/:id/events` 再提交；事件可能早于 POST 响应，按 runId/messageId 关联。断线后重新读取 narrative/runs 判断已保存内容，不自动重发提交。没有事件回放、重启续跑、自动重试或请求去重接口；Web 按这些约束接入会话运行，详见 [Web 运行接入](web-runtime.md)。
 
 ## 叙事查询与用量
 
@@ -351,7 +348,7 @@ type NarrativeOutcome =
   | { status: 'stopped'; assistantEntryId?: string; stopReason: NarrativeStopReason; finishedAt: number };
 ```
 
-finishedAt 为结算 Unix 毫秒；stopReason 与当前 SSE 的原因类型一致，例如 cancelled、provider_error、output_incomplete、message_persist_failed。创建用户时仍为 extData:{}；先保存已有助手内容，再记录用户结束结果，最后发布终态。没有助手输出也会记录结果。写入仅替换 narrative 字段，保留其他扩展；通用 POST/PATCH entry 不能传 narrative/output，通用 extData 替换会保留服务端已存 narrative/output；正文编辑不重新执行或回滚能力结果。结果写入失败不回滚已有消息，刷新后可能 unknown；不持久化 running 或执行恢复日志，不新增表。
+finishedAt 为结算 Unix 毫秒；stopReason 与当前 SSE 的原因类型一致，例如 cancelled、provider_error、output_incomplete、message_persist_failed。创建用户时仍为 extData:{}；先保存已有助手内容，再记录用户结束结果，最后发布终态。没有助手输出也会记录结果。结算时仅替换 narrative 字段，保留其他扩展。结果写入失败不回滚已有消息，刷新后可能 unknown；不持久化 running 或执行恢复日志，不新增表。
 
 metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstTextMs?}`。provider 必须是本次实际调用的 providerId。读取和写入使用同一 schema。
 
@@ -418,7 +415,7 @@ metrics.requests 每项为 `{requestId,provider,modelId,usage,durationMs?,firstT
 }
 ```
 
-结果随轮次列表中的 entries 返回。立绘另提供目录与精确消息结果两个只读 GET；状态/建议不新增独立查询端点，所有能力均无独立写入 API，也不增加能力开关响应字段。output 由 SessionService 的受控叙事保存入口写入，普通 POST/PATCH 不能伪造或删除。
+结果随轮次列表中的 entries 返回。立绘另提供指定消息结果的只读 GET；状态/建议不新增独立查询端点，所有能力均无独立写入 API，也不增加能力开关响应字段。output 由 SessionService 的受控叙事保存入口写入。
 
 每个能力按实际输出独立匹配大小写不敏感的自身标签，不读取预设或 enabled。状态/建议缺失或空块为 no_updates/no_suggestions，坏标签为 invalid_tag。stateUpdate.updates 保存全部成功/失败记录，建议仅保留过滤后的有效 items，三条只是 prompt 目标；这两类结果不含 results、blockIndex、line 或额外 index，errors 为能力级诊断。立绘缺标签不创建 characterSprite 字段；逐行接收只有 position/characterId/spriteId 的扁平对象，角色和位置分别唯一，第一条有效行优先，失败行不占位。支持七种位置，允许超过两项。立绘 errors.line 单独记录从 1 开始的非空数据行序号；标签/能力级诊断可不含 line。
 
@@ -431,36 +428,6 @@ run.completed 表示正文主流程完成，不等同于能力全部成功。能
 建议创建事件为 action_suggestions.created，仅发布本轮已保存的有效非空建议；run.created 驱动清空上一轮建议，首次恢复只认最新 run 的实际完成结果。详见 [会话事件](server-events.md#行动建议创建) 与 [叙事执行](server-narrative.md#叙事后处理与能力结果)。
 
 ## 立绘查询
-
-两项 GET 均不读取预设，不受节点开关影响。立绘是完整消息快照；目录提供素材元数据，消息接口只读取指定消息，不提供当前画面继承或跨消息 merge。
-
-### 素材目录
-
-`GET /worlds/:id/character-sprites` 调用 WorldService.getCharacterSpriteCatalog，按世界卡角色及 sprites 原顺序返回全卡已声明目录，不按角色 load 筛选。没有素材返回 items=[]，世界不存在返回 WORLD_NOT_FOUND/404。
-
-HTTP 200 成功包络：
-
-```json
-{
-  "success": true,
-  "errorCode": null,
-  "errorMessage": "",
-  "data": {
-    "worldId": "w-1",
-    "items": [
-      {
-        "characterId": "alice",
-        "characterName": "爱丽丝",
-        "spriteId": "default",
-        "description": "平静站立。",
-        "asset": "sr-asset://assets/characters/alice/default.webp"
-      }
-    ]
-  }
-}
-```
-
-每张素材一项，以 characterId + spriteId 关联；响应不包含角色完整 content、load 条件、图片字节或绝对磁盘路径。素材协议见 [世界卡协议](../reference/world-card.md)。
 
 ### 指定消息结果
 
@@ -516,7 +483,7 @@ HTTP 200 成功包络：
 
 ### 资源与 Stage 边界
 
-目录返回的 asset 交给既有资源解析能力；包内资源继续使用 GET /worlds/:id/resources/*，沿用路径与 MIME 校验，不新建立绘下载路由。Web 会话宿主复用该目录与指定消息契约，展示规则见[会话运行接入](web-runtime.md#悬浮立绘)。
+实时事件每项的 asset 来自本轮捕获的世界素材。历史消息保留角色与素材 ID，Web 从已加载的世界详情 characters[].sprites 解析对应资源；包内资源继续使用 GET /worlds/:id/resources/*，沿用路径与 MIME 校验，不新建立绘下载路由。展示规则见[会话运行接入](web-runtime.md#悬浮立绘)。
 
 ## 舞台部署配置
 

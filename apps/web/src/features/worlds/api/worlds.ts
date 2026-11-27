@@ -19,7 +19,7 @@ export type WorldVersionsView=WorldVersionSummary & {
 };
 export type WorldVersionApplication={version:string;expectedSha256:string;expectedRevision:number};
 export type WorldListItem=WorldVersionSummary & {id:string;name:string;publication:WorldPublication;cover:string|null;coverMosaicEnabled:boolean;tags:string[];sessionCount:number;createdAt:number;updatedAt:number};
-export type Character={id:string;name:string;presentation?:Presentation;content?:string;avatar?:string;player_selectable?:boolean;order?:number;load?:StateDefinition['load']};
+export type Character={sprites?:Array<{id:string;description:string;asset:string}>;id:string;name:string;presentation?:Presentation;content?:string;avatar?:string;player_selectable?:boolean;order?:number;load?:StateDefinition['load']};
 export type Opening={presentation?:Presentation;id:string;name:string;content:string;initial_state?:Record<string,unknown>};
 export type LoreEntry={id:string;title?:string;content:string;enabled?:boolean;load?:StateDefinition['load'] & {order?:number}};
 export type WorldDetail=WorldVersionSummary & {id:string;revision:number;specVersion:string;publication:WorldPublication;name:string;cover:string|null;coverMosaicEnabled:boolean;tags:string[];

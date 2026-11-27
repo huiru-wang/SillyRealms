@@ -1,6 +1,8 @@
 import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {safeImage} from '../worlds/resources';
 import type {SpriteDisplay} from './controller';
+import type {Character} from '../worlds/api/worlds';
+import {spriteResource} from './items';
 import {layoutSprites} from './layout';
 import styles from './CharacterSpriteOverlay.module.css';
 
@@ -18,7 +20,7 @@ function Portrait({src,name,side,raised,enabled}:{src:string;name:string;side:st
     src={ready} alt={name} draggable={false}/>:null;
 }
 
-export function CharacterSpriteOverlay({display,assetBaseUrl,bottomInset}:{display:SpriteDisplay;assetBaseUrl:string|null;bottomInset:number}){
+export function CharacterSpriteOverlay({display,characters,assetBaseUrl,bottomInset}:{display:SpriteDisplay;characters:readonly Character[];assetBaseUrl:string|null;bottomInset:number}){
   const layer=useRef<HTMLDivElement>(null);
   const [size,setSize]=useState({width:0,height:0});
   const [retained,setRetained]=useState(display.enabled);
@@ -41,10 +43,10 @@ export function CharacterSpriteOverlay({display,assetBaseUrl,bottomInset}:{displ
   return <div ref={layer} className={styles.layer} data-enabled={display.enabled} aria-hidden={!display.enabled}
     style={{bottom:bottomInset}}>
     {figures.map(({item,side})=>{
-      const asset=display.catalog.find(row=>row.characterId===item.characterId&&row.spriteId===item.spriteId);
-      const src=safeImage(asset?.asset,assetBaseUrl);
-      return asset&&src?<Portrait key={item.characterId} src={src} side={side} enabled={display.enabled}
-        raised={item.position.startsWith('top')} name={asset.characterName}/>:null;
+      const {asset,name}=spriteResource(item,characters);
+      const src=safeImage(asset,assetBaseUrl);
+      return src?<Portrait key={item.characterId} src={src} side={side} enabled={display.enabled}
+        raised={item.position.startsWith('top')} name={name}/>:null;
     })}
   </div>;
 }

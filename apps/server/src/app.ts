@@ -80,7 +80,7 @@ export function createApp({ events, services, usecases, canAccessSession, webOri
     deleteWorld: usecases.deleteWorld, canAccessSession, shutdownSignal: shutdown.signal,
   }));
   app.route('/api/v1/sessions', createSessionRoutes({
-    appendEntry: usecases.appendEntry, createSession: usecases.createSession,
+    createSession: usecases.createSession,
     sessions: services.sessions, worlds: services.worlds, events, canAccessSession, shutdownSignal: shutdown.signal, streamShutdownSignal: streams.signal,
   }));
   app.route('/api/v1/state', createStateRoutes({

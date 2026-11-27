@@ -28,7 +28,6 @@ function setup(initialActive=false){
  const request=async(path,init={})=>{
   calls.push({path,init});
   if(server.onRequest){const special=server.onRequest(path,init);if(special!==undefined)return special;}
-  if(path==='v1/worlds/w/character-sprites')return {worldId:'w',items:[]};
   if(path.startsWith('v1/state/global/'))return {item:{weather:'sun'}};
   if(path.startsWith('v1/state/session/'))return {item:{visited:true}};
   if(path.startsWith('v1/state/message/'))return {item:[{key:'coins',value:server.coins}]};
@@ -88,7 +87,7 @@ test('sprite projection survives missing output and reconnect replaces a deleted
  server.runs.push(run('r',[{...entry('a',2,'r'),parentId:opening.id}]));server.tip='a';
  await workspace.start();
  assert.deepEqual(workspace.getSnapshot().sprites.frame,{messageId:opening.id,items});
- const notify=id=>channel.emit({event:'character_sprite.changed',data:{sessionId:'s',messageId:id,runId:'r',items}});
+ const notify=id=>channel.emit({event:'character_sprite.changed',data:{sessionId:'s',messageId:id,runId:'r',items:items.map(item=>({...item,asset:'sr-asset://assets/coat.webp'}))}});
  workspace.setSpritesEnabled(false);
  notify('old');
  assert.equal(workspace.getSnapshot().sprites.frame.messageId,'old');
@@ -303,7 +302,7 @@ test('world.updated reloads author content while preserving the workspace histor
   assert.equal(after.config,before.config);
   assert.equal(channel.closed,false);
   assert.equal(calls.some(call=>call.path.includes('/narrative/')),false);
-  assert.equal(calls.some(call=>call.path==='v1/worlds/w/character-sprites'),true);
+  assert.equal(calls.some(call=>call.path==='v1/worlds/w/character-sprites'),false);
   const count=server.worldReads.length;
   channel.emit({event:'world.updated',data:{sessionId:'s',worldId:'w',version:'1.2.0',revision:2,timestamp:10}});
   channel.emit({event:'world.updated',data:{sessionId:'s',worldId:'foreign',version:'2.0.0',revision:100,timestamp:11}});

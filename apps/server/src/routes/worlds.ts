@@ -143,7 +143,6 @@ export function createWorldRoutes({ worlds, sessions, importWorld, exportWorld, 
   routes.get('/:id/resources/:path{.+}', async c =>
     contentResponse(c.req.param('id'), c.req.param('path'), await worlds.openPackageFile(c.req.param('id'), c.req.param('path'), c.req.raw.signal),
       c.req.method === 'HEAD', c.req.header('if-none-match')));
-  routes.get('/:id/character-sprites', c => success(c, worlds.getCharacterSpriteCatalog(c.req.param('id'))));
   routes.get('/:id/components', async c => {
     const id = c.req.param('id'), epoch = cache.captureWorldRead(id), revision = worlds.require(id).revision;
     const components = await worlds.getComponents(id);

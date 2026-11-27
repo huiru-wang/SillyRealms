@@ -63,7 +63,8 @@ function wireEvent(name: typeof SESSION_EVENT_NAMES[number], value: unknown, ses
     if (name === 'run.created' && (!Array.isArray(data.messages) || data.messages.length !== 1)) return null;
     if (name === 'run.delta' && (typeof data.messageId !== 'string' || !Array.isArray(data.messages) || data.messages.length !== 1)) return null;
     if (name === 'action_suggestions.created' && (typeof data.messageId !== 'string' || !Array.isArray(data.items))) return null;
-    if (name === 'character_sprite.changed' && (typeof data.messageId !== 'string' || !data.messageId.trim() || !isSpriteSnapshot(data.items))) return null;
+    if (name === 'character_sprite.changed' && (typeof data.messageId !== 'string' || !data.messageId.trim() || !isSpriteSnapshot(data.items) ||
+      !data.items.every(item => 'asset' in item && typeof item.asset === 'string' && item.asset.trim()))) return null;
     if ((name === 'run.completed' || name === 'run.stopped') &&
       (!Array.isArray(data.savedMessageIds) || !(data.tipEntryId === null || typeof data.tipEntryId === 'string'))) return null;
   }

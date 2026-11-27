@@ -157,8 +157,12 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
   }
   // A committed snapshot remains authoritative even if recording the run outcome later failed.
   if (committedSprites !== undefined) {
-    notifications.push({ event: 'character_sprite.changed',
-      data: { sessionId, runId, messageId: assistantEntryId, items: committedSprites.map(item => ({ ...item })) } });
+    const items = committedSprites.map(item => {
+      // Postprocessing accepted this pair against the same captured catalog.
+      const sprite = characterSpriteCatalog.find(row => row.characterId === item.characterId && row.spriteId === item.spriteId)!;
+      return { ...item, asset: sprite.asset };
+    });
+    notifications.push({ event: 'character_sprite.changed', data: { sessionId, runId, messageId: assistantEntryId, items } });
   }
   const total = addUsage(summaryUsage, attempted ? usage : zeroUsage());
   const usageEvent: NarrativeSettlement['usage'] = { event: 'run.usage', data: {

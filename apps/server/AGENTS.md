@@ -90,7 +90,7 @@
 - 仅正常 stop、无工具请求且干净正文有效时执行能力；模型中断/失败只保存部分公开内容，不生成 output。能力独立兜底，状态内部逐行隔离，能力失败不改变正常 completed。公开 delta/最终 snapshot/持久化正文都隐藏能力块，最终快照重新分离，reasoning/tool_calls 不作为能力输入。
 - 用例经同步 TransactionRunner 校验实际 tip，准备状态候选和变化信息，再原子追加助手正文/output/state/metrics。变化必须在追加前计算，避免读取更新后的视图漏发事件。SessionService.appendNarrativeAssistant 是 output 受控保存入口，新写严格接受精简结构，普通 append/update 禁止伪造或删除，编辑其他扩展保留结果，正文编辑不重执行或回滚。SessionService 按写入 schema 验证每种能力。损坏的状态或建议结果只返回该能力的 processing_error 和空列表，保留其他能力的有效结果。存在但结构损坏的 characterSprite 投影为 processing_error+[]，错误码 CHARACTER_SPRITE_STORED_RESULT_INVALID；读取历史只验证保存结构，不用当前素材目录否定过去合法 ID。
 - 提交和锁释放后、唯一终态前，依序独立发布实际 state.changed、有效非空 action_suggestions.created、可应用 character_sprite.changed，再发布一次总 usage/终态。立绘 success/partial_success 通知携带完整 items，success+[] 也发送；缺块和失败不发送。run.created 驱动清理旧建议，无空建议 created/cleared。每条能力通知异常不能跳过后续通知或终态。助手保存失败不通知；后续 run outcome 保存失败仍通知已提交状态和立绘，但不发布可点击建议。
-- 聊天、持久化正文、关键词及摘要保持干净；主模型历史由 context 附加独立旁注。postprocess 不承担历史重建，不重放状态或引用 context 内部阶段。结果仍随 narrative/runs 的 entries 返回；立绘另提供 GET /worlds/:id/character-sprites 目录与 GET /sessions/:id/entries/:entryId/character-sprites 精确消息查询（均带 /api/v1 前缀）。后者经 requireSessionAccess 和 SessionService.getMessageCharacterSprites 校验消息归属，缺失能力结果或用户消息返回 null，不继承或合并历史，compaction 拒绝。查询不受预设开关控制；资源走原 resources/*，无立绘写入端点、额外表或前端 SDK 实现。
+- 聊天、持久化正文、关键词及摘要保持干净；主模型历史由 context 附加独立旁注。postprocess 不承担历史重建，不重放状态或引用 context 内部阶段。结果仍随 narrative/runs 的 entries 返回；事件条目的 asset 取自本轮捕获的世界素材。GET /api/v1/sessions/:id/entries/:entryId/character-sprites 精确消息查询经 requireSessionAccess 和 SessionService.getMessageCharacterSprites 校验消息归属，缺失能力结果或用户消息返回 null，不继承或合并历史，compaction 拒绝。查询不受预设开关控制；资源走原 resources/*，无立绘写入端点、额外表或前端 SDK 实现。
 
 
 ## 运行日志

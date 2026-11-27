@@ -41,7 +41,7 @@ beforeEach(() => {
   app = new Hono().onError(errorHandler);
   app.route('/api/v1/sessions', createSessionRoutes({
     sessions: services.sessions, worlds: services.worlds, events,
-    appendEntry: usecases.appendEntry, createSession: usecases.createSession,
+    createSession: usecases.createSession,
     canAccessSession: () => allowed, shutdownSignal: shutdown.signal,
   }));
 });

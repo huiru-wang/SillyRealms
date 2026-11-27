@@ -96,18 +96,12 @@ async function resources(worldId: string) {
 }
 
 describe('world routes', () => {
-  it('returns only sprite catalog fields, including an empty catalog and missing-world errors', async () => {
-    const sprite = { id: 'default', asset: 'https://images.example/player.webp', description: '平静' };
-    const world = services.worlds.create({ ...content(), characters: [
-      { ...content().characters[0], content: 'hidden prompt', load: { mode: 'never' }, sprites: [sprite] },
-    ] });
-    expect(await data(await app.request(base + '/' + world.id + '/character-sprites'))).toEqual({
-      worldId: world.id,
-      items: [{ characterId: 'player', characterName: 'Player', spriteId: 'default', description: '平静', asset: sprite.asset }],
-    });
-    services.worlds.update(world.id, { characters: content().characters });
-    expect(await data(await app.request(base + '/' + world.id + '/character-sprites'))).toEqual({ worldId: world.id, items: [] });
-    await failure(await app.request(base + '/missing/character-sprites'), 'WORLD_NOT_FOUND', 404);
+  it('serves sprite declarations in world detail without a separate catalog endpoint', async () => {
+    const sprite = { id: 'default', asset: 'sr-asset://assets/player.webp', description: '平静' };
+    const world = services.worlds.create({ ...content(), characters: [{ ...content().characters[0], sprites: [sprite] }] });
+    const url = base + '/' + world.id;
+    expect(await data(await app.request(url))).toMatchObject({ item: { characters: [{ sprites: [sprite] }] } });
+    expect((await app.request(url + '/character-sprites')).status).toBe(404);
   });
 
   it('reads, updates and deletes management details without exposing state', async () => {

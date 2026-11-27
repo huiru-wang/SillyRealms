@@ -213,7 +213,8 @@ state.changed、action_suggestions.created 与 character_sprite.changed 独立�
     items: Array<{
       position: 'left' | 'center' | 'right' | 'top' | 'topleft' | 'topright' | 'truecenter',
       characterId: string,
-      spriteId: string
+      spriteId: string,
+      asset: string
     }>
   }
 }
@@ -245,9 +246,9 @@ SSE 不重复传输行错误诊断。部分成功时仍发送完整有效数组�
 
 读取配合：
 
-- `GET /api/v1/worlds/:worldId/character-sprites` 返回素材目录及资源引用。
+- 事件每项的 `asset` 来自本轮捕获的世界素材。历史结果按角色与素材 ID 从已加载的世界详情解析资源。
 - `GET /api/v1/sessions/:sessionId/entries/:messageId/character-sprites` 精确返回该消息的 status/items/errors，未产生结果时为 null，不向前继承。
-- 包内素材继续通过 `GET /api/v1/worlds/:worldId/resources/*` 访问；在线素材按既有资源解析规则使用。事件只携带 ID 和位置，不携带图片字节、地址或本机路径。
+- 包内素材继续通过 `GET /api/v1/worlds/:worldId/resources/*` 访问；在线素材按既有资源解析规则使用。
 
 事件复用现有会话 SSE，不增加连接、回放或专用资源下载入口。官方悬浮层按 messageId 消费完整快照。接口详情见 [Server HTTP](server-http.md)。
 

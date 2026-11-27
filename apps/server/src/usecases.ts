@@ -13,7 +13,6 @@ import { createExportWorld } from './usecases/export-world.js';
 import { createImportWorld } from './usecases/import-world.js';
 import { createInitialize } from './usecases/initialize.js';
 import { createStateUsecase } from './usecases/state.js';
-import { createAppendEntry } from './usecases/append-entry.js';
 import { createWorldUpdates } from './usecases/world-updates/index.js';
 import { createSessionUsecase } from './usecases/create-session.js';
 
@@ -34,7 +33,6 @@ export function createUsecases({ services, transaction, events, modelClient = ne
     modelConfigs: createModelConfigUsecases(services),
     initialize: createInitialize({ presets, settings, worlds, initialWorlds: services.initialWorlds, importWorld, transaction }),
     state: createStateUsecase({ worlds, sessions, state: services.state, transaction, events, cache: services.cache }),
-    appendEntry: createAppendEntry({ sessions, state: services.state, transaction, events }),
     deleteWorld: createDeleteWorld({ worlds, sessions, transaction, onWorldDeleted: worldUpdates.cancelForWorld }),
     importWorld,
     exportWorld: createExportWorld({ worlds }),

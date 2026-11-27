@@ -6,10 +6,9 @@ import { decodeCursor, encodeCursor } from '../http/pagination.js';
 import { numberQuery, readJson, success } from '../http/response.js';
 import { requireSessionAccess, type SessionAccessCheck } from '../http/session-access.js';
 import type {
-  AppendEntryInput, Session, SessionListOptions, SessionService, UpdateEntryInput, UpdateSessionInput,
+  Session, SessionListOptions, SessionService, UpdateSessionInput,
 } from '../modules/sessions/service.js';
 import type { WorldService } from '../modules/worlds/service.js';
-import type { AppendEntry } from '../usecases/append-entry.js';
 import type { CreateSession, CreateSessionInput } from '../usecases/create-session.js';
 
 export type SessionSummary = Pick<Session, 'id' | 'worldId' | 'runtimeConfig' | 'title' | 'updatedAt'>
@@ -43,14 +42,13 @@ export type SessionRouteOptions = {
   events: EventHub;
   sessions: SessionService;
   worlds: WorldService;
-  appendEntry: AppendEntry;
   createSession: CreateSession;
   canAccessSession?: SessionAccessCheck;
   shutdownSignal: AbortSignal;
   streamShutdownSignal?: AbortSignal;
 };
 
-export function createSessionRoutes({ events, sessions, worlds, appendEntry, createSession, canAccessSession, shutdownSignal, streamShutdownSignal = shutdownSignal }: SessionRouteOptions) {
+export function createSessionRoutes({ events, sessions, worlds, createSession, canAccessSession, shutdownSignal, streamShutdownSignal = shutdownSignal }: SessionRouteOptions) {
   const routes = new Hono();
   const access = (sessionId: string, request: Request) =>
     requireSessionAccess(sessions, sessionId, request, canAccessSession, shutdownSignal);
@@ -117,24 +115,10 @@ export function createSessionRoutes({ events, sessions, worlds, appendEntry, cre
     return success(c, { id });
   });
 
-  routes.post('/:id/entries', async c => {
-    const id = c.req.param('id');
-    await access(id, c.req.raw);
-    const input = await readJson<AppendEntryInput>(c);
-    if (Object.hasOwn(input, 'metrics')) throw new AppError('INVALID_REQUEST', '模型调用计量仅允许由服务内部写入');
-    return success(c, { item: appendEntry(id, input) }, 201);
-  });
-
   routes.get('/:id/entries/:entryId/character-sprites', async c => {
     const id = c.req.param('id'), messageId = c.req.param('entryId');
     await access(id, c.req.raw);
     return success(c, { sessionId: id, messageId, result: sessions.getMessageCharacterSprites(id, messageId) });
-  });
-
-  routes.patch('/:id/entries/:entryId', async c => {
-    const id = c.req.param('id');
-    await access(id, c.req.raw);
-    return success(c, { item: sessions.updateEntry(id, c.req.param('entryId'), await readJson<UpdateEntryInput>(c)) });
   });
 
   routes.get('/:id/events', async c => {

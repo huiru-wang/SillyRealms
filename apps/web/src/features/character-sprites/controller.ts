@@ -1,11 +1,10 @@
-import type {CharacterSpriteChangedEvent, CharacterSpriteItem, Entry, StoredRun} from '../../../../../packages/sr-sdk/src/stage-contract.ts';
+import type {CharacterSpriteChangedEvent, Entry, StoredRun} from '../../../../../packages/sr-sdk/src/stage-contract.ts';
 import type {HttpRequest} from '../../transport/http.ts';
 import type {HistoryController} from '../history/index.ts';
-import {appliedItems} from './items.ts';
+import {appliedItems, type DisplaySprite} from './items.ts';
 
-type CatalogItem = {characterId: string; spriteId: string; characterName: string; asset: string};
-type Frame = {messageId: string; items: CharacterSpriteItem[]};
-export type SpriteDisplay = {enabled: boolean; frame: Frame | null; catalog: readonly CatalogItem[]};
+type Frame = {messageId: string; items: DisplaySprite[]};
+export type SpriteDisplay = {enabled: boolean; frame: Frame | null};
 type Options = {
   sessionId: string; request: HttpRequest; history: HistoryController;
   readTip: (signal: AbortSignal) => Promise<string | null>; changed: () => void;
@@ -15,11 +14,10 @@ export function createSpriteController({sessionId, request, history, readTip, ch
   const preference = 'sr:session:' + sessionId + ':show-character-sprites';
   let enabled = true;
   try { enabled = localStorage.getItem(preference) !== 'false'; } catch { /* Optional browser preference. */ }
-  let view: SpriteDisplay = {enabled, frame: null, catalog: []};
+  let view: SpriteDisplay = {enabled, frame: null};
   let world: string | null = null, revision = 0;
   let verifiedTip: string | null = null;
-  let catalogRead: AbortController | null = null, restoreRead: AbortController | null = null;
-  let catalogLoaded = false;
+  let restoreRead: AbortController | null = null;
   const deleted = new Set<string>();
   const update = (patch: Partial<SpriteDisplay>) => { view = {...view, ...patch}; changed(); };
   function invalidate() {
@@ -28,35 +26,17 @@ export function createSpriteController({sessionId, request, history, readTip, ch
     restoreRead?.abort();
     restoreRead = null;
   }
-  async function loadCatalog() {
-    if (!world || !view.enabled || catalogLoaded || catalogRead) return;
-    const read = new AbortController();
-    catalogRead = read;
-    try {
-      const data = await request<{worldId: string; items: CatalogItem[]}>('v1/worlds/' + encodeURIComponent(world) + '/character-sprites', {signal: read.signal});
-      if (!read.signal.aborted && world === data.worldId && Array.isArray(data.items)) {
-        catalogLoaded = true;
-        update({catalog: data.items});
-      }
-    } catch { /* Keep narration available. Retry on the next sync or reveal. */ }
-    finally { if (catalogRead === read) catalogRead = null; }
-  }
   function bind(next: string | null) {
     if (world === next) return false;
     invalidate();
-    catalogRead?.abort();
-    catalogRead = null;
-    catalogLoaded = false;
     world = next;
     // The workspace publishes the binding and the reset frame together.
-    view = {...view, catalog: [], frame: null};
-    void loadCatalog();
+    view = {...view, frame: null};
     return true;
   }
   // Follow the durable parent chain; passive cursor reads leave the player's scrollback untouched.
   async function restore(tip: string | null, checkpoint: number, knownAssistantId?: string) {
     if (!world || !view.enabled || checkpoint !== revision) return;
-    void loadCatalog();
     restoreRead?.abort();
     if (tip && verifiedTip === tip) return;
     const read = new AbortController();
@@ -125,19 +105,16 @@ export function createSpriteController({sessionId, request, history, readTip, ch
   }
   return {
     bind, restore, checkpoint: () => revision, getSnapshot: () => view,
-    reloadCatalog() {
-      catalogRead?.abort();
-      catalogRead = null;
-      catalogLoaded = false;
-      update({catalog: []});
-      void loadCatalog();
+    invalidateAssets() {
+      if (!view.frame) return;
+      const items = view.frame.items.map(({position, characterId, spriteId}) => ({position, characterId, spriteId}));
+      update({frame: {...view.frame, items}});
     },
     setEnabled(value: boolean) {
       if (view.enabled === value) return;
       invalidate();
       try { localStorage.setItem(preference, String(value)); } catch { /* Memory still holds the selection. */ }
       update({enabled: value});
-      if (value) void loadCatalog();
     },
     accept(data: CharacterSpriteChangedEvent['data']) {
       if (!world || data.sessionId !== sessionId || deleted.has(data.messageId)) return;
@@ -161,6 +138,6 @@ export function createSpriteController({sessionId, request, history, readTip, ch
       invalidate();
       if (!view.enabled && view.frame) update({frame: null});
     },
-    dispose() { invalidate(); catalogRead?.abort(); world = null; deleted.clear(); },
+    dispose() { invalidate(); world = null; deleted.clear(); },
   };
 }

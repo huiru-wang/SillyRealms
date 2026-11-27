@@ -217,7 +217,7 @@ export function createSessionWorkspace(sessionId:string,dependencies:WorkspaceDe
       if(!current())return;
       world=next;
       if(previous&&worldReleaseIdentity(previous.world)!==worldReleaseIdentity(next.world)){
-        sprites.reloadCatalog();
+        sprites.invalidateAssets();
         if(!loading)reloadCapabilities();
       }
     }catch(reason){if(current())worldError=errorKey(reason,"sessions:worldLoadFailed");}

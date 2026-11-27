@@ -26,6 +26,8 @@ const rows = [
   { position: 'center', characterId: 'bob', spriteId: 'default' },
   { position: 'right', characterId: 'carol', spriteId: 'default' },
 ] as const;
+const assets = { alice: 'sr-asset://assets/alice.webp', bob: 'https://example.com/bob.webp', carol: 'https://example.com/carol.webp' };
+const eventItems = rows.map(item => ({ ...item, asset: assets[item.characterId] }));
 const block = (items: readonly unknown[] = rows) =>
   '<character_sprite>\n' + items.map(item => JSON.stringify(item)).join('\n') + '\n</character_sprite>';
 
@@ -46,8 +48,8 @@ beforeEach(async () => {
     id: 'world', specVersion: '0.2', publication: worldPublication(), name: 'World',
     characters: [
       { id: 'player', name: 'Player', player_selectable: true },
-      ...['alice', 'bob', 'carol'].map(id => ({ id, name: id,
-        sprites: [{ id: 'default', description: '日常站姿', asset: 'https://example.com/' + id + '.webp' }] })),
+      ...Object.entries(assets).map(([id, asset]) => ({ id, name: id,
+        sprites: [{ id: 'default', description: '日常站姿', asset }] })),
     ],
     openings: [{ id: 'opening', name: 'Opening', content: 'Opening' }],
   });
@@ -118,7 +120,7 @@ describe('character sprite narrative integration', () => {
     expect(committedAtEvent).toEqual(spriteResult(accepted));
     expect(unlocked).toBe(true);
     expect(changes()).toEqual([{ event: 'character_sprite.changed', data: {
-      sessionId: 'session', runId: accepted.runId, messageId: accepted.assistantEntryId, items: rows,
+      sessionId: 'session', runId: accepted.runId, messageId: accepted.assistantEntryId, items: eventItems,
     } }]);
     expect(seen.slice(-3).map(event => event.event)).toEqual(['character_sprite.changed', 'run.usage', 'run.completed']);
     expect(saved(accepted).payload.message).toMatchObject({ content: body });
@@ -142,7 +144,7 @@ describe('character sprite narrative integration', () => {
         { line: 1, errorCode: 'unknown_sprite' }, { line: 3, errorCode: 'duplicate_position' },
       ],
     });
-    expect(changes()[0]?.data.items).toEqual([rows[1]]);
+    expect(changes()[0]?.data.items).toEqual([eventItems[1]]);
     expect(spriteResult(first.accepted)?.items).toEqual(rows);
   });
 
@@ -240,7 +242,7 @@ describe('character sprite narrative integration', () => {
     expect(spriteResult(replacement)?.items).toEqual([rows[1]]);
     expect(seen.find(event => event.event === 'message.deleted')?.data.messageId).toBe(first.accepted.assistantEntryId);
     expect(changes()).toEqual([{ event: 'character_sprite.changed', data: {
-      sessionId: 'session', runId: replacement.runId, messageId: replacement.assistantEntryId, items: [rows[1]],
+      sessionId: 'session', runId: replacement.runId, messageId: replacement.assistantEntryId, items: [eventItems[1]],
     } }]);
   });
 });

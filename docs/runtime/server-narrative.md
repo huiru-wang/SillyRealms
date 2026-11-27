@@ -283,7 +283,7 @@ SessionService.appendNarrativeAssistant 将干净正文、extData.output、可�
 
 run outcome 独立保存失败时，助手及已提交能力结果不回滚；实际状态和可应用立绘仍通知，本轮不发布可点击建议。正常事件顺序为提交、释放锁、state.changed、符合条件的 action_suggestions.created、character_sprite.changed、总 usage、唯一终态。立绘事件携带 sessionId/runId/messageId/items，success/partial_success 每次都通知，success 空数组也通知；无块、全坏行、标签错误或处理异常不发立绘事件。通知异常分别隔离，完整字段见 [会话事件](server-events.md)。
 
-公共追加/编辑禁止写入或删除 output，编辑其他 extData 保留它；正文编辑保留当时结果，不重做或回滚。各能力按写入时的 schema 读取。状态或建议结果损坏时，该能力返回 processing_error 和空列表。立绘保存结构损坏时投影为 processing_error、items=[]、错误码 CHARACTER_SPRITE_STORED_RESULT_INVALID；不存在该字段时保持缺失。读取只验证保存结构，不依据最新素材目录改写历史合法 ID。结果随 narrative/runs 的 entries 返回，另有立绘目录和指定消息的只读 GET，见 [立绘查询](server-http.md#立绘查询)；无新表、列或能力运行状态缓存。
+公共追加/编辑禁止写入或删除 output，编辑其他 extData 保留它；正文编辑保留当时结果，不重做或回滚。各能力按写入时的 schema 读取。状态或建议结果损坏时，该能力返回 processing_error 和空列表。立绘保存结构损坏时投影为 processing_error、items=[]、错误码 CHARACTER_SPRITE_STORED_RESULT_INVALID；不存在该字段时保持缺失。读取只验证保存结构，不依据最新素材目录改写历史合法 ID。结果随 narrative/runs 的 entries 返回，另有指定消息立绘结果的只读 GET，见 [立绘查询](server-http.md#立绘查询)；无新表、列或能力运行状态缓存。
 
 聊天、持久化正文、关键词激活与摘要保持干净。主模型的保留历史由 context 在最终组装时附加条目级 model-only notes，读取历史或旁注不重执行更新；规则见[条目级模型旁注](#条目级模型旁注)。没有持久化 notes schema、contextEligible 或能力专用历史重建模块。
 

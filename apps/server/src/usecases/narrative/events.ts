@@ -56,7 +56,7 @@ export type ActionSuggestionsCreated = {
 };
 export type CharacterSpriteChangedEvent = {
   event: 'character_sprite.changed';
-  data: { sessionId: string; runId: string; messageId: string; items: CharacterSpriteItem[] };
+  data: { sessionId: string; runId: string; messageId: string; items: (CharacterSpriteItem & {asset: string})[] };
 };
 export type NarrativeSettlement = {
   notifications: (StateEvent | ActionSuggestionsCreated | CharacterSpriteChangedEvent)[];

@@ -51,7 +51,7 @@ export type CharacterSpriteItem = {
 };
 export type CharacterSpriteChangedEvent = {
   event: 'character_sprite.changed';
-  data: {sessionId: string; runId: string; messageId: string; items: CharacterSpriteItem[]};
+  data: {sessionId: string; runId: string; messageId: string; items: (CharacterSpriteItem & {asset: string})[]};
 };
 export type MessageDeletedEvent = {event: 'message.deleted'; data: {sessionId: string; runId: string; assistantEntryId: string; messageId: string; tipEntryId: string | null}};
 export type WorldUpdatedEvent = {event: 'world.updated'; data: {sessionId: string; worldId: string; version: string; revision: number; timestamp: number}};

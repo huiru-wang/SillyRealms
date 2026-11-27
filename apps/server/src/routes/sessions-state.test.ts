@@ -49,7 +49,7 @@ beforeEach(() => {
   app = new Hono();
   app.onError(errorHandler);
   app.route('/api/v1/sessions', createSessionRoutes({
-    sessions: services.sessions, worlds: services.worlds, appendEntry: usecases.appendEntry, createSession: usecases.createSession, events, canAccessSession, shutdownSignal: shutdown.signal,
+    sessions: services.sessions, worlds: services.worlds, createSession: usecases.createSession, events, canAccessSession, shutdownSignal: shutdown.signal,
   }));
   app.route('/api/v1/state', createStateRoutes({ state: usecases.state, sessions: services.sessions, canAccessSession, shutdownSignal: shutdown.signal }));
 });
@@ -192,7 +192,7 @@ describe('session HTTP operations', () => {
     app = new Hono();
     app.onError(errorHandler);
     app.route('/api/v1/sessions', createSessionRoutes({
-      sessions: services.sessions, worlds: services.worlds, appendEntry: usecases.appendEntry, createSession: usecases.createSession, events, shutdownSignal: shutdown.signal,
+      sessions: services.sessions, worlds: services.worlds, createSession: usecases.createSession, events, shutdownSignal: shutdown.signal,
     }));
     const first = await data<Page<SessionSummary>>(await request('GET', '/sessions?worldId=world&limit=2'));
     expect(first.items.map(item => item.id)).toEqual(['c', 'b']);
@@ -239,20 +239,14 @@ describe('session HTTP operations', () => {
     expect(services.sessions.require('one')).not.toHaveProperty('worldName');
   });
 
-  it('keeps entry history linear and does not expose metrics or ancestry editing', async () => {
-    const root = await data<{ item: SessionEntry }>(await request('POST', '/sessions/one/entries', entryInput('root')), 201);
-    const child = await data<{ item: SessionEntry }>(await request('POST', '/sessions/one/entries', { ...entryInput('child'), parentId: 'root' }), 201);
-    expect(child.item).toMatchObject({ parentId: root.item.id, seq: 2 });
-    expect(Object.keys(root.item).some(key => key.includes('_'))).toBe(false);
-    await failure(await request('POST', '/sessions/one/entries', { ...entryInput('branch'), parentId: 'root' }), 'TIP_CONFLICT', 409);
-    expect(services.sessions.get('one')!.tipEntryId).toBe('child');
-    for (const path of ['/sessions/one/entries', '/sessions/one/entries/child', '/sessions/one/narrative/runs/run']) {
+  it('has no generic HTTP route to append or edit entries', async () => {
+    const entry = services.sessions.appendEntry('one', entryInput('root'));
+    expect((await request('POST', '/sessions/one/entries', entryInput('child'))).status).toBe(404);
+    expect((await request('PATCH', '/sessions/one/entries/root', { payload: entryInput('edited').payload })).status).toBe(404);
+    expect(services.sessions.getHistory('one')).toEqual([entry]);
+    for (const path of ['/sessions/one/entries', '/sessions/one/entries/root', '/sessions/one/narrative/runs/run']) {
       expect((await request('GET', path)).status).toBe(404);
     }
-    expect((await data<{ item: SessionEntry }>(await request('PATCH', '/sessions/one/entries/child', { payload: { message: { role: 'assistant', content: 'Edited', timestamp: 1 } } }))).item.payload).toEqual({ message: { role: 'assistant', content: 'Edited', timestamp: 1 } });
-    await failure(await request('PATCH', '/sessions/one/entries/child', { parentId: null }), 'INVALID_REQUEST', 400);
-    await failure(await request('POST', '/sessions/one/entries', { ...entryInput('metrics'), metrics: null }), 'INVALID_REQUEST', 400);
-    await failure(await request('PATCH', '/sessions/one/entries/child', { metrics: null }), 'INVALID_REQUEST', 400);
   });
 
   it('rejects invalid JSON, missing fields and references through the normal error envelope', async () => {
@@ -273,8 +267,7 @@ describe('session HTTP operations', () => {
       ['GET', '/sessions/blocked'],
       ['PATCH', '/sessions/blocked', { title: 'Overwritten' }],
       ['DELETE', '/sessions/blocked'],
-      ['POST', '/sessions/blocked/entries', entryInput('leak')],
-      ['PATCH', '/sessions/blocked/entries/secret', { payload: { text: 'Overwritten' } }],
+      ['GET', '/sessions/blocked/entries/secret/character-sprites'],
       ['GET', '/sessions/blocked/events'],
       ['POST', '/state/query', { scope: 'session', sessionId: 'blocked' }],
       ['POST', '/state/update', { scope: 'session', sessionId: 'blocked', updates: [] }],

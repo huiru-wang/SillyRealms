@@ -1,7 +1,8 @@
+import {safeImage} from '../src/features/worlds/resources.ts';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createSpriteController} from '../src/features/character-sprites/controller.ts';
-import {appliedItems} from '../src/features/character-sprites/items.ts';
+import {appliedItems,spriteResource} from '../src/features/character-sprites/items.ts';
 import {layoutSprites,stackComposerActions} from '../src/features/character-sprites/layout.ts';
 
 const sprite=(position='right',characterId='keeper',spriteId='coat')=>({position,characterId,spriteId});
@@ -19,7 +20,6 @@ function setup(entries,{older,message,readTip=async()=>null}={}) {
   };
   const request=async(path,options)=>{
     calls.push(path);
-    if(path.includes('/worlds/'))return {worldId:'w',items:[{...sprite(),characterName:'守灯人',asset:'https://example.test/keeper.png'}]};
     return message(path,options);
   };
   const sprites=createSpriteController({sessionId:'s',history,request,readTip,changed:()=>{}});
@@ -38,7 +38,22 @@ test('recover along parent IDs across run pages, ignoring failed results and unr
   assert.deepEqual(queries,[{cursor:'older',limit:5}]);
   await restore('user');
   assert.equal(queries.length,1);
-  assert.equal(calls.length,1);
+  assert.equal(calls.length,0);
+});
+
+test('live assets load directly and historical IDs resolve against the installed world release',()=>{
+  const {sprites,calls}=setup([]);
+  const live={...sprite(),asset:'sr-asset://assets/coat.webp'};
+  sprites.accept({sessionId:'s',messageId:'new',runId:'r',items:[live]});
+  const characters=[{id:'keeper',name:'守灯人',sprites:[{id:'coat',asset:'https://example.test/new.webp'}]}];
+  const resource=()=>spriteResource(sprites.getSnapshot().frame.items[0],characters);
+  assert.deepEqual(resource(),{name:'守灯人',asset:live.asset});
+  const base='https://host.test/api/v1/worlds/w/resources/';
+  assert.equal(safeImage(resource().asset,base),base+'assets/coat.webp');
+  sprites.invalidateAssets();
+  assert.deepEqual(resource(),{name:'守灯人',asset:'https://example.test/new.webp'});
+  assert.equal(spriteResource(sprite(),[]).asset,undefined);
+  assert.deepEqual(calls,[]);
 });
 
 test('stop recovery on explicit clear; all-invalid and missing do not provide a frame',async()=>{
@@ -54,7 +69,7 @@ test('stop recovery on explicit clear; all-invalid and missing do not provide a 
 test('use the specified committed assistant when only its ID is known',async()=>{
   const {sprites,restore,calls}=setup([],{message:async()=>({sessionId:'s',messageId:'a/1',result:stored(frame)})});
   await restore('a/1','a/1');
-  assert.equal(calls[1],'v1/sessions/s/entries/a%2F1/character-sprites');
+  assert.equal(calls[0],'v1/sessions/s/entries/a%2F1/character-sprites');
   assert.deepEqual(sprites.getSnapshot().frame,{messageId:'a/1',items:frame});
 });
 

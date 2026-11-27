@@ -108,7 +108,7 @@ function SessionView({workspace,reload}:{workspace:SessionWorkspace;reload:()=>v
         view.worldError?<div className="stage-error" role="alert"><h2>{i18n.t("sessions:worldLoadFailed")}</h2><p>{errorMessage(view.worldError)}</p><button onClick={()=>void workspace.reloadWorld()}>{i18n.t("sessions:reloadWorld")}</button></div>:
         render&&view.config?<StageHost key={stageKey} config={view.config} render={render} snapshot={stage} command={command} subscribeEvents={workspace.subscribeEvents} fontSize={fontSize} bottomInset={layout.bottomInset} onNotice={setNotice} onComposerButtons={setButtons}/>:
         <p className="loading-panel" role="status">{i18n.t("sessions:preparingStage")}</p>}
-      {spriteToggle&&render&&!view.error&&!view.worldError&&<CharacterSpriteOverlay key={stageKey} display={view.sprites}
+      {spriteToggle&&view.world&&render&&!view.error&&!view.worldError&&<CharacterSpriteOverlay key={stageKey} display={view.sprites} characters={view.world.world.characters}
         assetBaseUrl={render.assetBaseUrl} bottomInset={layout.bottomInset}/>}
     </div>
     <div ref={layout.overlay} className={styles.composerArea} data-composer-overlay>
