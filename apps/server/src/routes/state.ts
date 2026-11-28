@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { AppError } from '../errors.js';
 import { readJson, success } from '../http/response.js';
-import { requireSessionAccess, type SessionAccessCheck } from '../http/session-access.js';
+import { assertAccepting, requireSessionAccess, type SessionAccessCheck } from '../http/session-access.js';
 import type { SessionService } from '../modules/sessions/service.js';
 import type { StateUpdate } from '../modules/state/service.js';
 import type { StateTarget, StateUsecase } from '../usecases/state.js';
@@ -44,12 +44,14 @@ export function createStateRoutes({ state, sessions, canAccessSession, shutdownS
     const { paths, ...owner } = await readJson<Record<string, unknown>>(c);
     const target = targetSchema.parse(owner);
     await authorize(target, c.req.raw);
+    assertAccepting(shutdownSignal);
     return success(c, state.query(target, queryPaths.parse(paths)));
   });
   routes.post('/update', async c => {
     const { updates, ...owner } = await readJson<Record<string, unknown>>(c);
     const target = targetSchema.parse(owner);
     await authorize(target, c.req.raw);
+    assertAccepting(shutdownSignal);
     return success(c, state.update(target, readUpdates(updates)));
   });
   return routes;

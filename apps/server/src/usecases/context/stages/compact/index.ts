@@ -1,17 +1,17 @@
 import { AppError } from '../../../../errors.js';
 import type { ModelInfo, ModelMessage } from '../../../../infrastructure/model/client.js';
-import type { EntryMetrics } from '../../../../modules/sessions/service.js';
+import type { RequestMetrics } from '../../../../modules/sessions/service.js';
 import type { CompiledNarrativeContext } from '../assemble/index.js';
 import { planContext, type CandidateEvaluator, type CompactInput } from './plan.js';
 
 export type SummaryRequest = { messages: ModelMessage[]; maxTokens: number };
-export type SummaryOutcome = { ok: true; text: string; metrics: EntryMetrics | null } | { ok: false };
+export type SummaryOutcome = { ok: true; text: string; metrics: RequestMetrics | null } | { ok: false };
 export type Summarize = (request: SummaryRequest) => Promise<SummaryOutcome>;
 export type SummaryDraft = {
   text: string;
   coveredThroughEntryId: string;
   sourceHash: string;
-  metrics: EntryMetrics | null;
+  metrics: RequestMetrics | null;
 };
 export type CompactedContext = {
   compiled: CompiledNarrativeContext;

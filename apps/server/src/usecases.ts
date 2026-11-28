@@ -22,12 +22,13 @@ export function createUsecases({ services, transaction, events, modelClient = ne
 }) {
   const { worlds, sessions, presets, settings } = services;
   const importWorld = createImportWorld({ worlds, settings });
+  const storageFailure = new AbortController();
   const worldUpdates = createWorldUpdates({ worlds, sessions, cache: services.cache, events });
   return {
-    worldUpdates,
+    storageFailure: storageFailure.signal, worldUpdates,
     createSession: createSessionUsecase({ worlds, sessions, state: services.state, transaction, events }),
     replyAssist: createReplyAssist({ ...services, modelClient, events }),
-    narrative: createNarrativeUsecases({ ...services, events, modelClient, transaction }),
+    narrative: createNarrativeUsecases({ ...services, events, modelClient, transaction, onStorageFailure: error => storageFailure.abort(error) }),
     testModel: createTestModel({ models: services.models, credentials: services.credentials, modelClient }),
     listProviders: () => modelClient.listProviders(),
     modelConfigs: createModelConfigUsecases(services),

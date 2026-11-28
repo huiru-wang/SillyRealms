@@ -1,3 +1,4 @@
+import { seedMessage } from '../testing/run-fixtures.js';
 import { worldPublication } from '../testing/fixtures.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -5,7 +6,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { EventHub, type SessionEvent } from '../infrastructure/events/event-hub.js';
-import { createAppendEntry } from './append-entry.js';
 import { openDatabase } from '../infrastructure/database/connection.js';
 import { bindTransaction } from '../infrastructure/database/transaction.js';
 import { createServices, type Services } from '../services.js';
@@ -33,8 +33,8 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); db.close(); rmSync(dataRoot, { recursive: true, force: true }); });
 
 function append(id: string) {
-  return services.sessions.appendEntry('one', {
-    id, runId: 'run', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: id, timestamp: 1 } }, extData: { author_key: true },
+  return seedMessage(services, 'one', {
+    id, runId: id + '-run', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: id, timestamp: 1 } },
   });
 }
 
@@ -159,11 +159,10 @@ describe('independent state field writes', () => {
 
   it('changes only state and the timestamp of the selected message', () => {
     vi.spyOn(Date, 'now').mockReturnValue(100);
-    const entry = services.sessions.appendEntry('one', {
+    const entry = seedMessage(services, 'one', {
       id: 'root', runId: 'run', type: 'message', role: 'assistant',
       payload: { message: { role: 'assistant', content: 'Story', timestamp: 100 } },
-      extData: { author_key: true }, state: [{ key: 'coins', value: 1 }],
-      metrics: { requests: [{ requestId: 'request', modelId: 'actual', provider: 'provider', usage: null }] },
+      state: [{ key: 'coins', value: 1 }],
     });
     vi.mocked(Date.now).mockReturnValue(200);
     expect(stateUsecase.update({ scope: 'message', sessionId: 'one', entryId: entry.id }, [{ path: 'coins', value: 7 }])[0]?.success).toBe(true);
@@ -280,23 +279,16 @@ describe('effective state events', () => {
     expect(foreign).not.toHaveBeenCalled();
   });
 
-  it('publishes tip replacement after an entry is saved, and skips inherited or equal state', () => {
-    const appendEntry = createAppendEntry({ sessions: services.sessions, state: services.state, events, transaction: bindTransaction(db) });
-    const received: SessionEvent[] = [], tips: (string | null)[] = [];
-    events.subscribe('one', event => { received.push(event); tips.push(services.sessions.require('one').tipEntryId); });
+  it('inherits and clears message state across committed runs and rejects a stale parent', () => {
+    const appendEntry = (id: string, entry: Parameters<typeof seedMessage>[2]) => seedMessage(services, id, { ...entry, runId: entry.id + '-run' });
     const input = { runId: 'run', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: 'State', timestamp: 1 } } } as const;
     appendEntry('one', { ...input, id: 'first', state: [{ key: 'coins', value: 4 }] });
     appendEntry('one', { ...input, id: 'inherited', state: null });
     appendEntry('one', { ...input, id: 'same', state: [{ key: 'coins', value: 4 }] });
     appendEntry('one', { ...input, id: 'clear', state: [] });
     appendEntry('one', { ...input, id: 'empty-inherited' });
-    expect(received).toEqual([
-      { event: 'state.changed', data: { scope: 'message', path: '', value: { coins: 4 } } },
-      { event: 'state.changed', data: { scope: 'message', path: '', value: {} } },
-    ]);
-    expect(tips).toEqual(['first', 'clear']);
+    expect(services.state.getCurrentMessage('one')).toEqual({});
     expect(() => appendEntry('one', { ...input, id: 'conflict', parentId: 'first', state: [{ key: 'coins', value: 9 }] })).toThrow('TIP_CONFLICT');
-    expect(received).toHaveLength(2);
     expect(services.sessions.getEntry('one', 'conflict')).toBeNull();
   });
 });

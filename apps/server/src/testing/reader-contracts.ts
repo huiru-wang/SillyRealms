@@ -22,8 +22,8 @@ export function readerContracts(world: WorldReader, session: SessionReader, pres
   session.setState('session', {});
   // @ts-expect-error A SessionReader cannot persist entry state.
   session.setEntryState('session', 'entry', null);
-  // @ts-expect-error A SessionReader cannot append entries or advance the tip.
-  session.appendEntry('session', { runId: 'run', type: 'message', role: 'assistant', payload: {} });
+  // @ts-expect-error A SessionReader cannot settle abandoned runs.
+  session.recoverInterruptedRuns();
   // @ts-expect-error A SessionReader cannot delete a session.
   session.delete('session');
   // @ts-expect-error A PresetReader cannot create the default preset.

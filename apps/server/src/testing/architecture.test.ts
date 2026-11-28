@@ -114,6 +114,7 @@ describe('Server architecture boundaries', () => {
     expect(await boundaryMessages('modules/state/service.ts', "import type { SessionService } from '../sessions/service.js';")).toContain('readonly');
     expect(await boundaryMessages('modules/state/service.ts', "import type { SessionReader } from '../sessions/service.js';")).toEqual([]);
     expect(await boundaryMessages('modules/worlds/repository.ts', "db.prepare('SELECT * FROM entries');")).toContain('table');
+    expect(await boundaryMessages('modules/worlds/repository.ts', "db.prepare('SELECT * FROM runs');")).toContain('table');
     expect(await boundaryMessages('usecases/example.ts', "db.prepare('SELECT * FROM entries');")).toContain('sqlLayer');
   });
 });

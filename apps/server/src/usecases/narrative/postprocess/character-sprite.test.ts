@@ -15,6 +15,7 @@ const catalog: CharacterSpriteCatalogItem[] = characters.flatMap(characterId => 
 })));
 const item = (characterId: string, position: CharacterSpritePosition, spriteId = 'default'): CharacterSpriteItem =>
   ({ position, characterId, spriteId });
+const saved = (row: CharacterSpriteItem) => ({...row, asset: 'https://example.test/' + row.characterId + '/' + row.spriteId + '.webp'});
 const block = (rows: string) => '<character_sprite>\n' + rows + '\n</character_sprite>';
 const parse = (text: string, list = catalog) => sprites.processCharacterSprite(extractCapability(text, 'character_sprite'), list);
 const encode = (items: CharacterSpriteItem[]) => items.map(value => JSON.stringify(value)).join('\n');
@@ -33,7 +34,7 @@ describe('character sprite JSONL snapshots', () => {
 
   it('accepts all seven distinct positions and more than two characters in original order', () => {
     const items = positions.map((position, index) => item(characters[index]!, position));
-    expect(parse(block(encode(items)))).toEqual({ status: 'success', items });
+    expect(parse(block(encode(items)))).toEqual({ status: 'success', items: items.map(saved) });
   });
 
   it('keeps the first valid row and lets failed duplicate-position/character rows reserve neither key', () => {
@@ -42,7 +43,7 @@ describe('character sprite JSONL snapshots', () => {
       item('alice', 'top'), item('carol', 'top'), item('carol', 'top'),
     ];
     expect(parse(block(encode(rows)))).toEqual({
-      status: 'partial_success', items: [rows[0], rows[2], rows[4]],
+      status: 'partial_success', items: [saved(rows[0]!), saved(rows[2]!), saved(rows[4]!)],
       errors: [
         { line: 2, errorCode: 'duplicate_position' },
         { line: 4, errorCode: 'duplicate_character' },
@@ -54,7 +55,7 @@ describe('character sprite JSONL snapshots', () => {
   it('does not let a rejected reference reserve either key or substitute a default sprite', () => {
     const rows = [item('alice', 'left', 'missing'), item('bob', 'left'), item('alice', 'right')];
     expect(parse(block(encode(rows)))).toEqual({
-      status: 'partial_success', items: rows.slice(1), errors: [{ line: 1, errorCode: 'unknown_sprite' }],
+      status: 'partial_success', items: rows.slice(1).map(saved), errors: [{ line: 1, errorCode: 'unknown_sprite' }],
     });
     expect(parse(block(encode([item('ALICE', 'left')])))).toMatchObject({
       status: 'invalid_items', errors: [{ line: 1, errorCode: 'unknown_character' }],
@@ -75,7 +76,7 @@ describe('character sprite JSONL snapshots', () => {
   ])('skips a row with %s and continues with the next valid row', (_name, rejected, errorCode) => {
     const accepted = item('alice', 'left');
     expect(parse(block(' \n' + rejected + '\n\n' + JSON.stringify(accepted)))).toEqual({
-      status: 'partial_success', items: [accepted], errors: [{ line: 1, errorCode }],
+      status: 'partial_success', items: [saved(accepted)], errors: [{ line: 1, errorCode }],
     });
   });
 
@@ -97,7 +98,7 @@ describe('character sprite JSONL snapshots', () => {
     const rows = positions.map((position, index) => item(characters[index]!, position));
     const result = parse(block('invalid\n'.repeat(105) + encode(rows)));
     expect(result?.status).toBe('partial_success');
-    expect(result?.items).toEqual(rows);
+    expect(result?.items).toEqual(rows.map(saved));
     expect(result?.errors).toHaveLength(105);
   });
 
@@ -107,7 +108,7 @@ describe('character sprite JSONL snapshots', () => {
       .mockImplementationOnce(() => { throw new Error('row failure'); }).mockImplementation(original);
     const row = item('alice', 'left');
     expect(parse(block(encode([row, row])))).toEqual({
-      status: 'partial_success', items: [row], errors: [{ line: 1, errorCode: 'processing_error' }],
+      status: 'partial_success', items: [saved(row)], errors: [{ line: 1, errorCode: 'processing_error' }],
     });
   });
 
@@ -127,13 +128,13 @@ describe('character sprite JSONL snapshots', () => {
   it('uses case-insensitive own tags without depending on another capability boundary', () => {
     const accepted = item('alice', 'topleft');
     const text = '<state_update>broken\n<CHARACTER_SPRITE>' + JSON.stringify(accepted) + '</CHARACTER_SPRITE>';
-    expect(parse(text)).toEqual({ status: 'success', items: [accepted] });
+    expect(parse(text)).toEqual({ status: 'success', items: [saved(accepted)] });
   });
 
   it('starts fresh for every message rather than merging previous accepted rows', () => {
     expect(parse(block(encode([item('alice', 'left'), item('bob', 'right')])))).toMatchObject({ items: expect.any(Array) });
     expect(parse(block(encode([item('carol', 'center')])))).toEqual({
-      status: 'success', items: [item('carol', 'center')],
+      status: 'success', items: [saved(item('carol', 'center'))],
     });
   });
 });
@@ -145,7 +146,7 @@ describe('independent sprite postprocess capability', () => {
   it('has no preset/enabled input and keeps missing output absent', () => {
     expect(processNarrativeOutput('Prose', state, context).output).not.toHaveProperty('characterSprite');
     expect(processNarrativeOutput(block(encode([item('alice', 'left')])), state, context).output.characterSprite)
-      .toEqual({ status: 'success', items: [item('alice', 'left')] });
+      .toEqual({ status: 'success', items: [saved(item('alice', 'left'))] });
   });
 
   it('isolates capability failure from suggestions and reports the failed sprite result', () => {

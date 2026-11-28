@@ -4,9 +4,9 @@
 
 Server 在现有会话上提供按预设整理上下文、可选一次摘要调用、一次正文调用、正文/公开 reasoning/工具请求增量和显式停止。用户受理时先保存；助手完整或部分公开内容在正常结束、失败或停止时独立结算。用户、成功摘要及助手各自保存，不使用跨模型调用的整体事务。SSE 只使用 Server 自有契约，外部仅发布一次 run 总 usage，异常终态仅使用 stop_reason。
 
-Web 已接入管理、作者预览与文本叙事运行页，见 [运行接入](web-runtime.md)。原 Server/Web 保持独立。Server 处理正文尾部的状态 JSONL、行动建议数组和独立角色立绘 JSONL 快照；不提供 Agent/tool loop、修复重试、重启恢复、执行状态表或事件回放。
+现有 Web 运行页的实现见 [运行接入](web-runtime.md)。前端需另行适配 v15 契约。Server 处理正文尾部的状态 JSONL、行动建议数组和独立角色立绘 JSONL 快照；执行状态保存在 runs，独占启动时收尾遗留活动轮。SSE 传递实时输出。
 
-会话创建由独立 create-session 用例完成开局选择、{{user}} 替换、session/message 初始状态和首条 assistant 消息的一次事务保存，只发 session.created。首条消息是普通 run 分组的一部分，不分类；其正文参与后续历史，状态被后继继承。服务端按应用开局覆盖后的 message 快照逐根写入 extData.output.stateUpdate.updates，每行保存成功状态、根路径及完整值。有更新时状态为 success，空快照为 no_updates。行动建议保存为 no_suggestions 和空数组，模型请求计数为零。开局不自动创建持久立绘结果。
+会话创建由独立 create-session 用例完成开局选择、{{user}} 替换、session/message 初始状态和首条 assistant 消息的一次事务保存，只发 session.created。首条消息是普通 run 分组的一部分，不分类；其正文参与后续历史，状态被后继继承。服务端按应用开局覆盖后的 message 快照逐根写入 Run.capabilities.stateUpdate.updates，每行保存成功状态、根路径及完整值。有更新时状态为 success，空快照为 no_updates。行动建议保存为 no_suggestions 和空数组，模型请求计数为零。开局不自动创建持久立绘结果。
 
 状态 HTTP 通过 POST /state/query 和 POST /state/update 按正文定位目标。叙事后处理只更新本轮激活且已存在的 message 路径，不向模型开放 global/session 写入；公共字段更新的缺失路径忽略语义保持不变。state.changed 保持 `{path,scope,value}` 契约，在成功提交实际变化后发布；message 事件表示当前 tip 的有效继承视图。叙事有变化时保存完整助手状态快照，无变化时继续 null 继承；内部 getViews/evaluateWhen 服务于叙事上下文。具体写入与读取语义见 [状态接口](server-http.md#状态接口)。调用方通过查询和已提交事件同步有效值。
 
@@ -57,12 +57,12 @@ pi-ai 1.5.0 的 OpenAI 兼容适配器在模型及思考档位默认值之后合
 ## 提交与结束
 
 1. HTTP 检查来源、真实会话和可选访问权限。用例检查输入非空白、expectedTipEntryId、同会话并发和停机状态；拒绝的请求不追加消息。
-2. 首次 await 前占用当前会话，生成 runId、userEntryId、assistantEntryId。用户消息立即追加到请求指定的前驱；写入失败则不受理、不调用模型。
+2. 首次 await 前占用当前会话，生成 runId、userEntryId、assistantEntryId。running Run 与 complete 用户消息同时写入，追加到请求指定的前驱；写入失败则不受理、不调用模型。
 3. 用户保存后仅传 sessionId 及执行控制参数调用 prepareContext；其同步部分在首次异步等待前捕获 session 当前领域快照。Context 自行识别末尾用户消息并映射 input.text，message 状态从实际 tip 读取；普通发送保存的用户 state=null，继续继承此前状态。上下文准备失败作为本轮执行错误处理，已经保存的用户消息保留。
 4. 返回 202 及受理标识、已保存的 userMessage，发布携带同一用户消息的 run.created；客户端可按 HTTP 响应立即展示，SSE 按消息 ID 确认或补偿。后续上下文准备包括模型预算、候选评估、顺序检查和可选一次摘要。context 编排器独立保存成功摘要并回传准备结果、后续父节点和摘要回执；外层取得可用请求后调用正文模型。摘要进度必须在 run.created 后，保存成功后才发布 run.summarized。尚未取得模型配置时 provider/model 为 null。
 5. 模型 content 经流式分离后映射为 run.delta，能力块保持隐藏；公开 reasoning 和工具参数继续独立累积。最终模型快照重新分离，干净 snapshot 权威替换公开内容，不要求与之前 delta 拼接完全一致。没有增量时也可输出最终快照。
 6. 模型结束、错误、输出不完整或停止都进入保存步骤。仅正常 stop、无工具请求且干净正文有效时执行后处理，分别记录能力结果并准备 message 状态候选。助手正文、output、state 和 metrics 同步事务保存；部分助手保存公开内容但不生成 output。parentId 为成功 compaction ID，没有摘要时为 userEntryId；完全没有公开内容时不造空助手。
-7. 保存助手后将结束结果写入用户 entry 的 extData.narrative，再释放当前会话占位，发布已提交状态变化及有效建议，然后发布唯一一次 run.usage 和唯一终态。每条能力通知异常独立隔离，继续后续通知和终态。stop_reason 区分取消、关闭和主流程失败，保存失败优先；能力错误只留在 output，不改正常 run.completed。
+7. 同一结算事务写入 Run 终态、主请求计量及能力结果。解锁后依序发布有效状态、建议、立绘、run.usage 和终态。停止原因与 Run.stopReason 完全一致。
 
 同会话同时只允许一轮，冲突返回 RUN_ALREADY_ACTIVE/409，不排队；不同会话独立执行。services.ts 装配的 RuntimeCache 在全应用共享，用户保存前加锁，覆盖摘要、正文、后处理和结算；失败/取消/关闭均释放。会话编辑、删除、手工追加、正文/扩展/计量/结束结果写入返回 SESSION_WRITE_LOCKED/409；session/message 状态写入及该世界任意 run 活跃时的 global 状态写入返回 STATE_WRITE_LOCKED/409，空更新批次和同值也不例外。内部本轮持有者令牌只授权消息、摘要和结束结果落库，不向外部事件订阅者传播。结算完成、通知之前解锁，finally 按对象身份幂等释放，避免覆盖新 run。active Map 仅保留停止/查询所需的执行句柄；读取、SSE、stop 不受写锁影响。不提供多进程锁或可恢复任务存储。
 
@@ -72,47 +72,11 @@ run.completed 要求模型正常 done、finishReason=stop、无工具请求、�
 
 ## 消息与计量
 
-不增加表，不改变 schema version。extData.narrative 只保存明确的结束结果，不存执行日志或恢复记录。单条 appendEntry 内部仍原子维护 entry、seq 和 tip；初始化等其他用例的既有事务不受影响。
+SQLite v15 使用 runs 和 entries。每次发送先预留 assistantEntryId。Run 保存执行状态、终止原因、分页键、时间、能力和请求指标。entry 维护轮次归属、父链、正文和有效消息状态。用户与开场消息完整性为 complete，助手可为 complete 或 partial，摘要的 status 为 null。
 
-```ts
-user.payload = {
-  message: { role: 'user', content: inputText, timestamp },
-};
-assistant.payload = {
-  message: {
-    role: 'assistant', content: finalSnapshot.content,
-    reasoning_content: finalSnapshot.reasoning_content,
-    tool_calls: finalSnapshot.tool_calls, timestamp,
-  },
-};
-user.metrics = null;
-assistant.metrics = {
-  requests: [{
-    requestId,
-    modelId,
-    provider, // 本次调用的 providerId
-    usage,
-    durationMs,
-    firstTextMs, // 尚未收到正文时不提供
-  }],
-};
-```
+开场 Run 直接完成。正常发送的写入顺序为用户、可选摘要、可选助手。助手可以只有公开思考或工具片段。中断且没有公开内容时，预留的助手 ID 仍属于本次执行，详情只显示用户。
 
-entry.role 与 payload.message.role 一致。同轮已有消息共享 runId；requestId 是一次模型请求的标识，不是请求去重键或事件 ID。助手 state 无变化时为 null，有实际变化时保存完整更新快照；正常执行后处理的助手 extData.output 保存各能力结果，模型未正常完成的部分助手不制造 output。用户 extData 在结束结算后包含 narrative。公开 reasoning 和工具请求与正文同属消息内容；不保存 SDK signature、redacted 数据、供应商原始响应、API key 或 SDK AssistantMessage 整体。工具参数保留字符串，包括中断时的不完整 JSON，不解析或执行。
-
-| 结束情况 | 保存结果 |
-| --- | --- |
-| 完整生成并保存成功 | 用户 + 完整助手快照，用户 narrative.status=completed |
-| 模型失败或输出截断，已有公开内容 | 用户 + 助手公开快照，用户 narrative.status=stopped，stopReason 为失败原因 |
-| 主动停止或正常关机，已有公开内容 | 用户 + 助手公开快照，用户 narrative.status=stopped，stopReason 为 cancelled/server_shutdown |
-| 只有 reasoning 或工具请求 | 保存公开快照；无正常正文或不支持的工具执行以相应 stop_reason 结束 |
-| 配置、凭据、预算等失败，或没有公开内容 | 仅用户；不生成空助手 |
-| 助手写入失败或 tip 冲突 | 保留用户，savedMessageIds 不包含预分配助手 ID，不宣称已保存 |
-| 只有空白正文和 reasoning、没有工具请求 | 不创建助手消息 |
-
-失败或停止的部分消息是正式可读记录，下一轮只读取其可见正文。只有 reasoning/tool_calls 而没有正文的助手记录不生成伪空模型历史，记录及真实前驱/tip 仍保留，状态从捕获时真实 tip 的有效视图读取。正文计量随助手保存，完全没有可保存助手时没有历史指标载体；实时 run.usage 仍按规则发布，这些指标不是完整账单。
-
-内部 usage 为 `{inputTokens,outputTokens,totalTokens,cacheReadTokens,cacheWriteTokens}` 或 null，SSE run.usage 映射为 snake_case。输入总量包含缓存：inputTokens=input+cacheRead+cacheWrite；cache 字段是输入细分，reasoning 已计入输出时不再次相加。没有 SDK 调用尝试时总量为真实零；尝试后无可信上报、字段无效或总量口径不一致时为 null，不把 SDK 初始零值当作已上报零。每个 accepted run 只发布一次结算总量，不带 messageId/requestId，也不在停止后等待或补发迟到统计。总量为成功保存摘要的调用用量加正文调用用量，任一参与统计的调用 usage 未知则总量为 null。失败/中断摘要既不保存记录也不计量；只有失败摘要而无正文调用时总量为零，允许与供应商实际消耗存在误差。
+`runs.metrics_json` 形如 `{main,summaries:{[compactionEntryId]:requestMetrics}}`。实际发起但缺 token 的请求保存 usage:null。每次公开统计同时返回已知 token 合计、记录数和未知用量请求数。再生替换 main，保留已提交的 summaries。缓存读写属于输入分项。
 
 ## 上下文与首版能力
 
@@ -154,7 +118,7 @@ narrative/index.ts 先排入执行微任务，再同步调用 prepareContext；�
 
 model-notes 构建按 entryId 关联的独立内存数据，历史正文始终不变。叙事内置状态更新、行动建议、角色立绘三个独立来源；节点与材料条件同当前 prompt，未启用或无适用材料的来源不附块。其他来源失败独立隔离；立绘 source 内部捕获读取、校验和序列化异常，仍返回完整空标签。
 
-在本轮已捕获历史中先选择最近两条有可见正文的 assistant，再分别读取对应 extData.output；没有结果不继续向更早消息补足。状态来源只取成功 updates 的 path/value/reason，建议来源只取有效 items；立绘来源只序列化该消息 success/partial_success 的完整有效 items，不注入行状态、错误诊断或原始失败行。每个裁剪候选重新核对来源条件，窗口始终来自同一份捕获历史。
+在本轮已捕获历史中先选择最近两条有可见正文的 assistant，再按 assistantEntryId 批量读取所属 Run 的 capabilities；没有结果不继续向更早消息补足。状态来源只取成功 updates 的 path/value/reason，建议来源只取有效 items；立绘来源只序列化该消息 success/partial_success 的完整有效 items，不注入行状态、错误诊断或原始失败行。每个裁剪候选重新核对来源条件，窗口始终来自同一份捕获历史。
 
 | 消费方 | 输入投影 |
 | --- | --- |
@@ -184,15 +148,15 @@ model-notes 构建按 entryId 关联的独立内存数据，历史正文始终�
   type: 'compaction', role: null, parentId: capturedTip.id, runId: capturedTip.runId,
   payload: { summary: '完整摘要正文' }, state: null,
   extData: { summary: { coveredThroughEntryId, sourceHash } },
-  metrics: { requests: [{ requestId, provider, modelId, usage, durationMs, firstTextMs? }] }
+  status: null
 }
 ```
 
 sourceHash 为覆盖前缀内全部 message 的 id/seq/runId/role/content 规范化 JSON 的 SHA-256，排除 state、metrics、时间戳、compaction 和动态模型旁注；覆盖到完整 run 边界。用于摘要复用时识别历史编辑，保存前也比较完整捕获消息的同规则指纹；不是请求指纹或恢复机制。首次存储 summary 时，coverage 是全部覆盖范围而非仅本次新增前缀。状态仍读取实际 tip 的有效继承视图，不从摘要重建。
 
-成功摘要的 usage 可以为 null；失败或中断摘要无记录、无计量。正文 metrics 仍属于 assistant，user.metrics 为 null，不重复计数。HTTP 通用追加禁止 compaction，通用编辑禁止修改摘要 payload/extData 或在普通消息伪造 summary 元数据。摘要只经 context 编排器调用 SessionService 保存，compact 阶段不写库。
+成功摘要与 runs.metrics_json.summaries[摘要 ID] 同事务提交。失败或取消的摘要调用没有持久回执。主请求写入 main，即使只保存了用户消息也可记录本次用量。
 
-普通发送的物理顺序为 user → 可选 compaction → 可选 assistant；独立上下文构建也允许在 assistant 或既有 compaction 后保存新摘要，各自分配 seq，父链和 tip 原子推进。savedMessageIds 仅列 message，实际 tipEntryId 可能是 compaction；五轮分页与 afterSeq 返回的完整分组包含摘要记录。摘要正文不作为聊天 delta 推送。
+普通发送的物理顺序为 user → 可选 compaction → 可选 assistant；独立上下文构建也允许在 assistant 或既有 compaction 后保存新摘要，各自分配 seq，父链和 tip 原子推进。savedMessageIds 仅列 message，实际 tipEntryId 可能是 compaction；轮次列表仅返回普通消息。摘要正文不作为聊天 delta 推送。
 
 ### 预算和生成参数
 
@@ -279,11 +243,9 @@ success 和 partial_success 的 items 都是一份完整新快照；前一条消
 
 各能力独立异常边界，状态和立绘内部逐行隔离。正常叙事的能力失败不改变 completed；模型错误、取消、length、工具请求或正文无效不执行能力，部分助手无 output。读取状态材料失败不能阻止建议、立绘与正文保存。
 
-SessionService.appendNarrativeAssistant 将干净正文、extData.output、可靠状态候选和 metrics 原子追加。主流程在同一收尾事务中校验 tip、计算候选并预计算有效状态变更，再保存助手；不逐行写库或提前通知。成功项已提交时，即使状态为 partial_success 也发布实际变化。主流程存储失败仍按既有规则结算，不承诺数据库整体不可用时 completed。
+SessionService.settleRun 在事务内保存干净正文、有效状态、能力、主请求计量和终态。单项能力损坏时，其读取结果为 processing_error，其他能力保持可读。立绘项携带生成时捕获的 asset，历史模型旁注只序列化位置与角色、立绘 ID。
 
-run outcome 独立保存失败时，助手及已提交能力结果不回滚；实际状态和可应用立绘仍通知，本轮不发布可点击建议。正常事件顺序为提交、释放锁、state.changed、符合条件的 action_suggestions.created、character_sprite.changed、总 usage、唯一终态。立绘事件携带 sessionId/runId/messageId/items，success/partial_success 每次都通知，success 空数组也通知；无块、全坏行、标签错误或处理异常不发立绘事件。通知异常分别隔离，完整字段见 [会话事件](server-events.md)。
-
-公共追加/编辑禁止写入或删除 output，编辑其他 extData 保留它；正文编辑保留当时结果，不重做或回滚。各能力按写入时的 schema 读取。状态或建议结果损坏时，该能力返回 processing_error 和空列表。立绘保存结构损坏时投影为 processing_error、items=[]、错误码 CHARACTER_SPRITE_STORED_RESULT_INVALID；不存在该字段时保持缺失。读取只验证保存结构，不依据最新素材目录改写历史合法 ID。结果随 narrative/runs 的 entries 返回，另有指定消息立绘结果的只读 GET，见 [立绘查询](server-http.md#立绘查询)；无新表、列或能力运行状态缓存。
+助手或终态写入失败时，回滚本次结算，并按同一执行身份尝试记录 stopped。先前独立提交的用户和摘要保留。最小结算也失败时，应用报告 STORAGE_UNAVAILABLE、停止受理并关闭 SSE。终态和能力通知只发布已提交事实。
 
 聊天、持久化正文、关键词激活与摘要保持干净。主模型的保留历史由 context 在最终组装时附加条目级 model-only notes，读取历史或旁注不重执行更新；规则见[条目级模型旁注](#条目级模型旁注)。没有持久化 notes schema、contextEligible 或能力专用历史重建模块。
 
@@ -305,18 +267,13 @@ POST 或 SSE 断开不取消叙事；只有显式 stop 或服务正常关闭触�
 
 服务正常关闭先停止受理，取消当前运行，等待本地结束保存和终态发布，然后关闭 SSE、HTTP 与数据库。强制结束进程时，已保存用户仍在；尚未进入结束保存步骤的内存公开内容可能丢失。不逐分片刷盘，不保留重启恢复记录。
 
-实时事件只有 event/data，没有事件 id、确认或回放。断线或重启后以 entries 或 narrative/runs 中已保存内容为准，不能从 202 或预分配助手 ID 推断生成完成。终态及字段定义见 [会话事件](server-events.md)。
+实时事件只有 event/data，没有事件 id、确认或回放。断线或重启后通过 narrative/runs 查询已保存内容，不能从 202 或预分配助手 ID 推断生成完成。终态及字段定义见 [会话事件](server-events.md)。
 
 ## 轮次查询与结束记录
 
-叙事接口统一位于 `/api/v1/sessions/:id/narrative`，包含 runs 提交、每页最多五轮的游标分页、停止与基础 usage 汇总；SSE 继续使用原会话 events 入口。列表返回完整 entries 分组：历史以 firstSeq 倒序，afterSeq 以新增条目对应的 lastSeq 升序。每个列表项将持久化结果与内存活跃记录组合，不保留已结束运行的内存缓存，不返回实时正文快照。
+客户端从 /sessions/:id/narrative/runs 读取最近一页，通过 nextCursor 翻页，通过 /runs/:runId 精确回读。页返回当前 activeRunId 和实际 tipEntryId。Run 持有 status、stopReason 和 assistantEntryId，公开历史仅包含已保存消息。详见 [HTTP 契约](server-http.md#叙事查询与用量)。
 
-结束记录在每个 run 首条 entry 的 extData.narrative（普通叙事为 user，创建会话时为 assistant），结构为 `{status:'completed',finishedAt}` 或 `{status:'stopped',stopReason,finishedAt}`。finishedAt 是 Unix 毫秒，stopReason 使用同一叙事原因枚举。用户尚未完成时不写该字段；助手保存失败仍尝试保存失败原因。结果写入失败保留已保存消息并以 message_persist_failed 发事件，没有结果且不活跃时查询返回 unknown。
-
-通用 entry 编辑不能写入或清除 narrative/output，修改其他 extData 时保留服务端结果；正文编辑不重新执行能力。metrics.requests 在读写时校验实际调用的 providerId。usage 查询合计已存 metrics 的已知部分并返回未知用量请求数，不宣称完整计费；同时返回 latestContext，取最新已保存主叙事 assistant 请求的真实输入量、请求时模型窗口、配置与字节组成。execute 只在实际调用 metrics 存在时附加 context，摘要不参与 latestContext 选择。配置/模型改变或条目的 seq 超过当前 tip标记 stale；缺少快照时保持未知，不借用上一轮数据。组成含 UTF-8 文本和 V1 约定每消息 16 B 开销，系统/摘要/历史字节不是逐类计费 Token；完整字段见 HTTP 契约。
-
-重连只补查已保存 seq；未落库分片不保证补齐，最终 snapshot 替换与终态后的持久化查询负责最终展示。仍活跃的轮次只提供 running/stopping 状态；用户 entry 的结束结果更新不增加 seq，客户端需另查原活跃轮次。接口字段见 [Server HTTP](server-http.md)。
-
+启动必须独占数据根。监听前将遗留 running 收尾为 stopped/server_shutdown，将 stopping 收尾为 stopped/cancelled。重复启动保留已有终态。重启期间没有流式重放和模型重试。
 
 ## Run 单行日志
 
@@ -356,13 +313,7 @@ API Key、鉴权 header、明确凭据字段及模型错误中的已知密钥值
 
 ## 最新 AI 回复重新生成
 
-重新生成沿用原用户消息和逻辑 runId，每次分配新的 assistantEntryId。Narrative 先校验最新用户轮次、指定 AI 与实际 tip，再持有执行锁完成删除和旧 extData.narrative 清除事务。Session.deleteEntry 仅提供通用删除、后继衔接和 tip 维护，不了解重新生成、不发布事件。首条开局 AI 和历史消息不属于此入口的合法目标。
-
-事务提交后发送 message.deleted，必要时发送继承视图的 state.changed，再进入与普通发送相同的 start/prepareContext/execute。Context 只读取删除后的 session 当前状态；保留 compaction，但受影响摘要须通过既有 sourceHash 校验才可使用。旧 AI 的 output 不重放，session/global 状态不回退，message 状态按剩余父链继承。
-
-新执行继续使用 run.created/summarizing/summarized/delta/usage/completed/stopped，不加 mode 或 attemptId。run 事件、活跃查询和新终态均带 assistantEntryId，stop 必须匹配该 ID 和 runId。用户消息按原 messageId 去重。删除成功后任何准备或模型失败均不恢复旧回复；部分公开输出保存，无输出只保留用户并允许显式重试。
-
-recordedUsage 保持现存 entries.metrics 求和：被删除 AI 的请求不再计入，保留摘要的计量保留，新输出独立记录。本数值不代表不可回退的历史账单，不新增账本或 schema。没有输出/持久化失败的计量边界与普通生成相同。删除可降低 lastSeq 或使新条目复用 seq；重连需以完整最近轮次替换客户端缓存。
+提交 runId、expectedAssistantEntryId、expectedTipEntryId。最新含用户消息的终态轮可以再生，包括上次没有保存助手的轮。事务保留 runId、创建时间、分页位置、用户、成功摘要与摘要计量，删除已保存旧助手、修复父链并清空旧能力和 main，预留新的助手 ID。删除通知和实际状态变化先于 run.created。停止和结算均核对当前执行身份。
 
 ## AI 帮答与会话锁
 

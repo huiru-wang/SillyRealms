@@ -34,6 +34,7 @@ export async function startServer({
   try {
     const services = createServices(database, root, credentialStore);
     const usecases = createUsecases({ services, transaction: bindTransaction(database), events });
+    services.sessions.recoverInterruptedRuns();
     await usecases.initialize();
     const app = createApp({ events, services, usecases, canAccessSession, webOrigin, stageOrigin, debug });
     const server = createServer(getRequestListener(app.fetch, { overrideGlobalObjects: false }));
@@ -63,6 +64,9 @@ export async function startServer({
       })).finally(() => database.close());
       return closing;
     };
+    usecases.storageFailure.addEventListener('abort', () => {
+      void close().catch(error => console.error('SERVER_SHUTDOWN_FAILED', error));
+    }, { once: true });
     return { server, events, services, usecases, close };
   } catch (error) {
     database.close();
@@ -79,6 +83,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       stageOrigin: process.env.SERVER_STAGE_ORIGIN,
       debug: process.argv.slice(2).includes('--debug') || process.env.SERVER_DEBUG === 'true',
     });
+    running.usecases.storageFailure.addEventListener('abort', () => { process.exitCode = 1; }, { once: true });
     const address = running.server.address();
     if (address && typeof address !== 'string') console.log('Server: http://127.0.0.1:' + address.port);
     const stop = () => {

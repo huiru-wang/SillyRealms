@@ -1,3 +1,4 @@
+import { seedMessage } from '../testing/run-fixtures.js';
 import { worldPublication } from '../testing/fixtures.js';
 import { Hono } from 'hono';
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
@@ -64,8 +65,8 @@ function worldRoutes(canAccessSession?: SessionAccessCheck, importWorld = create
 }
 function sessionWithEntry(worldId: string, id: string, config: ReturnType<typeof configuration>) {
   const session = services.sessions.create({ runtimeConfig: { narrativePresetId: config.presetId, apiModelConfigId: config.apiModelConfigId }, id, worldId, userCharacterId: 'player' });
-  const entry = services.sessions.appendEntry(id, {
-    id: id + '-entry', runId: 'opening', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: 'Opening', timestamp: 1 } },
+  const entry = seedMessage(services, id, {
+    id: id + '-entry', runId: id + '-run', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: 'Opening', timestamp: 1 } },
   });
   return { session, entry };
 }
@@ -274,6 +275,7 @@ describe('world routes', () => {
     const retained = sessionWithEntry(other.id, 'retained', config);
     expect(await data(await app.request(base + '/' + world.id + '?deleteSessions=true', { method: 'DELETE' }))).toEqual({ id: world.id });
     expect(services.worlds.get(world.id)).toBeNull();
+    expect(db.prepare('SELECT id FROM runs ORDER BY id').all()).toEqual([{id:retained.entry.runId}]);
     for (const { session, entry } of linked) {
       expect(services.sessions.get(session.id)).toBeNull();
       expect(services.sessions.getEntry(session.id, entry.id)).toBeNull();

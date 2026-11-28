@@ -36,7 +36,7 @@ const characterSpriteItemSchema = characterSpriteFields.extend({ position: chara
 
 export const characterSpriteOutputSchema = z.object({
   status: z.enum(['success', 'partial_success', 'invalid_items', 'invalid_tag', 'processing_error']),
-  items: z.array(characterSpriteItemSchema),
+  items: z.array(characterSpriteItemSchema.extend({ asset: z.string().min(1) })),
   errors: z.array(z.object({
     errorCode: diagnostic,
     line: z.number().int().positive().optional(),

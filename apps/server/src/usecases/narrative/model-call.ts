@@ -7,7 +7,7 @@ import type { ModelClient, ModelInfo, ModelMessage, ModelOptions, ModelSnapshot 
 import type { EventHub } from '../../infrastructure/events/event-hub.js';
 import type { RunEventFields } from './events.js';
 
-export { copySnapshot, zeroUsage, raceAbort as whileRunning } from '../../infrastructure/model/collect.js';
+export { copySnapshot, raceAbort as whileRunning } from '../../infrastructure/model/collect.js';
 
 export function assertRunning(signal: AbortSignal): void {
   if (signal.aborted) throw new AppError('RUN_STOPPED');

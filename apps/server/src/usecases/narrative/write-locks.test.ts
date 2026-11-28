@@ -1,3 +1,4 @@
+import { seedMessage, storedMetrics } from '../../testing/run-fixtures.js';
 import { worldPublication } from '../../testing/fixtures.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -85,7 +86,7 @@ function createSession(id: string, worldId = 'world') {
   });
 }
 function append(id: string, role: 'user' | 'assistant', sessionId = 'session') {
-  return services.sessions.appendEntry(sessionId, {
+  return seedMessage(services, sessionId, {
     id, runId: 'saved', type: 'message', role, payload: { message: { role, content: id, timestamp: 100 } },
   });
 }
@@ -128,13 +129,7 @@ describe('run write locks across session and state operations', () => {
       ['update', () => services.sessions.update('session', { title: 'Blocked' })],
       ['empty update', () => services.sessions.update('session', {})],
       ['delete', () => services.sessions.delete('session')],
-      ['appendEntry', () => append('blocked', 'assistant')],
-      ['appendNarrativeAssistant', () => services.sessions.appendNarrativeAssistant('session', {
-        id: 'blocked-narrative', runId: 'blocked', type: 'message', role: 'assistant', payload: { text: 'Blocked' },
-      }, { stateUpdate: { status: 'no_updates', updates: [] }, actionSuggestions: { status: 'no_suggestions', items: [] } })],
-      ['setNarrativeOutcome', () => services.sessions.setNarrativeOutcome('session', 'user', { status: 'completed', finishedAt: 123 })],
-      ['updateEntry', () => services.sessions.updateEntry('session', 'assistant', { payload: { text: 'Blocked' } })],
-      ['empty entry update', () => services.sessions.updateEntry('session', 'assistant', {})],
+      ['appendSummary', () => services.sessions.appendSummary('session', {id:'summary',parentId:'assistant',runId:'run',text:'summary',coveredThroughEntryId:'user',sourceHash:'hash',metrics:null})],
     ];
     for (const [name, write] of sessionWrites) expect(write, name).toThrow(new AppError('SESSION_WRITE_LOCKED'));
 
@@ -186,7 +181,7 @@ describe('run write locks across session and state operations', () => {
     expect(() => stateUsecase.update({ scope: 'session', sessionId: 'session' }, [])).toThrow(new AppError('STATE_WRITE_LOCKED'));
     await entered.promise;
     expect(narrative.list('session').activeRunId).toBe(run.accepted.runId);
-    expect(narrative.list('session').items.find(item => item.runId === run.accepted.runId)!.status).toBe('running');
+    expect(narrative.list('session').items.find(item => item.id === run.accepted.runId)!.status).toBe('running');
     expect(narrative.usage('session').recordedRequestCount).toBe(0);
     expect(services.sessions.getHistory('session').map(entry => entry.id)).toEqual([run.accepted.userEntryId]);
     expect(services.state.getSession('session')).toEqual({ coins: 2 });
@@ -210,18 +205,19 @@ describe('run write locks across session and state operations', () => {
       event: outcome === 'completed' ? 'run.completed' : 'run.stopped',
       data: { runId: run.accepted.runId },
     });
-    const entries = services.sessions.listEntryRuns('session').items.find(item => item.runId === run.accepted.runId)!.entries;
-    expect(entries[0]!.extData.narrative).toMatchObject({ status: outcome === 'completed' ? 'completed' : 'stopped' });
+    const result = services.sessions.getRun('session', run.accepted.runId);
+    const entries = result.messages;
+    expect(result).toMatchObject({ status: outcome === 'completed' ? 'completed' : 'stopped' });
     if (outcome === 'completed') {
       expect(entries).toHaveLength(2);
-      expect(entries[1]!.extData.output).toBeDefined();
-      expect(entries[1]!.metrics!.context!.contextWindowTokens).toBe(model.contextWindow);
+      expect(result.capabilities.stateUpdate).toBeDefined();
+      expect(storedMetrics(db, run.accepted.runId).main!.context!.contextWindowTokens).toBe(model.contextWindow);
     }
     expectWritable();
   });
 
   it('releases admission and global state when initial user persistence fails', async () => {
-    vi.spyOn(services.sessions, 'appendEntry').mockImplementationOnce(() => { throw new AppError('STORAGE_BUSY'); });
+    vi.spyOn(services.sessions, 'beginRun').mockImplementationOnce(() => { throw new AppError('STORAGE_BUSY'); });
     expect(() => submit()).toThrow(new AppError('STORAGE_BUSY'));
     expect(narrative.list('session').activeRunId).toBeNull();
     expectWritable();

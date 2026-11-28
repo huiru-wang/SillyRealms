@@ -1,5 +1,5 @@
 import type { StateEvent } from '../../modules/state/service.js';
-import type { CharacterSpriteItem, NarrativeStopReason } from '../../modules/sessions/service.js';
+import type { CharacterSpriteOutput, NarrativeStopReason, RunUsage } from '../../modules/sessions/service.js';
 import type {
   ModelDelta, ModelFinishReason, ModelSnapshot,
 } from '../../infrastructure/model/client.js';
@@ -13,7 +13,7 @@ export type RunEventFields = {
   timestamp: number;
 };
 
-export type SavedUserMessage = { id: string; role: 'user'; content: string; timestamp: number };
+export type SavedUserMessage = { id: string; role: 'user'; status: 'complete'; content: string; timestamp: number };
 export type AssistantDeltaMessage = {
   role: 'assistant';
   delta: Omit<ModelDelta, 'role'>;
@@ -24,14 +24,6 @@ export type AssistantDeltaMessage = {
 };
 
 export type { NarrativeStopReason } from '../../modules/sessions/service.js';
-
-export type NarrativeUsage = {
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-  cache_read_tokens: number;
-  cache_write_tokens: number;
-};
 
 type SavedRun = RunEventFields & {
   /** Entries from this run that still exist after settlement. */
@@ -45,7 +37,7 @@ export type NarrativeEvent =
   | { event: 'run.summarizing'; data: RunEventFields }
   | { event: 'run.summarized'; data: RunEventFields & { entryId: string } }
   | { event: 'run.delta'; data: RunEventFields & { messageId: string; messages: [AssistantDeltaMessage] } }
-  | { event: 'run.usage'; data: RunEventFields & { usage: NarrativeUsage | null } }
+  | { event: 'run.usage'; data: RunEventFields & { usage: RunUsage } }
   | { event: 'run.completed'; data: SavedRun }
   | { event: 'run.stopped'; data: SavedRun & { stop_reason: NarrativeStopReason } };
 
@@ -56,7 +48,7 @@ export type ActionSuggestionsCreated = {
 };
 export type CharacterSpriteChangedEvent = {
   event: 'character_sprite.changed';
-  data: { sessionId: string; runId: string; messageId: string; items: (CharacterSpriteItem & {asset: string})[] };
+  data: { sessionId: string; runId: string; messageId: string; items: CharacterSpriteOutput['items'] };
 };
 export type NarrativeSettlement = {
   notifications: (StateEvent | ActionSuggestionsCreated | CharacterSpriteChangedEvent)[];

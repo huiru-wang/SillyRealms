@@ -61,11 +61,15 @@ export function startNarrative(dependencies: NarrativeDependencies, session: Ses
   }).then(settlement => {
     // Settlement is complete: observers may stop or submit a new turn without finding a stale active run.
     release();
+    if (!settlement) return;
     for (const event of [...settlement.notifications, settlement.usage, settlement.terminal]) {
       log(event.event, event.data, 'timestamp' in event.data ? event.data.timestamp : undefined);
       try { dependencies.events.publish(sessionId, event); }
       catch { /* Notification delivery cannot change a committed outcome or skip later events. */ }
     }
+  }).catch((error: unknown) => {
+    log('run.storage_unavailable', { sessionId, runId, assistantEntryId, error: String(error) });
+    dependencies.onStorageFailure?.(error);
   }).finally(() => {
     release();
   });

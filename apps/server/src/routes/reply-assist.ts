@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { readJson, success } from '../http/response.js';
-import { requireSessionAccess } from '../http/session-access.js';
+import { assertAccepting, requireSessionAccess } from '../http/session-access.js';
 import type { SessionAccessCheck } from '../http/session-access.js';
 import type { SessionService } from '../modules/sessions/service.js';
 import type { createReplyAssist } from '../usecases/reply-assist/index.js';
@@ -11,7 +11,9 @@ export function createReplyAssistRoutes({ sessions, canAccessSession, shutdownSi
   routes.post('/:id/reply-assist', async c => {
     const id = c.req.param('id');
     await requireSessionAccess(sessions, id, c.req.raw, canAccessSession, shutdownSignal);
-    return success(c, replyAssist.submit(id, await readJson(c)), 202);
+    const body = await readJson<Parameters<typeof replyAssist.submit>[1]>(c);
+    assertAccepting(shutdownSignal);
+    return success(c, replyAssist.submit(id, body), 202);
   });
   routes.post('/:id/reply-assist/:requestId/stop', async c => {
     const id = c.req.param('id');

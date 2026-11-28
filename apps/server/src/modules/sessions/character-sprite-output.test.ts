@@ -3,7 +3,7 @@ import {
   storedNarrativeOutputSchema, narrativeOutputSchema, parseCharacterSpriteItem, readCharacterSpriteOutput, type CharacterSpriteOutput,
 } from './output.js';
 
-const item = { position: 'left' as const, characterId: 'alice', spriteId: 'default' };
+const item = { position: 'left' as const, characterId: 'alice', spriteId: 'default', asset: 'alice.webp' };
 const baseOutput = {
   stateUpdate: { status: 'no_updates' as const, updates: [] },
   actionSuggestions: { status: 'no_suggestions' as const, items: [] },
@@ -65,6 +65,7 @@ describe('persisted character sprite output', () => {
   });
 
   it('exposes strict three-field parsing while preserving exact identifier bytes', () => {
+    const item = {position:'left',characterId:'alice',spriteId:'default'};
     expect(parseCharacterSpriteItem(item)).toEqual({ ok: true, item });
     expect(parseCharacterSpriteItem({ ...item, position: 'bottom' })).toEqual({ ok: false, errorCode: 'invalid_position' });
     expect(parseCharacterSpriteItem({ ...item, extra: true })).toEqual({ ok: false, errorCode: 'invalid_item' });

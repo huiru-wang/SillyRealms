@@ -1,3 +1,4 @@
+import { seedMessage } from '../../testing/run-fixtures.js';
 import { worldPublication } from '../../testing/fixtures.js';
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -83,12 +84,12 @@ describe('AI reply assist',()=>{
   it('keeps the latest user in history, expands each goal once and emits only text without writing entries',async()=>{
     f.bind();
     const {sessions}=f.services;
-    const entry=sessions.appendEntry('a',{type:'message',role:'user',runId:'n',payload:{message:{role:'user',content:'saved input',timestamp:1}}});
+    const entry=seedMessage(f.services, 'a',{type:'message',role:'user',runId:'n',payload:{message:{role:'user',content:'saved input',timestamp:1}}});
     sessions.update('a',{runtimeConfig:{replyAssistGoal:'find {{user}}'}});sessions.update('b',{runtimeConfig:{replyAssistGoal:'different goal'}});
     f.submit('a','draft {{user}}');
     expect(()=>f.submit()).toThrow('REPLY_ASSIST_ALREADY_ACTIVE');
     expect(()=>f.usecases.narrative.submit({sessionId:'a',input:{text:'no'},expectedTipEntryId:entry.id})).toThrow('REPLY_ASSIST_ALREADY_ACTIVE');
-    expect(()=>f.usecases.narrative.regenerate({sessionId:'a',userEntryId:entry.id,assistantEntryId:null,expectedTipEntryId:entry.id})).toThrow('REPLY_ASSIST_ALREADY_ACTIVE');
+    expect(()=>f.usecases.narrative.regenerate({sessionId:'a',runId:entry.runId,expectedAssistantEntryId:sessions.getRun('a',entry.runId).assistantEntryId,expectedTipEntryId:entry.id})).toThrow('REPLY_ASSIST_ALREADY_ACTIVE');
     expect(()=>sessions.delete('a')).toThrow('SESSION_WRITE_LOCKED');
     expect(()=>sessions.setState('a',{})).toThrow('STATE_WRITE_LOCKED');
     expect(()=>f.services.worlds.setState('world',{})).not.toThrow();
@@ -117,7 +118,7 @@ describe('AI reply assist',()=>{
         affinity:{type:'number',initial:0,description:'Affinity',min:0,max:100},
       }}},
     });
-    const entry=f.services.sessions.appendEntry('a',{type:'message',role:'assistant',runId:'opening',
+    const entry=seedMessage(f.services, 'a',{type:'message',role:'assistant',runId:'opening',
       payload:{message:{role:'assistant',content:'Opening',timestamp:1}}});
     f.services.sessions.setEntryState('a',entry.id,[{key:'affinity',value:70}]);
     const history=f.services.sessions.getHistory('a');
@@ -250,8 +251,8 @@ describe('AI reply assist',()=>{
   });
   it('includes draft length in budget, preserves the last run and can disable history',async()=>{
     const preset=f.bind()!;
-    const {sessions,presets}=f.services;
-    for(const [id,text] of [['older','x'.repeat(6000)],['latest','latest visible']])sessions.appendEntry('a',{
+    const {presets}=f.services;
+    for(const [id,text] of [['older','x'.repeat(6000)],['latest','latest visible']])seedMessage(f.services, 'a',{
       type:'message',role:'assistant',runId:id!,payload:{message:{role:'assistant',content:text!,timestamp:1}},
     });
     preset.config.contextStrategy.maxContextTokens=600;

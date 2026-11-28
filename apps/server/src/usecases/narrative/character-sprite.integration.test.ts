@@ -1,3 +1,4 @@
+import { seedMessage } from '../../testing/run-fixtures.js';
 import { worldPublication } from '../../testing/fixtures.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -55,7 +56,7 @@ beforeEach(async () => {
   });
   services.sessions.create({ id: 'session', worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' },
     userCharacterId: 'player' });
-  services.sessions.appendEntry('session', { id: 'opening', runId: 'opening-run', type: 'message', role: 'assistant',
+  seedMessage(services, 'session', { id: 'opening', runId: 'opening-run', type: 'message', role: 'assistant',
     payload: { message: { role: 'assistant', content: 'Opening', timestamp: 1 } } });
   hub = new EventHub();
   seen = [];
@@ -116,7 +117,7 @@ describe('character sprite narrative integration', () => {
     });
     const { accepted, finished } = submit();
     expect((await finished).event).toBe('run.completed');
-    expect(spriteResult(accepted)).toEqual({ status: 'success', items: rows });
+    expect(spriteResult(accepted)).toEqual({ status: 'success', items: eventItems });
     expect(committedAtEvent).toEqual(spriteResult(accepted));
     expect(unlocked).toBe(true);
     expect(changes()).toEqual([{ event: 'character_sprite.changed', data: {
@@ -140,12 +141,12 @@ describe('character sprite narrative integration', () => {
     const second = submit();
     await second.finished;
     expect(spriteResult(second.accepted)).toEqual({
-      status: 'partial_success', items: [rows[1]], errors: [
+      status: 'partial_success', items: [eventItems[1]], errors: [
         { line: 1, errorCode: 'unknown_sprite' }, { line: 3, errorCode: 'duplicate_position' },
       ],
     });
     expect(changes()[0]?.data.items).toEqual([eventItems[1]]);
-    expect(spriteResult(first.accepted)?.items).toEqual(rows);
+    expect(spriteResult(first.accepted)?.items).toEqual(eventItems);
   });
 
   it.each([
@@ -169,7 +170,7 @@ describe('character sprite narrative integration', () => {
       nodes: current.config.nodes.map(node => node.id === 'characterSprite' ? { ...node, enabled: false } : node) } });
     const { accepted, finished } = submit();
     expect((await finished).event).toBe('run.completed');
-    expect(spriteResult(accepted)?.items).toEqual(rows);
+    expect(spriteResult(accepted)?.items).toEqual(eventItems);
     expect(changes()).toHaveLength(1);
     expect(JSON.stringify(stream.mock.calls[0]![1])).not.toContain('character_sprite');
   });
@@ -199,20 +200,19 @@ describe('character sprite narrative integration', () => {
     expect(saved(stopped.accepted).extData).not.toHaveProperty('output');
     expect(changes()).toHaveLength(0);
     script(body + block());
-    vi.spyOn(services.sessions, 'appendNarrativeAssistant').mockImplementation(() => { throw new Error('save failed'); });
+    vi.spyOn(services.sessions, 'settleRun').mockImplementationOnce(() => { throw new Error('save failed'); });
     const failed = submit();
     expect(await failed.finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'message_persist_failed' } });
     expect(services.sessions.getEntry('session', failed.accepted.assistantEntryId)).toBeNull();
     expect(changes()).toHaveLength(0);
   });
 
-  it('notifies a committed sprite result even when the later outcome write fails', async () => {
-    vi.spyOn(services.sessions, 'setNarrativeOutcome').mockImplementation(() => { throw new Error('outcome failed'); });
+  it('rolls back sprite output and emits no change when settlement fails', async () => {
+    vi.spyOn(services.sessions, 'settleRun').mockImplementationOnce(() => { throw new Error('outcome failed'); });
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'message_persist_failed' } });
-    expect(spriteResult(accepted)?.items).toEqual(rows);
-    expect(changes()).toHaveLength(1);
-    expect(seen.slice(-3).map(event => event.event)).toEqual(['character_sprite.changed', 'run.usage', 'run.stopped']);
+    expect(services.sessions.getRun('session', accepted.runId).capabilities).toEqual({});
+    expect(changes()).toHaveLength(0);
   });
 
   it('still settles when delivering a sprite notification throws', async () => {
@@ -223,7 +223,7 @@ describe('character sprite narrative integration', () => {
     });
     const { accepted, finished } = submit();
     expect((await finished).event).toBe('run.completed');
-    expect(spriteResult(accepted)?.items).toEqual(rows);
+    expect(spriteResult(accepted)?.items).toEqual(eventItems);
     expect(seen.slice(-2).map(event => event.event)).toEqual(['run.usage', 'run.completed']);
   });
 
@@ -233,16 +233,40 @@ describe('character sprite narrative integration', () => {
     script(body + block([rows[1]]));
     seen = [];
     const finished = terminal();
-    const replacement = narrative.regenerate({ sessionId: 'session', userEntryId: first.accepted.userEntryId,
-      assistantEntryId: first.accepted.assistantEntryId, expectedTipEntryId: first.accepted.assistantEntryId });
+    const replacement = narrative.regenerate({ sessionId: 'session', runId: first.accepted.runId,
+      expectedAssistantEntryId: first.accepted.assistantEntryId, expectedTipEntryId: first.accepted.assistantEntryId });
     expect((await finished).event).toBe('run.completed');
     expect(replacement.runId).toBe(first.accepted.runId);
     expect(replacement.assistantEntryId).not.toBe(first.accepted.assistantEntryId);
     expect(() => services.sessions.getMessageCharacterSprites('session', first.accepted.assistantEntryId)).toThrow('ENTRY_NOT_FOUND');
-    expect(spriteResult(replacement)?.items).toEqual([rows[1]]);
+    expect(spriteResult(replacement)?.items).toEqual([eventItems[1]]);
     expect(seen.find(event => event.event === 'message.deleted')?.data.messageId).toBe(first.accepted.assistantEntryId);
     expect(changes()).toEqual([{ event: 'character_sprite.changed', data: {
       sessionId: 'session', runId: replacement.runId, messageId: replacement.assistantEntryId, items: [eventItems[1]],
     } }]);
   });
+});
+
+it('appends the saved state, suggestion and sprite rows to the previous assistant in the next actual model request', async () => {
+  services.worlds.update('world', { stateDefinition:{schema_version:2,scopes:{message:{
+    coins:{type:'number',initial:1,description:'Coins',rules:{coins:'Track spending'}},
+  }}} });
+  services.sessions.setEntryState('session','opening',[{key:'coins',value:1}]);
+  script(body + '<state_update>\n{"path":"coins","value":3}\n</state_update>'
+    + '<action_suggestions>["查看行囊"]</action_suggestions>' + block([rows[0]]));
+  const first = submit();
+  expect((await first.finished).event).toBe('run.completed');
+  expect(saved(first.accepted).extData).toEqual({});
+  expect(saved(first.accepted).payload.message).toMatchObject({content:body});
+  expect(narrative.get('session', first.accepted.runId).capabilities).toMatchObject({
+    stateUpdate:{status:'success'}, actionSuggestions:{status:'success'}, characterSprite:{items:[eventItems[0]]},
+  });
+  script('继续行走。');
+  await submit().finished;
+  const previous = stream.mock.calls[1]![1].find(message => message.role === 'assistant' && message.content.startsWith(body));
+  expect(previous?.content).toBe([
+    body, '', '<state_update>', '{"path":"coins","value":3}', '</state_update>',
+    '<action_suggestions>["查看行囊"]</action_suggestions>', '<character_sprite>',
+    JSON.stringify(rows[0]), '</character_sprite>',
+  ].join('\n'));
 });

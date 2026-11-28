@@ -1,3 +1,4 @@
+import { seedMessage } from './testing/run-fixtures.js';
 import { worldPublication } from './testing/fixtures.js';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -102,7 +103,7 @@ describe('Server over HTTP', () => {
     const session = running.services.sessions.create({
       worldId: world.id, runtimeConfig: { narrativePresetId: preset.id, apiModelConfigId: model.id }, userCharacterId: 'player',
     });
-    const entry = running.services.sessions.appendEntry(session.id, {
+    const entry = seedMessage(running.services, session.id, {
       runId: 'run-1', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: 'Saved story', timestamp: 1 } }, state: [],
     });
     running.services.sessions.setState(session.id, { gold: 12 });
@@ -258,4 +259,26 @@ describe('Server over HTTP', () => {
       await exited;
     }
   });
+});
+
+it('settles interrupted runs before listening and leaves completed recovery unchanged on the next start', async () => {
+  const dataRoot = temporaryDirectory(), databasePath = join(dataRoot,'recover.sqlite');
+  const first = await launch({dataRoot,databasePath},['live','stopping']);
+  for (const sessionId of ['live','stopping']) {
+    const {sessions,cache} = first.services, runId = sessionId+'-run', assistantId = sessionId+'-assistant';
+    const permit = cache.acquireRun({sessionId,worldId:sessions.require(sessionId).worldId,runId});
+    sessions.beginRun(sessionId,runId,assistantId,{id:sessionId+'-user',parentId:null,timestamp:1,
+      payload:{message:{role:'user',content:'go',timestamp:1}}},permit);
+    if (sessionId==='stopping') sessions.markStopping(sessionId,runId,assistantId);
+    // Leave the durable state exactly as it would be after a process exit.
+  }
+  await first.close();
+  const second = await launch({dataRoot,databasePath});
+  const read = (server:RunningServer) => ['live','stopping'].map(id => server.services.sessions.getRun(id,id+'-run'));
+  const recovered = read(second);
+  expect(recovered.map(run => run.stopReason)).toEqual(['server_shutdown','cancelled']);
+  for (const run of recovered) expect(run).toMatchObject({status:'stopped',messages:[{role:'user',status:'complete'}],usage:{recordedRequestCount:0}});
+  await second.close();
+  const third = await launch({dataRoot,databasePath});
+  expect(read(third)).toEqual(recovered);
 });

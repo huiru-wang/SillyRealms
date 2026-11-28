@@ -1,4 +1,4 @@
-import type { EntryRun, EntryRunListOptions, Session } from '../../modules/sessions/service.js';
+import type { RunOptions, Session } from '../../modules/sessions/service.js';
 import { randomUUID } from 'node:crypto';
 import { createRunLogger } from '../../infrastructure/logging/run-logger.js';
 import type { RunWritePermit } from '../../infrastructure/cache/index.js';
@@ -20,8 +20,10 @@ const submitSchema = z.object({
 export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
   const active = new Map<string, ActiveNarrative>();
   let shuttingDown = false;
+  let storageFailed = false;
   let closing: Promise<void> | undefined;
   const check = (sessionId: string, expectedTipEntryId: string | null) => {
+    if (storageFailed) throw new AppError('STORAGE_UNAVAILABLE');
     if (shuttingDown) throw new AppError('SERVER_SHUTTING_DOWN');
     const session = dependencies.sessions.require(sessionId);
     if (active.has(sessionId)) throw new AppError('RUN_ALREADY_ACTIVE');
@@ -41,7 +43,10 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
     };
     try {
       const ready = prepare(permit, assistantEntryId);
-      startNarrative(dependencies, session, run, ready, permit, release);
+      startNarrative({ ...dependencies, onStorageFailure(error) {
+        storageFailed = true;
+        dependencies.onStorageFailure?.(error);
+      } }, session, run, ready, permit, release);
       return { runId, assistantEntryId, userEntryId: ready.userMessage.id, userMessage: { ...ready.userMessage },
         tipEntryId: ready.tipEntryId, deletedMessageIds: [...ready.deletedMessageIds] };
     } catch (error) { release(); throw error; }
@@ -49,29 +54,28 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
   const submit = (input: SubmitInput): AcceptedNarrative => {
     const value = submitSchema.parse(input), { sessionId, expectedTipEntryId } = value;
     const session = check(sessionId, expectedTipEntryId), runId = randomUUID();
-    return begin(session, runId, permit => {
+    return begin(session, runId, (permit, assistantId) => {
       const timestamp = Date.now();
-      const user = dependencies.sessions.appendEntry(sessionId, {
-        id: randomUUID(), parentId: expectedTipEntryId, runId, type: 'message', role: 'user', timestamp,
+      const user = dependencies.sessions.beginRun(sessionId, runId, assistantId, {
+        id: randomUUID(), parentId: expectedTipEntryId, timestamp,
         payload: { message: { role: 'user', content: value.input.text, timestamp } },
-        state: null, extData: {}, metrics: null,
       }, permit);
-      return { userMessage: { id: user.id, role: 'user', content: value.input.text, timestamp: user.timestamp },
+      return { userMessage: { id: user.id, status: 'complete', role: 'user', content: value.input.text, timestamp: user.timestamp },
         tipEntryId: user.id, deletedMessageIds: [], notifications: [] };
     });
   };
   const regenerate = (input: RegenerateInput): AcceptedNarrative => {
     const value = regenerateSchema.parse(input), session = check(value.sessionId, value.expectedTipEntryId);
-    const user = dependencies.sessions.getEntry(value.sessionId, value.userEntryId);
-    if (!user || user.role !== 'user') throw new AppError('INVALID_REGENERATION_TARGET');
-    return begin(session, user.runId, (permit, assistantEntryId) => prepareRegeneration(dependencies, value, permit, assistantEntryId));
+    return begin(session, value.runId, (permit, assistantEntryId) => prepareRegeneration(dependencies, value, permit, assistantEntryId));
   };
 
   const stop = (sessionId: string, runId: string, assistantEntryId: string): { runId: string; assistantEntryId: string; stopping: true } => {
     dependencies.sessions.require(identifier.parse(sessionId));
     const run = active.get(sessionId);
     if (!run || run.runId !== identifier.parse(runId) || run.assistantEntryId !== identifier.parse(assistantEntryId)) throw new AppError('RUN_NOT_FOUND');
+    if (shuttingDown && run.controller.signal.reason === 'server_shutdown') throw new AppError('SERVER_SHUTTING_DOWN');
     if (!run.controller.signal.aborted) {
+      dependencies.sessions.markStopping(sessionId, runId, assistantEntryId);
       run.log('run.stop_requested', { reason: 'cancelled' });
       run.controller.abort('cancelled');
     }
@@ -91,25 +95,11 @@ export function createNarrativeUsecases(dependencies: NarrativeDependencies) {
     return closing;
   };
 
-  const projectRun = (sessionId: string, item: EntryRun) => {
-    const current = active.get(sessionId);
-    const first = item.entries[0];
-    const outcome = first ? dependencies.sessions.getNarrativeOutcome(first) : null;
-    const state = current?.runId === item.runId
-      ? { status: current.controller.signal.aborted ? 'stopping' as const : 'running' as const,
-          assistantEntryId: current.assistantEntryId }
-      : outcome ?? { status: 'unknown' as const };
-    return { ...item, ...state };
-
-  };
-  const list = (sessionId: string, options: EntryRunListOptions = {}) => {
-    const page = dependencies.sessions.listEntryRuns(sessionId, options);
-    return { ...page, items: page.items.map(item => projectRun(sessionId, item)),
-      activeRunId: active.get(sessionId)?.runId ?? null };
-  };
+  const list = (sessionId: string, options: RunOptions = {}) => dependencies.sessions.listRuns(sessionId, options);
+  const get = (sessionId: string, runId: string) => dependencies.sessions.getRun(sessionId, runId);
   const usage = (sessionId: string) => dependencies.sessions.recordedUsage(sessionId);
 
-  return { submit, regenerate, stop, shutdown, list, usage };
+  return { submit, regenerate, stop, shutdown, list, get, usage };
 }
 
 export type NarrativeUsecases = ReturnType<typeof createNarrativeUsecases>;

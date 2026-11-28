@@ -1,3 +1,4 @@
+import { seedMessage } from '../../testing/run-fixtures.js';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -199,10 +200,11 @@ describe('world update orchestration', () => {
     world = services.worlds.updateManagement(world.id, { expectedRevision: world.revision, name: '本地名称', tags: ['本地标签'], coverMosaicEnabled: true, defaultPresetId: preset.id, defaultApiModelConfigId: model.id });
     services.worlds.setState(world.id, { coins: 99, extra: true });
     const session = services.sessions.create({ worldId: world.id, userCharacterId: 'player', runtimeConfig: { narrativePresetId: preset.id, apiModelConfigId: model.id }, state: { personal: 'keep' } });
-    const entry = services.sessions.appendEntry(session.id, { type: 'message', role: 'user', runId: 'run', payload: { message: { role: 'user', content: 'keep history', timestamp: 1 } } });
+    const entry = seedMessage(services, session.id, { type: 'message', role: 'user', runId: 'run', payload: { message: { role: 'user', content: 'keep history', timestamp: 1 } } });
     const messages: SessionEvent[] = [];
     events.subscribe(session.id, event => { services.cache.assertWorldRead(world.id); messages.push(event); });
     const originalSession = services.sessions.require(session.id);
+    const originalRun = services.sessions.getRun(session.id,entry.runId);
     await updates.refresh(world.id);
     const cached = await services.worlds.readReleaseIndex(world.id);
     const upgraded = await apply();
@@ -210,6 +212,7 @@ describe('world update orchestration', () => {
       defaultPresetId: preset.id, defaultApiModelConfigId: model.id, state: { coins: 99, extra: true }, publication: { release: { version: '2.0.0' }, update_url: updateUrl } });
     expect(upgraded.characters[0]).toMatchObject({ content: 'Prompt 2.0.0' });
     expect(services.sessions.require(session.id)).toEqual(originalSession);
+    expect(services.sessions.getRun(session.id,entry.runId)).toEqual(originalRun);
     expect(services.sessions.getEntry(session.id, entry.id)).toEqual(entry);
     expect(await services.worlds.readReleaseIndex(world.id)).toEqual(cached);
     expect((await services.worlds.readOriginal(world.id))!.bytes).toEqual(Buffer.from(artifact('2.0.0').bytes));

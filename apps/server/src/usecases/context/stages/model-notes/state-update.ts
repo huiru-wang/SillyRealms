@@ -5,7 +5,7 @@ export const stateUpdateNotes: ModelNoteSource = {
   source: 'state-update',
   build(entry) {
     if (entry.type !== 'message' || entry.role !== 'assistant') return undefined;
-    const output = record(record(entry.extData.output)?.stateUpdate);
+    const output = record(entry.capabilities?.stateUpdate);
     const rows = (output?.status === 'success' || output?.status === 'partial_success') && Array.isArray(output.updates)
       ? output.updates : [];
     const lines = ['<state_update>'];

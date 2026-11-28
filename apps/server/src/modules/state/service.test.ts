@@ -1,3 +1,4 @@
+import { seedMessage } from '../../testing/run-fixtures.js';
 import { worldPublication } from '../../testing/fixtures.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -30,9 +31,9 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); db.close(); rmSync(dataRoot, { recursive: true, force: true }); });
 
 function append(id: string, parentId?: string, sessionId = 'one') {
-  return sessions.appendEntry(sessionId, {
-    id, parentId, runId: 'run', type: 'message', role: 'assistant',
-    payload: { message: { role: 'assistant', content: id, timestamp: 1 } }, extData: { custom: true },
+  return seedMessage(services, sessionId, {
+    id, parentId, runId: id + '-run', type: 'message', role: 'assistant',
+    payload: { message: { role: 'assistant', content: id, timestamp: 1 } },
   });
 }
 
@@ -53,7 +54,7 @@ describe('read-only scope snapshots and inheritance', () => {
   it('inherits message state through compaction and the linear predecessor chain', () => {
     append('root');
     sessions.setEntryState('one', 'root', [{ key: 'coins', value: 3 }]);
-    sessions.appendEntry('one', { id: 'summary', runId: 'compact', type: 'compaction', role: null, payload: { summary: 'Summary' } });
+    seedMessage(services, 'one', { id: 'summary', runId: 'compact', type: 'compaction', role: null, payload: { summary: 'Summary' } });
     append('answer');
     expect(state.getMessage('one', 'answer')).toEqual([{ key: 'coins', value: 3 }]);
     sessions.setEntryState('one', 'answer', [{ key: 'coins', value: 99 }]);

@@ -1,3 +1,4 @@
+import { seedMessage } from '../../testing/run-fixtures.js';
 import { worldPublication } from '../../testing/fixtures.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,7 +7,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '../../infrastructure/database/connection.js';
 import type { ModelInfo } from '../../infrastructure/model/client.js';
-import type { EntryMetrics } from '../../modules/sessions/service.js';
+import type { RequestMetrics } from '../../modules/sessions/service.js';
 import { createServices, type Services } from '../../services.js';
 import { memoryCredentials } from '../../testing/credentials.js';
 import { narrativePreset, withEmptyModelNotes } from '../../testing/fixtures.js';
@@ -17,7 +18,7 @@ const model: ModelInfo = {
   api: 'test', input: ['text'], reasoning: false, thinkingLevels: ['off'], thinkingLevelMap: null,
   promptCache: null, supportsMidConversationSystemMessages: true,
 };
-const metrics: EntryMetrics = { requests: [{
+const metrics: RequestMetrics = { requests: [{
   requestId: 'summary-request', provider: 'provider', modelId: 'model',
   usage: { inputTokens: 20, outputTokens: 5, totalTokens: 25, cacheReadTokens: 0, cacheWriteTokens: 0 },
 }] };
@@ -47,13 +48,13 @@ afterEach(() => {
   vi.restoreAllMocks(); db.close(); rmSync(dataRoot, { recursive: true, force: true });
 });
 function appendHistory(id: string, content: string) {
-  return services.sessions.appendEntry('session', {
+  return seedMessage(services, 'session', {
     id, runId: id + '-run', type: 'message', role: 'assistant',
     payload: { message: { role: 'assistant', content, timestamp: 1 } },
   });
 }
 function input(onProgress?: (progress: ContextProgress) => void): PrepareContextInput {
-  services.sessions.appendEntry('session', {
+  seedMessage(services, 'session', {
     id: 'current', runId: 'current-run', type: 'message', role: 'user',
     payload: { message: { role: 'user', content: 'Current input', timestamp: 2 } },
   });
@@ -195,7 +196,7 @@ describe('public context preparation', () => {
 
   it.each(['Answer', ''])('keeps an answered user before the latest assistant (%j) without replaying the input node', async content => {
     input();
-    services.sessions.appendEntry('session', {
+    seedMessage(services, 'session', {
       id: 'answer', runId: 'current-run', type: 'message', role: 'assistant',
       payload: { message: { role: 'assistant', content, reasoning_content: 'Hidden reasoning', timestamp: 3 } },
     });
@@ -214,7 +215,7 @@ describe('public context preparation', () => {
   it('reads effective state at the actual tip, including a user state followed by compaction', async () => {
     const request = input();
     services.sessions.setEntryState('session', 'current', [{ key: 'coins', value: 12 }]);
-    services.sessions.appendEntry('session', {
+    seedMessage(services, 'session', {
       id: 'trailing-summary', runId: 'current-run', type: 'compaction', role: null,
       payload: { summary: 'Unverified summary must not hide history' },
     });
@@ -245,9 +246,7 @@ describe('public context preparation', () => {
     preset.config.modelParameters.temperature = 0.2;
     configuredModel.providerId = 'changed-provider';
     configuredModel.credentialRef = 'changed-reference';
-    services.sessions.updateEntry('session', 'old', {
-      payload: { message: { role: 'assistant', content: 'Changed history', timestamp: 1 } },
-    });
+    db.prepare('UPDATE entries SET payload=? WHERE id=?').run(JSON.stringify({ message: { role: 'assistant', content: 'Changed history', timestamp: 1 } }), 'old');
 
     const prepared = await pending;
     expect(prepared.ok).toBe(true);
@@ -275,7 +274,7 @@ describe('public context preparation', () => {
     const summaries = services.sessions.getHistory('session').filter(entry => entry.type === 'compaction');
     expect(summaries).toHaveLength(1);
     expect(summaries[0]).toMatchObject({
-      parentId: 'current', runId: 'current-run', state: null, metrics,
+      parentId: 'current', runId: 'current-run', state: null, status: null,
       payload: { summary: 's'.repeat(9000) },
       extData: { summary: { coveredThroughEntryId: 'old-2', sourceHash: expect.any(String) } },
     });
@@ -305,7 +304,7 @@ describe('public context preparation', () => {
     expect(savedWhenNotified).toBe(true);
     expect(prepared.summary).toEqual({ entryId: prepared.parentEntryId, metrics });
     expect(services.sessions.getEntry('session', prepared.summary!.entryId)).toMatchObject({
-      type: 'compaction', parentId: 'current', metrics, payload: { summary: 'Short summary' },
+      type: 'compaction', parentId: 'current', status: null, payload: { summary: 'Short summary' },
     });
     expect(prepared.request.messages.some(message => message.content === 'Short summary')).toBe(true);
     expect(summarize).toHaveBeenCalledOnce();
@@ -358,7 +357,7 @@ describe('public context preparation', () => {
       parentId: 'old-7', runId: 'old-7-run', type: 'compaction',
     });
     if (!prepared.ok) throw new Error(prepared.failure.code);
-    expect(prepared.request.messages.filter(message => message.role === 'user')).toEqual([]);
+    expect(prepared.request.messages.filter(message => message.role === 'user').map(message => message.content)).toEqual(Array(5).fill('继续'));
     expect(prepared.request.messages.filter(message => message.role === 'assistant').map(message => message.content))
       .toEqual(['Recent 3', 'Recent 4', 'Recent 5', withEmptyModelNotes('Recent 6'), withEmptyModelNotes('Recent 7')]);
   });
@@ -366,7 +365,7 @@ describe('public context preparation', () => {
   it('saves a new summary after an existing trailing compaction instead of trying to append to the user', async () => {
     seedCompaction();
     const request = input();
-    services.sessions.appendEntry('session', {
+    seedMessage(services, 'session', {
       id: 'unverified-summary', runId: 'current-run', type: 'compaction', role: null, payload: { summary: 'Unverified' },
     });
     const prepared = await prepareContext(dependencies, request);
@@ -382,9 +381,7 @@ describe('public context preparation', () => {
     const request = input();
     summarize.mockImplementationOnce(async () => {
       if (change === 'tip') appendHistory('new-tail', 'New tail');
-      else services.sessions.updateEntry('session', 'old-0', {
-        payload: { message: { role: 'assistant', content: 'Edited during summary', timestamp: 1 } },
-      });
+      else db.prepare('UPDATE entries SET payload=? WHERE id=?').run(JSON.stringify({ message: { role: 'assistant', content: 'Edited during summary', timestamp: 1 } }), 'old-0');
       return { ok: true, text: 'Obsolete summary', metrics };
     });
     const prepared = await prepareContext(dependencies, request);

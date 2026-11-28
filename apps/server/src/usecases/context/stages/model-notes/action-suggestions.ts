@@ -6,7 +6,7 @@ export const actionSuggestionNotes: ModelNoteSource = {
   source: 'action-suggestions',
   build(entry) {
     if (entry.type !== 'message' || entry.role !== 'assistant') return undefined;
-    const output = record(record(entry.extData.output)?.actionSuggestions);
+    const output = record(entry.capabilities?.actionSuggestions);
     const candidates = (output?.status === 'success' || output?.status === 'partial_success') && Array.isArray(output.items)
       ? output.items : [];
     const items: ActionSuggestionsOutput['items'] = [];

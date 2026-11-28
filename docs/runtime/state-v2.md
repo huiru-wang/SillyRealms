@@ -14,7 +14,7 @@
 
 ## 运行时状态
 
-全局、会话、消息三个 scope 分别对应世界、会话和消息条目。开局的 `initial_state` 按 message 根覆盖，创建会话时随开场消息保存。后续消息可以继承前驱状态。
+全局、会话、消息三个 scope 分别对应世界、会话和消息条目。开局的 `initial_state` 按 message 根覆盖，创建会话时随开场消息保存。后续消息可以继承前驱状态。有效消息状态来自 entries.state。本轮模型提出的逐项更新结果位于 Run.capabilities.stateUpdate。再生删除旧助手后，按新的父链读取实际有效值。
 
 服务端 `POST /api/v1/state/query` 读取单个目标的有效字段。省略 paths 返回所有根，指定 paths 返回有序字段行。`POST /api/v1/state/update` 逐项更新已有路径，有效变化在提交后通过会话 SSE 发布。见 [HTTP 状态接口](server-http.md#状态接口) 和 [会话事件](server-events.md#状态事件)。
 

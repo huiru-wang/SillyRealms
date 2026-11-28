@@ -2,11 +2,11 @@ import { expect, it } from 'vitest';
 import { narrativeQuery } from './narrative-query.js';
 import { encodeCursor } from './pagination.js';
 
-it('keeps bounded backward pages separate from forward entry progress', () => {
+it('accepts bounded run cursors and rejects sequence-based pagination', () => {
   expect(narrativeQuery('one', {})).toEqual({});
-  expect(narrativeQuery('one', { limit: '5', afterSeq: '23' })).toEqual({ afterSeq: 23, limit: 5 });
-  const cursor = encodeCursor('narrative:one', { beforeSeq: 19 });
-  expect(narrativeQuery('one', { cursor })).toEqual({ beforeSeq: 19 });
+  expect(() => narrativeQuery('one', { limit: '5', afterSeq: '23' })).toThrow();
+  const cursor = encodeCursor('runs:one', { beforePageKey: 19 });
+  expect(narrativeQuery('one', { cursor })).toEqual({ beforePageKey: 19 });
   expect(() => narrativeQuery('two', { cursor })).toThrow();
   expect(() => narrativeQuery('one', { cursor, afterSeq: '0' })).toThrow();
   expect(narrativeQuery('one', { limit: '1' })).toEqual({ limit: 1 });

@@ -1,12 +1,10 @@
 import { transaction } from '../../infrastructure/database/transaction.js';
 import type { DatabaseSync } from 'node:sqlite';
-import { metricsSchema, runtimeConfigSchema, validateMessagePayload } from './schema.js';
+import { identifier, metricsSchema, runtimeConfigSchema, validateMessagePayload } from './schema.js';
 import { AppError } from '../../errors.js';
 import { encodeJson, type JsonObject, type JsonValue } from '../../infrastructure/database/connection.js';
-import type {
-  AppendEntryInput, CreateSessionInput, SessionRuntimeConfig, EntryMetrics,
-  SessionListOptions, UpdateEntryInput, UpdateSessionInput, EntryRunListOptions, NarrativeOutcome,
-} from './types.js';
+import type { CreateSessionInput, SessionRuntimeConfig, RequestMetrics, SessionListOptions, UpdateSessionInput, NarrativeStopReason } from './types.js';
+import { aggregateUsage, decodeCapabilities, decodeMetrics, decodeRun, type MessageInput, type RunOptions, type SummaryInput, type Capabilities } from './run.js';
 
 export type SessionRow = {
   id: string; world_id: string; runtime_config: SessionRuntimeConfig;
@@ -16,7 +14,7 @@ export type SessionRow = {
 export type EntryRow = {
   id: string; session_id: string; parent_id: string | null; run_id: string; seq: number;
   timestamp: number; payload: JsonObject; state: JsonValue[] | null; ext_data: JsonObject;
-  metrics_json: EntryMetrics | null; created_at: number; updated_at: number;
+  status: 'complete' | 'partial' | null; created_at: number; updated_at: number;
 } & ({ type: 'message'; role: 'user' | 'assistant' } | { type: 'compaction'; role: null });
 
 function encodeConfig(config: SessionRuntimeConfig) {
@@ -43,12 +41,6 @@ function decodeSession(row: Record<string, unknown>): SessionRow {
   };
 }
 
-function decodeMetrics(json: unknown): EntryMetrics {
-  const parsed = metricsSchema.safeParse(JSON.parse(String(json)));
-  if (!parsed.success) throw new AppError('INTERNAL_ERROR', 'Invalid stored entry metrics');
-  return parsed.data;
-}
-
 function decodeEntry(row: Record<string, unknown>): EntryRow {
   const kind: { type: 'message'; role: 'user' | 'assistant' } | { type: 'compaction'; role: null } | null =
     row.type === 'message' && (row.role === 'user' || row.role === 'assistant')
@@ -65,12 +57,12 @@ function decodeEntry(row: Record<string, unknown>): EntryRow {
     payload: JSON.parse(String(row.payload)) as JsonObject,
     state: row.state === null ? null : JSON.parse(String(row.state)) as JsonValue[],
     ext_data: JSON.parse(String(row.ext_data)) as JsonObject,
-    metrics_json: row.metrics_json === null ? null : decodeMetrics(row.metrics_json),
+    status: row.status as EntryRow['status'],
     created_at: Number(row.created_at), updated_at: Number(row.updated_at),
   };
 }
 
-/** Module-private persistence for sessions and entries only. */
+/** Module-private persistence for sessions, runs and entries. */
 export class SessionRepository {
   readonly #db: DatabaseSync;
 
@@ -145,7 +137,10 @@ export class SessionRepository {
   }
 
   delete(id: string): boolean {
-    return this.#db.prepare('DELETE FROM sessions WHERE id=?').run(id).changes > 0;
+    return transaction(this.#db, () => {
+      this.#db.prepare('DELETE FROM runs WHERE session_id=?').run(id);
+      return this.#db.prepare('DELETE FROM sessions WHERE id=?').run(id).changes > 0;
+    });
   }
 
   getEntry(sessionId: string, entryId: string): EntryRow | null {
@@ -154,25 +149,30 @@ export class SessionRepository {
   }
 
   /** Check the expected predecessor and advance the tip with the insertion in one transaction. */
-  appendEntry(sessionId: string, value: AppendEntryInput & { id: string }): EntryRow {
-    const payload = encodeJson(value.payload, 'object'), ext = encodeJson(value.extData ?? {}, 'object');
-    if (value.type === 'message') validateMessagePayload(JSON.parse(payload), value.role);
+  #appendEntry(sessionId: string, value: MessageInput & { runId: string; extData?: JsonObject; status: EntryRow['status'] } &
+    ({ type: 'message'; role: 'user' | 'assistant' } | { type: 'compaction'; role: null })): EntryRow {
+    identifier.parse(value.id);
+    const payload = encodeJson(value.payload, 'object'), ext = encodeJson(value.type === 'compaction' ? value.extData ?? {} : {}, 'object');
+    if (value.type === 'message' && validateMessagePayload(JSON.parse(payload), value.role).timestamp !== value.timestamp) {
+      throw new AppError('INVALID_REQUEST', '消息时间与条目时间不一致');
+    }
     const state = value.state == null ? null : encodeJson(value.state, 'array');
-    const metrics = value.metrics ?? null;
     return transaction(this.#db, () => {
       const session = this.#requireSession(sessionId);
-      const parent = value.parentId === undefined ? session.tip_entry_id : value.parentId;
+      const parent = value.parentId;
       if (parent !== session.tip_entry_id) throw new AppError('TIP_CONFLICT');
       const latest = this.#db.prepare('SELECT id,seq FROM entries WHERE session_id=? ORDER BY seq DESC LIMIT 1').get(sessionId);
       if (parent !== (latest?.id ?? null)) throw new AppError('INVALID_PARENT_CHAIN');
+      if (value.role !== 'assistant' && this.#db.prepare('SELECT 1 FROM runs WHERE assistant_entry_id=?').get(value.id)) {
+        throw new AppError('INVALID_REQUEST');
+      }
       const seq = Number(latest?.seq ?? 0) + 1;
-      this.#assertMetricsUnique(sessionId, metrics);
       const now = Date.now();
       this.#db.prepare(
-        'INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,timestamp,payload,state,ext_data,metrics_json,created_at,updated_at) ' +
+        'INSERT INTO entries(id,session_id,parent_id,run_id,seq,type,role,timestamp,payload,state,ext_data,status,created_at,updated_at) ' +
         'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-      ).run(value.id, sessionId, parent, value.runId, seq, value.type, value.role, value.timestamp ?? now,
-        payload, state, ext, metrics === null ? null : encodeJson(metrics, 'object'), now, now);
+      ).run(value.id, sessionId, parent, value.runId, seq, value.type, value.role, value.timestamp,
+        payload, state, ext, value.status, now, now);
       this.#db.prepare('UPDATE sessions SET tip_entry_id=?,updated_at=? WHERE id=?').run(value.id, now, sessionId);
       return this.#requireEntry(sessionId, value.id);
     });
@@ -192,45 +192,155 @@ export class SessionRepository {
     return row.state === null ? null : JSON.parse(String(row.state)) as JsonValue[];
   }
 
-  listEntryRuns(sessionId: string, options: EntryRunListOptions) {
-    const limit = options.limit ?? 5;
-    const forward = options.afterSeq !== undefined;
-    // Seek from the cursor and select one boundary entry per run using (session_id,run_id,seq).
-    const comparison = forward ? '>' : '<';
-    const boundary = forward ? 'MAX' : 'MIN';
-    const groups = this.#db.prepare(
-      'SELECT e.run_id FROM entries e WHERE e.session_id=? AND e.seq' + comparison + '? AND e.seq=(' +
-      'SELECT ' + boundary + '(r.seq) FROM entries r WHERE r.session_id=e.session_id AND r.run_id=e.run_id) ' +
-      'ORDER BY e.seq ' + (forward ? 'ASC' : 'DESC') + ' LIMIT ?',
-    ).all(sessionId, forward ? options.afterSeq! : options.beforeSeq ?? Number.MAX_SAFE_INTEGER, limit + 1);
-    const selected = groups.slice(0, limit);
-    if (!selected.length) return { items: [], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null };
-    const entries = this.#db.prepare('SELECT * FROM entries WHERE session_id=? AND run_id IN (' +
-      selected.map(() => '?').join(',') + ') ORDER BY seq').all(sessionId, ...selected.map(row => String(row.run_id))).map(decodeEntry);
-    const items = selected.map(row => {
-      const runEntries = entries.filter(entry => entry.run_id === row.run_id);
-      return { runId: String(row.run_id), firstSeq: runEntries[0]!.seq, lastSeq: runEntries.at(-1)!.seq, entries: runEntries };
+  createRun(sessionId: string, runId: string, assistantId: string, entry: MessageInput,
+    role: 'user' | 'assistant', capabilities: Capabilities) {
+    return transaction(this.#db, () => {
+      identifier.parse(runId);
+      identifier.parse(assistantId);
+      const opening = role === 'assistant';
+      if (opening && (entry.parentId !== null || assistantId !== entry.id)) throw new AppError('INVALID_REQUEST');
+      if (!opening && (assistantId === entry.id || this.#db.prepare('SELECT 1 FROM entries WHERE id=?').get(assistantId))) {
+        throw new AppError('INVALID_REQUEST');
+      }
+      if (this.#activeId(sessionId)) throw new AppError('RUN_ALREADY_ACTIVE');
+      this.#db.prepare('INSERT INTO runs(id,session_id,assistant_entry_id,status,created_at,finished_at,capabilities_json) VALUES(?,?,?,?,?,?,?)')
+        .run(runId, sessionId, assistantId, opening ? 'completed' : 'running', entry.timestamp,
+          opening ? entry.timestamp : null, encodeJson(capabilities, 'object'));
+      return this.#appendEntry(sessionId, { ...entry, runId, type: 'message', role, status: 'complete' });
     });
-    // A run may gain another entry later; forward progress is its last saved seq, never its first seq.
-    return { items, hasMore: groups.length > limit,
-      nextBeforeSeq: forward || groups.length <= limit ? null : items.at(-1)!.firstSeq,
-      nextAfterSeq: Math.max(...items.map(item => item.lastSeq)) };
   }
 
-  listMetrics(sessionId: string): EntryMetrics[] {
-    return this.#db.prepare('SELECT metrics_json FROM entries WHERE session_id=? AND metrics_json IS NOT NULL')
-      .all(sessionId).map(row => decodeMetrics(row.metrics_json));
+  #validateMetrics(sessionId: string, runId: string, incoming: RequestMetrics) {
+    const result = metricsSchema.safeParse(incoming);
+    if (!result.success) throw new AppError('INVALID_REQUEST_METRICS');
+    const ids = result.data.requests.map(request => request.requestId);
+    if (ids.length && this.#db.prepare(
+      "SELECT 1 FROM runs r, json_tree(r.metrics_json) fact WHERE r.session_id=? AND r.id<>? " +
+      "AND fact.key='requestId' AND fact.value IN (SELECT value FROM json_each(?)) LIMIT 1",
+    ).get(sessionId, runId, JSON.stringify(ids))) throw new AppError('DUPLICATE_REQUEST_METRICS');
+    return result.data;
   }
 
-  latestNarrativeMetrics(sessionId: string): { seq: number; metrics: EntryMetrics } | null {
-    const row = this.#db.prepare(
-      "SELECT seq,metrics_json FROM entries WHERE session_id=? AND type='message' AND role='assistant' " +
-      "AND metrics_json IS NOT NULL AND json_array_length(metrics_json,'$.requests')>0 ORDER BY seq DESC LIMIT 1",
-    ).get(sessionId);
-    return row ? { seq: Number(row.seq), metrics: decodeMetrics(row.metrics_json) } : null;
+  appendSummary(sessionId: string, input: SummaryInput) {
+    return transaction(this.#db, () => {
+      const parent = this.#requireEntry(sessionId, input.parentId);
+      if (parent.run_id !== input.runId) throw new AppError('TIP_CONFLICT');
+      const run = this.requireRun(sessionId, input.runId);
+      const covered = this.getEntry(sessionId, input.coveredThroughEntryId);
+      if (!input.text.trim() || !/^[a-f0-9]{64}$/.test(input.sourceHash) || covered?.type !== 'message') {
+        throw new AppError('INVALID_REQUEST');
+      }
+      const entry = this.#appendEntry(sessionId, {
+        id: input.id, runId: input.runId, parentId: input.parentId, timestamp: Date.now(), type: 'compaction', role: null,
+        status: null, payload: { summary: input.text },
+        extData: { summary: { coveredThroughEntryId: input.coveredThroughEntryId, sourceHash: input.sourceHash } },
+      });
+      if (input.metrics) {
+        run.metrics.summaries[input.id] = this.#validateMetrics(sessionId, input.runId, input.metrics);
+        aggregateUsage([run.metrics]);
+        this.#db.prepare('UPDATE runs SET metrics_json=? WHERE session_id=? AND id=?').run(encodeJson(run.metrics), sessionId, input.runId);
+      }
+      return entry;
+    });
   }
 
-  deleteEntry(sessionId: string, entryId: string, expectedTipEntryId: string | null) {
+  finishRun(sessionId: string, runId: string, assistantId: string, reason: NarrativeStopReason | null,
+    reply: MessageInput | null, capabilities: Capabilities, main: RequestMetrics | null) {
+    return transaction(this.#db, () => {
+      const run = this.requireRun(sessionId, runId);
+      if (run.assistantEntryId !== assistantId || (run.status !== 'running' && run.status !== 'stopping')) throw new AppError('RUN_NOT_FOUND');
+      if (!reason && !reply) throw new AppError('MESSAGE_PERSIST_FAILED');
+      if (reason && Object.keys(capabilities).length) throw new AppError('INVALID_REQUEST');
+      if (reply) {
+        if (reply.id !== assistantId) throw new AppError('INVALID_REQUEST');
+        this.#appendEntry(sessionId, { ...reply, type: 'message', role: 'assistant', status: reason ? 'partial' : 'complete', runId });
+      }
+      run.metrics.main = main === null ? null : this.#validateMetrics(sessionId, runId, main);
+      const usage = aggregateUsage([run.metrics]);
+      const result = this.#db.prepare("UPDATE runs SET status=?, stop_reason=?, capabilities_json=?, metrics_json=?, finished_at=? " +
+        "WHERE session_id=? AND id=? AND assistant_entry_id=? AND status IN ('running','stopping')")
+        .run(reason ? 'stopped' : 'completed', reason, encodeJson(capabilities), encodeJson(run.metrics), Date.now(), sessionId, runId, assistantId);
+      if (result.changes !== 1) throw new AppError('RUN_NOT_FOUND');
+      return { stopReason: reason, usage, tipEntryId: this.#requireSession(sessionId).tip_entry_id,
+        savedMessageIds: this.#db.prepare("SELECT id FROM entries WHERE session_id=? AND run_id=? AND type='message' ORDER BY seq")
+          .all(sessionId, runId).map(row => String(row.id)) };
+    });
+  }
+
+  restartRun(sessionId: string, runId: string, expectedId: string, assistantId: string, tip: string) {
+    return transaction(this.#db, () => {
+      const session = this.#requireSession(sessionId);
+      if (session.tip_entry_id !== tip) throw new AppError('TIP_CONFLICT');
+      const run = this.requireRun(sessionId, runId);
+      if (this.#requireEntry(sessionId, tip).run_id !== runId || run.assistantEntryId !== expectedId ||
+        (run.status !== 'completed' && run.status !== 'stopped')) throw new AppError('INVALID_REGENERATION_TARGET');
+      const user = this.#db.prepare("SELECT * FROM entries WHERE session_id=? AND run_id=? AND role='user'").get(sessionId, runId);
+      if (!user || expectedId === assistantId || this.#db.prepare('SELECT 1 FROM entries WHERE id=?').get(assistantId)) throw new AppError('INVALID_REGENERATION_TARGET');
+      const deleted = this.getEntry(sessionId, expectedId);
+      if (deleted && (deleted.run_id !== runId || deleted.role !== 'assistant')) throw new AppError('INVALID_REGENERATION_TARGET');
+      const tipEntryId = deleted ? this.#deleteEntry(sessionId, expectedId, tip).tipEntryId : tip;
+      this.#db.prepare("UPDATE runs SET assistant_entry_id=?, status='running', stop_reason=NULL, finished_at=NULL, capabilities_json='{}', " +
+        "metrics_json=json_set(metrics_json,'$.main',null) WHERE session_id=? AND id=?").run(assistantId, sessionId, runId);
+      return { user: decodeEntry(user), tipEntryId, deletedMessageIds: deleted ? [expectedId] : [] };
+    });
+  }
+
+  markStopping(sessionId: string, runId: string, assistantId: string) {
+    if (!this.#db.prepare("UPDATE runs SET status='stopping' WHERE session_id=? AND id=? AND assistant_entry_id=? AND status IN ('running','stopping')")
+      .run(sessionId, runId, assistantId).changes) throw new AppError('RUN_NOT_FOUND');
+  }
+
+  recoverInterruptedRuns() {
+    this.#db.prepare("UPDATE runs SET stop_reason=CASE status WHEN 'stopping' THEN 'cancelled' ELSE 'server_shutdown' END, " +
+      "status='stopped',finished_at=? WHERE status IN ('running','stopping')").run(Date.now());
+  }
+
+  requireRun(sessionId: string, runId: string) {
+    const row = this.#db.prepare('SELECT * FROM runs WHERE session_id=? AND id=?').get(sessionId, runId);
+    if (!row) throw new AppError('RUN_NOT_FOUND');
+    return decodeRun(row);
+  }
+
+  #activeId(sessionId: string) {
+    const row = this.#db.prepare("SELECT id FROM runs WHERE session_id=? AND status IN ('running','stopping')").get(sessionId);
+    return row ? String(row.id) : null;
+  }
+
+  readRuns(sessionId: string, options: RunOptions, id?: string) {
+    return transaction(this.#db, () => {
+      const session = this.#requireSession(sessionId), limit = options.limit ?? 5;
+      const rows = id === undefined
+        ? this.#db.prepare('SELECT * FROM runs WHERE session_id=? AND page_key<? ORDER BY page_key DESC LIMIT ?')
+          .all(sessionId, options.beforePageKey ?? Number.MAX_SAFE_INTEGER, limit + 1).map(decodeRun)
+        : [this.requireRun(sessionId, id)];
+      const selected = rows.slice(0, limit);
+      const entries = selected.length ? this.#db.prepare("SELECT * FROM entries WHERE session_id=? AND type='message' AND run_id IN (" +
+        selected.map(() => '?').join(',') + ') ORDER BY run_id,seq').all(sessionId, ...selected.map(run => run.id)).map(decodeEntry) : [];
+      return { selected, entries, tipEntryId: session.tip_entry_id, activeRunId: this.#activeId(sessionId),
+        hasMore: rows.length > limit, nextPageKey: rows.length > limit ? selected.at(-1)!.pageKey : null };
+    });
+  }
+
+  assistantCapabilities(sessionId: string, ids: string[]) {
+    if (!ids.length) return new Map<string, Capabilities>();
+    const rows = this.#db.prepare('SELECT assistant_entry_id,capabilities_json FROM runs WHERE session_id=? AND assistant_entry_id IN (' +
+      ids.map(() => '?').join(',') + ')').all(sessionId, ...ids);
+    if (rows.length !== new Set(ids).size) throw new AppError('INTERNAL_ERROR', 'Missing owning run for saved assistant');
+    return new Map(rows.map(row => [String(row.assistant_entry_id), decodeCapabilities(row.capabilities_json)]));
+  }
+
+  sessionMetrics(sessionId: string) {
+    return this.#db.prepare('SELECT metrics_json FROM runs WHERE session_id=?').all(sessionId)
+      .map(row => decodeMetrics(row.metrics_json));
+  }
+
+  latestMain(sessionId: string) {
+    const row = this.#db.prepare("SELECT e.seq,r.metrics_json FROM runs r JOIN entries e ON e.session_id=r.session_id AND e.run_id=r.id AND e.id=r.assistant_entry_id AND e.role='assistant' " +
+      "WHERE r.session_id=? AND json_array_length(r.metrics_json,'$.main.requests')>0 ORDER BY e.seq DESC LIMIT 1").get(sessionId);
+    return row ? { seq: Number(row.seq), metrics: decodeMetrics(row.metrics_json).main! } : null;
+  }
+
+  #deleteEntry(sessionId: string, entryId: string, expectedTipEntryId: string | null) {
     return transaction(this.#db, () => {
       const session = this.#requireSession(sessionId);
       if (session.tip_entry_id !== expectedTipEntryId) throw new AppError('TIP_CONFLICT');
@@ -242,47 +352,6 @@ export class SessionRepository {
       this.#db.prepare('UPDATE sessions SET tip_entry_id=?,updated_at=? WHERE id=?').run(tipEntryId, now, sessionId);
       return { entry, tipEntryId };
     });
-  }
-
-  setNarrativeOutcome(sessionId: string, entryId: string, outcome: NarrativeOutcome | null): EntryRow {
-    return transaction(this.#db, () => {
-      const current = this.#requireEntry(sessionId, entryId);
-      const first = this.#db.prepare('SELECT id FROM entries WHERE session_id=? AND run_id=? ORDER BY seq LIMIT 1').get(sessionId, current.run_id);
-      if (current.type !== 'message' || first?.id !== current.id) throw new AppError('INVALID_REQUEST', '结束结果只能保存在该 run 的首条消息');
-      const ext = { ...current.ext_data };
-      if (outcome === null) delete ext.narrative; else ext.narrative = outcome;
-      this.#db.prepare('UPDATE entries SET ext_data=?,updated_at=? WHERE session_id=? AND id=?')
-        .run(encodeJson(ext, 'object'), Date.now(), sessionId, entryId);
-      return this.#requireEntry(sessionId, entryId);
-    });
-  }
-
-  updateEntry(sessionId: string, entryId: string, patch: UpdateEntryInput): EntryRow {
-    return transaction(this.#db, () => {
-      const current = this.#requireEntry(sessionId, entryId);
-      if (patch.payload === undefined && patch.extData === undefined) return current;
-      const payload = encodeJson(patch.payload ?? current.payload, 'object');
-      if (current.type === 'message' && patch.payload !== undefined) validateMessagePayload(JSON.parse(payload), current.role);
-      const ext = encodeJson(patch.extData === undefined ? current.ext_data : { ...patch.extData,
-        ...(current.ext_data.narrative === undefined ? {} : { narrative: current.ext_data.narrative }),
-        ...(current.ext_data.output === undefined ? {} : { output: current.ext_data.output }) }, 'object');
-      const now = Date.now();
-      this.#db.prepare('UPDATE entries SET payload=?,ext_data=?,updated_at=? WHERE session_id=? AND id=?')
-        .run(payload, ext, now, sessionId, entryId);
-      this.#db.prepare('UPDATE sessions SET updated_at=? WHERE id=?').run(now, sessionId);
-      return this.#requireEntry(sessionId, entryId);
-    });
-  }
-
-  #assertMetricsUnique(sessionId: string, metrics: EntryMetrics | null): void {
-    if (metrics === null) return;
-    const select = this.#db.prepare(
-      "SELECT e.id FROM entries e, json_each(e.metrics_json,'$.requests') AS request " +
-      "WHERE e.session_id=? AND json_extract(request.value,'$.requestId')=? LIMIT 1",
-    );
-    for (const request of metrics.requests) {
-      if (select.get(sessionId, request.requestId)) throw new AppError('DUPLICATE_REQUEST_METRICS');
-    }
   }
 
   getState(sessionId: string): JsonObject | null {

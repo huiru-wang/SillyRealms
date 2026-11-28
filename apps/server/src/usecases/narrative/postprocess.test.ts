@@ -1,3 +1,4 @@
+import { seedMessage, storedMetrics } from '../../testing/run-fixtures.js';
 import { worldPublication } from '../../testing/fixtures.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -56,7 +57,7 @@ beforeEach(async () => {
     } } },
   });
   services.sessions.create({ id: 'session', worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player' });
-  services.sessions.appendEntry('session', {
+  seedMessage(services, 'session', {
     id: 'opening', runId: 'opening-run', type: 'message', role: 'assistant',
     payload: { message: { role: 'assistant', content: 'Opening', timestamp: 1 } },
     state: [{ key: 'coins', value: 10, label: 'Currency' }, { key: 'energy', value: 5 }, { key: 'secret', value: 99 }],
@@ -87,7 +88,7 @@ function submit(text = '买汤') {
   return { accepted, finished };
 }
 const saved = (run: AcceptedNarrative) => services.sessions.getEntry('session', run.assistantEntryId)!;
-const output = (run: AcceptedNarrative) => saved(run).extData.output as unknown as NarrativeOutput;
+const output = (run: AcceptedNarrative) => services.sessions.getRun('session', run.runId).capabilities as NarrativeOutput;
 const current = () => services.state.getCurrentMessage('session');
 function script(content: string, chunks: string[] = [], finish: 'stop' | 'length' | 'missing' = 'stop') {
   stream.mockImplementation(async function* () {
@@ -134,7 +135,7 @@ describe('narrative postprocessing integration', () => {
     expect(seen.find(event => event.event === 'action_suggestions.created')?.data).toEqual({
       sessionId: 'session', runId: accepted.runId, messageId: accepted.assistantEntryId, items: ['继续询问。', '离开酒馆。'],
     });
-    expect(saved(accepted).metrics?.requests[0]?.usage).toEqual(usage);
+    expect(storedMetrics(db, accepted.runId).main?.requests[0]?.usage).toEqual(usage);
     expect(JSON.stringify(output(accepted))).not.toMatch(/blockIndex|contextEligible|"line":|"results":/);
     expect(stream).toHaveBeenCalledOnce();
   });
@@ -272,8 +273,8 @@ describe('narrative postprocessing integration', () => {
   });
 
   it('rolls back an assistant/state append failure and emits no uncommitted capability notifications', async () => {
-    const append = services.sessions.appendNarrativeAssistant.bind(services.sessions);
-    vi.spyOn(services.sessions, 'appendNarrativeAssistant').mockImplementation((...args) => {
+    const append = services.sessions.settleRun.bind(services.sessions);
+    vi.spyOn(services.sessions, 'settleRun').mockImplementationOnce((...args) => {
       append(...args); throw new Error('failure after append');
     });
     const { accepted, finished } = submit();
@@ -285,13 +286,13 @@ describe('narrative postprocessing integration', () => {
     expect(seen.some(event => event.event === 'state.changed' || event.event === 'action_suggestions.created')).toBe(false);
   });
 
-  it('notifies committed state but withholds suggestions if recording the run outcome fails', async () => {
-    vi.spyOn(services.sessions, 'setNarrativeOutcome').mockImplementation(() => { throw new Error('outcome failed'); });
+  it('rolls back state and suggestions if settlement fails', async () => {
+    vi.spyOn(services.sessions, 'settleRun').mockImplementationOnce(() => { throw new Error('outcome failed'); });
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'message_persist_failed' } });
-    expect(current().coins).toBe(8);
-    expect(saved(accepted).extData).toHaveProperty('output');
-    expect(seen.some(event => event.event === 'state.changed')).toBe(true);
+    expect(services.sessions.getEntry('session', accepted.assistantEntryId)).toBeNull();
+    expect(output(accepted)).toEqual({});
+    expect(seen.some(event => event.event === 'state.changed')).toBe(false);
     expect(seen.some(event => event.event === 'action_suggestions.created')).toBe(false);
   });
 
@@ -446,7 +447,7 @@ describe('postprocess diagnostics', () => {
   });
 
   it('does not claim postprocess persistence when the assistant transaction rolls back', async () => {
-    vi.spyOn(services.sessions, 'appendNarrativeAssistant').mockImplementation(() => { throw new Error('storage failed'); });
+    vi.spyOn(services.sessions, 'settleRun').mockImplementationOnce(() => { throw new Error('storage failed'); });
     expect((await submit().finished).event).toBe('run.stopped');
     expect(capabilityLog('state_update.result')).toMatchObject({ phase: 'prepared', status: 'success' });
     expect(logLines.some(line => line.includes('[postprocess.completed]'))).toBe(false);

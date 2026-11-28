@@ -1,4 +1,4 @@
-import { parseCharacterSpriteItem, type CharacterSpriteOutput, type CharacterSpriteItem } from '../../../modules/sessions/service.js';
+import { parseCharacterSpriteItem, type CharacterSpriteOutput } from '../../../modules/sessions/service.js';
 import type { CharacterSpriteCatalogItem } from '../../../modules/worlds/service.js';
 import type { CapabilityExtraction } from './parser.js';
 import { parseJsonl } from './strict-json.js';
@@ -18,13 +18,13 @@ export function processCharacterSprite(
   }
   if (extraction.status === 'empty') return { status: 'success', items: [] };
 
-  const sprites = new Map<string, Set<string>>();
+  const sprites = new Map<string, Map<string, string>>();
   for (const entry of catalog) {
-    const choices = sprites.get(entry.characterId) ?? new Set<string>();
-    choices.add(entry.spriteId);
+    const choices = sprites.get(entry.characterId) ?? new Map<string, string>();
+    choices.set(entry.spriteId, entry.asset);
     sprites.set(entry.characterId, choices);
   }
-  const items: CharacterSpriteItem[] = [];
+  const items: CharacterSpriteOutput['items'] = [];
   const errors: NonNullable<CharacterSpriteOutput['errors']> = [];
   const characters = new Set<string>(), positions = new Set<string>();
   for (const [index, row] of parseJsonl(extraction.blocks).entries()) {
@@ -39,7 +39,7 @@ export function processCharacterSprite(
       if (!choices.has(item.spriteId)) { reject('unknown_sprite'); continue; }
       if (characters.has(item.characterId)) { reject('duplicate_character'); continue; }
       if (positions.has(item.position)) { reject('duplicate_position'); continue; }
-      items.push(item);
+      items.push({ ...item, asset: choices.get(item.spriteId)! });
       characters.add(item.characterId);
       positions.add(item.position);
     } catch {

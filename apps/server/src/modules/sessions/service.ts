@@ -7,23 +7,13 @@ import type { ModelReader } from '../models/service.js';
 import type { PresetReader } from '../presets/service.js';
 import type { WorldReader } from '../worlds/service.js';
 import { SessionRepository, type EntryRow, type SessionRow } from './repository.js';
-import { storedNarrativeOutputSchema, narrativeOutputSchema, readCharacterSpriteOutput, type CharacterSpriteOutput, type NarrativeOutput } from './output.js';
-import {
-  appendEntrySchema, createSessionSchema, identifier,
-  sessionListSchema, updateEntrySchema, updateSessionSchema, narrativeOutcomeSchema, entryRunListSchema,
-} from './schema.js';
-import type {
-  AppendEntryInput, CreateSessionInput, EntryMetrics, SessionEntry,
-  SessionListOptions, SessionPage, Session, UpdateEntryInput, UpdateSessionInput,
-  NarrativeOutcome, EntryRunListOptions, EntryRunPage, DeletedEntry,
-} from './types.js';
+import { narrativeOutputSchema, type NarrativeOutput } from './output.js';
+import { createSessionSchema, identifier, sessionListSchema, updateSessionSchema, narrativeStopReasonSchema } from './schema.js';
+import type { CreateSessionInput, RequestMetrics, SessionEntry, SessionListOptions, SessionPage, Session, UpdateSessionInput, NarrativeStopReason } from './types.js';
+import { aggregateUsage, publicMessage, runOptionsSchema, type MessageInput, type RunOptions, type SummaryInput } from './run.js';
 
-export type {
-  AppendEntryInput, CreateSessionInput, EntryMetrics, SessionEntry,
-  SessionListOptions, SessionPage, Session, UpdateEntryInput, UpdateSessionInput,
-  NarrativeOutcome, EntryRunListOptions, EntryRunPage, DeletedEntry,
-  NarrativeStopReason, EntryRun,
-} from './types.js';
+export type { CreateSessionInput, RequestMetrics, SessionEntry, SessionListOptions, SessionPage, Session, UpdateSessionInput, NarrativeStopReason } from './types.js';
+export type { RunUsage, RunOptions, MessageInput, RunMessage, Capabilities } from './run.js';
 
 export { createSessionSchema } from './schema.js';
 
@@ -52,8 +42,7 @@ function toSessionEntry(row: EntryRow): SessionEntry {
     ...kind,
     id: row.id, sessionId: row.session_id, parentId: row.parent_id, runId: row.run_id, seq: row.seq,
     timestamp: row.timestamp, payload: row.payload, state: row.state,
-    extData: row.ext_data.output === undefined ? row.ext_data : { ...row.ext_data, output: storedNarrativeOutputSchema.parse(row.ext_data.output) },
-    metrics: row.metrics_json,
+    extData: row.ext_data, status: row.status,
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
@@ -75,6 +64,12 @@ export class SessionService {
 
   #assertSessionWrite(id: string, permit?: RunWritePermit): void {
     this.#dependencies.cache.assertSessionWrite(id, permit, this.get(id)?.worldId);
+  }
+
+  #assertRunWrite(sessionId: string, runId: string, permit: RunWritePermit): void {
+    const { worldId } = this.require(sessionId);
+    this.#dependencies.cache.assertSessionWrite(sessionId, permit, worldId);
+    if (permit.runId !== runId || permit.worldId !== worldId) throw new AppError('SESSION_WRITE_LOCKED');
   }
 
   #assertStateWrite(id: string, permit?: RunWritePermit): void {
@@ -140,58 +135,81 @@ export class SessionService {
   }
 
   /** Reads only this message's result; missing/error output never inherits another message. */
-  getMessageCharacterSprites(sessionId: string, entryId: string): CharacterSpriteOutput | null {
+  getMessageCharacterSprites(sessionId: string, entryId: string) {
     this.require(sessionId);
     const entry = this.#requireEntry(sessionId, entryId);
     if (entry.type !== 'message') throw new AppError('INVALID_REQUEST', '立绘结果只能查询消息条目');
     if (entry.role !== 'assistant') return null;
-    const output = entry.extData.output;
-    if (output === null || typeof output !== 'object' || Array.isArray(output)) return null;
-    return readCharacterSpriteOutput(output.characterSprite);
+    return this.#repository.assistantCapabilities(sessionId, [entryId]).get(entryId)?.characterSprite ?? null;
   }
 
-  appendEntry(sessionId: string, input: AppendEntryInput, permit?: RunWritePermit): SessionEntry {
-    this.#assertSessionWrite(identifier.parse(sessionId), permit);
-    return this.#appendEntry(sessionId, appendEntrySchema.parse(input));
+  createOpening(sessionId: string, runId: string, entry: MessageInput, output: NarrativeOutput) {
+    this.#assertSessionWrite(sessionId);
+    return publicMessage(toSessionEntry(this.#repository.createRun(sessionId, runId, entry.id, entry, 'assistant', narrativeOutputSchema.parse(output))));
   }
 
-  /** Stores trusted opening or generated assistant output alongside the entry. */
-  appendNarrativeAssistant(sessionId: string, input: AppendEntryInput, output: NarrativeOutput, permit?: RunWritePermit): SessionEntry {
-    this.#assertSessionWrite(identifier.parse(sessionId), permit);
-    const value = appendEntrySchema.parse(input);
-    if (value.type !== 'message' || value.role !== 'assistant') {
-      throw new AppError('INVALID_REQUEST', '后处理结果只能保存在叙事助手消息');
-    }
-    const result = narrativeOutputSchema.parse(output);
-    return this.#appendEntry(sessionId, { ...value, extData: { ...value.extData, output: result } });
+  beginRun(sessionId: string, runId: string, assistantId: string, user: MessageInput, permit: RunWritePermit) {
+    this.#assertRunWrite(sessionId, runId, permit);
+    return toSessionEntry(this.#repository.createRun(sessionId, runId, assistantId, user, 'user', {}));
   }
 
-  #appendEntry(sessionId: string, value: AppendEntryInput): SessionEntry {
-    const id = value.id ?? randomUUID();
-    this.#assertMetricsRole(value.role, value.metrics ?? null);
-    return toSessionEntry(this.#repository.appendEntry(sessionId, { ...value, id }));
+  appendSummary(sessionId: string, input: SummaryInput, permit?: RunWritePermit) {
+    if (permit) this.#assertRunWrite(sessionId, input.runId, permit);
+    else this.#assertSessionWrite(sessionId);
+    return toSessionEntry(this.#repository.appendSummary(sessionId, input));
   }
 
-  listEntryRuns(sessionId: string, options: EntryRunListOptions = {}): EntryRunPage {
-    this.require(sessionId);
-    const page = this.#repository.listEntryRuns(sessionId, entryRunListSchema.parse(options));
-    return { ...page, items: page.items.map(item => ({ ...item, entries: item.entries.map(toSessionEntry) })) };
+  settleRun(sessionId: string, runId: string, assistantId: string, reason: NarrativeStopReason | null,
+    reply: MessageInput | null, output: NarrativeOutput | null, metrics: RequestMetrics | null, permit: RunWritePermit) {
+    this.#assertRunWrite(sessionId, runId, permit);
+    return this.#repository.finishRun(sessionId, runId, assistantId, narrativeStopReasonSchema.nullable().parse(reason),
+      reply, output ? narrativeOutputSchema.parse(output) : {}, metrics);
+  }
+
+  restartRun(sessionId: string, runId: string, previousId: string, assistantId: string, tip: string, permit: RunWritePermit) {
+    this.#assertRunWrite(sessionId, runId, permit);
+    const result = this.#repository.restartRun(sessionId, runId, previousId, assistantId, tip);
+    const user = publicMessage(toSessionEntry(result.user));
+    if (user.role !== 'user') throw new AppError('INVALID_REGENERATION_TARGET');
+    return { userMessage: { id: user.id, role: user.role, content: user.content, timestamp: user.timestamp, status: 'complete' as const },
+      deletedMessageIds: result.deletedMessageIds, tipEntryId: result.tipEntryId };
+  }
+
+  markStopping(sessionId: string, runId: string, assistantId: string) {
+    this.#repository.markStopping(sessionId, runId, assistantId);
+  }
+
+  recoverInterruptedRuns() { this.#repository.recoverInterruptedRuns(); }
+
+  getAssistantCapabilities(sessionId: string, ids: string[]) {
+    return this.#repository.assistantCapabilities(sessionId, ids);
+  }
+
+  listRuns(sessionId: string, options: RunOptions = {}) {
+    return this.#readRuns(identifier.parse(sessionId), runOptionsSchema.parse(options));
+  }
+
+  getRun(sessionId: string, id: string) {
+    return this.#readRuns(sessionId, {}, identifier.parse(id)).items[0]!;
+  }
+
+  #readRuns(sessionId: string, options: RunOptions, id?: string) {
+    const { selected, entries, ...page } = this.#repository.readRuns(sessionId, options, id);
+    return { ...page, items: selected.map(run => ({
+      id: run.id, status: run.status, stopReason: run.stopReason, assistantEntryId: run.assistantEntryId,
+      createdAt: run.createdAt, finishedAt: run.finishedAt, capabilities: run.capabilities, usage: aggregateUsage([run.metrics]),
+      messages: entries.filter(entry => entry.run_id === run.id).map(entry => publicMessage(toSessionEntry(entry))),
+    })) };
   }
 
   recordedUsage(sessionId: string) {
     const session = this.require(sessionId);
-    const knownUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
-    let recordedRequestCount = 0, unknownUsageRequestCount = 0;
-    for (const metrics of this.#repository.listMetrics(sessionId)) for (const request of metrics.requests) {
-      recordedRequestCount++;
-      if (request.usage === null) { unknownUsageRequestCount++; continue; }
-      for (const key of Object.keys(knownUsage) as Array<keyof typeof knownUsage>) knownUsage[key] += request.usage[key];
-    }
+    const usage = aggregateUsage(this.#repository.sessionMetrics(sessionId));
     let latestContext: {
       inputTokens: number | null; contextWindowTokens: number | null; modelId: string; stale: boolean;
       contextComposition?: { systemBytes: number; summaryBytes: number; historyBytes: number };
     } | null = null;
-    const latest = this.#repository.latestNarrativeMetrics(sessionId);
+    const latest = this.#repository.latestMain(sessionId);
     if (latest) {
       const request = latest.metrics.requests.at(-1)!;
       const snapshot = latest.metrics.context?.requestId === request.requestId ? latest.metrics.context : undefined;
@@ -207,42 +225,12 @@ export class SessionService {
         ...(snapshot ? { contextComposition: snapshot.contextComposition } : {}),
       };
     }
-    return { knownUsage, recordedRequestCount, unknownUsageRequestCount, latestContext };
-  }
-
-  deleteEntry(sessionId: string, entryId: string, expectedTipEntryId: string | null, permit?: RunWritePermit): DeletedEntry {
-    this.#assertSessionWrite(identifier.parse(sessionId), permit);
-    identifier.parse(entryId);
-    if (expectedTipEntryId !== null) identifier.parse(expectedTipEntryId);
-    const deleted = this.#repository.deleteEntry(sessionId, entryId, expectedTipEntryId);
-    return { ...deleted, entry: toSessionEntry(deleted.entry) };
-  }
-
-  setNarrativeOutcome(sessionId: string, entryId: string, outcome: NarrativeOutcome | null, permit?: RunWritePermit): SessionEntry {
-    identifier.parse(sessionId); identifier.parse(entryId);
-    this.#assertSessionWrite(sessionId, permit);
-    return toSessionEntry(this.#repository.setNarrativeOutcome(sessionId, entryId, outcome === null ? null : narrativeOutcomeSchema.parse(outcome)));
-  }
-
-  getNarrativeOutcome(entry: SessionEntry): NarrativeOutcome | null {
-    if (entry.type !== 'message') return null;
-    const result = narrativeOutcomeSchema.safeParse(entry.extData.narrative);
-    return result.success ? result.data : null;
+    return { ...usage, latestContext };
   }
 
   getHistory(sessionId: string): SessionEntry[] {
     const session = this.require(sessionId);
     return session.tipEntryId === null ? [] : this.#repository.contextEntries(sessionId, session.tipEntryId).map(toSessionEntry);
-  }
-
-  updateEntry(sessionId: string, entryId: string, input: UpdateEntryInput): SessionEntry {
-    identifier.parse(sessionId); identifier.parse(entryId);
-    this.#assertSessionWrite(sessionId);
-    const patch = updateEntrySchema.parse(input);
-    if (this.#requireEntry(sessionId, entryId).type === 'compaction' && (patch.payload !== undefined || patch.extData !== undefined)) {
-      throw new AppError('INVALID_REQUEST', '摘要内容及覆盖范围仅允许由服务内部维护');
-    }
-    return toSessionEntry(this.#repository.updateEntry(sessionId, entryId, patch));
   }
 
   getState(sessionId: string): JsonObject | null {
@@ -278,10 +266,6 @@ export class SessionService {
     const entry = this.getEntry(sessionId, entryId);
     if (!entry) throw new AppError('ENTRY_NOT_FOUND');
     return entry;
-  }
-
-  #assertMetricsRole(role: SessionEntry['role'], metrics: EntryMetrics | null): void {
-    if (metrics !== null && role === 'user') throw new AppError('USER_ENTRY_METRICS_NOT_ALLOWED');
   }
 }
 

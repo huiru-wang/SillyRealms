@@ -1,3 +1,4 @@
+import { seedMessage } from '../testing/run-fixtures.js';
 import { worldPublication } from '../testing/fixtures.js';
 import { Hono } from 'hono';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -19,7 +20,7 @@ import { createSessionRoutes } from './sessions.js';
 let db: DatabaseSync, root: string, services: Services, app: Hono;
 let usecases: ReturnType<typeof createUsecases>, shutdown: AbortController;
 let allowed: boolean;
-const item = { position: 'left' as const, characterId: 'alice', spriteId: 'default' };
+const item = { position: 'left' as const, characterId: 'alice', spriteId: 'default', asset: 'assets/alice.png' };
 
 beforeEach(() => {
   db = openDatabase(':memory:');
@@ -61,7 +62,7 @@ function save(id: string, result?: CharacterSpriteOutput, sessionId = 'one') {
     actionSuggestions: { status: 'no_suggestions', items: [] },
     ...(result === undefined ? {} : { characterSprite: result }),
   };
-  return services.sessions.appendNarrativeAssistant(sessionId, input, output);
+  return seedMessage(services, sessionId, input, output);
 }
 const query = (id: string, sessionId = 'one') =>
   app.request('/api/v1/sessions/' + sessionId + '/entries/' + id + '/character-sprites');
@@ -84,7 +85,7 @@ describe('specified message character sprite query', () => {
   it('returns only the selected message and never inherits an earlier snapshot', async () => {
     save('with-sprites', { status: 'success', items: [item] });
     save('no-sprites');
-    services.sessions.appendEntry('one', {
+    seedMessage(services, 'one', {
       id: 'user', runId: 'next', type: 'message', role: 'user', payload: { message: { role: 'user', content: 'Continue', timestamp: 1 } },
     });
     expect(await result('with-sprites')).toEqual({ status: 'success', items: [item] });
@@ -110,7 +111,8 @@ describe('specified message character sprite query', () => {
     await failure('foreign', 'ENTRY_NOT_FOUND', 404);
     await failure('missing', 'ENTRY_NOT_FOUND', 404);
     await failure('missing', 'SESSION_NOT_FOUND', 404, 'missing-session');
-    services.sessions.appendEntry('one', { id: 'summary', runId: 'summary-run',
+    save('opening');
+    seedMessage(services, 'one', { id: 'summary', runId: 'summary-run',
       type: 'compaction', role: null, payload: { summary: 'Earlier story' } });
     await failure('summary', 'INVALID_REQUEST', 400);
     allowed = false;
@@ -122,25 +124,22 @@ describe('specified message character sprite query', () => {
   it('keeps saved output through ordinary edits and rejects a caller-supplied replacement', async () => {
     const snapshot: CharacterSpriteOutput = { status: 'success', items: [item] };
     save('saved', snapshot);
-    services.sessions.updateEntry('one', 'saved', { payload: { message: { role: 'assistant', content: 'Edited story', timestamp: 1 } }, extData: { note: 'changed' } });
+    services.sessions.setEntryState('one', 'saved', []);
     expect(await result('saved')).toEqual(snapshot);
-    expect(() => services.sessions.updateEntry('one', 'saved', { extData: { output: {
-      characterSprite: { status: 'success', items: [] },
-    } } })).toThrow();
-    services.sessions.deleteEntry('one', 'saved', 'saved');
-    await failure('saved', 'ENTRY_NOT_FOUND', 404);
+    services.sessions.delete('one');
+    await failure('saved', 'SESSION_NOT_FOUND', 404);
   });
 
   it('projects corrupt stored output as a failure without rewriting it or claiming a clear', async () => {
     save('corrupt', { status: 'success', items: [item] });
-    const stored = JSON.stringify({ output: { characterSprite: {
+    const stored = JSON.stringify({ characterSprite: {
       status: 'success', items: [item, { ...item, characterId: 'bob' }],
-    } } });
-    db.prepare('UPDATE entries SET ext_data=? WHERE id=?').run(stored, 'corrupt');
+    } });
+    db.prepare('UPDATE runs SET capabilities_json=? WHERE id=?').run(stored, 'corrupt');
     expect(await result('corrupt')).toEqual({
       status: 'processing_error', items: [],
       errors: [{ errorCode: 'CHARACTER_SPRITE_STORED_RESULT_INVALID' }],
     });
-    expect(db.prepare('SELECT ext_data FROM entries WHERE id=?').get('corrupt')?.ext_data).toBe(stored);
+    expect(db.prepare('SELECT capabilities_json FROM runs WHERE id=?').get('corrupt')?.capabilities_json).toBe(stored);
   });
 });

@@ -11,7 +11,8 @@ import { readSummary } from './stages/compact/saved-summary.js';
 import { historyBoundaries, narrativeMessage, projectHistory } from './stages/history/index.js';
 import { selectNarrativeMaterials } from './stages/materials/index.js';
 
-export type ReplyAssistSources = Omit<ContextSources, 'worlds'> & {
+export type ReplyAssistSources = Omit<ContextSources, 'worlds' | 'sessions'> & {
+  sessions: Pick<ContextSources['sessions'], 'require' | 'getHistory'>;
   worlds: Pick<ContextSources['worlds'], 'require'>;
   modelClient: Pick<ModelClient, 'resolve' | 'assertMessageOrder'>;
 };

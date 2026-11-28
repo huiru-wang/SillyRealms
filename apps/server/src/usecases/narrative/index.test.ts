@@ -1,3 +1,4 @@
+import { seedMessage, storedMetrics } from '../../testing/run-fixtures.js';
 import { worldPublication } from '../../testing/fixtures.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,9 +26,8 @@ const model: ModelInfo = {
 };
 const usage: ModelUsage = { inputTokens: 20, outputTokens: 5, totalTokens: 25, cacheReadTokens: 10, cacheWriteTokens: 0 };
 const zeroUsage: ModelUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
-const wireUsage = (value: ModelUsage | null) => value === null ? null : ({
-  input_tokens: value.inputTokens, output_tokens: value.outputTokens, total_tokens: value.totalTokens,
-  cache_read_tokens: value.cacheReadTokens, cache_write_tokens: value.cacheWriteTokens,
+const wireUsage = (value: ModelUsage | null, recordedRequestCount = 1) => ({
+  knownUsage: value ?? zeroUsage, recordedRequestCount, unknownUsageRequestCount: value === null ? recordedRequestCount : 0,
 });
 const snapshot = (content = '', extra: Partial<ModelSnapshot> = {}): ModelSnapshot => ({
   role: 'assistant', content, reasoning_content: '', tool_calls: [], ...extra,
@@ -151,11 +151,11 @@ function assertLifecycle(runId: string) {
     if (event.event === 'run.usage') {
       expect(Object.keys(event.data).sort()).toEqual(['assistantEntryId', 'model', 'provider', 'runId', 'sessionId', 'timestamp', 'usage']);
       if (event.data.usage !== null) expect(Object.keys(event.data.usage).sort()).toEqual([
-        'cache_read_tokens', 'cache_write_tokens', 'input_tokens', 'output_tokens', 'total_tokens',
+        'knownUsage', 'recordedRequestCount', 'unknownUsageRequestCount',
       ]);
     } else if (event.event === 'run.created') {
       expect(event.data.messages).toHaveLength(1);
-      expect(Object.keys(event.data.messages[0]).sort()).toEqual(['content', 'id', 'role', 'timestamp']);
+      expect(Object.keys(event.data.messages[0]).sort()).toEqual(['content', 'id', 'role', 'status', 'timestamp']);
     } else if (event.event === 'run.delta') {
       expect(event.data.messageId).toEqual(expect.any(String));
       expect(event.data.messages).toHaveLength(1);
@@ -173,16 +173,16 @@ describe('unified narrative events and independent persistence', () => {
   it('saves the user before model work, then publishes one usage total and the committed assistant result', async () => {
     const observedPersisted: string[] = [];
     events.subscribe('session', event => {
-      if (event.event === 'run.created') observedPersisted.push(...services.sessions.listEntryRuns('session').items.find(item => item.runId === event.data.runId)!.entries.map(entry => entry.id));
+      if (event.event === 'run.created') observedPersisted.push(...services.sessions.getRun('session', String(event.data.runId)).messages.map(entry => entry.id));
       if (event.event === 'run.usage') observedPersisted.push(services.sessions.require('session').tipEntryId!);
     });
     const { accepted, finished } = submit();
     expect(stream).not.toHaveBeenCalled();
     expect(resolveModel).not.toHaveBeenCalled();
     expect(texts()).toEqual(['玩家输入']);
-    expect(history()[0]).toMatchObject({ id: accepted.userEntryId, runId: accepted.runId, state: null, extData: {}, metrics: null });
+    expect(history()[0]).toMatchObject({ id: accepted.userEntryId, runId: accepted.runId, state: null, extData: {}, status: 'complete' });
     expect(accepted.userMessage).toEqual({
-      id: accepted.userEntryId, role: 'user', content: '玩家输入', timestamp: history()[0]!.timestamp,
+      id: accepted.userEntryId, status: 'complete', role: 'user', content: '玩家输入', timestamp: history()[0]!.timestamp,
     });
     expect(accepted).not.toHaveProperty('capabilities');
     expect(await finished).toMatchObject({ event: 'run.completed', data: {
@@ -193,14 +193,13 @@ describe('unified narrative events and independent persistence', () => {
     expect(seen[0]).toMatchObject({ event: 'run.created', data: { messages: [accepted.userMessage] } });
     expect(texts()).toEqual(['玩家输入', '完整正文']);
     expect(history()[1]).toMatchObject({
-      parentId: accepted.userEntryId, state: null, extData: { output: {
-        stateUpdate: { status: 'no_updates', updates: [] },
-        actionSuggestions: { status: 'no_suggestions', items: [] },
-      } },
+      parentId: accepted.userEntryId, state: null, extData: {}, status: 'complete',
       payload: { message: snapshot('完整正文') },
-      metrics: { requests: [{ provider: model.providerId, modelId: 'story-model', usage }] },
     });
-    expect(history()[1]!.metrics!.requests[0]!.requestId).not.toBe(accepted.runId);
+    expect(services.sessions.getRun('session', accepted.runId).capabilities).toMatchObject({
+      stateUpdate: { status: 'no_updates', updates: [] }, actionSuggestions: { status: 'no_suggestions', items: [] },
+    });
+    expect(storedMetrics(db, history()[1]!.runId).main!.requests[0]!.requestId).not.toBe(accepted.runId);
     expect(seen.map(event => event.event)).toEqual(['run.created', 'run.delta', 'run.delta', 'run.delta', 'run.usage', 'run.completed']);
     expect(deltas().slice(0, -1).map(event => event.data.messages[0].delta.content)).toEqual(['完整', '正文']);
     expect(finalMessage()).toEqual({ role: 'assistant', delta: {}, snapshot: snapshot('完整正文'), finish_reason: 'stop' });
@@ -247,8 +246,8 @@ describe('unified narrative events and independent persistence', () => {
       stop_reason: reason, savedMessageIds: [accepted.userEntryId, accepted.assistantEntryId], tipEntryId: accepted.assistantEntryId,
     } });
     expect(texts()).toEqual(['玩家输入', body]);
-    expect(history()[1]!.metrics!.requests[0]).not.toHaveProperty('status');
-    expect(history()[0]!.extData.narrative).toMatchObject({ status: 'stopped', stopReason: reason });
+    expect(storedMetrics(db, history()[1]!.runId).main!.requests[0]).not.toHaveProperty('status');
+    expect(services.sessions.getRun('session', history()[0]!.runId)).toMatchObject({ status: 'stopped', stopReason: reason });
     expect(finalMessage()?.snapshot?.content).toBe(body);
     expect(runUsage(accepted.runId)).toEqual(wireUsage(knownUsage));
   });
@@ -259,7 +258,7 @@ describe('unified narrative events and independent persistence', () => {
     script([done('', { finishReason, snapshot: snapshot('', { reasoning_content: '已公开的思考' }) })]);
     const first = submit('第一轮');
     expect(await first.finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: reason } });
-    expect(narrative.list('session').items.find(run => run.runId === first.accepted.runId))
+    expect(narrative.list('session').items.find(run => run.id === first.accepted.runId))
       .toMatchObject({ status: 'stopped', stopReason: reason });
     expect(history()[1]!.payload.message).toMatchObject(snapshot('', { reasoning_content: '已公开的思考' }));
     script([done('下一轮正文')]);
@@ -314,7 +313,7 @@ describe('unified narrative events and independent persistence', () => {
     } });
     expect(texts()).toEqual(['玩家输入']);
     expect(runUsage(accepted.runId)).toEqual(wireUsage(expectedUsage));
-    expect(history()[0]!.metrics).toBeNull();
+    expect(history()[0]).not.toHaveProperty('metrics');
   });
 
   it('continues from saved partial visible history and supports a body returned only in the final snapshot', async () => {
@@ -337,7 +336,7 @@ describe('unified narrative events and independent persistence', () => {
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'provider_error' } });
     expect(texts()).toEqual(['玩家输入', '已生成']);
-    expect(runUsage(accepted.runId)).toBeNull();
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(null));
     expect(JSON.stringify(seen)).not.toContain('/private/model');
   });
 });
@@ -353,7 +352,7 @@ describe('pre-request and persistence failures', () => {
     expect(await finished).toMatchObject({ event: 'run.stopped', data: {
       stop_reason: reason, savedMessageIds: [accepted.userEntryId], tipEntryId: accepted.userEntryId,
     } });
-    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage, 0));
     expect(stream).not.toHaveBeenCalled();
     expect(deltas()).toEqual([]);
   });
@@ -367,18 +366,18 @@ describe('pre-request and persistence failures', () => {
     else get.mockRejectedValueOnce(new AppError('CREDENTIAL_STORE_ERROR', 'private-test-secret'));
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: reason } });
-    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage, 0));
     expect(stream).not.toHaveBeenCalled();
   });
 
   it('retains saved users on unsupported context and preserves provider/model metadata where known', async () => {
-    services.sessions.appendEntry('session', { id: 'bad', runId: 'old', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: 'Wrong role', timestamp: 100 } } });
+    seedMessage(services, 'session', { id: 'bad', runId: 'old', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: 'Wrong role', timestamp: 100 } } });
     db.prepare("UPDATE entries SET role='user' WHERE id='bad'").run();
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'invalid_context' } });
     expect(seen[0]).toMatchObject({ event: 'run.created', data: { provider: model.providerId, model: model.modelId } });
     expect(history().at(-1)?.id).toBe(accepted.userEntryId);
-    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage, 0));
     expect(stream).not.toHaveBeenCalled();
   });
 
@@ -387,14 +386,14 @@ describe('pre-request and persistence failures', () => {
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { provider: null, model: null, stop_reason: 'invalid_context' } });
     expect(seen[0]).toMatchObject({ event: 'run.created', data: { provider: null, model: null } });
-    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage, 0));
   });
 
   it('reports zero for local stream validation failure before request_started', async () => {
     stream.mockImplementation(() => { throw new AppError('MODEL_CAPABILITY_UNSUPPORTED'); });
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'model_capability_unsupported' } });
-    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage, 0));
   });
 
   it('rejects invalid input, stale tips and failed user writes without creating accepted-run events', async () => {
@@ -404,7 +403,7 @@ describe('pre-request and persistence failures', () => {
       { sessionId: 'session', input: { text: 'Input' }, expectedTipEntryId: null, requestId: 'not-supported' },
       { sessionId: 'session', input: { text: 'Input' }, expectedTipEntryId: 'stale' },
     ]) expect(() => narrative.submit(invalid as SubmitInput)).toThrow();
-    const append = vi.spyOn(services.sessions, 'appendEntry');
+    const append = vi.spyOn(services.sessions, 'beginRun');
     append.mockImplementationOnce(() => { throw new AppError('STORAGE_BUSY'); });
     expect(() => narrative.submit({ sessionId: 'session', input: { text: 'Input' }, expectedTipEntryId: null })).toThrow('STORAGE_BUSY');
     expect(history()).toEqual([]);
@@ -429,7 +428,7 @@ describe('pre-request and persistence failures', () => {
         stop_reason: 'message_persist_failed', savedMessageIds: [accepted.userEntryId], tipEntryId: accepted.userEntryId,
       } });
       expect(texts()).toEqual(['玩家输入']);
-      expect(services.sessions.listEntryRuns('session').items.find(item => item.runId === accepted.runId)!.entries).toHaveLength(1);
+      expect(services.sessions.getRun('session', accepted.runId).messages).toHaveLength(1);
     },
   );
 
@@ -438,7 +437,7 @@ describe('pre-request and persistence failures', () => {
     events.subscribe('session', event => {
       if (event.event !== 'run.delta' || blocked) return;
       try {
-        services.sessions.appendEntry('session', {
+        seedMessage(services, 'session', {
           id: 'external', parentId: services.sessions.require('session').tipEntryId, runId: 'external-run', type: 'message', role: 'assistant',
           payload: { message: { role: 'assistant', content: '外部追加', timestamp: 1 } },
         });
@@ -448,7 +447,7 @@ describe('pre-request and persistence failures', () => {
     expect(await finished).toMatchObject({ event: 'run.completed', data: {
       savedMessageIds: [accepted.userEntryId, accepted.assistantEntryId], tipEntryId: accepted.assistantEntryId,
     } });
-    expect(blocked).toMatchObject({ code: 'SESSION_WRITE_LOCKED' });
+    expect(blocked).toMatchObject({ code: 'RUN_ALREADY_ACTIVE' });
     expect(texts()).toEqual(['玩家输入', '完整正文']);
     expect(services.sessions.getEntry('session', 'external')).toBeNull();
   });
@@ -492,7 +491,7 @@ describe('cancellation, shutdown and observer isolation', () => {
     const { accepted, finished } = submit();
     narrative.stop('session', accepted.runId, accepted.assistantEntryId);
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
-    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage, 0));
     expect(stream).not.toHaveBeenCalled();
   });
 
@@ -507,7 +506,7 @@ describe('cancellation, shutdown and observer isolation', () => {
     const request = submit();
     runId = request.accepted.runId;
     expect(await request.finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
-    expect(runUsage(runId)).toBeNull();
+    expect(runUsage(runId)).toEqual(wireUsage(null));
     expect(texts()).toEqual(['玩家输入']);
   });
 
@@ -525,7 +524,7 @@ describe('cancellation, shutdown and observer isolation', () => {
     await waiting.promise;
     narrative.stop('session', request.accepted.runId, request.accepted.assistantEntryId);
     expect(await request.finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
-    expect(runUsage(request.accepted.runId)).toEqual(wireUsage(zeroUsage));
+    expect(runUsage(request.accepted.runId)).toEqual(wireUsage(zeroUsage, 0));
     const settled = structuredClone(seen);
     held.resolve();
     await vi.waitFor(() => expect(resumed).toBe(true));
@@ -554,11 +553,11 @@ describe('cancellation, shutdown and observer isolation', () => {
     } });
     expect(resumed).toBe(false);
     expect(history()[1]!.payload.message).toMatchObject(snapshot('半段', { reasoning_content: '公开思考' }));
-    expect(history()[1]!.metrics!.requests[0]).not.toHaveProperty('status');
-    expect(history()[0]!.extData.narrative).toMatchObject({ status: 'stopped', stopReason: 'cancelled' });
+    expect(storedMetrics(db, history()[1]!.runId).main!.requests[0]).not.toHaveProperty('status');
+    expect(services.sessions.getRun('session', history()[0]!.runId)).toMatchObject({ status: 'stopped', stopReason: 'cancelled' });
     expect(finalMessage()).toMatchObject({ snapshot: snapshot('半段', { reasoning_content: '公开思考' }) });
     expect(finalMessage()).not.toHaveProperty('finish_reason');
-    expect(runUsage(accepted.runId)).toBeNull();
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(null));
     expect(() => narrative.stop('session', accepted.runId, accepted.assistantEntryId)).toThrow('RUN_NOT_FOUND');
   });
 
@@ -575,7 +574,7 @@ describe('cancellation, shutdown and observer isolation', () => {
     held.resolve('late-private-secret');
     await Promise.resolve();
     expect(stream).not.toHaveBeenCalled();
-    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage, 0));
   });
 
   it('retains the first cancellation reason if shutdown follows user cancellation', async () => {
@@ -608,10 +607,10 @@ describe('cancellation, shutdown and observer isolation', () => {
       stop_reason: 'server_shutdown', savedMessageIds: [accepted.userEntryId, accepted.assistantEntryId],
     } });
     expect(texts()).toEqual(['玩家输入', '关机前正文']);
-    expect(runUsage(accepted.runId)).toBeNull();
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(null));
     const saved = structuredClone(seen);
-    const append = vi.spyOn(services.sessions, 'appendEntry');
-    const appendAssistant = vi.spyOn(services.sessions, 'appendNarrativeAssistant');
+    const append = vi.spyOn(services.sessions, 'beginRun');
+    const appendAssistant = vi.spyOn(services.sessions, 'settleRun');
     held.resolve();
     await Promise.resolve();
     await Promise.resolve();
@@ -634,7 +633,7 @@ describe('cancellation, shutdown and observer isolation', () => {
     await created.promise;
     await closing;
     expect(seen.at(-1)).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'server_shutdown' } });
-    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage));
+    expect(runUsage(accepted.runId)).toEqual(wireUsage(zeroUsage, 0));
     expect(texts()).toEqual(['玩家输入']);
     expect((await finished).event).toBe('run.stopped');
   });
@@ -649,8 +648,8 @@ describe('cancellation, shutdown and observer isolation', () => {
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'cancelled' } });
     expect(finalMessage()?.finish_reason).toBe('stop');
     expect(runUsage(accepted.runId)).toEqual(wireUsage(usage));
-    expect(history()[1]!.metrics!.requests[0]).not.toHaveProperty('status');
-    expect(history()[0]!.extData.narrative).toMatchObject({ status: 'stopped', stopReason: 'cancelled' });
+    expect(storedMetrics(db, history()[1]!.runId).main!.requests[0]).not.toHaveProperty('status');
+    expect(services.sessions.getRun('session', history()[0]!.runId)).toMatchObject({ status: 'stopped', stopReason: 'cancelled' });
   });
 
   it('isolates throwing observers and their mutation of final snapshot data from persistence', async () => {
@@ -688,30 +687,30 @@ describe('queryable narrative results', () => {
   it('exposes active state then a durable outcome without in-memory text snapshots', async () => {
     const { accepted, finished } = submit();
     expect(narrative.list('session').activeRunId).toBe(accepted.runId);
-    expect(narrative.list('session').items.find(item => item.runId === accepted.runId)!).toMatchObject({ status: 'running', entries: [{ id: accepted.userEntryId }] });
+    expect(narrative.list('session').items.find(item => item.id === accepted.runId)!).toMatchObject({ status: 'running', messages: [{ id: accepted.userEntryId }] });
     await finished;
     expect(narrative.list('session').activeRunId).toBeNull();
-    expect(narrative.list('session').items.find(item => item.runId === accepted.runId)!).toMatchObject({ status: 'completed', finishedAt: expect.any(Number) });
-    expect(history()[0]!.extData.narrative).toMatchObject({ status: 'completed' });
-    expect(history()[1]!.metrics!.requests[0]).toMatchObject({ provider: model.providerId, modelId: model.modelId });
-    expect(history()[1]!.metrics!.requests[0]).not.toHaveProperty('status');
-    const context = history()[1]!.metrics!.context!;
-    expect(context).toMatchObject({ requestId: history()[1]!.metrics!.requests[0]!.requestId,
+    expect(narrative.list('session').items.find(item => item.id === accepted.runId)!).toMatchObject({ status: 'completed', finishedAt: expect.any(Number) });
+    expect(services.sessions.getRun('session', history()[0]!.runId)).toMatchObject({ status: 'completed' });
+    expect(storedMetrics(db, history()[1]!.runId).main!.requests[0]).toMatchObject({ provider: model.providerId, modelId: model.modelId });
+    expect(storedMetrics(db, history()[1]!.runId).main!.requests[0]).not.toHaveProperty('status');
+    const context = storedMetrics(db, history()[1]!.runId).main!.context!;
+    expect(context).toMatchObject({ requestId: storedMetrics(db, history()[1]!.runId).main!.requests[0]!.requestId,
       apiModelConfigId: 'model', contextWindowTokens: model.contextWindow });
     expect(context.contextComposition.historyBytes).toBeGreaterThan(0);
     expect(narrative.usage('session')).toEqual({ knownUsage: usage, recordedRequestCount: 1, unknownUsageRequestCount: 0,
       latestContext: { inputTokens: usage.inputTokens, contextWindowTokens: model.contextWindow, modelId: model.modelId,
         stale: false, contextComposition: context.contextComposition } });
     const reloaded = createNarrativeUsecases({ ...services, events, transaction: bindTransaction(db), modelClient: { resolve: resolveModel, assertMessageOrder: vi.fn(), stream } });
-    expect(reloaded.list('session').items.find(item => item.runId === accepted.runId)!.status).toBe('completed');
+    expect(reloaded.list('session').items.find(item => item.id === accepted.runId)!.status).toBe('completed');
   });
 
-  it('records preparation failure on the user even when no assistant or metrics exists', async () => {
+  it('records preparation failure on the run without creating an assistant or request metrics', async () => {
     resolveModel.mockImplementationOnce(() => { throw new AppError('MODEL_NOT_FOUND'); });
     const { accepted, finished } = submit();
     await finished;
-    expect(narrative.list('session').items.find(item => item.runId === accepted.runId)!).toMatchObject({
-      status: 'stopped', stopReason: 'model_not_found', entries: [{ id: accepted.userEntryId }],
+    expect(narrative.list('session').items.find(item => item.id === accepted.runId)!).toMatchObject({
+      status: 'stopped', stopReason: 'model_not_found', messages: [{ id: accepted.userEntryId }],
     });
     expect(narrative.usage('session').recordedRequestCount).toBe(0);
   });
@@ -725,22 +724,22 @@ describe('queryable narrative results', () => {
       if (event.event === 'run.delta' && !stopped) {
         stopped = true; narrative.stop('session', accepted.runId, accepted.assistantEntryId);
       }
-      if (event.event === 'run.stopped') observed = narrative.list('session').items.find(item => item.runId === accepted.runId)!;
+      if (event.event === 'run.stopped') observed = narrative.list('session').items.find(item => item.id === accepted.runId)!;
     });
     await finished;
     expect(observed).toMatchObject({ status: 'stopped', stopReason: 'cancelled' });
-    const after = narrative.list('session', { afterSeq: history()[0]!.seq });
+    const after = narrative.list('session', { limit: 1 });
     expect(after.items).toHaveLength(1);
-    expect(after.items[0]!.entries.map(entry => entry.seq)).toEqual([1, 2]);
+    expect(after.items[0]!.messages.map(entry => entry.status)).toEqual(['complete', 'partial']);
     expect(texts()).toEqual(['玩家输入', '半截']);
   });
 
-  it('does not roll back saved messages or fabricate an outcome if settlement storage fails', async () => {
-    vi.spyOn(services.sessions, 'setNarrativeOutcome').mockImplementationOnce(() => { throw new AppError('STORAGE_BUSY'); });
+  it('rolls back the assistant and commits a minimal stopped outcome after settlement failure', async () => {
+    vi.spyOn(services.sessions, 'settleRun').mockImplementationOnce(() => { throw new AppError('STORAGE_BUSY'); });
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'message_persist_failed' } });
-    expect(texts()).toEqual(['玩家输入', '完整正文']);
-    expect(narrative.list('session').items.find(item => item.runId === accepted.runId)!.status).toBe('unknown');
+    expect(texts()).toEqual(['玩家输入']);
+    expect(narrative.list('session').items.find(item => item.id === accepted.runId)!.status).toBe('stopped');
     expect(history()[0]!.extData).toEqual({});
   });
 });
@@ -826,4 +825,25 @@ describe('run diagnostic logs', () => {
     expect(history().map(entry => entry.id)).toEqual([accepted.userEntryId, accepted.assistantEntryId]);
     expect(runUsage(accepted.runId)).toEqual(wireUsage(usage));
   });
+});
+
+// Inject the disposition at the storage boundary so every published reason is checked independently of provider error mapping.
+it.each([
+  'cancelled','server_shutdown','provider_aborted','provider_error','provider_context_window_exceeded',
+  'model_not_found','model_capability_unsupported','credential_not_configured','credential_unavailable',
+  'context_budget_exceeded','invalid_context','output_limit_reached','output_incomplete','model_output_invalid',
+  'tool_execution_unsupported','summary_capacity_exceeded','summary_failed','message_persist_failed',
+  'tip_conflict','session_deleted','internal_error',
+] as const)('preserves %s from the committed receipt through event, list and detail', async reason => {
+  const settle = services.sessions.settleRun.bind(services.sessions);
+  vi.spyOn(services.sessions,'settleRun').mockImplementationOnce((sessionId,runId,assistantId,_reason,_reply,_output,metrics,permit) =>
+    settle(sessionId,runId,assistantId,reason,null,null,metrics,permit));
+  // Stop before any capability is prepared.
+  resolveModel.mockImplementationOnce(() => { throw new AppError('MODEL_NOT_FOUND'); });
+  const {accepted,finished} = submit();
+  expect(await finished).toMatchObject({event:'run.stopped',data:{stop_reason:reason,savedMessageIds:[accepted.userEntryId]}});
+  const run = narrative.get('session',accepted.runId);
+  expect(narrative.list('session').items[0]).toEqual(run);
+  expect(run).toMatchObject({status:'stopped',stopReason:reason,assistantEntryId:accepted.assistantEntryId,
+    messages:[{id:accepted.userEntryId,status:'complete'}],usage:runUsage(accepted.runId)});
 });

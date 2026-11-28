@@ -8,7 +8,7 @@ const tables = {
   models: ['api_model_configs'],
   settings: ['app_settings'],
   worlds: ['worlds', 'world_tags'],
-  sessions: ['sessions', 'entries'],
+  sessions: ['sessions', 'entries', 'runs'],
   state: [],
 };
 const businessTables = new Set(Object.values(tables).flat());

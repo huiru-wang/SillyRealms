@@ -1,10 +1,12 @@
 import { DEFAULT_LOCALE, type AppLocale } from '@sillyrealms/sdk/locale';
 import type { SettingsReader } from '../../modules/settings/service.js';
+import { recentAssistants } from './stages/model-notes/index.js';
+import type { NoteEntry } from './stages/model-notes/types.js';
 import { projectContextMessages, type NarrativeHistoryMessage } from './stages/history/index.js';
 import { AppError } from '../../errors.js';
 import type { ModelConfig, ModelService } from '../../modules/models/service.js';
 import type { Preset, PresetService } from '../../modules/presets/service.js';
-import type { Session, SessionEntry, SessionService } from '../../modules/sessions/service.js';
+import type { Session, SessionService } from '../../modules/sessions/service.js';
 import type { StateService, StateViews } from '../../modules/state/service.js';
 import type { CharacterSpriteCatalogItem, World, WorldService } from '../../modules/worlds/service.js';
 import { selectNarrativeMaterials, type NarrativeMaterials } from './stages/materials/index.js';
@@ -12,7 +14,7 @@ import { promptSpriteCatalog } from './capabilities.js';
 
 export type ContextSources = {
   settings: Pick<SettingsReader, 'getOptional'>;
-  sessions: Pick<SessionService, 'require' | 'getHistory'>;
+  sessions: Pick<SessionService, 'require' | 'getHistory' | 'getAssistantCapabilities'>;
   worlds: Pick<WorldService, 'require' | 'getCharacterSpriteCatalog'>;
   presets: Pick<PresetService, 'require'>;
   models: Pick<ModelService, 'require'>;
@@ -26,7 +28,7 @@ export type ContextSnapshot = {
   preset: Preset;
   modelConfig: ModelConfig;
   history: NarrativeHistoryMessage[];
-  historyEntries: SessionEntry[];
+  historyEntries: NoteEntry[];
   views: StateViews;
   inputText: string;
   inputEntryId: string | null;
@@ -37,7 +39,10 @@ export type ContextSnapshot = {
 export function captureContext(services: ContextSources, sessionId: string): ContextSnapshot {
   const session = services.sessions.require(sessionId);
   const locale = services.settings.getOptional()?.locale ?? DEFAULT_LOCALE;
-  const historyEntries = services.sessions.getHistory(sessionId);
+  const historyEntries: NoteEntry[] = services.sessions.getHistory(sessionId);
+  const recent = recentAssistants(historyEntries);
+  const outputs = services.sessions.getAssistantCapabilities(sessionId, recent.map(entry => entry.id));
+  for (const entry of recent) entry.capabilities = outputs.get(entry.id)!;
   if ((historyEntries.at(-1)?.id ?? null) !== session.tipEntryId) throw new AppError('TIP_CONFLICT');
   const projection = projectContextMessages(historyEntries);
   const world = services.worlds.require(session.worldId);

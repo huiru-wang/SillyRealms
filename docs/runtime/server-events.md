@@ -23,14 +23,14 @@ SSE 握手前的错误仍用普通 HTTP JSON 包络；建立后返回原始 text
     sessionId: string,
     tipEntryId: string,
     timestamp: number,
-    entry: SessionEntry
+    opening: { runId: string, message: {id: string, role: "assistant", status: "complete", content: string, timestamp: number} }
   }
 }
 ```
 
-entry 是已保存的完整首条消息，包含 runId、seq、替换 {{user}} 后的正文、初始消息状态与明确的完成结果，不包含 kind/origin。timestamp 使用首条消息时间。事件按 sessionId 通过同一个 EventHub 发布，监听器错误不影响已提交的数据。
+opening.message 是与创建响应和详情相同的公开消息，timestamp 使用开场消息的保存时间。
 
-创建没有执行叙事，不发布 run.created/run.delta/run.usage/run.completed 或 state.changed。由于首次创建时可能没有 SSE 连接，POST 响应同时提供 item 与 entry；初始显示以响应或历史查询为准，不等待创建事件。失败回滚时不发布任何事件。
+创建没有执行叙事，不发布 run.created/run.delta/run.usage/run.completed 或 state.changed。由于首次创建时可能没有 SSE 连接，POST 响应同时提供 item 与 opening；初始显示以响应或历史查询为准，不等待创建事件。失败回滚时不发布任何事件。
 
 ## 世界内容更新
 
@@ -68,7 +68,7 @@ run.created 中用户消息的 timestamp 是其保存时的消息时间。messag
 
 | event | 特有 data 字段 | 含义 |
 | --- | --- | --- |
-| run.created | messages: [{id,role:"user",content,timestamp}]、tipEntryId、deletedMessageIds | 已受理且用户消息已保存；客户端清空上一轮建议，不保证模型调用已开始 |
+| run.created | messages: [{id,role:"user",status:"complete",content,timestamp}]、tipEntryId、deletedMessageIds | 已受理且用户消息已保存；客户端清空上一轮建议，不保证模型调用已开始 |
 | run.summarizing | 无额外字段 | 摘要输入校验通过，准备发起摘要调用 |
 | run.summarized | entryId | 完整摘要及其 metrics 已保存，entryId 为 compaction ID |
 | run.delta | messageId、messages（固定一个元素） | 同一条助手消息的正文、公开 reasoning 或工具调用增量，以及最终公开快照 |
@@ -124,35 +124,23 @@ content 先隐藏能力块再追加，reasoning_content 继续独立追加；工
 
 snapshot 使用最终模型结果重新分离后的干净 content，是该消息完整公开内容，采用替换语义；空 delta 不清空已有内容，snapshot 不能重复追加。SDK 最终正文、reasoning 和工具参数可能修正增量，因此必须以最终公开快照为准。没有增量时也可直接用快照显示最终消息。
 
-finish_reason 描述一次模型输出结束，不代表数据库保存成功或整轮业务成功。正常 stop 且存在干净正文、没有工具请求并保存成功时发布 run.completed；后处理的 invalid_tag、invalid_json、partial_success 等只记录在助手 output，不改变该终态。length/deferred 归为输出不完整；本期没有工具执行能力，收到工具请求后保留公开内容并以 tool_execution_unsupported 结束。失败或取消也会冻结并发送当前公开快照，不伪造 finish_reason=stop。
+finish_reason 描述一次模型输出结束，不代表数据库保存成功或整轮业务成功。正常 stop 且存在干净正文、没有工具请求并保存成功时发布 run.completed；后处理的 invalid_tag、invalid_json、partial_success 等只记录在 Run.capabilities，不改变该终态。length/deferred 归为输出不完整；本期没有工具执行能力，收到工具请求后保留公开内容并以 tool_execution_unsupported 结束。失败或取消也会冻结并发送当前公开快照，不伪造 finish_reason=stop。
 
 公开 reasoning 不包含 SDK thinkingSignature、textSignature、工具签名、redacted 数据或原始 provider 错误。工具执行、模型继续调用和私有签名回放尚未实现。
 
 ### 一次运行的总 usage
 
-每次已受理的叙事执行在消息保存及首条 user entry 的结束结果结算后发布一次 run.usage，随后发布唯一 run.completed 或 run.stopped。运行占位在发布结算事件前释放；终态后不再发送本轮增量或用量。SSE 连接继续存在。
+结算成功后，服务发送一次 run.usage，接着发送 run.completed 或 run.stopped。data.usage 等于同一执行的 Run.usage，包含 knownUsage、recordedRequestCount、unknownUsageRequestCount。示例为一次无可信 token 的主请求和一次已知用量的成功摘要。
 
-usage 为以下对象或 null：
-
-```ts
-{
-  input_tokens: number,
-  output_tokens: number,
-  cache_read_tokens: number,
-  cache_write_tokens: number,
-  total_tokens: number
-}
+```json
+{"knownUsage":{"inputTokens":20,"outputTokens":5,"totalTokens":25,"cacheReadTokens":0,"cacheWriteTokens":0},"recordedRequestCount":2,"unknownUsageRequestCount":1}
 ```
 
-隐藏能力数据块属于模型实际输出，历史模型旁注属于实际输入；usage 均采用模型返回值，不按公开正文或旁注估算替代真实计量；输入总量包含缓存读写，缓存字段是细分；total_tokens=input_tokens+output_tokens，reasoning 已包含在输出时不重复相加。计量是快照，不能将累计值重复相加。
-
-没有开始 SDK 调用尝试时，总量为真实全零；已经开始调用但没有可信统计时为 null。内部 request_started 仅表明调用尝试，不承诺网络已经发送字节。停止不等待迟到 usage，也不在终态后补发。本轮总量汇总成功保存的摘要调用和正文调用；参与统计的任一次 usage 未知则总量为 null。失败/中断摘要不保存记录也不计量，只有失败摘要且无正文调用时总量为零；不作为供应商精确账单。
-
-usage 不代表消息保存成功。摘要 metrics 随成功的 compaction 保存，正文 metrics 随助手 entry 保存；没有可保存助手或保存失败时，实时 usage 不一定有历史指标载体，不新增 run 表或账单存储。
+该值覆盖上次展示。再生保留成功摘要的费用，重复累加会重复计算摘要。
 
 ### 终态与保存结果
 
-savedMessageIds 表达本轮结算确认保存的消息，tipEntryId 是结算读取的实际会话 tip。部分消息已保存时也列入 savedMessageIds；保存失败时不把预分配助手 ID 列为已保存。compaction 不列入 savedMessageIds，但摘要后未保存正文时 tipEntryId 可以指向 compaction。会话不存在时 tip 可为 null。独立的删除操作不由生成回滚或恢复。
+savedMessageIds 表达本轮结算确认保存的消息，tipEntryId 是结算读取的实际会话 tip。部分消息已保存时也列入 savedMessageIds；保存失败时不把预分配助手 ID 列为已保存。compaction 不列入 savedMessageIds，但摘要后未保存正文时 tipEntryId 可以指向 compaction。执行期间会话消失时丢弃该执行，不发布终态。独立的删除操作不由生成回滚或恢复。
 
 停止原因包括用户取消、服务关闭、模型或凭据不可用、上下文/输出错误及持久化失败，采用稳定的小写原因码。典型值为 cancelled、server_shutdown、provider_error、provider_context_window_exceeded、model_not_found、credential_not_configured、context_budget_exceeded、summary_capacity_exceeded、summary_failed、output_limit_reached、output_incomplete、model_output_invalid、tool_execution_unsupported、message_persist_failed、tip_conflict。保存失败优先于原来的取消或生成原因。详细异常留在服务端，不对外转发 SDK 错误对象。
 
@@ -193,11 +181,11 @@ data: {"assistantEntryId":"m-2","runId":"r-1","sessionId":"s-1","provider":"deep
 }
 ```
 
-messageId 是承载 output 的助手 entry ID；items 是本轮完整有效集合，客户端整组替换。partial_success 仍可携带有效建议，不能仅因状态能力失败或某条建议为空就丢弃其他有效建议。
+messageId 是本轮已保存的助手消息 ID；items 是本轮完整有效集合，客户端整组替换。partial_success 仍可携带有效建议，不能仅因状态能力失败或某条建议为空就丢弃其他有效建议。
 
 标签缺失、空标签、空数组、无有效建议、模型未正常结束或主流程未完成时不发布 created。新 run 的 run.created 已负责清空旧建议，不发送 messageId=null/items=[] 的 created 清空事件，也不增加 cleared。
 
-state.changed、action_suggestions.created 与 character_sprite.changed 独立发布；每条能力通知异常局部处理，继续其余通知及 run.usage/终态，不回滚已提交数据或重新执行能力。能力结果通过 runs 分页中的 entry.extData.output 读取，事件不重复传输全部诊断。首次加载/重连只恢复最新已完成 run 的有效结果，不回找更早建议冒充当前建议。
+state.changed、action_suggestions.created 与 character_sprite.changed 独立发布；每条能力通知异常局部处理，继续其余通知及 run.usage/终态，不回滚已提交数据或重新执行能力。能力结果通过 Run.capabilities 读取，事件不重复传输全部诊断。首次加载/重连只恢复最新已完成 run 的有效结果，不回找更早建议冒充当前建议。
 
 ## 角色立绘变化
 
@@ -240,13 +228,13 @@ data: {"sessionId":"s-1","runId":"r-2","messageId":"m-2","items":[]}
 
 SSE 不重复传输行错误诊断。部分成功时仍发送完整有效数组；非空模型块全部失败时保存 invalid_items，不发布清场事件。历史模型旁注补出的空标签也不改变持久结果或产生新事件。
 
-正常结算顺序为：助手事务提交、释放运行锁、state.changed、符合既有条件的 action_suggestions.created、character_sprite.changed、run.usage、唯一终态。能力通知彼此隔离。助手已经提交而后续 run 结束结果写入失败时，立绘仍作为已提交事实通知；它不依赖 run.completed，也不沿用行动建议必须正文主流程完成的通知条件。
+正常结算顺序为：助手事务提交、释放运行锁、state.changed、符合既有条件的 action_suggestions.created、character_sprite.changed、run.usage、唯一终态。能力通知彼此隔离。助手、能力和终态一起提交；写入失败时，回滚并抑制本次能力通知。
 
 重生成沿用 message.deleted：旧助手 ID 被删除，新执行使用新助手 ID。客户端据删除事件使旧消息来源失效；服务端不自动回找更早快照、不合成回退数组，也不合并新旧立绘。事件只说明哪条消息保存了哪份快照，不规定组件显示哪个消息。
 
 读取配合：
 
-- 事件每项的 `asset` 来自本轮捕获的世界素材。历史结果按角色与素材 ID 从已加载的世界详情解析资源。
+- 事件每项的 `asset` 来自本轮捕获的世界素材。历史结果携带同一份已保存的 asset。
 - `GET /api/v1/sessions/:sessionId/entries/:messageId/character-sprites` 精确返回该消息的 status/items/errors，未产生结果时为 null，不向前继承。
 - 包内素材继续通过 `GET /api/v1/worlds/:worldId/resources/*` 访问；在线素材按既有资源解析规则使用。
 
@@ -277,9 +265,7 @@ SSE 不重复传输行错误诊断。部分成功时仍发送完整有效数组�
 
 ## 查询配合
 
-事件传输仍为 `/api/v1/sessions/:id/events`，没有 narrative/events、SSE id 或回放。轮次查询位于 narrative/runs：客户端重连后按已有 seq 补查新增 entries，若末轮曾在运行则覆盖其末条 seq；退出后重新进入则读取最新 5 轮。未落库的断线分片无需补齐，现有最终 snapshot 保持替换语义。
-
-每个 run 首条 entry 的 extData.narrative 保存 `{status,assistantEntryId?,finishedAt,stopReason?}`，正常完成为 completed，其他结算为 stopped，stopReason 与本事件契约相同；写入失败不回滚已存消息。metrics.requests 改为 provider/modelId/requestId/usage/时间信息，不再存 status。助手 extData.output 单独保存后处理结果；终态仅代表正文主流程结果，能力诊断通过 runs 分页读取。
+事件连接位于 /api/v1/sessions/:id/events。SSE 没有回放。重新连接后读取最近一页 Run，以 activeRunId 定位正在执行的轮；终态后按 runId 精确读取已提交的消息、原因及能力。未持久化的分片可由最终快照替换。
 
 ## AI 帮答
 

@@ -43,6 +43,7 @@ export type NarrativeDependencies = {
   transaction: TransactionRunner;
   /** Defaults to one formatted console line per observation; injectable for embedding/tests. */
   logSink?: RunLogSink;
+  onStorageFailure?: (error: unknown) => void;
 };
 
 export type NarrativeExecution = {
@@ -62,7 +63,7 @@ export type NarrativeExecution = {
   log: RunLogger;
 };
 
-export type RegenerateInput = { sessionId: string; userEntryId: string; assistantEntryId: string | null; expectedTipEntryId: string };
+export type RegenerateInput = { sessionId: string; runId: string; expectedAssistantEntryId: string; expectedTipEntryId: string };
 export type ReadyNarrative = Pick<AcceptedNarrative, 'userMessage' | 'tipEntryId' | 'deletedMessageIds'> & {
   notifications: Array<MessageDeletedEvent | StateEvent>;
 };

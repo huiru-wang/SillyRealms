@@ -1,3 +1,4 @@
+import { seedMessage } from '../testing/run-fixtures.js';
 import type { Presentation } from '@sillyrealms/sdk/presentation';
 import { worldPublication } from '../testing/fixtures.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -55,13 +56,13 @@ describe('create a ready session', () => {
     events.subscribe('session', event => { received.push(event); order.push('event'); });
     const foreign = vi.fn(); events.subscribe('other', foreign);
     const result = create(input);
-    expect(result.item).toMatchObject({ id: 'session', title: '夜归', tipEntryId: result.entry.id, state: { visits: 0 } });
-    expect(result.entry).toMatchObject({ sessionId: 'session', seq: 1, parentId: null, type: 'message', role: 'assistant',
-      payload: { message: { role: 'assistant', content: '掌柜，欢迎回来。掌柜！', timestamp: result.entry.timestamp } },
+    expect(result.item).toMatchObject({ id: 'session', title: '夜归', tipEntryId: result.opening.message.id, state: { visits: 0 } });
+    expect(services.sessions.getEntry('session', result.opening.message.id)!).toMatchObject({ sessionId: 'session', seq: 1, parentId: null, type: 'message', role: 'assistant',
+      payload: { message: { role: 'assistant', content: '掌柜，欢迎回来。掌柜！', timestamp: result.opening.message.timestamp } },
       state: [{ key: 'coins', value: 20 }, { key: 'energy', value: 5 }, { key: 'bag', value: { gold: 5 } }],
-      metrics: null, extData: { narrative: { status: 'completed', finishedAt: result.entry.timestamp } } });
+      status: 'complete', extData: {} });
     expect(services.worlds.require('world')).toEqual(globalBefore);
-    expect(services.sessions.getEntry('session', result.entry.id)?.extData.output).toEqual({
+    expect(services.sessions.getRun('session', result.opening.runId).capabilities).toEqual({
       stateUpdate: { status: 'success', updates: [
         { status: 'success', path: 'coins', value: 20 },
         { status: 'success', path: 'energy', value: 5 },
@@ -70,11 +71,11 @@ describe('create a ready session', () => {
       actionSuggestions: { status: 'no_suggestions', items: [] },
     });
     expect(order).toEqual(['commit', 'event']);
-    expect(received).toEqual([{ event: 'session.created', data: { sessionId: 'session', tipEntryId: result.entry.id, timestamp: result.entry.timestamp, entry: result.entry } }]);
+    expect(received).toEqual([{ event: 'session.created', data: { sessionId: 'session', tipEntryId: result.opening.message.id, timestamp: result.opening.message.timestamp, opening: result.opening } }]);
     expect(foreign).not.toHaveBeenCalled();
-    expect(result.entry.extData).not.toHaveProperty('origin');
-    expect(result.entry).not.toHaveProperty('kind');
-    expect(usecases.narrative.list('session').items.find(item => item.runId === result.entry.runId)!).toMatchObject({ status: 'completed', finishedAt: result.entry.timestamp, entries: [result.entry] });
+    expect(services.sessions.getEntry('session', result.opening.message.id)!.extData).not.toHaveProperty('origin');
+    expect(services.sessions.getEntry('session', result.opening.message.id)!).not.toHaveProperty('kind');
+    expect(usecases.narrative.list('session').items.find(item => item.id === result.opening.runId)!).toMatchObject({ status: 'completed', finishedAt: result.opening.message.timestamp, messages: [result.opening.message] });
     expect(usecases.narrative.usage('session').recordedRequestCount).toBe(0);
   });
 
@@ -89,16 +90,16 @@ describe('create a ready session', () => {
     });
     const components = vi.spyOn(services.worlds, 'getComponents');
     const result = usecases.createSession(input);
-    expect(result.entry.payload).toMatchObject({ message: { content: '掌柜，欢迎回来。掌柜！' } });
-    expect(JSON.stringify(result.entry)).not.toContain('PREVIEW_ONLY');
-    expect(JSON.stringify(result.entry)).not.toContain('PreviewOnly');
+    expect(result.opening.message.content).toBe('掌柜，欢迎回来。掌柜！');
+    expect(JSON.stringify(result.opening.message)).not.toContain('PREVIEW_ONLY');
+    expect(JSON.stringify(result.opening.message)).not.toContain('PreviewOnly');
     expect(components).not.toHaveBeenCalled();
   });
 
   it('substitutes every exact user placeholder once, keeping replacement syntax literal', () => {
     services.worlds.update('world', { characters: [{ id: 'player', name: '$&{{user}}', player_selectable: true }] });
     const result = usecases.createSession(input);
-    expect(result.entry.payload.message).toMatchObject({ content: '$&{{user}}，欢迎回来。$&{{user}}！' });
+    expect(result.opening.message).toMatchObject({ content: '$&{{user}}，欢迎回来。$&{{user}}！' });
     expect(services.worlds.requireOpening('world', 'start').content).toBe('{{user}}，欢迎回来。{{user}}！');
   });
 
@@ -107,8 +108,8 @@ describe('create a ready session', () => {
     const result = usecases.createSession({ ...input, title: null });
     expect(result.item.title).toBeNull();
     expect(result.item.state).toEqual({});
-    expect(result.entry.state).toEqual([]);
-    expect(result.entry.extData.output).toEqual({
+    expect(services.sessions.getEntry('session', result.opening.message.id)!.state).toEqual([]);
+    expect(services.sessions.getRun('session', result.opening.runId).capabilities).toEqual({
       stateUpdate: { status: 'no_updates', updates: [] }, actionSuggestions: { status: 'no_suggestions', items: [] },
     });
   });
@@ -133,7 +134,7 @@ describe('create a ready session', () => {
 
   it('allows opening overrides without rules for the new fields', () => {
     services.worlds.update('world', { openings: [{ id: 'start', name: 'Start', content: 'Hi', initial_state: { bag: { surprise: true } } }] });
-    expect(usecases.createSession(input).entry.state).toContainEqual({ key: 'bag', value: { surprise: true } });
+    expect(services.sessions.getEntry('session', usecases.createSession(input).opening.message.id)!.state).toContainEqual({ key: 'bag', value: { surprise: true } });
   });
 
   it.each([{ unknown: 1 }, { coins: 999 }, { 'bag.gold': 1 }] as JsonObject[])('rejects invalid initial overrides: %j', initialState => {
@@ -149,8 +150,8 @@ describe('create a ready session', () => {
 
   it('rolls back both the session and first entry if saving its outcome fails', () => {
     const publish = vi.spyOn(events, 'publish');
-    const persist = services.sessions.setNarrativeOutcome.bind(services.sessions);
-    vi.spyOn(services.sessions, 'setNarrativeOutcome').mockImplementation((...args) => { persist(...args); throw new Error('save failed'); });
+    const persist = services.sessions.createOpening.bind(services.sessions);
+    vi.spyOn(services.sessions, 'createOpening').mockImplementationOnce((...args) => { persist(...args); throw new Error('save failed'); });
     expect(() => usecases.createSession(input)).toThrow('save failed');
     expect(services.sessions.get('session')).toBeNull();
     expect(db.prepare('SELECT count(*) AS count FROM entries').get()!.count).toBe(0);
@@ -162,27 +163,27 @@ describe('create a ready session', () => {
     const publish = vi.spyOn(events, 'publish');
     const result = usecases.createSession(input);
     expect(() => usecases.createSession(input)).toThrow();
-    expect(services.sessions.getHistory('session')).toEqual([result.entry]);
+    expect(services.sessions.getHistory('session')).toEqual([services.sessions.getEntry('session', result.opening.message.id)!]);
     expect(publish).toHaveBeenCalledTimes(1);
   });
 
   it('keeps runs unclassified and paginates the initial message as an ordinary group', () => {
     const result = usecases.createSession(input);
-    for (let index = 0; index < 5; index++) services.sessions.appendEntry('session', {
+    for (let index = 0; index < 5; index++) seedMessage(services, 'session', {
       runId: 'run-' + index, type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: 'Body', timestamp: 1 } },
     });
     const first = usecases.narrative.list('session');
     expect(first.items).toHaveLength(5);
-    expect(first.items.every(item => item.status === 'unknown' && !('kind' in item))).toBe(true);
-    const last = usecases.narrative.list('session', { beforeSeq: first.nextBeforeSeq! });
+    expect(first.items.every(item => item.status === 'completed' && !('kind' in item))).toBe(true);
+    const last = usecases.narrative.list('session', { beforePageKey: first.nextPageKey! });
     expect(last.items).toHaveLength(1);
-    expect(last.items[0]).toMatchObject({ runId: result.entry.runId, status: 'completed' });
+    expect(last.items[0]).toMatchObject({ id: result.opening.runId, status: 'completed' });
     expect(last.hasMore).toBe(false);
   });
 
   it('uses the saved first message and inherited state in the first player turn', async () => {
     const result = usecases.createSession(input);
-    const user = services.sessions.appendEntry('session', { runId: 'next', type: 'message', role: 'user', payload: { message: { role: 'user', content: '进门', timestamp: 1 } } });
+    const user = seedMessage(services, 'session', { runId: 'next', type: 'message', role: 'user', payload: { message: { role: 'user', content: '进门', timestamp: 1 } } });
     const summarize = vi.fn<ContextDependencies['summarize']>(async () => ({ ok: false }));
     const context = await prepareContext({
       ...services, modelClient: { resolve: () => model, assertMessageOrder: vi.fn() }, summarize,
@@ -193,7 +194,7 @@ describe('create a ready session', () => {
     if (!context.ok) throw new Error(context.failure.code);
     expect(context.parentEntryId).toBe(user.id);
     expect(context.request.messages.filter(message => message.role === 'assistant'))
-      .toEqual([{ role: 'assistant', timestamp: result.entry.timestamp, content: [
+      .toEqual([{ role: 'assistant', timestamp: result.opening.message.timestamp, content: [
         '掌柜，欢迎回来。掌柜！', '', '<state_update>',
         '{"path":"coins","value":20}', '{"path":"energy","value":5}', '{"path":"bag","value":{"gold":5}}',
         '</state_update>', '<action_suggestions>[]</action_suggestions>',
@@ -206,7 +207,7 @@ describe('create a ready session', () => {
     expect(instructions).not.toContain('value: 20');
     expect(services.state.getViews({ worldId: 'world', sessionId: 'session', entryId: user.id }))
       .toEqual({ global: { day: 9 }, session: { visits: 0 }, message: { coins: 20, energy: 5, bag: { gold: 5 } } });
-    expect(services.state.requireMessage('session', user.id)).toEqual(result.entry.state);
+    expect(services.state.requireMessage('session', user.id)).toEqual(services.sessions.getEntry('session', result.opening.message.id)!.state);
     expect(summarize).not.toHaveBeenCalled();
   });
 });

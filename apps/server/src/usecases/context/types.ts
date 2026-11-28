@@ -2,7 +2,7 @@ import type { RunWritePermit } from '../../infrastructure/cache/index.js';
 import type { ErrorCode } from '../../errors.js';
 import type { ModelClient, ModelInfo, ModelMessage, ModelParameters } from '../../infrastructure/model/client.js';
 import type { ModelConfig } from '../../modules/models/service.js';
-import type { EntryMetrics, SessionService } from '../../modules/sessions/service.js';
+import type { RequestMetrics, SessionService } from '../../modules/sessions/service.js';
 import type { ContextSources } from './capture.js';
 import type { CompiledNarrativeContext } from './stages/assemble/index.js';
 import type { SummaryOutcome } from './stages/compact/index.js';
@@ -29,7 +29,7 @@ export type SummaryModelRequest = {
 };
 export type SummaryModelResult = SummaryOutcome;
 export type ContextDependencies = Omit<ContextSources, 'sessions'> & {
-  sessions: Pick<SessionService, 'require' | 'getHistory' | 'appendEntry'>;
+  sessions: Pick<SessionService, 'require' | 'getHistory' | 'getAssistantCapabilities' | 'appendSummary'>;
   modelClient: Pick<ModelClient, 'resolve' | 'assertMessageOrder'>;
   summarize: (request: SummaryModelRequest) => Promise<SummaryModelResult>;
 };
@@ -42,7 +42,7 @@ export type ContextFailure = {
   /** Author/preset template source diagnostics for the outer run log; never a state value or SSE payload. */
   detail?: string;
 };
-export type SummaryReceipt = { entryId: string; metrics: EntryMetrics | null };
+export type SummaryReceipt = { entryId: string; metrics: RequestMetrics | null };
 type ContextReceipt = { parentEntryId: string | null; summary?: SummaryReceipt };
 export type PreparedContext = ContextReceipt & (
   | { ok: true; request: ContextModelRequest; diagnostics: ContextDiagnostics }

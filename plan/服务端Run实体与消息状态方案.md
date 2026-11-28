@@ -2,9 +2,20 @@
 
 ## 决策与交付边界
 
-建议先改 Server，再以实际通过测试的 HTTP / SSE 契约修订前端重构方案。单修 SDK 也能恢复已存在的状态和 21 个停止原因。引入 Run 的理由是 SR 已经需要独立查询和更新“一轮”：同一条用户输入可以多次生成，失败时可能连助手消息都没有，摘要可以成功而本轮回复失败。一轮应有稳定的身份、顺序和可回读的结论。
+本阶段交付可独立验收的 v15 Server。存储、用例、HTTP、SSE、启动与关闭、所有服务端调用方和测试一起切换。Server 验收通过并冻结请求与事件样例后，才开始修订前端方案。引入 Run 的理由是 SR 已经需要独立查询和更新“一轮”：同一条用户输入可以多次生成，失败时可能连助手消息都没有，摘要可以成功而本轮回复失败。一轮应有稳定的身份、顺序和可回读的结论。
 
 这一期增加一张 `runs` 表。消息本身的完整性、整轮的执行结果和模型对世界状态的修改分开建模。沿用 SQLite、Session 模块、现有同步事务、会话写许可和会话 SSE。首发使用新数据根。实施和验收顺序见[任务清单](服务端Run实体与消息状态任务.md)。
+
+## 首发版本与旧实现退役
+
+v15 是本次 Server 重构唯一支持的会话存储和运行契约。同一套生产代码只读写 v15。禁止迁移或回填 v14 数据、双读双写、读失败后从旧 entry 恢复结果、旧请求转换、响应别名、双发事件，以及通过开关、请求头或客户端版本选择旧实现。受影响的 Web/SDK 属于下一阶段，旧客户端测试不能成为添加兼容路径的理由。
+
+| 范围 | 实施完成时可检查的结果 |
+| --- | --- |
+| 数据库启动 | 空库创建 v15；已有库仅在 application_id、user_version 和实际表/索引定义全部匹配时打开。旧版、未知版和结构损坏的库在初始化内置数据和监听前失败。保留错误码 SERVER_DATABASE_INCOMPATIBLE / SERVER_DATABASE_SCHEMA_MISMATCH 和原文件；禁止自动改版本、删库、重建或偷偷换用新目录。 |
+| 存储与服务 | 移除 entry 的 metrics 列、旧 outcome/output 读写校验器和首尾 seq 分组 SQL，清掉废弃的类型、导出与通用写入口。活动执行控制器只负责取消、等待和许可释放，历史查询一律读 runs。缺失 Run 属于数据错误，禁止推算 unknown 或从消息拼造轮次。v15 单项能力损坏仍按该能力的既定错误格式返回，只检查当前轮。 |
+| HTTP / SSE | 本次重构的接口仅接受其正式输入并返回一套字段。对轮次接口严格校验 query 和 body，旧 cursor、afterSeq、旧再生体、新旧字段混传均返回 400 INVALID_REQUEST。被移除的历史/通用条目路由保持未注册。分页响应、201、202 和事件都不附送旧 entry 结构；只发布一次 v15 事件。 |
+| 源码和交接 | 删除所有为本次退役行为服务的分支、夹具和正向测试。旧格式只出现在说明退役行为的文档、拒绝旧输入的负例中。Server 可继续引用共享包的世界格式等现行工具；Server 验收直接使用真实路由、用例和新库，不依赖旧舞台契约或 Web 转换器。 |
 
 ## 现状与证据
 
@@ -57,9 +68,9 @@ CREATE UNIQUE INDEX idx_runs_session_active ON runs(session_id)
 
 - `entries` 增加原子列 `status`。message 必填 `complete | partial`，user 只能 complete；compaction 必须 NULL。用显式 IS NOT NULL 和 type/role 联合 CHECK，防止 SQLite 将 NULL 谓词当作通过。完整性只描述已保存内容。排队、生成中、停止中都是轮次状态，无需建空助手行。失败的用户提交在受理事务回滚后没有消息。
 - 保留 `entries.run_id`、`UNIQUE(session_id,seq)` 和 `(session_id,run_id,seq)` 索引。每次追加都在同一事务校验 session、run、tip 和角色；助手 ID 须等于本轮预留值，用户只在受理时追加，开场只有助手。compaction 继承真实 tip 的 runId，写入路径校验同会话。不通过通用 entry 编辑接口修改轮归属、消息状态、计量和能力结果。
-- 删除 entries.metrics_json 以及 ext_data.narrative / ext_data.output 的读写。ext_data.summary 继续服务于摘要。停止原因仅在 runs.stop_reason 写一次，使用 Server 枚举校验写入与解码。Run 不重复存 messageIds、正文、父链或有效世界状态。
+- 删除 entries.metrics_json 以及 ext_data.narrative / ext_data.output 的读写。受控写入口自行构造 ext_data：生成和开场消息写 {}，compaction 写经校验的 summary 元数据。禁止把任意调用者提供的 extData 合并到记录中。停止原因仅在 runs.stop_reason 写一次，使用 Server 枚举校验写入与解码。Run 不重复存 messageIds、正文、父链或有效世界状态。
 - 无新 FK 的配套要求是所有涉及两表的写入都走 Session 模块的受控事务。删除会话先执行既有写锁校验，再在同一事务显式删除该会话 runs 和 session，由既有规则清理 entries。删除世界复用同一入口，任一失败整体回滚。正常操作期间活跃会话不能被删除。完整性测试覆盖孤儿 Run、孤儿条目、跨会话引用和错误执行身份，查不到 owner 视为数据错误。
-- 新空库版本 v15，保留 application_id 与旧库拒绝启动策略。v14 及更旧数据不迁移、不覆盖。上线需新数据根；旧根和匹配的旧服务版本成对保留以供回退。
+- 新空库版本 v15，保留 application_id 与旧库拒绝启动策略。首发显式选择新数据根。运维如需回退，停止新进程后恢复原版服务及其原数据根；两套数据库互不转换，v15 新产生的会话不会自动出现在旧根。
 
 建议将下列 CHECK 放入 v15 的 entries 建表定义，与既有 type/role 及 payload 检查一同生效。
 
@@ -117,11 +128,19 @@ CHECK (
 
 保留已有完整轮边界、待答用户保护与滚动摘要保护最近五个历史轮的规则。继续通过 coveredThroughEntryId、完整消息边界和覆盖前缀的 sourceHash 判断摘要能否复用。当前 hash 取普通消息的 id、seq、runId、role、content；Run 终态、能力输出或用量变化不应使正文摘要失效。被覆盖的正文编辑或删除后重新校验。prepareContext 的业务输入仍仅 sessionId，首次 await 前捕获状态、条目与对应的 Run 输出；摘要提交时重查 tip 和来源，助手写入必须接在可能新产生的摘要之后。Context 通过 Session 模块同时追加摘要与计量，保持与 Narrative/EventHub 独立。
 
-模型历史 notes 先选最近两条可见助手，再按其 entry.id 与 run.assistantEntryId 精确匹配批量捕获的输出。保留现行 state / action / sprite 顺序、空块、损坏输出与能力授权规则，不补取更旧回复，不在每个预算候选中查询数据库。帮答仍只读消息、有效摘要和允许的材料。
+下一轮主模型请求中的历史能力块由 Context 在内存组装。模型历史 notes 先选最近两条可见助手，再按其 entry.id 与 run.assistantEntryId 精确匹配批量捕获的输出。保留现行 state / action / sprite 顺序、空块、损坏输出与能力授权规则，不补取更旧回复，不在每个预算候选中查询数据库。能力块计入实际主请求输入预算。摘要、关键词激活和玩家可见正文使用干净正文；读取历史不触发状态写入。验收直接检查第二轮传入 modelClient.stream 的 messages，在上一轮助手正文后按序看到三个已启用的能力块；再生后重复读取只能匹配新助手，立绘块没有 asset。帮答仍只读消息、有效摘要和允许的材料。
+
+## 服务故障与正常关闭
+
+当终态事务和独立的最小失败结算都无法持久化时，由叙事执行向应用装配层报告一次致命存储故障。应用在释放故障执行许可前同步停止新准入，通过现有应用生命周期关闭已打开的 SSE，记录 sessionId、runId、assistantEntryId 和数据库错误；该执行不发布猜测的终态。正在等待鉴权的请求恢复后须再核对关闭信号，不能新开 SSE 或提交写操作。数据库关闭由启动方在已有任务退出后统一完成，故障回调不能同步等待触发它的执行自身。
+
+故障发生后，只要进程仍可响应，`/health` 及新 API 请求返回 503 `STORAGE_UNAVAILABLE`（新增服务错误码），不再报告健康。退出后由独占该数据根的 Server 重新启动，先完成 v15 遗留活动轮收尾，再开放流量。普通停止请求、成功落库的 stopped 和单个订阅者异常不触发全局故障。正常关机继续按既有顺序停止准入、等待活动任务结算并发布终态、关闭 SSE，最后关闭 DB。重复 shutdown / 故障报告均须幂等。
 
 ## Server 契约与分页
 
-HTTP 继续沿用 `/api/v1/sessions/:id/narrative` 前缀；模型实现的目录名不约束后续 SDK 命名。以下为响应 data 部分。id 均为字符串，时间为现行毫秒时间戳。
+HTTP 继续沿用 `/api/v1/sessions/:id/narrative` 前缀；模型实现的目录名不约束后续 SDK 命名。下表简写的 /runs 和 /usage 均相对此前缀。以下为响应 data 部分。id 均为字符串，时间为现行毫秒时间戳。
+
+**会话创建单独冻结。** `POST /api/v1/sessions` 的 201 data 为 `{item: SessionView, opening: {runId, message}}`，`session.created` 的 data 为 `{sessionId, tipEntryId, timestamp, opening: {runId, message}}`。两者使用同一份提交回执和同一公开 Message 投影；开场 message 为 `{id, role: "assistant", status: "complete", timestamp, content}`。此时 `item.tipEntryId = tipEntryId = message.id`，按 opening.runId 查到 completed Run，其 assistantEntryId 与该消息相同，messages 只有这条开场；初始能力从 Run 读取。201 与事件均取消旧顶层 entry。事务失败不返回 201、不发布事件；成功创建也只产生一次 session.created。
 
 | 操作 | 输入及返回 |
 | --- | --- |
@@ -131,7 +150,7 @@ HTTP 继续沿用 `/api/v1/sessions/:id/narrative` 前缀；模型实现的目�
 | POST /runs/regenerate | {runId, expectedAssistantEntryId, expectedTipEntryId}。即使上次没有保存助手，也能从 Run 取得预留 ID，有效拒绝旧请求的延迟重试。Server 在锁内找本轮用户与实际旧助手，返回同一受理结构。 |
 | POST /runs/:runId/stop | {assistantEntryId}，匹配当前执行后返回现有停止受理回执。 |
 | GET /usage | 保留会话记录用量及 latestContext，改从 runs.metrics_json 读取。 |
-| 会话 SSE 和按消息读立绘 | SSE 地址不变。现有单条消息立绘读入口经身份校验投影所属轮输出，用户消息返回 null，摘要拒绝，已删除/异会话消息未找到。资源文件继续经既有资源入口加载。 |
+| 会话 SSE 和按消息读立绘 | SSE 地址不变。正式提供 GET /api/v1/sessions/:id/entries/:entryId/character-sprites，服务于只持有消息 ID 的精确读取；只查同会话消息与当前 Run.assistantEntryId 匹配的 capabilities.characterSprite，全程使用 v15 数据，删除原 extData 读取实现。响应为 {sessionId, messageId, result}，有效条目含 asset；用户消息返回 null，摘要拒绝，已删除/异会话消息未找到。资源文件继续经既有资源入口加载。 |
 
 Run DTO 包含 `id, status, stopReason, assistantEntryId, createdAt, finishedAt, messages, capabilities, usage`。stopReason、finishedAt 无值时显式 null。messages 按 seq 升序，仅含已保存的普通消息，每条含 id、role、status、timestamp、content 和已保存的可选 reasoning_content、tool_calls（仅助手）。capabilities 为该次执行的持久结果。内部摘要正文、原始计量快照和 parent 链不进轮次消息列表；发命令所需的真实 tip 从页或受理回执取得。
 
@@ -167,6 +186,15 @@ internal_error
 
 run.created 的用户投影同样带 complete。run.delta 保留增量正文、思考文本和最终替换快照；run.completed/stopped 的身份和已存 ID 能与持久消息逐个对应。run.summarizing、run.summarized、run.usage 仍是 Server 会话事件。发布方复用同一结算回执；SSE 无回放，崩溃恰好发生在提交后、通知前时，HTTP 仍读得到最终记录。Run 查询描述叙事活动；独立 reply assist 的占用通过原有准入机制处理，不能从 activeRunId=null 推断所有平台命令一定成功。
 
+## 服务端关联模块的验收边界
+
+| 入口或调用方 | v15 需要证明的行为 |
+| --- | --- |
+| 会话管理与鉴权 | 会话列表仍按 updatedAt、id 分页；详情与编辑返回真实 tip（含摘要 tip）。新轮详情、复用的立绘入口、SSE 都经现有会话鉴权。找不到本会话的轮返回 404 RUN_NOT_FOUND；已完成轮可正常 GET。鉴权不可见的会话沿用 404 SESSION_NOT_FOUND。陈旧 tip 为 409 TIP_CONFLICT，已替换的再生目标为 409 INVALID_REGENERATION_TARGET；仅当前活动执行可受理 stop。 |
+| 运行配置、预设和帮答 | runtime/config 仍按安装环境、当前预设和目录求可用性；历史能力与历史模型指标只属于 Run。删除预设仍检查实际配置引用。帮答持有独立许可、只读有效摘要；叙事活动读与帮答准入分别验证。 |
+| State 与世界 | 按 entryId 查 message scope、会话/全局写锁、再生后的实际状态事件均用真实 tip 验证。删除会话/世界按既有授权在同一数据库事务清理；更新世界版本验证活动锁并保留所有 Run、消息和历史资源引用。 |
+| Web/SDK 后续交接 | 列出旧 Entry/StoredRun、afterSeq、开场 entry、旧再生请求、旧 usage 事件和消息能力读取的消费点。用已验收的 Server 请求/响应/事件样例更新下一阶段方案；本阶段不修改 Host、Stage 或 SDK，不在 Server 内实现前端适配。 |
+
 ## 首发切换与交接
 
-这次是 Server 存储与传输契约的一次破坏性变更。现有 Web 使用 entry 分组、afterSeq 和旧再生参数，单独替换生产 Server 会破坏现有运行页。先在独立数据根完成 Server 验收，冻结分页、终态、再生和计量样例，下一项工作才更新前端架构、SDK 和验收用例；前后端配套后上线。其余模型提供商、世界卡格式、预设语法、会话配置、状态 API、资源服务与传输协议均可沿用。实现的变更文件树、故障用例和发布门槛见[实施任务](服务端Run实体与消息状态任务.md)。
+这次是 Server 存储与传输契约的一次破坏性变更。现有 Web 使用 entry 分组、afterSeq 和旧再生参数，单独替换生产 Server 会破坏现有运行页。Server 完成条件为旧实现清理完成、拒绝旧格式的负例通过、全套服务端测试/typecheck/lint 通过，并由函数级路由与事件测试验证开场、分页、终态、再生、计量及故障样例。接口文档以这些样例为准。达到以上条件即可独立交付 Server；前后端配套后再发布整站。其余模型提供商、世界卡格式、预设语法、会话配置、状态 API、资源服务与传输协议均可沿用。实现的变更文件树、故障用例和发布门槛见[实施任务](服务端Run实体与消息状态任务.md)。

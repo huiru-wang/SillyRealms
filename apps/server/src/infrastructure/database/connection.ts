@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { AppError } from '../../errors.js';
 
-export const DATABASE_VERSION = 14;
+export const DATABASE_VERSION = 15;
 export const DATABASE_APPLICATION_ID = 0x53525632; // SRV2; distinct from the old Server database.
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
@@ -81,6 +81,27 @@ CREATE TABLE sessions (
     updated_at          INTEGER NOT NULL
 );
 
+CREATE TABLE runs (
+  page_key INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT NOT NULL UNIQUE,
+  session_id TEXT NOT NULL,
+  assistant_entry_id TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK (status IN ('running','stopping','completed','stopped')),
+  stop_reason TEXT,
+  capabilities_json TEXT NOT NULL DEFAULT '{}'
+    CHECK (json_valid(capabilities_json) AND json_type(capabilities_json) = 'object'),
+  metrics_json TEXT NOT NULL DEFAULT '{"main":null,"summaries":{}}'
+    CHECK (json_valid(metrics_json) AND json_type(metrics_json) = 'object'),
+  created_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  CHECK ((status IN ('running','stopping') AND finished_at IS NULL AND stop_reason IS NULL)
+      OR (status = 'completed' AND finished_at IS NOT NULL AND stop_reason IS NULL)
+      OR (status = 'stopped' AND finished_at IS NOT NULL AND stop_reason IS NOT NULL))
+);
+CREATE INDEX idx_runs_session_page ON runs(session_id, page_key DESC);
+CREATE UNIQUE INDEX idx_runs_session_active ON runs(session_id)
+  WHERE status IN ('running','stopping');
+
 CREATE TABLE entries (
     id           TEXT PRIMARY KEY NOT NULL,
     session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -93,13 +114,16 @@ CREATE TABLE entries (
     payload      TEXT NOT NULL CHECK(json_valid(payload) AND json_type(payload) = 'object'),
     state        TEXT CHECK(state IS NULL OR (json_valid(state) AND json_type(state) = 'array')),
     ext_data     TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(ext_data) AND json_type(ext_data) = 'object'),
-    metrics_json TEXT CHECK(metrics_json IS NULL OR (json_valid(metrics_json) AND json_type(metrics_json) = 'object')),
+    status       TEXT,
     created_at   INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL,
     UNIQUE(session_id, seq),
-    CHECK(
-        (type = 'message' AND role IN ('user', 'assistant') AND role IS NOT NULL)
-        OR (type = 'compaction' AND role IS NULL)
+    CHECK (
+      (type = 'compaction' AND role IS NULL AND status IS NULL) OR
+      (type = 'message' AND role IS NOT NULL AND status IS NOT NULL AND (
+        (role = 'user' AND status = 'complete') OR
+        (role = 'assistant' AND status IN ('complete','partial'))
+      ))
     )
 );
 

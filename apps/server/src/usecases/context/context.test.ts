@@ -1,3 +1,4 @@
+import { seedMessage } from '../../testing/run-fixtures.js';
 import { worldPublication } from '../../testing/fixtures.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -42,8 +43,9 @@ beforeEach(() => {
 afterEach(() => { db.close(); rmSync(dataRoot, { recursive: true, force: true }); });
 
 function append(id: string, role: 'user' | 'assistant', content: string) {
-  return services.sessions.appendEntry('session', {
-    id, runId: 'run-' + id, type: 'message', role,
+  return seedMessage(services, 'session', {
+    id, runId: role === 'assistant' && services.sessions.getHistory('session').at(-1)?.role === 'user'
+      ? services.sessions.getHistory('session').at(-1)!.runId : 'run-' + id, type: 'message', role,
     payload: { message: { role, content, timestamp: 100 } },
   });
 }
@@ -165,7 +167,7 @@ describe('synchronous session snapshot', () => {
     const snapshot = capture();
     services.worlds.update('world', { name: 'Changed', characters: [{ id: 'player', name: 'Different', player_selectable: true }] });
     services.sessions.setEntryState('session', 'prior', [{ key: 'coins', value: 99 }]);
-    services.sessions.updateEntry('session', 'prior', { payload: { message: { role: 'assistant', content: 'Edited', timestamp: 100 } } });
+    db.prepare('UPDATE entries SET payload=? WHERE id=?').run(JSON.stringify({ message: { role: 'assistant', content: 'Edited', timestamp: 100 } }), 'prior');
     expect(snapshot.world.name).toBe('World');
     expect(snapshot.history.map(item => item.text)).toEqual(['Previous answer']);
     expect(snapshot.views.message).toEqual({ coins: 5 });
@@ -173,16 +175,17 @@ describe('synchronous session snapshot', () => {
     expect(services.sessions.getEntryState('session', 'current-user')).toBeNull();
   });
 
-  it('captures legacy compaction separately without treating it as a visible history message', () => {
-    services.sessions.appendEntry('session', { id: 'summary', runId: 'summary', type: 'compaction', role: null, payload: { summary: 'Earlier' } });
+  it('captures a committed compaction separately without treating it as a visible history message', () => {
+    append('opening', 'assistant', 'Opening');
+    seedMessage(services, 'session', { id: 'summary', runId: 'run-opening', type: 'compaction', role: null, payload: { summary: 'Earlier' } });
     const captured = capture();
-    expect(captured.history).toEqual([]);
-    expect(captured.historyEntries[0]?.type).toBe('compaction');
+    expect(captured.history.map(message => message.text)).toEqual(['Opening']);
+    expect(captured.historyEntries[1]?.type).toBe('compaction');
     expect(services.sessions.require('session').tipEntryId).toBe('current-user');
   });
 
   it('rejects mismatched history roles rather than replacing malformed data with an empty message', () => {
-    services.sessions.appendEntry('session', {
+    seedMessage(services, 'session', {
       id: 'bad', runId: 'bad', type: 'message', role: 'assistant',
       payload: { message: { role: 'assistant', content: 'Mismatch', timestamp: 100 } },
     });
@@ -193,8 +196,8 @@ describe('synchronous session snapshot', () => {
 
   it('uses only visible assistant body for prompt history and material activation', () => {
     append('prior-user', 'user', 'Previous input');
-    services.sessions.appendEntry('session', {
-      id: 'answer', runId: 'prior', type: 'message', role: 'assistant',
+    seedMessage(services, 'session', {
+      id: 'answer', runId: 'run-prior-user', type: 'message', role: 'assistant',
       payload: { message: {
         role: 'assistant', content: 'Visible harbor', timestamp: 100,
         reasoning_content: 'reasoning-secret',
@@ -231,8 +234,8 @@ describe('synchronous session snapshot', () => {
   ])('keeps a $name entry in storage while omitting an empty model turn and activation text', ({ content, reasoning_content, tool_calls }) => {
     append('prior-user', 'user', 'Previous input');
     const message = { role: 'assistant', content, reasoning_content, tool_calls, timestamp: 101 };
-    services.sessions.appendEntry('session', {
-      id: 'partial', runId: 'prior', type: 'message', role: 'assistant', payload: { message },
+    seedMessage(services, 'session', {
+      id: 'partial', runId: 'run-prior-user', type: 'message', role: 'assistant', payload: { message },
     });
     services.sessions.setEntryState('session', 'partial', [{ key: 'coins', value: 9 }]);
     services.worlds.update('world', { lorebook: { entries: [
@@ -424,15 +427,15 @@ describe('context selection policies', () => {
 
   it('slides at complete run boundaries and leaves persisted messages intact', () => {
     configure('sliding_window', 200);
-    services.sessions.appendEntry('session', { id: 'u0', runId: 'past', type: 'message', role: 'user',
+    seedMessage(services, 'session', { id: 'u0', runId: 'past', type: 'message', role: 'user',
       payload: { message: { role: 'user', content: 'x'.repeat(1200), timestamp: 0 } } });
-    services.sessions.appendEntry('session', { id: 'a0', runId: 'past', type: 'message', role: 'assistant',
+    seedMessage(services, 'session', { id: 'a0', runId: 'past', type: 'message', role: 'assistant',
       payload: { message: { role: 'assistant', content: 'Small answer', timestamp: 1 } } });
     append('recent', 'assistant', 'Recent');
     const selected = planContext(captureBudgeted(), model, services.state);
     expect(selected.summary).toBeUndefined();
-    expect(selected.compiled.messages.slice(0, -1).map(message => message.content)).toEqual([withEmptyModelNotes('Recent'), 'Current input']);
-    expect(services.sessions.getHistory('session')).toHaveLength(4);
+    expect(selected.compiled.messages.slice(0, -1).map(message => message.content)).toEqual(['继续', withEmptyModelNotes('Recent'), 'Current input']);
+    expect(services.sessions.getHistory('session')).toHaveLength(5);
   });
 
   it('keeps the longest candidate under the hard limit if no soft-target candidate exists, despite nonmonotonic activation', () => {
@@ -445,7 +448,7 @@ describe('context selection policies', () => {
     append('old', 'assistant', 'x'.repeat(1200));
     append('kept', 'assistant', 'suppress ' + 's'.repeat(180));
     const selected = planContext(captureBudgeted(), model, services.state);
-    expect(selected.compiled.messages.slice(0, -1).map(message => message.content)).toEqual([withEmptyModelNotes('suppress ' + 's'.repeat(180)), 'Current input']);
+    expect(selected.compiled.messages.slice(0, -1).map(message => message.content)).toEqual(['继续', withEmptyModelNotes('suppress ' + 's'.repeat(180)), 'Current input']);
     expect(selected.compiled.estimatedInputTokens).toBeGreaterThan(selected.compiled.inputBudget * 0.6);
     expect(selected.compiled.estimatedInputTokens).toBeLessThanOrEqual(selected.compiled.inputBudget);
   });
@@ -457,26 +460,13 @@ describe('context selection policies', () => {
     expect(services.sessions.getHistory('session')).toHaveLength(2);
   });
 
-  it('never splits an interleaved run even when doing so would fit the context', () => {
+  it('retains complete two-message rounds and protects the pending user', () => {
     configure('sliding_window', 200);
-    for (const [id, runId, content] of [['a', 'same', 'x'.repeat(1200)], ['b', 'middle', 'short'], ['c', 'same', 'end']]) {
-      services.sessions.appendEntry('session', { id, runId: runId!, type: 'message', role: 'assistant',
-        payload: { message: { role: 'assistant', content: content!, timestamp: 0 } } });
-    }
+    append('question', 'user', 'x'.repeat(1200));
+    append('answer', 'assistant', 'short');
     const captured = captureBudgeted();
-    expect(historyBoundaries(captured.historyEntries)).toEqual([0, 3, 4]);
+    expect(historyBoundaries(captured.historyEntries)).toEqual([0, 2, 3]);
     expect(planContext(captured, model, services.state).compiled.messages.slice(0, -1).map(item => item.content)).toEqual(['Current input']);
-  });
-
-  it('protects the entire trailing user run instead of keeping only its last user message', () => {
-    configure('sliding_window', 200);
-    services.sessions.appendEntry('session', {
-      id: 'same-run-prefix', runId: 'run-current-user', type: 'message', role: 'assistant',
-      payload: { message: { role: 'assistant', content: 'x'.repeat(1200), timestamp: 0 } },
-    });
-    const captured = captureBudgeted();
-    expect(() => planContext(captured, model, services.state)).toThrow('CONTEXT_BUDGET_EXCEEDED');
-    expect(services.sessions.getHistory('session').map(entry => entry.id)).toEqual(['same-run-prefix', 'current-user']);
   });
 
   it('protects five historical runs including an initial assistant and user-only/hidden-output runs', () => {
@@ -493,7 +483,7 @@ describe('context selection policies', () => {
     configure('sliding_window', 500);
     append('old', 'assistant', 'Original story');
     const entries = services.sessions.getHistory('session');
-    services.sessions.appendEntry('session', { id: 'compact', type: 'compaction', role: null, runId: 'compact-run',
+    seedMessage(services, 'session', { id: 'compact', type: 'compaction', role: null, runId: 'compact-run',
       payload: { summary: 'Saved summary' }, extData: { summary: { coveredThroughEntryId: 'old', sourceHash: sourceHash(entries) } } });
     const selected = planContext(captureBudgeted(), model, services.state);
     expect(selected.compiled.messages.slice(0, -1).map(message => message.content)).toEqual([withEmptyModelNotes('Original story'), 'Current input']);
@@ -503,7 +493,7 @@ describe('context selection policies', () => {
     append('old', 'assistant', 'Original');
     const entries = services.sessions.getHistory('session');
     const metadata = { coveredThroughEntryId: 'old', sourceHash: sourceHash(entries) };
-    const compact = services.sessions.appendEntry('session', { id: 'compact', type: 'compaction', role: null, runId: 'compact-run',
+    const compact = seedMessage(services, 'session', { id: 'compact', type: 'compaction', role: null, runId: 'compact-run',
       payload: { summary: 'Saved summary' }, extData: { summary: metadata } });
     expect(readSummary([...entries, compact], entries)).toEqual({ text: 'Saved summary', coveredCount: 1 });
     expect(readSummary([...entries, { ...compact, extData: { summary: { ...metadata, sourceHash: 'stale' } } }], entries)).toBeNull();
@@ -515,29 +505,27 @@ describe('context selection policies', () => {
   it('falls back to the latest valid summary and retains the edited uncovered suffix once', () => {
     append('old', 'assistant', 'Covered old story');
     const firstSource = services.sessions.getHistory('session');
-    services.sessions.appendEntry('session', {
+    seedMessage(services, 'session', {
       id: 'first-summary', type: 'compaction', role: null, runId: 'run-old', payload: { summary: 'Valid older summary' },
       extData: { summary: { coveredThroughEntryId: 'old', sourceHash: sourceHash(firstSource) } },
     });
     append('recent', 'assistant', 'Original recent story');
     const secondSource = services.sessions.getHistory('session');
-    services.sessions.appendEntry('session', {
+    seedMessage(services, 'session', {
       id: 'second-summary', type: 'compaction', role: null, runId: 'run-recent', payload: { summary: 'Stale newer summary' },
       extData: { summary: { coveredThroughEntryId: 'recent', sourceHash: sourceHash(secondSource) } },
     });
-    services.sessions.updateEntry('session', 'recent', {
-      payload: { message: { role: 'assistant', content: 'Edited recent story', timestamp: 100 } },
-    });
+    db.prepare('UPDATE entries SET payload=? WHERE id=?').run(JSON.stringify({ message: { role: 'assistant', content: 'Edited recent story', timestamp: 100 } }), 'recent');
     const compiled = planContext(captureBudgeted(), model, services.state).compiled;
     expect(compiled.messages.slice(0, -1).map(message => message.content))
-      .toEqual(['Valid older summary', withEmptyModelNotes('Edited recent story'), 'Current input']);
+      .toEqual(['Valid older summary', '继续', withEmptyModelNotes('Edited recent story'), 'Current input']);
   });
 
   it('does not let a stored summary consume the pending user run', () => {
     append('old', 'assistant', 'Old story');
     captureBudgeted();
     const entries = services.sessions.getHistory('session');
-    services.sessions.appendEntry('session', {
+    seedMessage(services, 'session', {
       id: 'too-wide-summary', type: 'compaction', role: null, runId: 'run-current-user',
       payload: { summary: 'Includes pending user' },
       extData: { summary: { coveredThroughEntryId: 'current-user', sourceHash: sourceHash(entries) } },
@@ -561,7 +549,7 @@ describe('context selection policies', () => {
 
 describe('model-only notes in context candidates', () => {
   it('renders captured notes only for model history, counts their tokens and leaves activation, summaries and storage clean', () => {
-    services.sessions.appendNarrativeAssistant('session', {
+    seedMessage(services, 'session', {
       id: 'answer', runId: 'past', type: 'message', role: 'assistant',
       payload: { message: { role: 'assistant', content: 'A quiet room.', timestamp: 100 } },
     }, {
@@ -595,15 +583,15 @@ describe('model-only notes in context candidates', () => {
     snapshot.preset.config.contextStrategy.strategy = 'sliding_window';
     snapshot.preset.config.contextStrategy.maxContextTokens = compileNarrativeContext(snapshot, model).estimatedInputTokens + 10;
     expect(planContext(snapshot, model, services.state).compiled.messages.some(message => message.content === withEmptyModelNotes('Older body'))).toBe(true);
-    snapshot.historyEntries.find(entry => entry.id === 'old')!.extData.output = {
+    snapshot.historyEntries.find(entry => entry.id === 'old')!.capabilities = {
       actionSuggestions: { status: 'success', items: Array.from({ length: 180 }, (_, index) => 'large-note-marker ' + index + ' ' + 'x'.repeat(20)) },
     };
     const selected = planContext(snapshot, model, services.state).compiled;
     expect(selected.messages.some(message => message.content.includes('Older body'))).toBe(false);
     expect(selected.messages.some(message => message.content.includes('large-note-marker'))).toBe(false);
     expect(selected.estimatedInputTokens).toBeLessThanOrEqual(selected.inputBudget);
-    expect(snapshot.history.map(message => message.id)).toEqual(['old', 'recent']);
-    expect(services.sessions.getHistory('session').map(entry => entry.id)).toEqual(['old', 'recent', 'current-user']);
+    expect(snapshot.history.map(message => message.id)).toEqual(['old', 'recent-user', 'recent']);
+    expect(services.sessions.getHistory('session').map(entry => entry.id)).toEqual(['old', 'recent-user', 'recent', 'current-user']);
   });
 });
 
@@ -613,13 +601,13 @@ describe('compaction stage without persistence', () => {
     const snapshot = capture();
     const compiled = compileNarrativeContext(snapshot, model);
     const protocolTokens = compiled.estimatedInputTokens - estimateInputTokens(compiled.messages.slice(0, -1));
-    snapshot.preset.config.contextStrategy.maxContextTokens = 300 + protocolTokens;
+    snapshot.preset.config.contextStrategy.maxContextTokens = 500 + protocolTokens;
     return snapshot;
   }
 
   it('returns one successful summary draft without writing entries and keeps summary input free of notes', async () => {
     const snapshot = summarySnapshot();
-    snapshot.historyEntries.find(entry => entry.id === 'past-0')!.extData.output = {
+    snapshot.historyEntries.find(entry => entry.id === 'past-0')!.capabilities = {
       actionSuggestions: { status: 'success', items: ['old-note-marker'] },
     };
     const summarize = vi.fn(async () => ({ ok: true as const, text: 'summary', metrics: null }));
@@ -629,7 +617,7 @@ describe('compaction stage without persistence', () => {
     expect(result.summaryDraft).toMatchObject({ text: 'summary', coveredThroughEntryId: 'past-2', metrics: null });
     expect(result.failure).toBeUndefined();
     expect(result.compiled.messages.some(message => message.content === 'summary')).toBe(true);
-    expect(services.sessions.getHistory('session')).toHaveLength(9);
+    expect(services.sessions.getHistory('session')).toHaveLength(16);
     expect(services.sessions.require('session').tipEntryId).toBe('current-user');
   });
 
@@ -640,7 +628,7 @@ describe('compaction stage without persistence', () => {
     expect(summarize).toHaveBeenCalledTimes(1);
     expect(result.summaryDraft?.text).toHaveLength(6000);
     expect(result.failure).toBe('summary_capacity_exceeded');
-    expect(services.sessions.getHistory('session')).toHaveLength(9);
+    expect(services.sessions.getHistory('session')).toHaveLength(16);
   });
 
   it('retains a successful summary draft if final assembly fails', async () => {
@@ -654,7 +642,7 @@ describe('compaction stage without persistence', () => {
       const result = await compactHistory(snapshot, model, services.state, summarize, new AbortController().signal);
       expect(result.summaryDraft?.text).toBe('summary');
       expect(result.failure).toBe(failure);
-      expect(services.sessions.getHistory('session')).toHaveLength(9);
+      expect(services.sessions.getHistory('session')).toHaveLength(16);
     } finally { spy?.mockRestore(); }
   });
 
@@ -668,7 +656,7 @@ describe('compaction stage without persistence', () => {
       controller.abort();
       return { ok: true, text: 'Late summary', metrics: null };
     }, controller.signal)).rejects.toThrow('RUN_STOPPED');
-    expect(services.sessions.getHistory('session')).toHaveLength(9);
+    expect(services.sessions.getHistory('session')).toHaveLength(16);
   });
 });
 

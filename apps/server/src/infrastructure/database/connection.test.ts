@@ -25,9 +25,9 @@ describe('V2 database lifecycle and constraints', () => {
     db.prepare('INSERT INTO presets(id,type,name,description,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('p', 'narrative', 'Preset', null, '{}', 1, 1);
   }
 
-  it('initializes the seven tables without inserting business data', () => {
+  it('initializes the eight tables without inserting business data', () => {
     const tables = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all();
-    expect(tables.map(row => row.name)).toEqual(['api_model_configs', 'app_settings', 'entries', 'presets', 'sessions', 'world_tags', 'worlds']);
+    expect(tables.map(row => row.name)).toEqual(['api_model_configs', 'app_settings', 'entries', 'presets', 'runs', 'sessions', 'world_tags', 'worlds']);
     expect(db.prepare('PRAGMA foreign_keys').get()?.foreign_keys).toBe(1);
     expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(DATABASE_VERSION);
     expect(db.prepare('PRAGMA application_id').get()?.application_id).toBe(DATABASE_APPLICATION_ID);
@@ -73,6 +73,15 @@ describe('V2 database lifecycle and constraints', () => {
     expect(readFileSync(path)).toEqual(bytes);
   });
 
+  it.each(['DROP TABLE runs','DROP INDEX idx_runs_session_page'])('rejects damaged current storage after %s', removal => {
+    const path = file(), current = openDatabase(path);
+    current.exec(removal);
+    current.close();
+    const before = readFileSync(path);
+    expect(() => openDatabase(path)).toThrow('SERVER_DATABASE_SCHEMA_MISMATCH');
+    expect(readFileSync(path)).toEqual(before);
+  });
+
   it('refuses a damaged V2 schema instead of recreating missing tables', () => {
     const path = file();
     const first = openDatabase(path);
@@ -111,7 +120,7 @@ describe('V2 database lifecycle and constraints', () => {
       JSON.stringify({ narrative_preset_id: 'p', api_model_config_id: 'm', reply_assist_preset_id: null, reply_assist_goal: '', font_size: 16 }));
     expect(() => db.prepare("DELETE FROM worlds WHERE id='w'").run()).toThrow();
     expect(() => db.prepare("DELETE FROM presets WHERE id='p'").run()).toThrow();
-    const insert = db.prepare('INSERT INTO entries(id,session_id,run_id,seq,type,role,timestamp,payload,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)');
+    const insert = db.prepare("INSERT INTO entries(id,session_id,run_id,seq,type,role,timestamp,payload,created_at,updated_at,status) VALUES(?,?,?,?,?,?,?,?,?,?,'complete')");
     expect(() => insert.run('e', 'missing', 'run', 1, 'message', 'user', 1, '{}', 1, 1)).toThrow();
     expect(() => insert.run('e', 's', 'run', 1, 'message', null, 1, '{}', 1, 1)).toThrow();
     expect(() => insert.run('e', 's', 'run', 1, 'compaction', 'assistant', 1, '{}', 1, 1)).toThrow();

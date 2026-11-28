@@ -1,3 +1,4 @@
+import { seedMessage, storedMetrics } from '../../testing/run-fixtures.js';
 import { worldPublication } from '../../testing/fixtures.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,7 +14,6 @@ import { memoryCredentials } from '../../testing/credentials.js';
 import { narrativePreset, withEmptyModelNotes } from '../../testing/fixtures.js';
 import { createNarrativeUsecases, type NarrativeUsecases } from './index.js';
 import type { NarrativeEvent, NarrativeTerminalEvent } from './events.js';
-import { createAppendEntry } from '../append-entry.js';
 import { bindTransaction } from '../../infrastructure/database/transaction.js';
 
 const model: ModelInfo = {
@@ -51,7 +51,7 @@ afterEach(async () => {
   await narrative.shutdown(); vi.restoreAllMocks(); db.close(); rmSync(root, { recursive: true, force: true });
 });
 function seed(oldSize = 7000) {
-  for (let i = 0; i < 8; i++) services.sessions.appendEntry('session', {
+  for (let i = 0; i < 8; i++) seedMessage(services, 'session', {
     id: 'old-' + i, runId: 'past-' + i, type: 'message', role: 'assistant',
     payload: { message: { role: 'assistant', content: i < 3 ? 'Old story ' + 'x'.repeat(oldSize) : 'Recent ' + i, timestamp: i } },
   });
@@ -98,7 +98,7 @@ describe('summary execution and accounting', () => {
     seed();
     let savedWhenNotified = false;
     hub.subscribe('session', event => {
-      if (event.event === 'run.summarized') savedWhenNotified = services.sessions.getEntry('session', event.data.entryId as string)?.metrics !== null;
+      if (event.event === 'run.summarized') savedWhenNotified = Boolean(storedMetrics(db, String(event.data.runId)).summaries[String(event.data.entryId)]);
     });
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.completed', data: { savedMessageIds: [accepted.userEntryId, accepted.assistantEntryId] } });
@@ -106,21 +106,22 @@ describe('summary execution and accounting', () => {
     expect(savedWhenNotified).toBe(true);
     expect(summary).toMatchObject({ parentId: accepted.userEntryId, runId: accepted.runId, role: null, state: null,
       payload: { summary: 'summary' }, extData: { summary: { coveredThroughEntryId: 'old-2', sourceHash: expect.any(String) } },
-      metrics: { requests: [{ provider: 'provider', modelId: 'model', usage }] },
+      status: null,
     });
+    expect(storedMetrics(db, accepted.runId).summaries[summary.id]).toMatchObject({ requests: [{ provider: 'provider', modelId: 'model', usage }] });
     expect(services.sessions.getEntry('session', accepted.assistantEntryId)?.parentId).toBe(summary.id);
     expect(services.state.getCurrentMessage('session')).toEqual({ coins: 3 });
     expect(seen.map(event => event.event)).toEqual(['run.created', 'run.summarizing', 'run.summarized', 'run.delta', 'run.usage', 'run.completed']);
     expect(seen.every(event => !('phase' in event.data))).toBe(true);
     expect(stream).toHaveBeenCalledTimes(2);
     const summaryInput = JSON.parse(stream.mock.calls[0]![1][1]!.content);
-    expect(summaryInput.messages).toHaveLength(3);
+    expect(summaryInput.messages).toHaveLength(5);
     expect(JSON.stringify(summaryInput)).not.toContain('Current input');
     const generation = stream.mock.calls[1]![1].slice(0, -1).map(message => message.content);
-    expect(generation).toEqual(['summary', 'Recent 3', 'Recent 4', 'Recent 5', withEmptyModelNotes('Recent 6'), withEmptyModelNotes('Recent 7'), 'Current input']);
-    expect(total()).toMatchObject({ total_tokens: 50 });
+    expect(generation).toEqual(['summary', '继续', 'Recent 3', '继续', 'Recent 4', '继续', 'Recent 5', '继续', withEmptyModelNotes('Recent 6'), '继续', withEmptyModelNotes('Recent 7'), 'Current input']);
+    expect(total()).toMatchObject({ knownUsage: { totalTokens: 50 } });
     expect(services.sessions.recordedUsage('session')).toMatchObject({ recordedRequestCount: 2, knownUsage: { totalTokens: 50 } });
-    expect(narrative.list('session', {}).items[0]?.entries.map(entry => entry.type)).toEqual(['message', 'compaction', 'message']);
+    expect(narrative.list('session', {}).items[0]?.messages.map(entry => entry.role)).toEqual(['user', 'assistant']);
     const logs = lines.map(line => {
       const match = /^\[[^\]]+\] \[([^\]]+)\] \[(.*)\]$/u.exec(line)!;
       return { event: match[1], data: JSON.parse(match[2]!) };
@@ -145,8 +146,8 @@ describe('summary execution and accounting', () => {
     expect(stream).toHaveBeenCalledTimes(1);
     const summary = summaries()[0]!;
     expect(services.sessions.require('session').tipEntryId).toBe(summary.id);
-    expect(services.sessions.getNarrativeOutcome(services.sessions.getEntry('session', accepted.userEntryId)!)).toMatchObject({ stopReason: 'summary_capacity_exceeded' });
-    expect(total()).toMatchObject({ total_tokens: 25 });
+    expect(services.sessions.getRun('session', accepted.runId)).toMatchObject({ stopReason: 'summary_capacity_exceeded' });
+    expect(total()).toMatchObject({ knownUsage: { totalTokens: 25 } });
     const preset = services.presets.require('preset'); preset.config.contextStrategy.maxContextTokens = 20000;
     services.presets.update('preset', { config: preset.config });
     expect(await submit().finished).toMatchObject({ event: 'run.completed' });
@@ -166,8 +167,8 @@ describe('summary execution and accounting', () => {
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'summary_failed' } });
     expect(summaries()).toEqual([]);
-    expect(services.sessions.listEntryRuns('session').items.find(item => item.runId === accepted.runId)!.entries).toHaveLength(1);
-    expect(total()).toMatchObject({ total_tokens: 0 });
+    expect(services.sessions.getRun('session', accepted.runId).messages).toHaveLength(1);
+    expect(total()).toMatchObject({ knownUsage: { totalTokens: 0 } });
     expect(services.sessions.recordedUsage('session').recordedRequestCount).toBe(0);
     expect(seen.map(event => event.event)).toEqual(['run.created', 'run.summarizing', 'run.usage', 'run.stopped']);
     expect(stream).toHaveBeenCalledTimes(1);
@@ -183,9 +184,9 @@ describe('summary execution and accounting', () => {
       });
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ event: 'run.stopped', data: { stop_reason: 'provider_error' } });
-    expect(summaries()[0]?.metrics?.requests[0]?.usage).toBeNull();
-    expect(services.sessions.getEntry('session', accepted.assistantEntryId)?.metrics?.requests[0]?.usage).toBeNull();
-    expect(total()).toBeNull();
+    expect(storedMetrics(db, accepted.runId).summaries[summaries()[0]!.id]?.requests[0]?.usage).toBeNull();
+    expect(storedMetrics(db, accepted.runId).main?.requests[0]?.usage).toBeNull();
+    expect(total()).toMatchObject({ recordedRequestCount: 2, unknownUsageRequestCount: 2 });
     expect(services.sessions.recordedUsage('session')).toMatchObject({ recordedRequestCount: 2, unknownUsageRequestCount: 2 });
   });
 
@@ -217,7 +218,7 @@ describe('summary execution and accounting', () => {
     narrative.stop('session', accepted.runId, accepted.assistantEntryId);
     expect(await finished).toMatchObject({ data: { stop_reason: 'cancelled' } });
     expect(summaries()).toEqual([]);
-    expect(total()).toMatchObject({ total_tokens: 0 });
+    expect(total()).toMatchObject({ knownUsage: { totalTokens: 0 } });
     unblock({ done: false, value: done('Too late') });
     expect(await submit().finished).toMatchObject({ event: 'run.completed' });
     expect(summaries()).toHaveLength(1);
@@ -238,7 +239,7 @@ describe('summary execution and accounting', () => {
     expect(refused).toBe(true);
     expect(summaries()).toHaveLength(1);
     expect(stream).toHaveBeenCalledTimes(1);
-    expect(total()).toMatchObject({ total_tokens: 25 });
+    expect(total()).toMatchObject({ knownUsage: { totalTokens: 25 } });
   });
 
   it('discards an unfinished summary on shutdown and does not lock another session', async () => {
@@ -254,20 +255,16 @@ describe('summary execution and accounting', () => {
     await narrative.shutdown();
     expect(await run.finished).toMatchObject({ data: { stop_reason: 'server_shutdown' } });
     expect(summaries()).toEqual([]);
-    expect(total()).toMatchObject({ total_tokens: 0 });
+    expect(total()).toMatchObject({ knownUsage: { totalTokens: 0 } });
   });
 
   it('keeps the user if summary persistence fails and releases the lock', async () => {
     seed();
-    const original = services.sessions.appendEntry.bind(services.sessions);
-    const write = vi.spyOn(services.sessions, 'appendEntry').mockImplementation((id, input, permit) => {
-      if (input.type === 'compaction') throw new Error('disk');
-      return original(id, input, permit);
-    });
+    const write = vi.spyOn(services.sessions, 'appendSummary').mockImplementationOnce(() => { throw new Error('disk'); });
     const { accepted, finished } = submit();
     expect(await finished).toMatchObject({ data: { stop_reason: 'message_persist_failed', savedMessageIds: [accepted.userEntryId] } });
     expect(summaries()).toEqual([]);
-    expect(total()).toMatchObject({ total_tokens: 0 });
+    expect(total()).toMatchObject({ knownUsage: { totalTokens: 0 } });
     write.mockRestore();
     expect(await submit().finished).toMatchObject({ event: 'run.completed' });
   });
@@ -287,40 +284,37 @@ describe('summary execution and accounting', () => {
     services.sessions.setEntryState('session', 'old-0', [{ key: 'coins', value: 100 }]);
     await submit().finished;
     expect(summaries()).toHaveLength(1);
-    services.sessions.updateEntry('session', 'old-0', { payload: { message: { role: 'assistant', content: 'Edited story ' + 'e'.repeat(7000), timestamp: 0 } } });
+    db.prepare('UPDATE entries SET payload=? WHERE id=?').run(JSON.stringify({ message: { role: 'assistant', content: 'Edited story ' + 'e'.repeat(7000), timestamp: 0 } }), 'old-0');
     await submit().finished;
     expect(summaries()).toHaveLength(2);
     expect(stream.mock.calls[4]?.[1][1]?.content).toContain('Edited story');
   });
 
-  it('merges the previous summary with only newly covered history and preserves seq-based catch-up', async () => {
+  it('merges the previous summary with only newly covered history and exposes only ordinary messages in run details', async () => {
     seed(); await submit().finished;
     const first = summaries()[0]!;
-    for (let i = 0; i < 7; i++) services.sessions.appendEntry('session', {
+    for (let i = 0; i < 7; i++) seedMessage(services, 'session', {
       id: 'new-' + i, runId: 'new-run-' + i, type: 'message', role: 'user',
       payload: { message: { role: 'user', content: 'New story ' + 'n'.repeat(1200), timestamp: 100 + i } },
     });
     const run = submit(); await run.finished;
     const input = JSON.parse(stream.mock.calls[2]![1][1]!.content);
     expect(input.previousSummary).toBe(first.payload.summary);
-    expect(input.messages[0].content).toBe('Recent 3');
+    expect(input.messages.slice(0, 2).map((message: {content:string}) => message.content)).toEqual(['继续', 'Recent 3']);
     expect(JSON.stringify(input)).not.toContain('Old story');
     const second = summaries()[1]!;
     expect(second.seq).toBeGreaterThan(first.seq);
     expect(second.extData.summary).toMatchObject({ coveredThroughEntryId: 'new-1' });
-    expect(narrative.list('session', { afterSeq: second.seq - 1 }).items[0]?.entries.map(entry => entry.id))
-      .toEqual([run.accepted.userEntryId, second.id]);
-    expect(services.sessions.getNarrativeOutcome(services.sessions.getEntry('session', run.accepted.userEntryId)!))
+    expect(services.sessions.getRun('session', run.accepted.runId).messages.map(entry => entry.id))
+      .toEqual([run.accepted.userEntryId]);
+    expect(services.sessions.getRun('session', run.accepted.runId))
       .toMatchObject({ stopReason: 'summary_capacity_exceeded' });
   });
 
   it('protects summary creation and metadata from generic entry mutations', async () => {
     seed(); await submit().finished;
     const entry = summaries()[0]!;
-    expect(() => services.sessions.updateEntry('session', entry.id, { payload: { summary: 'Forged' } })).toThrow('INVALID_REQUEST');
-    expect(() => services.sessions.updateEntry('session', entry.id, { extData: {} })).toThrow('INVALID_REQUEST');
-    expect(() => services.sessions.updateEntry('session', 'old-0', { extData: { summary: {} } })).toThrow();
-    const append = createAppendEntry({ sessions: services.sessions, state: services.state, events: hub, transaction: bindTransaction(db) });
-    expect(() => append('session', { runId: 'forged', type: 'compaction', role: null, payload: { summary: 'Forged' } })).toThrow('INVALID_REQUEST');
+    expect(() => services.sessions.appendSummary('session', {id:'forged',parentId:entry.id,runId:'foreign',text:'Forged',coveredThroughEntryId:'old-0',sourceHash:'incorrect',metrics:null})).toThrow('TIP_CONFLICT');
+    expect(services.sessions.getEntry('session','forged')).toBeNull();
   });
 });

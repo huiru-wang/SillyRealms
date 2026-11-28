@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import { AppError } from '../errors.js';
 import type { TransactionRunner } from '../infrastructure/database/transaction.js';
 import type { EventHub } from '../infrastructure/events/event-hub.js';
-import { createSessionSchema, type SessionEntry, type SessionService } from '../modules/sessions/service.js';
+import { createSessionSchema, type RunMessage, type SessionService } from '../modules/sessions/service.js';
 import { StateValidationError, type StateService } from '../modules/state/service.js';
 import type { WorldService } from '../modules/worlds/service.js';
 
@@ -11,13 +11,13 @@ const inputSchema = createSessionSchema.omit({ state: true }).extend({ openingId
 export type CreateSessionInput = z.input<typeof inputSchema>;
 export type SessionCreatedEvent = {
   event: 'session.created';
-  data: { sessionId: string; tipEntryId: string; timestamp: number; entry: SessionEntry };
+  data: { sessionId: string; tipEntryId: string; timestamp: number; opening: { runId: string; message: RunMessage } };
 };
 
 /** One local transaction: ready session, initialized state and its first saved message. */
 export function createSessionUsecase({ worlds, sessions, state, transaction, events }: {
   worlds: Pick<WorldService, 'require' | 'requireOpening'>;
-  sessions: Pick<SessionService, 'create' | 'require' | 'appendNarrativeAssistant' | 'setNarrativeOutcome'>;
+  sessions: Pick<SessionService, 'create' | 'require' | 'createOpening'>;
   state: Pick<StateService, 'prepareInitialSnapshots'>;
   transaction: TransactionRunner;
   events: EventHub;
@@ -47,20 +47,20 @@ export function createSessionUsecase({ worlds, sessions, state, transaction, eve
       // Function replacement keeps $ sequences in names literal; substitutions are not re-evaluated.
       const content = opening.content.replaceAll('{{user}}', () => playerName);
       const updates = snapshots.message.map(({ key, value }) => ({ status: 'success' as const, path: key, value }));
-      const saved = sessions.appendNarrativeAssistant(session.id, {
-        runId: randomUUID(), parentId: null, type: 'message', role: 'assistant', timestamp,
+      const runId = randomUUID();
+      const message = sessions.createOpening(session.id, runId, {
+        id: randomUUID(), parentId: null, timestamp,
         payload: { message: { role: 'assistant', content, timestamp } },
-        state: snapshots.message, metrics: null,
+        state: snapshots.message,
       }, {
         stateUpdate: { status: updates.length ? 'success' : 'no_updates', updates },
         actionSuggestions: { status: 'no_suggestions', items: [] },
       });
-      const entry = sessions.setNarrativeOutcome(session.id, saved.id, { status: 'completed', finishedAt: timestamp });
-      return { item: sessions.require(session.id), entry };
+      return { item: sessions.require(session.id), opening: { runId, message } };
     });
     const event: SessionCreatedEvent = { event: 'session.created', data: {
-      sessionId: result.item.id, tipEntryId: result.entry.id, timestamp: result.entry.timestamp,
-      entry: structuredClone(result.entry),
+      sessionId: result.item.id, tipEntryId: result.opening.message.id, timestamp: result.opening.message.timestamp,
+      opening: structuredClone(result.opening),
     } };
     events.publish(result.item.id, event);
     return result;

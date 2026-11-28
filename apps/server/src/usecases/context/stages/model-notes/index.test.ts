@@ -1,9 +1,10 @@
+import type { NoteEntry } from './types.js';
 import { describe, expect, it } from 'vitest';
-import type { NarrativeOutput, SessionEntry } from '../../../../modules/sessions/service.js';
+import type { NarrativeOutput } from '../../../../modules/sessions/service.js';
 import { buildModelNotes, buildNarrativeNotes as buildSelectedNarrativeNotes, renderModelNotes, type ModelNoteSource } from './index.js';
 
 const standardCapabilities = { stateUpdateNotes: true, actionSuggestions: true, characterSprite: false };
-const buildNarrativeNotes = (entries: readonly SessionEntry[]) => buildSelectedNarrativeNotes(entries, standardCapabilities);
+const buildNarrativeNotes = (entries: readonly NoteEntry[]) => buildSelectedNarrativeNotes(entries, standardCapabilities);
 
 function output(): NarrativeOutput {
   return {
@@ -11,11 +12,11 @@ function output(): NarrativeOutput {
     actionSuggestions: { status: 'success', items: ['询问店主。'] },
   };
 }
-function message(id: string, result?: NarrativeOutput, content = '叙事正文', role: 'user' | 'assistant' = 'assistant'): SessionEntry {
+function message(id: string, result?: NarrativeOutput, content = '叙事正文', role: 'user' | 'assistant' = 'assistant'): NoteEntry {
   return {
     id, sessionId: 'session', parentId: null, runId: id, seq: 1, timestamp: 1,
     type: 'message', role, payload: { message: { role, content, timestamp: 1 } },
-    state: null, extData: result ? { output: result } : {}, metrics: null, createdAt: 1, updatedAt: 1,
+    state: null, extData: {}, capabilities: result, status: 'complete', createdAt: 1, updatedAt: 1,
   };
 }
 function freeze(value: unknown): void {
@@ -56,7 +57,7 @@ describe('entry model-only notes', () => {
   });
 
   it('selects two visible assistants before inspecting output, without filling from older messages', () => {
-    const compaction: SessionEntry = { ...message('summary'), type: 'compaction', role: null, payload: { summary: '旧摘要' } };
+    const compaction: NoteEntry = { ...message('summary'), type: 'compaction', role: null, payload: { summary: '旧摘要' } };
     const entries = [
       message('old', output()),
       message('recent-without-output'),
@@ -178,14 +179,14 @@ describe('entry model-only notes', () => {
 
   it('skips malformed stored items and never copies arbitrary output properties', () => {
     const entry = message('a');
-    entry.extData = { output: {
+    entry.capabilities = {
       stateUpdate: { status: 'partial_success', updates: [
         { status: 'success', value: 5 }, { status: 'success', path: 'coins' },
         { path: 'unconfirmed', value: 99 }, { status: 'invalid_value', path: 'invalid', value: 3 },
         { status: 'success', path: 'coins', value: 8, raw: 'DO_NOT_COPY' },
       ], raw: 'DO_NOT_COPY' },
       actionSuggestions: { status: 'partial_success', items: ['', 3, '  有效建议。 ', '有效建议。', '长'.repeat(51)] },
-    } };
+    } as unknown as NoteEntry['capabilities'];
     const rendered = renderModelNotes('正文', buildNarrativeNotes([entry]).get(entry.id));
     expect(rendered).toContain('{"path":"coins","value":8}');
     expect(rendered).toContain('["有效建议。"]');

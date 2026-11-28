@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { AppError } from '../../errors.js';
 import { captureContext } from './capture.js';
 import { createCandidateEvaluator } from './candidate.js';
@@ -51,17 +52,16 @@ export async function prepareContext(dependencies: ContextDependencies, input: P
           sourceHash(dependencies.sessions.getHistory(input.sessionId)) !== sourceHash(snapshot.historyEntries)) {
           throw new AppError('TIP_CONFLICT');
         }
-        entry = dependencies.sessions.appendEntry(input.sessionId, {
-          parentId: tip.id, runId: tip.runId, type: 'compaction', role: null,
-          payload: { summary: draft.text }, state: null, metrics: draft.metrics,
-          extData: { summary: { coveredThroughEntryId: draft.coveredThroughEntryId, sourceHash: draft.sourceHash } },
+        entry = dependencies.sessions.appendSummary(input.sessionId, {
+          id: randomUUID(), parentId: tip.id, runId: tip.runId, text: draft.text, metrics: draft.metrics,
+          coveredThroughEntryId: draft.coveredThroughEntryId, sourceHash: draft.sourceHash,
         }, input.writePermit);
       } catch (error) {
         if (error instanceof AppError && (error.code === 'TIP_CONFLICT' || error.code === 'SESSION_NOT_FOUND')) throw error;
         throw new AppError('MESSAGE_PERSIST_FAILED');
       }
       receipt.parentEntryId = entry.id;
-      receipt.summary = { entryId: entry.id, metrics: entry.metrics };
+      receipt.summary = { entryId: entry.id, metrics: draft.metrics };
       notify({ type: 'summary_saved', entryId: entry.id });
     }
     // Cancellation or a late preparation failure must retain the already committed receipt.

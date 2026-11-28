@@ -1,3 +1,4 @@
+import { seedMessage } from '../testing/run-fixtures.js';
 import { worldPublication } from '../testing/fixtures.js';
 import { Hono } from 'hono';
 import { createApp } from '../app.js';
@@ -27,7 +28,7 @@ let usecases: ReturnType<typeof createUsecases>;
 const sessionInput = (id: string) => ({
   id, worldId: 'world', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player',
 });
-const entryInput = (id: string) => ({ id, runId: 'run', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: id, timestamp: 1 } } } as const);
+const entryInput = (id: string) => ({ id, runId: id + '-run', type: 'message', role: 'assistant', payload: { message: { role: 'assistant', content: id, timestamp: 1 } } } as const);
 
 beforeEach(() => {
   dataRoot = mkdtempSync(join(tmpdir(), 'sr-session-state-routes-'));
@@ -142,8 +143,10 @@ describe('session HTTP operations', () => {
   });
 
   it('uses camel inputs and item wrappers for detail and writes', async () => {
-    const created = await data<{ item: SessionView; entry: SessionEntry }>(await request('POST', '/sessions', { ...sessionInput('new'), openingId: 'start', title: 'Start' }), 201);
-    expect(created.item).toMatchObject({ id: 'new', worldId: 'world', title: 'Start', tipEntryId: created.entry.id, worldName: 'World', cover: null });
+    const created = await data<{ item: SessionView; opening: {runId:string; message: Pick<SessionEntry, 'id'>} }>(await request('POST', '/sessions', { ...sessionInput('new'), openingId: 'start', title: 'Start' }), 201);
+    expect(Object.keys(created).sort()).toEqual(['item','opening']);
+    expect(Object.keys(created.opening.message).sort()).toEqual(['content','id','role','status','timestamp']);
+    expect(created.item).toMatchObject({ id: 'new', worldId: 'world', title: 'Start', tipEntryId: created.opening.message.id, worldName: 'World', cover: null });
     const { item: detail } = await data<{ item: SessionView }>(await request('GET', '/sessions/new'));
     expect(detail).toMatchObject({ id: 'new', runtimeConfig: { narrativePresetId: 'preset', apiModelConfigId: 'model' }, userCharacterId: 'player' });
     expect(detail).not.toHaveProperty('item');
@@ -240,7 +243,7 @@ describe('session HTTP operations', () => {
   });
 
   it('has no generic HTTP route to append or edit entries', async () => {
-    const entry = services.sessions.appendEntry('one', entryInput('root'));
+    const entry = seedMessage(services, 'one', entryInput('root'));
     expect((await request('POST', '/sessions/one/entries', entryInput('child'))).status).toBe(404);
     expect((await request('PATCH', '/sessions/one/entries/root', { payload: entryInput('edited').payload })).status).toBe(404);
     expect(services.sessions.getHistory('one')).toEqual([entry]);
@@ -260,7 +263,7 @@ describe('session HTTP operations', () => {
   });
 
   it('filters lists and guards every existing-session route, including state and event access', async () => {
-    services.sessions.appendEntry('blocked', { ...entryInput('secret'), type: 'message', role: 'assistant' });
+    seedMessage(services, 'blocked', { ...entryInput('secret'), type: 'message', role: 'assistant' });
     access = id => id === 'one';
     expect((await data<Page<SessionSummary>>(await request('GET', '/sessions'))).items.map(item => item.id)).toEqual(['one']);
     const checks: [string, string, unknown?][] = [
@@ -315,10 +318,10 @@ describe('state field queries', () => {
 
   it('resolves message inheritance and scopes entry ownership', async () => {
     const owner = { scope: 'message', sessionId: 'one', entryId: 'root' };
-    services.sessions.appendEntry('one', entryInput('root'));
+    seedMessage(services, 'one', entryInput('root'));
     expect(await data(await request('POST', '/state/query', owner))).toEqual([]);
     services.sessions.setEntryState('one', 'root', [{ key: 'coins', value: 3 }]);
-    services.sessions.appendEntry('one', entryInput('child'));
+    seedMessage(services, 'one', entryInput('child'));
     expect(await data(await request('POST', '/state/query', { ...owner, entryId: 'child' }))).toEqual([{ path: 'coins', value: 3 }]);
     services.sessions.setEntryState('one', 'child', []);
     expect(await data(await request('POST', '/state/query', { ...owner, entryId: 'child' }))).toEqual([]);
@@ -400,9 +403,9 @@ describe('field state HTTP operations', () => {
   });
 
   it('patches inherited message state on the selected entry and leaves ignored paths inherited', async () => {
-    services.sessions.appendEntry('one', { ...entryInput('root'), type: 'message', role: 'assistant' });
+    seedMessage(services, 'one', { ...entryInput('root'), type: 'message', role: 'assistant' });
     services.sessions.setEntryState('one', 'root', [{ key: 'coins', value: 3 }, { key: 'inventory', value: { keys: 1 } }]);
-    services.sessions.appendEntry('one', { ...entryInput('child'), type: 'message', role: 'assistant' });
+    seedMessage(services, 'one', { ...entryInput('child'), type: 'message', role: 'assistant' });
     const ignored = await data<StateWriteResult[]>(await request('POST', '/state/update', { scope: 'message', sessionId: 'one', entryId: 'child',
       updates: [{ path: 'inventory.missing', value: 2 }, { path: 'coins', value: 3 }],
     }));
@@ -448,7 +451,7 @@ describe('field state HTTP operations', () => {
   });
 
   it('checks owner existence and message ownership even for empty batches', async () => {
-    services.sessions.appendEntry('one', { ...entryInput('root'), type: 'message', role: 'assistant' });
+    seedMessage(services, 'one', { ...entryInput('root'), type: 'message', role: 'assistant' });
     const targets = [
       { scope: 'global', worldId: 'world' },
       { scope: 'session', sessionId: 'one' },
@@ -509,4 +512,135 @@ describe('field state HTTP operations', () => {
       await application.shutdown();
     }
   });
+});
+
+describe('v15 run API', () => {
+  const base = '/api/v1/sessions/one/narrative/runs';
+  const post = (body: unknown) => ({method:'POST', headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  it('pages by stable run key, scopes cursors and rejects removed mutation contracts', async () => {
+    const application = createApp({events, services, usecases});
+    const seed = (id:string) => seedMessage(services, 'one', {id,runId:'r-'+id,role:'user',type:'message',
+      timestamp:1,payload:{message:{role:'user',content:id,timestamp:1}}});
+    for (const id of ['a','b','c']) seed(id);
+    const page = async (suffix: string) => (await (await application.request(base + suffix)).json()).data;
+    const first = await page('?limit=1');
+    expect(Object.keys(first).sort()).toEqual(['activeRunId','hasMore','items','nextCursor','tipEntryId']);
+    expect(first).toMatchObject({activeRunId:null,hasMore:true,tipEntryId:'c',items:[{id:'r-c'}]});
+    expect(first.items[0]).toEqual(await page('/r-c'));
+    expect(Object.keys(first.items[0]).sort()).toEqual(['assistantEntryId','capabilities','createdAt','finishedAt','id','messages','status','stopReason','usage']);
+    const cursor = encodeURIComponent(first.nextCursor);
+    seed('d');
+    const second = await page('?limit=1&cursor='+cursor);
+    expect(second.items[0].id).toBe('r-b');
+    // A cursor is a numeric position, so even removal of its boundary row cannot invalidate the next page.
+    bindTransaction(db)(() => {
+      db.prepare("UPDATE entries SET parent_id='b' WHERE id='d'").run();
+      db.prepare("DELETE FROM entries WHERE run_id='r-c'").run();
+      db.prepare("DELETE FROM runs WHERE id='r-c'").run();
+    });
+    expect((await page('?limit=1&cursor='+cursor)).items).toEqual(second.items);
+    expect(await page('?cursor='+encodeURIComponent(second.nextCursor))).toMatchObject({hasMore:false,nextCursor:null,items:[{id:'r-a'}]});
+    const other = base.replace('/one/', '/blocked/');
+    await failure(await application.request(other+'/r-b'),'RUN_NOT_FOUND',404);
+    await failure(await application.request(other+'?cursor='+cursor),'INVALID_REQUEST',400);
+    for (const query of ['afterSeq=0','beforeSeq=1','unused=1','limit=1&afterSeq=0','limit=6',
+      'cursor='+Buffer.from(JSON.stringify({version:1,scope:'narrative:one',position:{beforeSeq:2}})).toString('base64url')]) {
+      await failure(await application.request(base+'?'+query),'INVALID_REQUEST',400);
+    }
+    const before = services.sessions.getHistory('one'), publish = vi.spyOn(events, 'publish');
+    const latest = (await page('?limit=1')).items[0];
+    for (const invalid of [
+      {userEntryId:'d',assistantEntryId:null,expectedTipEntryId:'d'},
+      {runId:latest.id,expectedAssistantEntryId:latest.assistantEntryId,expectedTipEntryId:'d',userEntryId:'d'},
+    ]) await failure(await application.request(base+'/regenerate',post(invalid)),'INVALID_REQUEST',400);
+    expect(services.sessions.getHistory('one')).toEqual(before);
+    expect(publish).not.toHaveBeenCalled();
+    await application.shutdown();
+  });
+
+  it('closes SSE and rejects pending access, health and new submissions when both settlement writes fail', async () => {
+    let release!: (ok:boolean) => void, entered!: () => void;
+    const checking = new Promise<void>(resolve => { entered = resolve; });
+    const application = createApp({events, services, usecases, canAccessSession: (_id,req) => {
+      if (req.method !== 'PATCH') return true;
+      entered();
+      return new Promise(resolve => { release = resolve; });
+    }});
+    const sse = await application.request('/api/v1/sessions/one/events');
+    const closed = sse.text();
+    const pending = application.request('/api/v1/sessions/one', {...post({title:'too late'}),method:'PATCH'});
+    await checking;
+    db.exec("CREATE TRIGGER fail_settlement BEFORE UPDATE OF finished_at ON runs BEGIN SELECT RAISE(ABORT,'disk fault'); END");
+    const failed = new Promise<void>(resolve => usecases.storageFailure.addEventListener('abort', () => resolve(), {once:true}));
+    const accepted = usecases.narrative.submit({sessionId:'one',expectedTipEntryId:null,input:{text:'Go'}});
+    await failed;
+    release(true);
+    await failure(await pending,'STORAGE_UNAVAILABLE',503);
+    await failure(await application.request('/health'),'STORAGE_UNAVAILABLE',503);
+    await failure(await application.request(base,post({input:{text:'again'},expectedTipEntryId:accepted.tipEntryId})),'STORAGE_UNAVAILABLE',503);
+    const frames = await closed;
+    expect(frames).toContain('event: run.created');
+    expect(frames).not.toMatch(/event: run\.(stopped|completed|usage)/);
+    expect(services.sessions.getRun('one',accepted.runId).status).toBe('running');
+    expect(services.sessions.require('one').title).not.toBe('too late');
+    await application.shutdown();
+  });
+});
+
+it('can read the exact committed run over HTTP from inside a terminal subscriber', async () => {
+  const application = createApp({events, services, usecases});
+  const base = '/api/v1/sessions/one/narrative/runs';
+  let started: unknown, usage: unknown;
+  const observed = new Promise<{terminal:Record<string,unknown>; detail:Response}>(resolve => {
+    events.subscribe('one', event => {
+      if (event.event === 'run.created') started = event.data.messages;
+      if (event.event === 'run.usage') usage = event.data.usage;
+      if (event.event === 'run.stopped') {
+        void Promise.resolve(application.request(base+'/'+event.data.runId)).then(detail => resolve({terminal:event.data,detail}));
+      }
+    });
+  });
+  const input = {input:{text:'go'},expectedTipEntryId:null};
+  const res = await application.request(base,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});
+  expect(res.status).toBe(202);
+  const {data:accepted} = await res.json();
+  expect(Object.keys(accepted).sort()).toEqual(['assistantEntryId','deletedMessageIds','runId','tipEntryId','userEntryId','userMessage']);
+  const {terminal,detail} = await observed;
+  expect(Object.keys(terminal).sort()).toEqual(['assistantEntryId','model','provider','runId','savedMessageIds','sessionId','stop_reason','timestamp','tipEntryId']);
+  expect(started).toEqual([accepted.userMessage]);
+  expect(detail.status).toBe(200);
+  const {data:run} = await detail.json();
+  expect(run).toMatchObject({id:accepted.runId,assistantEntryId:accepted.assistantEntryId,status:'stopped',stopReason:terminal.stop_reason,usage,
+    messages:[{id:accepted.userEntryId,status:'complete'}]});
+  expect(terminal.savedMessageIds).toEqual(run.messages.map((message:{id:string})=>message.id));
+  await application.shutdown();
+});
+
+it('discards an execution whose session disappeared without recreating storage or announcing a terminal', async () => {
+  const notifications: string[] = [];
+  events.subscribe('one', event => {
+    notifications.push(event.event);
+    if (event.event === 'run.created') bindTransaction(db)(() => {
+      db.prepare('DELETE FROM runs WHERE session_id=?').run('one');
+      db.prepare('DELETE FROM sessions WHERE id=?').run('one');
+    });
+  });
+  const accepted = usecases.narrative.submit({sessionId:'one',expectedTipEntryId:null,input:{text:'Go'}});
+  await usecases.narrative.shutdown();
+  expect(notifications).not.toContain('run.stopped');
+  expect(notifications).not.toContain('run.completed');
+  expect(usecases.storageFailure.aborted).toBe(false);
+  expect(db.prepare('SELECT id FROM runs WHERE id=?').get(accepted.runId)).toBeUndefined();
+});
+
+it('drains the committed terminal through SSE before closing a normally stopped application', async () => {
+  const application = createApp({events, services, usecases});
+  const stream = await application.request('/api/v1/sessions/one/events');
+  const frames = stream.text();
+  const accepted = usecases.narrative.submit({sessionId:'one',expectedTipEntryId:null,input:{text:'Go'}});
+  await application.shutdown();
+  const received = await frames;
+  expect(received).toContain('event: run.usage');
+  expect(received.indexOf('event: run.stopped')).toBeGreaterThan(received.indexOf('event: run.usage'));
+  expect(services.sessions.getRun('one',accepted.runId)).toMatchObject({status:'stopped',stopReason:'server_shutdown'});
 });

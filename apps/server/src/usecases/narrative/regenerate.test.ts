@@ -1,3 +1,4 @@
+import { seedMessage } from '../../testing/run-fixtures.js';
 import { worldPublication } from '../../testing/fixtures.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -95,9 +96,9 @@ function submit(content = '玩家输入', sessionId = 'session') {
   return { accepted, finished };
 }
 
-function regenerate(userEntryId: string, assistantEntryId: string | null) {
+function regenerate(runId: string, expectedAssistantEntryId: string) {
   const finished = terminal();
-  const accepted = narrative.regenerate({sessionId:'session', userEntryId, assistantEntryId,
+  const accepted = narrative.regenerate({sessionId:'session', runId, expectedAssistantEntryId,
     expectedTipEntryId: services.sessions.require('session').tipEntryId!});
   return {accepted, finished};
 }
@@ -107,12 +108,12 @@ describe('regeneration of the latest user round', () => {
     const first = submit(); await first.finished;
     const originalUsage = narrative.usage('session');
     seen.length = 0;
-    const next = regenerate(first.accepted.userEntryId, first.accepted.assistantEntryId);
+    const next = regenerate(first.accepted.runId, first.accepted.assistantEntryId);
     expect(next.accepted).toMatchObject({runId:first.accepted.runId,userEntryId:first.accepted.userEntryId,
       deletedMessageIds:[first.accepted.assistantEntryId],tipEntryId:first.accepted.userEntryId});
     expect(next.accepted.assistantEntryId).not.toBe(first.accepted.assistantEntryId);
     expect(services.sessions.getEntry('session', first.accepted.assistantEntryId)).toBeNull();
-    expect(services.sessions.getNarrativeOutcome(services.sessions.getEntry('session', first.accepted.userEntryId)!)).toBeNull();
+    expect(services.sessions.getRun('session', first.accepted.runId).capabilities).toEqual({});
     expect(narrative.list('session').items[0]).toMatchObject({status:'running',assistantEntryId:next.accepted.assistantEntryId});
     expect(() => narrative.stop('session',first.accepted.runId,first.accepted.assistantEntryId)).toThrow('RUN_NOT_FOUND');
     expect((await next.finished).event).toBe('run.completed');
@@ -125,8 +126,8 @@ describe('regeneration of the latest user round', () => {
 
   it('keeps compaction successors and the actual tip while reconnecting their parent', async () => {
     const first = submit(); await first.finished;
-    services.sessions.appendEntry('session',{id:'summary',runId:first.accepted.runId,type:'compaction',role:null,payload:{summary:'stale summary'}});
-    const next = regenerate(first.accepted.userEntryId,first.accepted.assistantEntryId);
+    seedMessage(services, 'session',{id:'summary',runId:first.accepted.runId,type:'compaction',role:null,payload:{summary:'stale summary'}});
+    const next = regenerate(first.accepted.runId,first.accepted.assistantEntryId);
     expect(next.accepted.tipEntryId).toBe('summary');
     expect(services.sessions.getEntry('session','summary')!.parentId).toBe(first.accepted.userEntryId);
     expect((await next.finished).event).toBe('run.completed');
@@ -137,20 +138,20 @@ describe('regeneration of the latest user round', () => {
   it('rolls back both deletion and outcome reset if admission fails', async () => {
     const first = submit(); await first.finished;
     const before = services.sessions.getHistory('session');
-    vi.spyOn(services.sessions,'setNarrativeOutcome').mockImplementationOnce(()=>{throw Error('storage failure');});
-    expect(()=>regenerate(first.accepted.userEntryId,first.accepted.assistantEntryId)).toThrow('storage failure');
+    vi.spyOn(services.sessions,'restartRun').mockImplementationOnce(()=>{throw Error('storage failure');});
+    expect(()=>regenerate(first.accepted.runId,first.accepted.assistantEntryId)).toThrow('storage failure');
     expect(services.sessions.getHistory('session')).toEqual(before);
     expect(narrative.list('session').activeRunId).toBeNull();
-    expect((await regenerate(first.accepted.userEntryId,first.accepted.assistantEntryId).finished).event).toBe('run.completed');
+    expect((await regenerate(first.accepted.runId,first.accepted.assistantEntryId).finished).event).toBe('run.completed');
   });
 
   it('keeps deletion on a pre-request stop and can retry the user-only round', async () => {
     const first = submit(); await first.finished;
-    const next = regenerate(first.accepted.userEntryId,first.accepted.assistantEntryId);
+    const next = regenerate(first.accepted.runId,first.accepted.assistantEntryId);
     narrative.stop('session',next.accepted.runId,next.accepted.assistantEntryId);
     expect((await next.finished).event).toBe('run.stopped');
     expect(services.sessions.getHistory('session').map(entry=>entry.id)).toEqual([first.accepted.userEntryId]);
-    const retry = regenerate(first.accepted.userEntryId,null);
+    const retry = regenerate(first.accepted.runId,next.accepted.assistantEntryId);
     expect(retry.accepted.deletedMessageIds).toEqual([]);
     expect((await retry.finished).event).toBe('run.completed');
     expect(services.sessions.getHistory('session')).toHaveLength(2);
@@ -158,20 +159,20 @@ describe('regeneration of the latest user round', () => {
 
   it('rejects stale, historical, opening and active targets without deleting anything', async () => {
     const first = submit(); await first.finished;
-    expect(()=>narrative.regenerate({sessionId:'session',userEntryId:first.accepted.userEntryId,assistantEntryId:first.accepted.assistantEntryId,expectedTipEntryId:first.accepted.userEntryId})).toThrow('TIP_CONFLICT');
-    expect(()=>regenerate(first.accepted.assistantEntryId,null)).toThrow('INVALID_REGENERATION_TARGET');
+    expect(()=>narrative.regenerate({sessionId:'session',runId:first.accepted.runId,expectedAssistantEntryId:first.accepted.assistantEntryId,expectedTipEntryId:first.accepted.userEntryId})).toThrow('TIP_CONFLICT');
+    expect(()=>regenerate(first.accepted.assistantEntryId,'stale')).toThrow('RUN_NOT_FOUND');
     const second = submit('next');
-    expect(()=>regenerate(first.accepted.userEntryId,first.accepted.assistantEntryId)).toThrow('RUN_ALREADY_ACTIVE');
+    expect(()=>regenerate(first.accepted.runId,first.accepted.assistantEntryId)).toThrow('RUN_ALREADY_ACTIVE');
     await second.finished;
-    expect(()=>regenerate(first.accepted.userEntryId,first.accepted.assistantEntryId)).toThrow('INVALID_REGENERATION_TARGET');
-    expect(()=>regenerate(second.accepted.userEntryId,null)).toThrow('INVALID_REGENERATION_TARGET');
-    expect(()=>regenerate(second.accepted.userEntryId,first.accepted.assistantEntryId)).toThrow('INVALID_REGENERATION_TARGET');
+    expect(()=>regenerate(first.accepted.runId,first.accepted.assistantEntryId)).toThrow('INVALID_REGENERATION_TARGET');
+    expect(()=>regenerate(second.accepted.runId,'stale')).toThrow('INVALID_REGENERATION_TARGET');
+    expect(()=>regenerate(second.accepted.runId,first.accepted.assistantEntryId)).toThrow('INVALID_REGENERATION_TARGET');
     expect(services.sessions.getHistory('session')).toHaveLength(4);
   });
 
   it('publishes the inherited message state only after deletion commits under the run lock', async () => {
-    const user = services.sessions.appendEntry('session',{id:'user',runId:'round',type:'message',role:'user',payload:{message:{role:'user',content:'Go',timestamp:1}},state:[{key:'coins',value:5}]});
-    services.sessions.appendEntry('session',{id:'old-ai',runId:'round',type:'message',role:'assistant',payload:{message:{role:'assistant',content:'Old',timestamp:1}},state:[{key:'coins',value:3}]});
+    const user = seedMessage(services, 'session',{id:'user',runId:'round',type:'message',role:'user',payload:{message:{role:'user',content:'Go',timestamp:1}},state:[{key:'coins',value:5}]});
+    seedMessage(services, 'session',{id:'old-ai',runId:'round',type:'message',role:'assistant',payload:{message:{role:'assistant',content:'Old',timestamp:1}},state:[{key:'coins',value:3}]});
     const changes: unknown[] = [], observations: Array<{deleted:boolean;locked:boolean}> = [];
     events.subscribe('session',event=>{
       if(event.event!=='state.changed')return;
@@ -179,7 +180,7 @@ describe('regeneration of the latest user round', () => {
       let locked=false;try { services.sessions.update('session',{title:'blocked'}); } catch(error) { locked=error instanceof Error && error.message.includes('SESSION_WRITE_LOCKED'); }
       observations.push({deleted:services.sessions.getEntry('session','old-ai')===null,locked});
     });
-    await regenerate(user.id,'old-ai').finished;
+    await regenerate(user.runId,'old-ai').finished;
     expect(changes).toContainEqual({scope:'message',path:'',value:{coins:5}});
     expect(observations).toEqual([{deleted:true,locked:true}]);
   });
@@ -191,10 +192,23 @@ it.each(['', 'Partial new answer'])('keeps the deletion after provider failure w
     yield {type:'request_started'};
     yield {type:'error',snapshot:snapshot(content),stopReason:'provider_error',usage};
   });
-  const next=regenerate(first.accepted.userEntryId,first.accepted.assistantEntryId);
+  const next=regenerate(first.accepted.runId,first.accepted.assistantEntryId);
   expect(await next.finished).toMatchObject({event:'run.stopped',data:{assistantEntryId:next.accepted.assistantEntryId,stop_reason:'provider_error'}});
   expect(services.sessions.getEntry('session',first.accepted.assistantEntryId)).toBeNull();
   const entries=services.sessions.getHistory('session');
   expect(entries.filter(entry=>entry.role==='user').map(entry=>entry.id)).toEqual([first.accepted.userEntryId]);
   expect(entries.filter(entry=>entry.role==='assistant').map(entry=>entry.id)).toEqual(content?[next.accepted.assistantEntryId]:[]);
+});
+
+it('rejects a delayed user-only retry even when both attempts have the same tip', async () => {
+  resolveModel.mockImplementation(() => { throw Error('preparation failure'); });
+  const first = submit();
+  await first.finished;
+  const second = regenerate(first.accepted.runId, first.accepted.assistantEntryId);
+  await second.finished;
+  expect(second.accepted.tipEntryId).toBe(first.accepted.userEntryId);
+  expect(() => regenerate(first.accepted.runId, first.accepted.assistantEntryId)).toThrow('INVALID_REGENERATION_TARGET');
+  expect(services.sessions.getRun('session', first.accepted.runId)).toMatchObject({
+    assistantEntryId:second.accepted.assistantEntryId, status:'stopped', messages:[{id:first.accepted.userEntryId}],
+  });
 });

@@ -1,10 +1,10 @@
 import { z } from 'zod';
 import { AppError } from '../../errors.js';
-import type { JsonObject, JsonValue } from '../../infrastructure/database/connection.js';
+import type { JsonObject } from '../../infrastructure/database/connection.js';
 
 export const identifier = z.string().min(1).refine(value => value === value.trim(), 'Identifiers cannot have surrounding whitespace');
 const jsonObject = z.custom<JsonObject>(value => value !== null && typeof value === 'object' && !Array.isArray(value));
-const jsonArray = z.custom<JsonValue[]>(Array.isArray);
+
 const tokenCount = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const duration = z.number().nonnegative().finite();
 
@@ -22,9 +22,10 @@ const messagePayloadSchema = z.object({
   ]),
 }).strict();
 
-export function validateMessagePayload(payload: unknown, role: 'user' | 'assistant'): void {
+export function validateMessagePayload(payload: unknown, role: 'user' | 'assistant') {
   const { message } = messagePayloadSchema.parse(payload);
   if (message.role !== role) throw new AppError('INVALID_REQUEST', '消息角色与条目不一致');
+  return message;
 }
 
 const usageSchema = z.object({
@@ -90,23 +91,6 @@ export const updateSessionSchema = z.object({
   runtimeConfig: runtimeConfigSchema.partial().optional(),
   title: z.string().nullable().optional(),
 }).strict();
-const internalExtData = jsonObject
-  .refine(value => !Object.hasOwn(value, 'narrative'), 'narrative 由服务端维护')
-  .refine(value => !Object.hasOwn(value, 'output'), 'output 由服务端维护');
-const editableExtData = internalExtData.refine(value => !Object.hasOwn(value, 'summary'), 'summary 由服务端维护');
-const appendFields = {
-  id: identifier.optional(), parentId: identifier.nullable().optional(), runId: identifier,
-  timestamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
-  payload: jsonObject, state: jsonArray.nullable().optional(),
-  extData: editableExtData.optional(), metrics: metricsSchema.nullable().optional(),
-};
-export const appendEntrySchema = z.discriminatedUnion('type', [
-  z.object({ ...appendFields, type: z.literal('message'), role: z.enum(['user', 'assistant']) }).strict(),
-  z.object({ ...appendFields, type: z.literal('compaction'), role: z.null(), extData: internalExtData.optional() }).strict(),
-]);
-export const updateEntrySchema = z.object({
-  payload: jsonObject.optional(), extData: editableExtData.optional(),
-}).strict();
 export const sessionListSchema = z.object({
   worldId: identifier.optional(),
   limit: z.number().int().min(1).max(1000).default(100),
@@ -123,14 +107,3 @@ export const narrativeStopReasonSchema = z.enum([
   'summary_capacity_exceeded', 'summary_failed',
   'message_persist_failed', 'tip_conflict', 'session_deleted', 'internal_error',
 ]);
-export const narrativeOutcomeSchema = z.discriminatedUnion('status', [
-  z.object({ status: z.literal('completed'), assistantEntryId: identifier.optional(), finishedAt: z.number().int().nonnegative() }).strict(),
-  z.object({ status: z.literal('stopped'), assistantEntryId: identifier.optional(), stopReason: narrativeStopReasonSchema,
-    finishedAt: z.number().int().nonnegative() }).strict(),
-]);
-export const entryRunListSchema = z.object({
-  limit: z.number().int().min(1).max(5).optional(),
-  beforeSeq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
-  afterSeq: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
-}).strict().refine(value => value.beforeSeq === undefined || value.afterSeq === undefined,
-  'beforeSeq 与 afterSeq 不能同时提供');

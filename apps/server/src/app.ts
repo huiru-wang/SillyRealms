@@ -36,9 +36,14 @@ export function createApp({ events, services, usecases, canAccessSession, webOri
     .map(origin => [origin, runtimeConfig({ webOrigin: origin, debug })]));
   const app = new Hono();
   const shutdown = new AbortController(), streams = new AbortController();
+  usecases.storageFailure.addEventListener('abort', () => {
+    shutdown.abort('STORAGE_UNAVAILABLE');
+    streams.abort();
+  }, { once: true });
   let stopping = false;
   let closing: Promise<void> | undefined;
   app.use('*', async (c, next) => {
+    if (usecases.storageFailure.aborted) return failure(c, 'STORAGE_UNAVAILABLE');
     if (stopping) return failure(c, 'SERVER_SHUTTING_DOWN');
     await next();
   });

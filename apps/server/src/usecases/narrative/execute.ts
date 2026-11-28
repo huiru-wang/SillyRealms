@@ -1,38 +1,27 @@
 import { AppError } from '../../errors.js';
-import type { ModelFinishReason, ModelSnapshot, ModelUsage } from '../../infrastructure/model/client.js';
+import type { ModelFinishReason, ModelSnapshot } from '../../infrastructure/model/client.js';
 import { processNarrativeOutput } from './postprocess/processor.js';
-import type { StateEvent } from '../../modules/state/service.js';
-import type { CharacterSpriteItem, EntryMetrics } from '../../modules/sessions/service.js';
+import type { RequestMetrics } from '../../modules/sessions/service.js';
 import type { CharacterSpriteCatalogItem } from '../../modules/worlds/service.js';
 import type { NarrativeEvent, NarrativeSettlement, NarrativeStopReason, RunEventFields } from './events.js';
 import type { NarrativeDependencies, NarrativeExecution } from './types.js';
-import { assertRunning, callModel, cancellationReason, copySnapshot, failureReason, hasPublicOutput, zeroUsage } from './model-call.js';
-
-function addUsage(left: ModelUsage | null, right: ModelUsage | null): ModelUsage | null {
-  if (left === null || right === null) return null;
-  return {
-    inputTokens: left.inputTokens + right.inputTokens, outputTokens: left.outputTokens + right.outputTokens,
-    totalTokens: left.totalTokens + right.totalTokens, cacheReadTokens: left.cacheReadTokens + right.cacheReadTokens,
-    cacheWriteTokens: left.cacheWriteTokens + right.cacheWriteTokens,
-  };
-}
+import { assertRunning, callModel, cancellationReason, copySnapshot, failureReason, hasPublicOutput } from './model-call.js';
 
 /** User-first execution, optional single summary, then narrative and one settlement. */
-export async function executeNarrative(dependencies: NarrativeDependencies, execution: NarrativeExecution): Promise<NarrativeSettlement> {
+export async function executeNarrative(dependencies: NarrativeDependencies, execution: NarrativeExecution): Promise<NarrativeSettlement | null> {
   const { sessions, modelClient, events } = dependencies;
   const { sessionId, runId, userEntryId, assistantEntryId, userMessage, tipEntryId: acceptedTipEntryId, deletedMessageIds, provider, model, prepared, getApiKey, signal, log, writePermit } = execution;
   let snapshot: ModelSnapshot = { role: 'assistant', content: '', reasoning_content: '', tool_calls: [] };
-  let usage: ModelUsage | null = zeroUsage(), summaryUsage: ModelUsage | null = zeroUsage();
   let attempted = false, receivedTerminal = false, publishedDelta = false;
-  let metrics: EntryMetrics | null = null;
+  let metrics: RequestMetrics | null = null;
   let finishReason: ModelFinishReason | undefined, stopReason: NarrativeStopReason | undefined;
-  let parentId = userEntryId;
+  let parentId = acceptedTipEntryId ?? userEntryId;
   let rawContent = '', allowedStateUpdateRoots: string[] = [];
-  let committedState: StateEvent | null = null, committedSuggestions: string[] = [];
   let characterSpriteCatalog: readonly CharacterSpriteCatalogItem[] = [];
-  let committedSprites: CharacterSpriteItem[] | undefined;
   const fields = (): RunEventFields => ({ runId, assistantEntryId, sessionId, provider, model, timestamp: Date.now() });
-  const publish = (event: NarrativeEvent) => events.publish(sessionId, event);
+  const publish = (event: NarrativeEvent) => {
+    try { events.publish(sessionId, event); } catch { /* Delivery is independent of storage. */ }
+  };
   publish({ event: 'run.created', data: { ...fields(), messages: [{ ...userMessage }], tipEntryId: acceptedTipEntryId, deletedMessageIds } });
   try {
     assertRunning(signal);
@@ -42,7 +31,6 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
     else log('context.failed', { failure: context.failure, parentEntryId: context.parentEntryId,
       summaryEntryId: context.summary?.entryId ?? null });
     if (context.parentEntryId !== null) parentId = context.parentEntryId;
-    if (context.summary) summaryUsage = context.summary.metrics?.requests[0]?.usage ?? null;
     assertRunning(signal);
     if (!context.ok) {
       stopReason = context.failure.code === 'SUMMARY_FAILED'
@@ -62,7 +50,7 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
             model: selected.modelId, source: event.source, raw: event.data });
         },
       }, { events, fields: fields(), messageId: assistantEntryId });
-      ({ snapshot, rawContent, usage, attempted, metrics, finishReason, stopReason, receivedTerminal, publishedDelta } = result);
+      ({ snapshot, rawContent, attempted, metrics, finishReason, stopReason, receivedTerminal, publishedDelta } = result);
       if (metrics && metrics.requests.length) {
         metrics = { ...metrics, context: { ...compiled.context, requestId: metrics.requests.at(-1)!.requestId } };
       }
@@ -83,100 +71,59 @@ export async function executeNarrative(dependencies: NarrativeDependencies, exec
   // A final-snapshot observer can still cancel before persistence begins.
   if (signal.aborted) stopReason = cancellationReason(signal);
 
+  let receipt;
   try {
-    if (hasPublicOutput(snapshot)) {
+    receipt = dependencies.transaction(() => {
+      if (sessions.require(sessionId).tipEntryId !== parentId) throw new AppError('TIP_CONFLICT');
       const timestamp = Date.now();
-      const input = {
-        id: assistantEntryId, parentId, runId, type: 'message' as const, role: 'assistant' as const, timestamp,
-        payload: { message: { ...copySnapshot(snapshot), timestamp } },
-        state: null, extData: {}, metrics,
-      };
-      if (stopReason === undefined) {
-        const committed = dependencies.transaction(() => {
-          if (sessions.require(sessionId).tipEntryId !== parentId) throw new AppError('TIP_CONFLICT');
-          log('postprocess.started', { messageId: assistantEntryId, allowedRoots: allowedStateUpdateRoots });
-          const processed = processNarrativeOutput(rawContent, dependencies.state, {
-            sessionId, parentId, allowedRoots: allowedStateUpdateRoots, characterSpriteCatalog,
-          }, (event, data) => log(event, { messageId: assistantEntryId, ...data }));
-          sessions.appendNarrativeAssistant(sessionId, { ...input, state: processed.state }, processed.output, writePermit);
-          const sprites = processed.output.characterSprite;
-          return { change: processed.change, suggestions: processed.output.actionSuggestions.items,
-            sprites: sprites?.status === 'success' || sprites?.status === 'partial_success' ? sprites.items : undefined };
-        });
-        committedState = committed.change;
-        committedSuggestions = committed.suggestions;
-        committedSprites = committed.sprites;
-        log('postprocess.completed', { messageId: assistantEntryId, persisted: true,
-          stateChanged: committedState !== null, suggestionCount: committedSuggestions.length,
-          ...(committedSprites === undefined ? {} : { characterSpriteCount: committedSprites.length }) });
-      } else {
-        // Interrupted/model-failed output is visible history only; no postprocessing was executed.
-        sessions.appendEntry(sessionId, input, writePermit);
+      const reply = hasPublicOutput(snapshot) ? {
+        id: assistantEntryId, parentId, timestamp, payload: { message: { ...copySnapshot(snapshot), timestamp } },
+      } : null;
+      let processed;
+      if (reply && !stopReason) {
+        log('postprocess.started', { messageId: assistantEntryId, allowedRoots: allowedStateUpdateRoots });
+        processed = processNarrativeOutput(rawContent, dependencies.state, {
+          sessionId, parentId, allowedRoots: allowedStateUpdateRoots, characterSpriteCatalog,
+        }, (event, data) => log(event, { messageId: assistantEntryId, ...data }));
       }
-    }
-  } catch (error) {
-    // Persistence failure takes precedence even if the model finished, failed or was cancelled.
-    stopReason = error instanceof AppError && error.code === 'TIP_CONFLICT' ? 'tip_conflict'
-      : error instanceof AppError && error.code === 'SESSION_NOT_FOUND' ? 'session_deleted' : 'message_persist_failed';
-    log('message.persist_failed', { messageId: assistantEntryId, persisted: false, stop_reason: stopReason });
-  }
-
-  let savedMessageIds: string[] = [], tipEntryId: string | null = null;
-  try {
-    const session = sessions.get(sessionId);
-    if (!session) stopReason = 'session_deleted';
-    else {
-      tipEntryId = session.tipEntryId;
-      savedMessageIds = [userEntryId, assistantEntryId].filter(id => sessions.getEntry(sessionId, id) !== null);
-      if (!savedMessageIds.includes(userEntryId) || (stopReason === undefined && !savedMessageIds.includes(assistantEntryId))) {
-        stopReason = 'message_persist_failed';
-      }
-    }
-  } catch {
-    // Do not claim any unverified saved IDs if storage cannot report the settlement.
-    savedMessageIds = [];
-    tipEntryId = null;
-    stopReason = 'message_persist_failed';
-  }
-
-  // Outcome belongs to the durable user entry, even if no assistant could be saved.
-  try {
-    sessions.setNarrativeOutcome(sessionId, userEntryId, stopReason === undefined
-      ? { status: 'completed', assistantEntryId, finishedAt: Date.now() }
-      : { status: 'stopped', assistantEntryId, stopReason, finishedAt: Date.now() }, writePermit);
-  } catch {
-    // Keep saved messages; a missing outcome remains unknown after restart.
-    if (stopReason !== 'session_deleted') stopReason = 'message_persist_failed';
-  }
-
-  const notifications: NarrativeSettlement['notifications'] = [];
-  if (committedState) notifications.push(committedState);
-  if (stopReason === undefined && committedSuggestions.length) {
-    notifications.push({ event: 'action_suggestions.created',
-      data: { sessionId, runId, messageId: assistantEntryId, items: [...committedSuggestions] } });
-  }
-  // A committed snapshot remains authoritative even if recording the run outcome later failed.
-  if (committedSprites !== undefined) {
-    const items = committedSprites.map(item => {
-      // Postprocessing accepted this pair against the same captured catalog.
-      const sprite = characterSpriteCatalog.find(row => row.characterId === item.characterId && row.spriteId === item.spriteId)!;
-      return { ...item, asset: sprite.asset };
+      const saved = sessions.settleRun(sessionId, runId, assistantEntryId, stopReason ?? null,
+        reply ? { ...reply, state: processed?.state ?? null } : null, processed?.output ?? null, metrics, writePermit);
+      return { saved, processed };
     });
-    notifications.push({ event: 'character_sprite.changed', data: { sessionId, runId, messageId: assistantEntryId, items } });
+  } catch (error) {
+    if (error instanceof AppError && (error.code === 'RUN_NOT_FOUND' || error.code === 'SESSION_NOT_FOUND' || error.code === 'SESSION_WRITE_LOCKED')) {
+      log('run.discarded', { stop_reason: error.code === 'SESSION_NOT_FOUND' ? 'session_deleted' : 'tip_conflict' });
+      return null;
+    }
+    stopReason = error instanceof AppError && error.code === 'TIP_CONFLICT' ? 'tip_conflict' : 'message_persist_failed';
+    log('message.persist_failed', { messageId: assistantEntryId, persisted: false, stop_reason: stopReason });
+    const invalidMetrics = error instanceof AppError &&
+      (error.code === 'INVALID_REQUEST_METRICS' || error.code === 'DUPLICATE_REQUEST_METRICS');
+    const saved = sessions.settleRun(sessionId, runId, assistantEntryId, stopReason, null, null, invalidMetrics ? null : metrics, writePermit);
+    receipt = { saved, processed: undefined };
   }
-  const total = addUsage(summaryUsage, attempted ? usage : zeroUsage());
-  const usageEvent: NarrativeSettlement['usage'] = { event: 'run.usage', data: {
-    ...fields(), usage: total === null ? null : {
-      input_tokens: total.inputTokens, output_tokens: total.outputTokens, total_tokens: total.totalTokens,
-      cache_read_tokens: total.cacheReadTokens, cache_write_tokens: total.cacheWriteTokens,
-    },
-  } };
-  const data = { ...fields(), savedMessageIds, tipEntryId };
+  const { saved, processed } = receipt;
+  const notifications: NarrativeSettlement['notifications'] = [];
+  if (processed) {
+    const { change, output } = processed;
+    const suggestions = output.actionSuggestions.items;
+    const sprites = output.characterSprite;
+    const applySprites = sprites?.status === 'success' || sprites?.status === 'partial_success';
+    if (change) notifications.push(change);
+    if (suggestions.length) notifications.push({ event: 'action_suggestions.created',
+      data: { sessionId, runId, messageId: assistantEntryId, items: suggestions } });
+    if (applySprites) notifications.push({ event: 'character_sprite.changed',
+      data: { sessionId, runId, messageId: assistantEntryId, items: sprites.items } });
+    log('postprocess.completed', { messageId: assistantEntryId, persisted: true, stateChanged: change !== null,
+      suggestionCount: suggestions.length, ...(applySprites && { characterSpriteCount: sprites.items.length }) });
+  }
+  const usageEvent: NarrativeSettlement['usage'] = { event: 'run.usage', data: { ...fields(), usage: saved.usage } };
+  const data = { ...fields(), savedMessageIds: saved.savedMessageIds, tipEntryId: saved.tipEntryId };
   return {
     notifications,
     usage: usageEvent,
-    terminal: stopReason === undefined
+    terminal: saved.stopReason === null
       ? { event: 'run.completed', data }
-      : { event: 'run.stopped', data: { ...data, stop_reason: stopReason } },
+      : { event: 'run.stopped', data: { ...data, stop_reason: saved.stopReason } },
   };
 }

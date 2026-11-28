@@ -4,7 +4,7 @@ import type { EventHub } from '../infrastructure/events/event-hub.js';
 import { createSessionEventsResponse } from '../infrastructure/events/session-events.js';
 import { decodeCursor, encodeCursor } from '../http/pagination.js';
 import { numberQuery, readJson, success } from '../http/response.js';
-import { requireSessionAccess, type SessionAccessCheck } from '../http/session-access.js';
+import { assertAccepting, requireSessionAccess, type SessionAccessCheck } from '../http/session-access.js';
 import type {
   Session, SessionListOptions, SessionService, UpdateSessionInput,
 } from '../modules/sessions/service.js';
@@ -92,8 +92,9 @@ export function createSessionRoutes({ events, sessions, worlds, createSession, c
 
   routes.post('/', async c => {
     const input = await readJson<CreateSessionInput>(c);
+    assertAccepting(shutdownSignal);
     const result = createSession(input);
-    return success(c, { item: projectSession(result.item, worlds), entry: result.entry }, 201);
+    return success(c, { item: projectSession(result.item, worlds), opening: result.opening }, 201);
   });
 
   routes.get('/:id', async c => {
@@ -105,7 +106,9 @@ export function createSessionRoutes({ events, sessions, worlds, createSession, c
   routes.patch('/:id', async c => {
     const id = c.req.param('id');
     await access(id, c.req.raw);
-    return success(c, { item: projectSession(sessions.update(id, await readJson<UpdateSessionInput>(c)), worlds) });
+    const patch = await readJson<UpdateSessionInput>(c);
+    assertAccepting(shutdownSignal);
+    return success(c, { item: projectSession(sessions.update(id, patch), worlds) });
   });
 
   routes.delete('/:id', async c => {
