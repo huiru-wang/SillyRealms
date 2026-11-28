@@ -21,14 +21,45 @@ export type Position = 'left' | 'center' | 'right' | 'top' | 'topleft' | 'toprig
 export type Sprite = {position: Position; characterId: string; spriteId: string; asset: string};
 export type ReadStatus = {loading: boolean; error: Error | null};
 export type AssetSource = 'world' | 'stage';
-export type Message = {id: string; content: string; timestamp: number} &
-  ({role: 'user'} | {role: 'assistant'; reasoningText?: string});
-export type Run = {id: string; messages: readonly Message[]};
+export type StopReason =
+  | 'cancelled' | 'server_shutdown' | 'provider_aborted' | 'provider_error'
+  | 'provider_context_window_exceeded' | 'model_not_found' | 'model_capability_unsupported'
+  | 'credential_not_configured' | 'credential_unavailable' | 'context_budget_exceeded'
+  | 'invalid_context' | 'output_limit_reached' | 'output_incomplete' | 'model_output_invalid'
+  | 'tool_execution_unsupported' | 'summary_capacity_exceeded' | 'summary_failed'
+  | 'message_persist_failed' | 'tip_conflict' | 'session_deleted' | 'internal_error';
+export type ToolCall = {index: number; id: string; type: 'function';
+  function: {name: string; arguments: string}};
+export type Message = {id: string; content: string; timestamp: number} & (
+  | {role: 'user'; status: 'complete'}
+  | {role: 'assistant'; status: 'complete' | 'partial';
+     reasoning_content?: string; tool_calls?: readonly ToolCall[]});
+export type RunUsage = {knownUsage: {inputTokens: number; outputTokens: number;
+  totalTokens: number; cacheReadTokens: number; cacheWriteTokens: number};
+  recordedRequestCount: number; unknownUsageRequestCount: number};
+type Diagnostic = {errorCode: string};
+type StateUpdateRow = {status: 'success'; path: string; value: Value; reason?: string}
+  | {status: 'invalid_json' | 'invalid_update' | 'invalid_path' | 'invalid_value' | 'processing_error';
+     path?: string; value?: Value; reason?: string; errorCode?: string; statePath?: string; rulePath?: string};
+export type RunCapabilities = {
+  stateUpdate?: {status: 'no_updates' | 'success' | 'partial_success' | 'invalid_updates' | 'invalid_tag' | 'processing_error';
+    updates: readonly StateUpdateRow[]; errors?: readonly Diagnostic[]};
+  actionSuggestions?: {status: 'no_suggestions' | 'success' | 'partial_success' | 'invalid_tag' | 'invalid_json' | 'invalid_suggestions' | 'processing_error';
+    items: readonly string[]; errors?: readonly Diagnostic[]};
+  characterSprite?: {status: 'success' | 'partial_success' | 'invalid_items' | 'invalid_tag' | 'processing_error';
+    items: readonly Sprite[]; errors?: readonly (Diagnostic & {line?: number})[]};
+};
+export type Run = {id: string; assistantEntryId: string; createdAt: number;
+  messages: readonly Message[]; capabilities: RunCapabilities; usage: RunUsage} & (
+  | {status: 'running' | 'stopping'; stopReason: null; finishedAt: null}
+  | {status: 'completed'; stopReason: null; finishedAt: number}
+  | {status: 'stopped'; stopReason: StopReason; finishedAt: number});
 export type RunQuery = {limit?: 1 | 2 | 3 | 4 | 5; cursor?: string};
-export type RunPage = {items: readonly Run[]; hasMore: boolean; nextCursor: string | null};
+export type RunPage = {items: readonly Run[]; hasMore: boolean; nextCursor: string | null;
+  activeRunId: string | null; tipEntryId: string | null};
 ```
 
-**Session** 是一次游玩，**Run** 是其中一轮。开场可能只有助手话语，刚受理的一轮可能只有玩家话语；重生成仍属于同一轮。Run.messages 只含该轮可见的玩家和助手内容，稳定的消息 ID 可定位替换组件或查询消息状态。已保存助手消息的 reasoning_content 投影为 reasoningText；无思考文本时可省略此字段，只有思考文本的已保存助手消息仍可按 ID 回读。Server 的摘要条目、计量、工具调用、原始处理结果、父链和执行回执留在平台。
+**Session** 是一次游玩，**Run** 是一轮。分页中的每项和单轮详情共用上述类型。毫秒时间、明确的 null、部分消息状态、轮次能力结果及用量都沿用 Server v15。开场是已完成的单助手轮。生成失败也可能只留下用户消息，预留的 assistantEntryId 仍标识这次执行。messages 按保存顺序只列普通消息，tipEntryId 则可能指向摘要。即使助手正文为空，也应保留已保存的思考或工具内容。存储及 HTTP 的字段来源见 [Server 会话读取](../apps/server/src/modules/sessions/service.ts) 和 [HTTP 示例](../docs/runtime/server-http.md#叙事查询与用量)。
 
 ## 2. 全部公开 hooks
 
@@ -73,15 +104,16 @@ export type SessionView = {
   readonly capabilities: SessionCapabilities;
   send(text: string): Promise<void>;
   setDraft(text: string): Promise<SetDraftResult>;
-  readonly runs: {query(params?: RunQuery, options?: ReadOptions): Promise<RunPage>};
-  readonly events: {subscribe<K extends keyof ContentEvents>(
+  readonly runs: {query(params?: RunQuery, options?: ReadOptions): Promise<RunPage>;
+    get(runId: string, options?: ReadOptions): Promise<Run>};
+  readonly events: {subscribe<K extends string>(
     types: readonly [K, ...K[]], listener: (event: StageEvent<K>) => void
   ): () => void};
 };
 export declare function useSRSession(): SessionView;
 ```
 
-- **挂载即校准。** 会话 iframe 绑定端口时，SDK 先安装连接及运行事件接收器，立即通过桥读取 GET S/narrative/runs?limit=1。每个会话 frame 只有一个状态所有者；空舞台、只展示天气和同时挂载多个 useSRSession 的舞台均执行同一流程。子组件挂载、卸载或翻页不会触发额外校准。预览没有会话绑定。校准只保留活动身份和状态，作品读页及游标独立。
+- **挂载即校准。** 会话 iframe 绑定端口时，SDK 先安装连接及运行事件接收器，立即通过桥读取 GET S/narrative/runs?limit=1。每个会话 frame 只有一个状态所有者；空舞台、只展示天气和同时挂载多个 useSRSession 的舞台均执行同一流程。子组件挂载、卸载或翻页不会触发额外校准。预览没有会话绑定。校准保留活动身份、真实 tip 和只读状态，作品读页及游标独立。
 - **重连即重校准。** 断线后立即发布 unknown。每次 SSE 重新连通，SDK 主动重读 limit=1。若首次校准发生在 SSE 连通前，到首次连通时也要补读，覆盖中间的事件空档。可恢复的读取失败由 SDK 退避重试；尚无可信结果时保持 unknown。同代次最多一个校准在途，撤桥或切换会话即取消。作者只读 status，无需调用 runs.query 或手动刷新。
 - **状态如何裁决。** 已连通的当前代次中，校准结果 activeRunId 为 null 表示 idle；匹配活动轮和回复身份且状态为 running/stopping 表示 generating。身份不一致时保持 unknown 并重新校准。在线期间匹配的受理回执或 run.created 进入 generating，对应终态回到 idle，停止请求本身仍为 generating。校准开始时记录连接代次和运行事件修订号；旧响应不能覆盖较新的开始、终态或重新生成，无法确定先后时由 SDK 补读。迟到的受理回执不能复活已结束的执行。帮答 busy 与单次命令、翻页的在途状态归各自调用方。
 - **会话配置。** capabilities 逐项返回存储在当前会话的三个开关原值，只读、响应式。设置保存后由平台下发，重连重读。即使世界没有包内立绘，开关为 true 就返回 true。作品可使用云端素材、自行决定呈现；模型预设、素材数量、最近输出和配置错误均不改写这些值。平台 Composer 根据 replyAssist 展示帮答入口，实际执行失败由平台处理。
@@ -89,41 +121,62 @@ export declare function useSRSession(): SessionView;
 - **填入草稿。** `await session.setDraft(text)` 返回 SetDraftResult。成功时 frame 本地共享草稿已写入，其他视图在下次渲染可见。空字符串用于清空。帮答持有草稿写权、超过 100000 字符、旧会话绑定已销毁分别返回 assist_active、draft_too_long、session_closed；失败保留原文。生成中、暂时断网或输入区收起时仍可填写。写入判定和应用按调用顺序完成，不发 HTTP 或端口消息，不自动发送。作者 SDK 不提供读取草稿、代提交草稿或取得编辑器实例的接口。
 - **查询。** `session.runs.query({limit: 3})` 取最近三轮；再次传上页 nextCursor 取更早一页，游标不透明。limit 是轮数，1–5，缺省 5；对外页内按时间从早到晚排列，轮内消息也按先后排列。适配层将 Server 的近期优先顺序转成阅读顺序，并原样保留 Server 生成的游标。hasMore 为 false 时 nextCursor 为 null。查询只返回该次结果，不建订阅也不移动其他组件的窗口。WorldStory 持有列表、游标、加载/重试与滚动位置；视觉小说可只取一轮，在组件内翻对白。首发无需独立 History、消息分页端点或视觉小说专属 API。
 
-### 唯一的内容事件订阅
+- **单轮读取。** `session.runs.get(runId)` 直接返回 Run，同一绑定内缺失或不属于本会话时返回 RUN_NOT_FOUND。终态后缺正文、原因或能力结果可精确补读。若期间同轮已被重新生成，详情返回最新执行，消费者必须核对 assistantEntryId。整页的 activeRunId、tipEntryId 是该次查询时的会话事实，翻旧页不会回退 SDK 的当前状态。cursor 始终按 Server 返回值传回，摘要或同轮重生成均不移动轮次的分页位置。
+
+### 唯一的会话事件订阅
+
+端口交付 Server 已公开的 SSE 信封 `{event, data}`。event 保持原名，data 保留完整解析后的 JSON，包括新加的字段。已知事件具有判别联合，未来命名事件也可按名称订阅，未知载荷须由使用者收窄。以下类型说明目前实际产生的事件。
 
 ```ts
-type Reply = {runId: string; replyId: string};
-export type ContentEvents = {
-  'run.created': Reply & {user: Message & {role: 'user'}; removedIds: readonly string[]};
-  'run.delta': Reply & (
-    | ({mode: 'append'} & ({text: string; reasoningText?: string} | {text?: string; reasoningText: string}))
-    | {mode: 'replace'; text: string; reasoningText: string});
-  'run.completed': Reply;
-  'run.stopped': Reply & {replySaved: boolean; reason: 'cancelled' | 'length_limit' | 'interrupted'};
-  'message.deleted': {runId: string; messageId: string};
+type Execution = {runId: string; assistantEntryId: string; sessionId: string;
+  provider: string | null; model: string | null; timestamp: number};
+type Saved = Execution & {savedMessageIds: readonly string[]; tipEntryId: string | null};
+type Output = {role: 'assistant'; delta: {content?: string; reasoning_content?: string;
+  tool_calls?: readonly {index: number; id?: string; type?: 'function';
+    function?: {name?: string; arguments?: string}}[]};
+  finish_reason?: 'stop' | 'length' | 'tool_calls' | 'deferred';
+  snapshot?: {role: 'assistant'; content: string; reasoning_content: string; tool_calls: readonly ToolCall[]}};
+type SourceMessage = {sessionId: string; runId: string; messageId: string};
+type Assist = {sessionId: string; requestId: string; timestamp: number};
+export type SessionEventData = {
+  'session.created': {sessionId: string; tipEntryId: string; timestamp: number;
+    opening: {runId: string; message: Message}};
+  'world.updated': {sessionId: string; worldId: string; version: string; revision: number; timestamp: number};
+  'run.created': Execution & {messages: readonly [Extract<Message, {role: 'user'}>];
+    tipEntryId: string | null; deletedMessageIds: readonly string[]};
+  'run.summarizing': Execution;
+  'run.summarized': Execution & {entryId: string};
+  'run.delta': Execution & {messageId: string; messages: readonly [Output]};
+  'run.usage': Execution & {usage: RunUsage};
+  'run.completed': Saved;
+  'run.stopped': Saved & {stop_reason: StopReason};
+  'message.deleted': SourceMessage & {assistantEntryId: string; tipEntryId: string | null};
   'state.changed': {scope: Scope; path: string; value: Value};
-  'action_suggestions.created': {runId: string; messageId: string; items: readonly string[]};
-  'character_sprite.changed': {runId: string; messageId: string; items: readonly Sprite[]};
+  'action_suggestions.created': SourceMessage & {items: readonly string[]};
+  'character_sprite.changed': SourceMessage & {items: readonly Sprite[]};
+  'reply_assist.delta': Assist & {delta: {content: string}};
+  'reply_assist.completed': Assist & {snapshot: {content: string}};
+  'reply_assist.stopped': Assist & {snapshot: {content: string}; stop_reason: string};
 };
-export type StageEvent<K extends keyof ContentEvents = keyof ContentEvents> =
-  {[P in K]: {type: P; data: ContentEvents[P]}}[K];
+export type StageEvent<K extends string = keyof SessionEventData> =
+  K extends keyof SessionEventData ? {event: K; data: SessionEventData[K]} : {event: K; data: unknown};
 ```
 
-`session.events.subscribe(types, listener)` 作用于当前会话绑定。非空类型列表决定回调可见的判别联合；重复类型按一个处理，未知名称、空列表和通配符拒绝。返回的取消函数可重复调用。订阅只交付未来到达的内容变化，无隐式查询、初始通知或回放。一条会话 SSE、每个允许的事件过桥一次，SDK 在当前 iframe 内按类型分发；一个回调抛错不影响其他监听者。例如 `events.subscribe(['run.completed', 'run.stopped'], onEnd)` 只接收两类终态，回调通过 event.type 收窄 data。立绘和建议等便捷 hook 消费同一分发器。
+`session.events.subscribe(types, listener)` 接收当前绑定未来到达的所选名称。列表非空，按名称精确匹配，重复名只回调一次，取消函数幂等。Host 每帧只转发一次完整会话事件，多个回调在 iframe 内分发，单个回调抛错不影响其他监听者。监听类型说明、作品的筛选或领域状态归并均不能改写公共事件流。原始顺序以本连接的到达次序为准。连接状态、心跳注释及重连校准属于传输生命周期。
 
-| 内容事件 | 作品如何使用 |
+| 事件 | 作者与平台如何消费 |
 |---|---|
-| run.created、message.deleted | 按 runId 定位轮次，按 user.id 合并已受理的话语，幂等移除旧消息。replyId 是本次助手回复 ID；重新生成保留轮 ID、更换回复 ID |
-| run.delta | 按 replyId 分别追加 text（正文）和 reasoningText（思考）。append 至少含一个非空增量，缺席字段保持原值；仅思考也发，两者同片只发一次，仅工具变化不发。Server 完整 snapshot 优先投影一次 replace，两个字符串同时覆盖，空串可清空旧值。缺失前缀时标记输出尚不完整，收到 replace 或终态补读后恢复 |
-| run.completed、run.stopped | 结束对应回复；completed 已包含 Server 的结算保证。中断时 replySaved 区分保留部分回复与没有该回复。用户停止、长度上限映射为 cancelled、length_limit，其他原因映射为 interrupted；技术详情留给平台 |
-| state.changed | 展示订阅字段的有效变化，空 path 表示替换该 scope；固定历史目标按需重读 |
-| action_suggestions.created、character_sprite.changed | 根据所属消息更新建议或整幅立绘，立绘 asset 直接解析，空数组清场 |
+| run.created、message.deleted | 按 messages[0].id 合并受理用户，按 deletedMessageIds 或 messageId 幂等移除旧助手。runId 标识轮，assistantEntryId 标识本次执行 |
+| run.delta | 读 messages[0].delta 的 content、reasoning_content、tool_calls，包括只有工具或思考的分片。snapshot 存在时用其完整内容覆盖临时输出。保留 finish_reason，等运行终态再结束忙态 |
+| run.completed、run.stopped | 用 savedMessageIds 判断预留的助手是否保存，以 tipEntryId 更新实际 tip。停止事件的 stop_reason 与该次执行历史 Run.stopReason 的值相同。可以直接按 output_limit_reached、summary_failed 等原因编排 |
+| run.summarizing、run.summarized、run.usage | 作者按需订阅。顶栏展示压缩进度和用量，普通阅读器无需订阅。usage 是本次 Run 汇总，按执行替换 |
+| state.changed、action_suggestions.created、character_sprite.changed | 空 path 替换整域。建议和立绘按 messageId 使用整组 items，立绘使用其中的 asset |
+| session.created、world.updated | 开场用 opening.runId 和 opening.message。装载器可用发行信息核对内容版本 |
+| reply_assist.delta、reply_assist.completed、reply_assist.stopped | 同会话作品（包括另一标签页）可以观察模型生成的帮答文本。仅发起操作的 Composer 按 requestId 与本地绑定修订匹配后写入草稿。事件订阅不赋予调用帮答、停止或读取编辑器的权限 |
 
-思考文本取自 Server 叙事输出的 reasoning_content，流中和已保存轮次统一命名为 reasoningText。组件可以单独显示、折叠或忽略。SR.MessageBody 与消息替换规则只处理正文；思考文本按普通文本渲染。帮答仍仅返回起草结果。
+例如执行 `a1` 遇到输出上限，组件收到 `run.stopped`，其 `data.stop_reason` 是 `output_limit_reached`。若 `savedMessageIds` 含 `a1`，重新打开该轮能读到同一原因、`status: "stopped"` 和助手消息的 `status: "partial"`。若只有用户消息，轮次仍可查询原因。若玩家已重新生成，轮 ID 不变，当前执行 ID 已变成 `a2`，阅读器应采用新执行的结果。
 
-**平台与端口。** 平台顶栏直接读取已记录的用量并可展示摘要进度。Host 按事件名和字段白名单做投影。run.usage、run.summarizing、run.summarized、provider/model、token 计数与诊断不进入 iframe。session.created 属于运营创建流程，world.updated 交给装载器核对发行。端口连接变化用于 SDK 恢复；reply_assist.* 仅投递发起端口的帮答操作，公开内容监听收不到草稿。
-
-**WorldStory 的读写时序。** 先安装所需类型的监听，再发近期页查询。组件保存查询代次与查询期间的相关变化；以持久页为基线，按 runId、消息 ID 对齐更新。对已经包含最终回复的页不再追加旧 delta，已删除或被替换的回复不复活。若执行切换或终态与查询交错且无法判断基线，新读一次近期页；连续 delta 不逐字触发查询。断线进入 unknown，使在途页和旧 cursor 失效，连接恢复后重建近期窗口；卸载取消查询与监听。SDK 内部按执行身份过滤迟到事件；Host 不缓存事件或正文。阅读器拿不到缺失前缀时，首发只承诺恢复最终可读内容。
+**WorldStory 的读写时序。** 先安装所需类型的监听，再发近期页查询。组件保存查询代次与查询期间的相关变化；以持久页为基线，按 runId、消息 ID 对齐更新。对已经包含最终回复的页不再追加旧 delta，已删除或被替换的回复不复活。若执行切换或终态与查询交错且无法判断基线，新读一次近期页；连续 delta 不逐字触发查询。断线进入 unknown，使在途页和旧 cursor 失效，连接恢复后重建近期窗口；卸载取消查询与监听。阅读器和 SDK 自有状态分别按执行身份忽略过期更新，原始订阅仍交付迟到事件；Host 不缓存事件或正文。阅读器拿不到缺失前缀时，首发只承诺恢复最终可读内容。
 
 ### 状态
 
@@ -155,8 +208,8 @@ export declare function useSRCharacterSprites():
 
 - **胶囊声明。** hook 每个挂载实例拥有自己的一组声明，同一组按数组顺序，多组按登记顺序。可重名，React 注册实例与组内位置确定回调归属。重渲染更新当前标签和回调，仅回调引用变化时不重新登记或改变位置，避免内联函数引起重复渲染。卸载仅撤销本组；同一 frame 内直接调用最新回调。注册器和回调引用属于 frame 本地 React 状态。平台不识别“立绘胶囊”，不检查配置决定是否登记、禁用或点击；没有跨端口的按钮列表、版本或点击指令。按钮数量超过可见区域时全部保留。
 - **胶囊布局。** 输入区统一渲染固定宽度的单行滚动区域（窄屏最大为 Composer 可用宽度），胶囊等宽且不压缩。容得下时整组居中；溢出时从第一项开始，裁切视口外部分，左右滑动可达最后一项。Tab 聚焦时滚入视口，长标签截断并保留完整可访问名称。作者仅声明 label 和 onClick。收起时保留登记和草稿，展开仍是同一实例。
-- **建议与立绘。** 两个 hook 都只读最新一轮的最后一条普通消息，跳过内部摘要；玩家消息也算最新。建议区取 items，点击可填草稿或直接发行动。立绘 hook 无参数，返回结果中无 available。挂载、重连按 limit=1 定位该消息；仅在需要时精确补读它。messageId 指向用于判断的最新消息，无普通消息时为 null。最新为玩家输入、助手未产出立绘、无效输出或显式清场均返回空数组；success / partial_success 返回该消息有效项。提交被受理、重生成删除旧助手时立即丢弃旧画面，迟到事件/查询不能复活旧图。没有父链回溯、旧页查找或继承。实时事件可直接解析 asset。作品可另用云端资源或在组件内实现留场演出。
-- **固定平台 Composer。** 它与作者根共用 frame 实例，由 FrameShell 强制挂载在作品错误边界之外。收起仍保留展开与活动生成的停止入口。停止、重新生成、帮答及后续输入功能仅由平台输入区触发；私有控制器取得执行身份或帮答 requestId。它们不在作者包根、事件回调上下文或通用 RPC 中导出。帮答启动后只写本地所属草稿，断线尽力停止，旧帧回执不写新会话。预览不挂载输入区。这个边界约束受支持的接口；同一 JS 环境中的作品与平台输入区不构成浏览器级安全隔离。
+- **建议与立绘。** 两个 hook 都只读最新一轮的最后一条普通消息，跳过内部摘要；玩家消息也算最新。建议区取 items，点击可填草稿或直接发行动。立绘 hook 无参数，返回结果中无 available。挂载、重连从最新 Run 的 messages 定位该消息，直接使用同一 Run.capabilities。缺失终态时可按 runId 补读整轮。messageId 指向用于判断的最新消息，无普通消息时为 null。最新为玩家输入、助手未产出立绘、无效输出或显式清场均返回空数组；success / partial_success 返回该消息有效项。提交被受理、重生成删除旧助手时立即丢弃旧画面，迟到事件/查询不能复活旧图。没有父链回溯、旧页查找或继承。实时事件可直接解析 asset。作品可另用云端资源或在组件内实现留场演出。
+- **固定平台 Composer。** 它与作者根共用 frame 实例，由 FrameShell 强制挂载在作品错误边界之外。收起仍保留展开与活动生成的停止入口。停止、重新生成、帮答及后续输入功能仅由平台输入区触发；私有控制器取得执行身份或帮答 requestId。作者能从事件看到执行 ID 和 requestId。私有命令只在平台控制器内可调用。帮答启动后只写本地所属草稿，断线尽力停止，旧帧回执不写新会话。预览不挂载输入区。这个边界约束受支持的接口；同一 JS 环境中的作品与平台输入区不构成浏览器级安全隔离。
 
 ## 3. 公共渲染原语和普通组件
 
@@ -228,7 +281,7 @@ export default function StoryActions() {
 }
 ```
 
-**逐页回看。** 这个面板由玩家点开后查询，每次展示一页。它自己保存 cursor，关闭时中止读取；即时阅读器另按上节时序监听内容变化。
+**逐页回看。** 这个面板由玩家点开后查询，每次展示一页。它自己保存 cursor，关闭时中止读取；面板展示每轮状态、原始停止原因和每条消息的完整性。即时阅读器另按上节时序监听事件。
 
 ```tsx
 import React from 'react';
@@ -254,8 +307,12 @@ export default function Journal() {
   return <section data-failed={failed}>
     <button onClick={() => read()}>最近三轮</button>
     {page?.hasMore && earlier && <button onClick={() => read(earlier)}>更早三轮</button>}
-    {page?.items.map(run => <article key={run.id}>{run.messages.map(message =>
-      <SR.MessageBody key={message.id} message={message} runId={run.id}/>)}</article>)}
+    {page?.items.map(run => <article key={run.id}>
+      <header>{run.status}{run.status === 'stopped' && <code>{run.stopReason}</code>}</header>
+      {run.messages.map(message => <section key={message.id} data-status={message.status}>
+        <SR.MessageBody message={message} runId={run.id}/>
+      </section>)}
+    </article>)}
   </section>;
 }
 ```
@@ -276,40 +333,36 @@ export default function CastNotice() {
 }
 ```
 
-**展示当前回复的流式思考。** 此面板监听新回复的开始和文本变化。中途打开或断线重连后，如果未观察到开始，就等完整替换；回看轮次时可以直接渲染已保存助手消息的 reasoningText。
+**展示当前回复的流式思考。** 此面板演示一次已观察到开始的执行。持久化阅读器在挂载及重连时还需读最近页并按执行身份交接，已保存文本取 message.reasoning_content。
 
 ```tsx
 import React from 'react';
 import {useSRSession} from '@sillyrealms/sdk';
 
 export default function ReplyThought() {
-  const {events, status} = useSRSession();
+  const {events} = useSRSession();
   const [thought, setThought] = React.useState('');
-  const ready = status !== 'unknown';
   React.useEffect(() => {
-    setThought('');
-    if (!ready) return;
-    let replyId: string | undefined;
-    return events.subscribe(['run.created', 'run.delta', 'message.deleted', 'run.stopped'], event => {
-      if (event.type === 'run.created') {
-        replyId = event.data.replyId;
+    let activeId: string | undefined;
+    return events.subscribe(['run.created', 'run.delta', 'run.completed', 'run.stopped'], e => {
+      if (e.event === 'run.created') {
+        activeId = e.data.assistantEntryId;
         setThought('');
-      } else if (event.type === 'message.deleted' || event.type === 'run.stopped') {
-        const discard = event.type === 'message.deleted' ? event.data.messageId :
-          event.data.replySaved ? undefined : event.data.replyId;
-        if (discard && discard === replyId) { replyId = undefined; setThought(''); }
-      } else {
-        const data = event.data;
-        if (data.mode === 'replace') {
-          replyId = data.replyId;
-          setThought(data.reasoningText);
-        } else if (data.replyId === replyId && data.reasoningText) {
-          const part = data.reasoningText;
-          setThought(previous => previous + part);
+      } else if (e.data.assistantEntryId === activeId) {
+        if (e.event === 'run.delta') {
+          const {delta, snapshot} = e.data.messages[0];
+          if (snapshot) setThought(snapshot.reasoning_content);
+          else if (delta.reasoning_content) {
+            const part = delta.reasoning_content;
+            setThought(previous => previous + part);
+          }
+        } else {
+          if (!e.data.savedMessageIds.includes(e.data.assistantEntryId)) setThought('');
+          activeId = undefined;
         }
       }
     });
-  }, [events, ready]);
+  }, [events]);
   return thought ? <details><summary>思考</summary><p>{thought}</p></details> : null;
 }
 ```
@@ -328,21 +381,21 @@ export default function WeatherCard() {
 }
 ```
 
-**其他组合。** 建议区取 useSRActionSuggestions().items，选中后调用 session.setDraft 或 session.send；立绘区用 world.assetUrl(item.asset) 取得图片；状态面板用 stateAPI.query/update 并逐行报告结果。视觉小说读 limit: 1 最新轮，按 replyId 展示正文变化，通过本地状态实现翻对白；只有玩家采取新行动才调用 send。重新生成由平台输入区锁定最新可重试目标，作品监听该轮的新回复。
+**其他组合。** 建议区取 useSRActionSuggestions().items，选中后调用 session.setDraft 或 session.send；立绘区用 world.assetUrl(item.asset) 取得图片；状态面板用 stateAPI.query/update 并逐行报告结果。视觉小说读 limit: 1 最新轮，按 assistantEntryId 展示正文变化，通过本地状态实现翻对白；只有玩家采取新行动才调用 send。重新生成由平台输入区锁定最新可重试目标，作品监听该轮的新回复。
 
 ## 5. 端口操作和 Server 映射
 
-S 表示 /api/v1/sessions/:boundSession。下表是基础设施契约。作者只调用上文的对象，Host 为请求补入绑定，并在入帧之前裁剪回执。
+S 表示 /api/v1/sessions/:boundSession。下表是基础设施契约。作者只调用上文的对象，Host 为请求补入绑定，并解开 HTTP 的 data 包络。
 
 | 端口操作 | Server 来源 | 范围 |
 |---|---|---|
 | session.read | GET S | 会话；读取 tip 和持久化的三项开关原值，去除模型配置、凭据和私人帮答目标 |
-| runs.query | GET S/narrative/runs | 会话；复用现有按轮分页。绑定和重连均由 SDK 强制调用 limit=1 校准。桥上只保留正文、思考文本、活动身份、最新普通消息的 ID 与该消息有效的建议/立绘输出；跳过内部摘要。SDK 返回 RunPage，游标与 afterSeq 等内部补读参数分开 |
-| session.send | POST S/narrative/runs | 作者及平台共用，去重受理回执 |
-| 平台内部 regenerate / stop | POST S/narrative/runs/regenerate、S/narrative/runs/:runId/stop | 仅固定 Composer 的私有控制器调用；核对最新 tip 与执行身份 |
+| runs.query | GET S/narrative/runs | 会话；完整 RunPage，SDK 绑定和重连自动 limit=1 校准，作者独立翻页 |
+| runs.get | GET S/narrative/runs/:runId | 与页项同型的完整 Run，按绑定检查归属 |
+| session.send | POST S/narrative/runs | 发送 {input:{text},expectedTipEntryId}，用 202 与 run.created 中相同的消息和执行身份去重 |
+| 平台内部 regenerate / stop | POST S/narrative/runs/regenerate、S/narrative/runs/:runId/stop | 仅固定 Composer 的私有控制器调用；再生传 {runId,expectedAssistantEntryId,expectedTipEntryId}，停止传 {assistantEntryId} |
 | state.query / update | POST /api/v1/state/query、/api/v1/state/update | 会话三域；预览只读绑定世界 global 的显式路径 |
-| sprites.readMessage | GET S/entries/:entryId/character-sprites | 精确读该会话的一条消息，素材走游玩世界的 resources 端点 |
 | 平台内部 assist.start / stop | POST S/reply-assist、S/reply-assist/:requestId/stop | 仅平台 Composer 触发，操作与发起端口绑定，回执和草稿按 requestId 隔离 |
-| init、ready、appearance、connection、内容事件、操作回执及撤销 | Host 会话连接及 frame 生命周期 | preview 无会话 SSE，订阅和取消订阅在 frame 内完成 |
+| init、ready、appearance、connection、会话原生事件、操作回执及撤销 | Host 会话连接及 frame 生命周期 | preview 无会话 SSE，订阅和取消订阅在 frame 内完成 |
 
 用量查询 GET S/narrative/usage 保留给平台顶栏。会话桥无计量操作。setDraft、胶囊登记与点击均在 frame 本地完成。SDK 的包根提供本契约的七个 hook 和 SR 的两个原语；原有快照、Host 按钮登记及读写整页的接口随首发实现移除。
